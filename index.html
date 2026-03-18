@@ -12,8 +12,8 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.min.js"></script>
   <!-- Firebase -->
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; padding: 16px; font-family: system-ui, sans-serif; background: #f5f5f2; color: #1a1a18; }
@@ -86,6 +86,91 @@ const WORKER_STATUS = {
   absent: { label: 'Отсутствует', bg: '#f0ede8', cl: '#666', br: '#ccc' },
   sick: { label: 'Больничный', bg: RD3, cl: RD2, br: RD },
   vacation: { label: 'Отпуск', bg: '#E6F1FB', cl: '#042C53', br: BL }
+};
+
+// ==================== Геймификация ====================
+const ACHIEVEMENTS = {
+  first_op: { icon: '⭐', title: 'Первая операция', desc: 'Выполнена первая операция', condition: (s) => s.doneCount >= 1 },
+  ops_10: { icon: '🔧', title: 'Десятка', desc: 'Выполнено 10 операций', condition: (s) => s.doneCount >= 10 },
+  ops_50: { icon: '⚙️', title: 'Профессионал', desc: 'Выполнено 50 операций', condition: (s) => s.doneCount >= 50 },
+  ops_100: { icon: '🏆', title: 'Стахановец', desc: 'Выполнено 100 операций', condition: (s) => s.doneCount >= 100 },
+  ops_500: { icon: '👑', title: 'Ветеран', desc: 'Выполнено 500 операций', condition: (s) => s.doneCount >= 500 },
+  quality_star: { icon: '💎', title: 'Безупречное качество', desc: 'Более 50 операций, брак менее 1%', condition: (s) => s.doneCount >= 50 && s.defectRate < 1 },
+  weld_master: { icon: '🔥', title: 'Мастер сварки', desc: '50 сварочных операций', condition: (s) => s.weldCount >= 50 },
+  speed_demon: { icon: '⚡', title: 'Скоростной монтаж', desc: 'Среднее время на 20% быстрее плана (мин. 10 операций)', condition: (s) => s.doneWithPlan >= 10 && s.avgRatio < 0.8 },
+  no_downtime: { icon: '🛡️', title: 'Нет простоям', desc: '0 простоев за последние 30 дней', condition: (s) => s.downtimes30d === 0 && s.doneCount >= 5 },
+  streak_5: { icon: '🎯', title: 'Серия 5', desc: '5 операций подряд без брака', condition: (s) => s.currentStreak >= 5 },
+  streak_20: { icon: '🎪', title: 'Серия 20', desc: '20 операций подряд без брака', condition: (s) => s.currentStreak >= 20 },
+  multi_skill: { icon: '🌟', title: 'Универсал', desc: 'Выполнял 5+ разных типов операций', condition: (s) => s.uniqueOpTypes >= 5 }
+};
+
+const getWorkerLevel = (doneCount) => Math.floor(doneCount / 10) + 1;
+const getLevelProgress = (doneCount) => (doneCount % 10) / 10;
+const getLevelTitle = (level) => {
+  if (level >= 50) return 'Легенда';
+  if (level >= 30) return 'Мастер';
+  if (level >= 20) return 'Эксперт';
+  if (level >= 10) return 'Профессионал';
+  if (level >= 5) return 'Опытный';
+  if (level >= 3) return 'Работник';
+  return 'Новичок';
+};
+
+const calcWorkerStats = (workerId, data) => {
+  const allOps = data.ops.filter(op => op.workerId === workerId);
+  const doneOps = allOps.filter(op => op.status === 'done');
+  const defectOps = allOps.filter(op => op.status === 'defect');
+  const doneCount = doneOps.length;
+  const defectCount = defectOps.length;
+  const total = doneCount + defectCount;
+  const defectRate = total > 0 ? (defectCount / total * 100) : 0;
+  const weldCount = doneOps.filter(op => op.name && op.name.toLowerCase().includes('свар')).length;
+  
+  // Среднее отношение факт/план
+  const withPlan = doneOps.filter(op => op.plannedHours && op.startedAt && op.finishedAt);
+  const doneWithPlan = withPlan.length;
+  const avgRatio = doneWithPlan > 0 ? withPlan.reduce((s, op) => s + ((op.finishedAt - op.startedAt) / (op.plannedHours * 3600000)), 0) / doneWithPlan : 1;
+  
+  // Простои за 30 дней
+  const d30 = now() - 30 * 86400000;
+  const downtimes30d = data.events.filter(e => e.workerId === workerId && e.type === 'downtime' && e.ts >= d30).length;
+  
+  // Серия без брака (последние операции)
+  const sorted = [...doneOps, ...defectOps].sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0));
+  let currentStreak = 0;
+  for (const op of sorted) {
+    if (op.status === 'done') currentStreak++;
+    else break;
+  }
+  
+  // Уникальные типы операций
+  const uniqueOpTypes = new Set(doneOps.map(op => op.name)).size;
+  
+  return { doneCount, defectCount, defectRate, weldCount, doneWithPlan, avgRatio, downtimes30d, currentStreak, uniqueOpTypes };
+};
+
+const checkAchievements = (workerId, data) => {
+  const worker = data.workers.find(w => w.id === workerId);
+  if (!worker) return data;
+  const stats = calcWorkerStats(workerId, data);
+  const current = worker.achievements || [];
+  const newAch = [...current];
+  let changed = false;
+  
+  for (const [id, ach] of Object.entries(ACHIEVEMENTS)) {
+    if (!newAch.includes(id) && ach.condition(stats)) {
+      newAch.push(id);
+      changed = true;
+    }
+  }
+  
+  if (changed) {
+    return {
+      ...data,
+      workers: data.workers.map(w => w.id === workerId ? { ...w, achievements: newAch } : w)
+    };
+  }
+  return data;
 };
 const uid = () => Math.random().toString(36).slice(2, 8).toUpperCase();
 const now = () => Date.now();
@@ -393,6 +478,45 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
         h('div', { style: { ...S.card, textAlign: 'center' } }, h('div', { style: { fontSize: 24, fontWeight: 500, color: BL } }, `${opsInProgress.length}/${opsPending.length}`), h('div', { style: { fontSize: 10, color: '#888' } }, 'В работе / Ожидает'))
       ),
 
+      // Уровень и прогресс
+      (() => {
+        const allDone = data.ops.filter(op => op.workerId === worker.id && op.status === 'done').length;
+        const lvl = getWorkerLevel(allDone);
+        const prog = getLevelProgress(allDone);
+        return h('div', { style: { ...S.card, marginBottom: 16 } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 } },
+            h('div', { style: { fontSize: 28, fontWeight: 500, color: AM } }, `${lvl}`),
+            h('div', null,
+              h('div', { style: { fontSize: 14, fontWeight: 500 } }, getLevelTitle(lvl)),
+              h('div', { style: { fontSize: 11, color: '#888' } }, `${allDone} операций всего`)
+            )
+          ),
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+            h('div', { style: { flex: 1, height: 8, background: '#eee', borderRadius: 4, overflow: 'hidden' } },
+              h('div', { style: { width: `${prog * 100}%`, height: 8, background: AM, borderRadius: 4 } })
+            ),
+            h('div', { style: { fontSize: 11, color: '#888' } }, `${Math.round(prog * 100)}% → Ур. ${lvl + 1}`)
+          )
+        );
+      })(),
+
+      // Достижения
+      h('div', { style: { marginBottom: 16 } },
+        h('div', { style: S.sec }, `Достижения (${(worker.achievements || []).length} / ${Object.keys(ACHIEVEMENTS).length})`),
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 } },
+          Object.entries(ACHIEVEMENTS).map(([id, ach]) => {
+            const earned = (worker.achievements || []).includes(id);
+            return h('div', { key: id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 8, background: earned ? AM3 : '#f5f5f2', opacity: earned ? 1 : 0.5 } },
+              h('span', { style: { fontSize: 18 } }, ach.icon),
+              h('div', null,
+                h('div', { style: { fontSize: 12, fontWeight: 500, color: earned ? AM2 : '#888' } }, ach.title),
+                h('div', { style: { fontSize: 10, color: '#aaa' } }, ach.desc)
+              )
+            );
+          })
+        )
+      ),
+
       // Компетенции
       worker.competences && worker.competences.length > 0 && h('div', { style: { marginBottom: 16 } },
         h('div', { style: S.sec }, 'Допуск к операциям'),
@@ -532,12 +656,25 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     };
     await DB.save(updated);
     onUpdate(updated);
+    // Проверка достижений
+    const withAch = checkAchievements(workerId, updated);
+    if (withAch !== updated) {
+      const oldAch = (data.workers.find(w => w.id === workerId)?.achievements || []).length;
+      const newAch = (withAch.workers.find(w => w.id === workerId)?.achievements || []);
+      if (newAch.length > oldAch) {
+        const latest = newAch[newAch.length - 1];
+        const achInfo = ACHIEVEMENTS[latest];
+        if (achInfo) addToast(`${achInfo.icon} Достижение: ${achInfo.title}!`, 'success');
+      }
+      await DB.save(withAch);
+      onUpdate(withAch);
+    }
     setActiveOp(null);
     setShowDefForm(false);
     setDefNote('');
     setWeldParams({ seamNumber: '', electrode: '', result: 'ok' });
     addToast(`Операция "${op.name}" завершена (${STATUS[status].label})`, 'info');
-  }, [data, workerId, onUpdate, defNote, weldParams]);
+  }, [data, workerId, onUpdate, defNote, weldParams, addToast]);
 
   const recordDowntime = useCallback(async () => {
     if (!selectedDowntimeType) {
@@ -1573,7 +1710,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
       // Время прихода сегодня
       const todayStart = new Date().setHours(0,0,0,0);
       const checkin = data.events.find(e => e.workerId === w.id && e.type === 'checkin_manual' && e.ts >= todayStart);
-      return { ...w, opsDone: opsDone.length, opsDefect: opsDefect.length, opsActive: opsActive.length, avgTime, defectRate, downtimes, sectionName: section?.name || '', checkinTime: checkin ? new Date(checkin.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null };
+      return { ...w, opsDone: opsDone.length, opsDefect: opsDefect.length, opsActive: opsActive.length, avgTime, defectRate, downtimes, sectionName: section?.name || '', checkinTime: checkin ? new Date(checkin.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null, allTimeDone: data.ops.filter(op => op.workerId === w.id && op.status === 'done').length, level: getWorkerLevel(data.ops.filter(op => op.workerId === w.id && op.status === 'done').length), levelProgress: getLevelProgress(data.ops.filter(op => op.workerId === w.id && op.status === 'done').length) };
     });
   }, [data.workers, data.ops, data.events, data.sections, period30]);
 
@@ -1654,10 +1791,13 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
             // Аватар
             h('div', { style: { width: 44, height: 44, borderRadius: '50%', background: ws.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 500, color: ws.cl, flexShrink: 0, border: '0.5px solid ' + ws.br } }, w.name?.charAt(0) || '?'),
             h('div', { style: { flex: 1, minWidth: 0 } },
-              // Верхняя строка: имя + статус
+              // Верхняя строка: имя + уровень + статус
               h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 } },
                 h('div', null,
-                  h('div', { style: { fontSize: 15, fontWeight: 500 } }, w.name),
+                  h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                    h('div', { style: { fontSize: 15, fontWeight: 500 } }, w.name),
+                    h('span', { style: { display: 'inline-block', padding: '1px 8px', fontSize: 10, borderRadius: 8, background: AM3, color: AM2, fontWeight: 500 } }, `Ур. ${w.level} · ${getLevelTitle(w.level)}`)
+                  ),
                   h('div', { style: { fontSize: 12, color: '#888' } },
                     [w.position, w.grade ? `${w.grade} разр.` : null, w.tabNumber ? `Таб. ${w.tabNumber}` : null, w.sectionName].filter(Boolean).join(' · ') || '—'
                   )
@@ -1666,6 +1806,15 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
                   h('span', { style: { display: 'inline-block', padding: '3px 10px', fontSize: 10, borderRadius: 8, fontWeight: 500, background: ws.bg, color: ws.cl, border: '0.5px solid ' + ws.br } }, ws.label),
                   w.checkinTime && h('span', { style: { fontSize: 11, color: '#888' } }, `с ${w.checkinTime}`)
                 )
+              ),
+
+              // Прогресс-бар уровня
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 } },
+                h('div', { style: { fontSize: 11, color: '#888', whiteSpace: 'nowrap' } }, `${w.allTimeDone} оп.`),
+                h('div', { style: { flex: 1, height: 5, background: '#eee', borderRadius: 3, overflow: 'hidden' } },
+                  h('div', { style: { width: `${w.levelProgress * 100}%`, height: 5, background: AM, borderRadius: 3, transition: 'width 0.3s' } })
+                ),
+                h('div', { style: { fontSize: 10, color: '#888', whiteSpace: 'nowrap' } }, `→ Ур. ${w.level + 1}`)
               ),
 
               // Метрики
@@ -1685,6 +1834,18 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
                 h('div', { style: { textAlign: 'center', padding: '6px 4px', background: '#f8f8f5', borderRadius: 8 } },
                   h('div', { style: { fontSize: 16, fontWeight: 500, color: BL } }, w.opsActive),
                   h('div', { style: { fontSize: 10, color: '#888' } }, 'в работе')
+                )
+              ),
+
+              // Достижения
+              (w.achievements && w.achievements.length > 0) && h('div', { style: { marginBottom: 8 } },
+                h('div', { style: { fontSize: 10, color: '#888', marginBottom: 4 } }, `Достижения (${w.achievements.length})`),
+                h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
+                  w.achievements.slice(0, 6).map(achId => {
+                    const a = ACHIEVEMENTS[achId];
+                    return a ? h('span', { key: achId, title: `${a.title}: ${a.desc}`, style: { padding: '2px 8px', fontSize: 11, background: '#f8f8f5', borderRadius: 8, cursor: 'default' } }, `${a.icon} ${a.title}`) : null;
+                  }),
+                  w.achievements.length > 6 && h('span', { style: { fontSize: 11, color: '#888', padding: '2px 4px' } }, `+${w.achievements.length - 6}`)
                 )
               ),
 
@@ -1921,7 +2082,22 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
       ops: data.ops.map(o => o.id === op.id ? updatedOp : o),
       events: [...data.events, { id: uid(), type: status, opId: op.id, workerId: op.workerId, ts: finishedAt, note: defNote || undefined, shift }]
     };
-    await DB.save(updated); onUpdate(updated); setShowDefForm(false); setDefNote(''); setWeldParams({ seamNumber: '', electrode: '', result: 'ok' }); addToast('Операция завершена', 'info');
+    await DB.save(updated); onUpdate(updated);
+    // Проверка достижений
+    if (op.workerId) {
+      const withAch = checkAchievements(op.workerId, updated);
+      if (withAch !== updated) {
+        const newAchList = withAch.workers.find(w => w.id === op.workerId)?.achievements || [];
+        const oldAchList = updated.workers.find(w => w.id === op.workerId)?.achievements || [];
+        if (newAchList.length > oldAchList.length) {
+          const latest = newAchList[newAchList.length - 1];
+          const achInfo = ACHIEVEMENTS[latest];
+          if (achInfo) addToast(`${achInfo.icon} Достижение: ${achInfo.title}!`, 'success');
+        }
+        await DB.save(withAch); onUpdate(withAch);
+      }
+    }
+    setShowDefForm(false); setDefNote(''); setWeldParams({ seamNumber: '', electrode: '', result: 'ok' }); addToast('Операция завершена', 'info');
   }, [data, op, onUpdate, defNote, weldParams]);
 
   const recordDowntime = useCallback(async () => {
@@ -2210,6 +2386,63 @@ const Dashboard = memo(({ data, addToast }) => {
           h('td', { style: S.td }, w.defectCount),
           h('td', { style: S.td }, w.downtimeCount)
         )))
+      )
+    ),
+
+    // Лидерборд
+    data.workers.length > 0 && h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 } },
+      // Топ по количеству
+      h('div', { style: S.card },
+        h('div', { style: S.sec }, 'Топ по выполнению'),
+        (() => {
+          const top = data.workers.map(w => ({ name: w.name, count: doneOpsInPeriod.filter(op => op.workerId === w.id).length, level: getWorkerLevel(data.ops.filter(op => op.workerId === w.id && op.status === 'done').length) })).filter(w => w.count > 0).sort((a,b) => b.count - a.count).slice(0, 5);
+          return top.length === 0 ? h('div', { style: { fontSize: 12, color: '#888' } }, 'Нет данных') : top.map((w, i) => h('div', { key: i, style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: i < top.length - 1 ? '0.5px solid rgba(0,0,0,0.06)' : 'none' } },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+              h('span', { style: { fontSize: 14, fontWeight: 500, color: i === 0 ? AM : '#888', width: 20 } }, `${i+1}.`),
+              h('span', { style: { fontSize: 12 } }, w.name),
+              h('span', { style: { fontSize: 10, color: AM, background: AM3, padding: '1px 6px', borderRadius: 6 } }, `Ур.${w.level}`)
+            ),
+            h('span', { style: { fontSize: 14, fontWeight: 500, color: GN } }, w.count)
+          ));
+        })()
+      ),
+      // Топ по качеству
+      h('div', { style: S.card },
+        h('div', { style: S.sec }, 'Топ по качеству'),
+        (() => {
+          const top = data.workers.map(w => {
+            const done = doneOpsInPeriod.filter(op => op.workerId === w.id).length;
+            const def = defectsInPeriod.filter(op => op.workerId === w.id).length;
+            const total = done + def;
+            return { name: w.name, rate: total > 0 ? (done / total * 100) : 0, total };
+          }).filter(w => w.total >= 3).sort((a,b) => b.rate - a.rate).slice(0, 5);
+          return top.length === 0 ? h('div', { style: { fontSize: 12, color: '#888' } }, 'Нет данных') : top.map((w, i) => h('div', { key: i, style: { display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: i < top.length - 1 ? '0.5px solid rgba(0,0,0,0.06)' : 'none' } },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+              h('span', { style: { fontSize: 14, fontWeight: 500, color: i === 0 ? AM : '#888', width: 20 } }, `${i+1}.`),
+              h('span', { style: { fontSize: 12 } }, w.name)
+            ),
+            h('span', { style: { fontSize: 14, fontWeight: 500, color: w.rate >= 95 ? GN : AM } }, `${w.rate.toFixed(0)}%`)
+          ));
+        })()
+      ),
+      // Топ по скорости
+      h('div', { style: S.card },
+        h('div', { style: S.sec }, 'Топ по скорости'),
+        (() => {
+          const top = data.workers.map(w => {
+            const ops = doneOpsInPeriod.filter(op => op.workerId === w.id && op.plannedHours && op.startedAt && op.finishedAt);
+            if (ops.length < 3) return null;
+            const ratio = ops.reduce((s, op) => s + ((op.finishedAt - op.startedAt) / (op.plannedHours * 3600000)), 0) / ops.length;
+            return { name: w.name, ratio, count: ops.length };
+          }).filter(Boolean).sort((a,b) => a.ratio - b.ratio).slice(0, 5);
+          return top.length === 0 ? h('div', { style: { fontSize: 12, color: '#888' } }, 'Нет данных') : top.map((w, i) => h('div', { key: i, style: { display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: i < top.length - 1 ? '0.5px solid rgba(0,0,0,0.06)' : 'none' } },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+              h('span', { style: { fontSize: 14, fontWeight: 500, color: i === 0 ? AM : '#888', width: 20 } }, `${i+1}.`),
+              h('span', { style: { fontSize: 12 } }, w.name)
+            ),
+            h('span', { style: { fontSize: 14, fontWeight: 500, color: w.ratio <= 1 ? GN : RD } }, `${Math.round(w.ratio * 100)}%`)
+          ));
+        })()
       )
     ),
 
