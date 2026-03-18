@@ -592,6 +592,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const [showDowntimeModal, setShowDowntimeModal] = useState(false);
   const [selectedDowntimeType, setSelectedDowntimeType] = useState('');
   const [weldParams, setWeldParams] = useState({ seamNumber: '', electrode: '', result: 'ok' });
+  const [showAchievements, setShowAchievements] = useState(false);
 
   useEffect(() => {
     if (initialOpId && workerId) {
@@ -711,13 +712,75 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const canStartQr = qrOp && qrOp.status === 'pending' && !qrOp.workerId && !qrOp.archived;
 
   return h('div', { style: { maxWidth: 420, margin: '0 auto', padding: '16px 12px' } },
-    h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 } },
-      h('div', { style: { width: 40, height: 40, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 500, color: AM2 } }, worker?.name?.charAt(0) || '?'),
-      h('div', null,
-        h('div', { style: { fontSize: 15, fontWeight: 500 } }, worker?.name || 'Рабочий'),
-        h('div', { style: { fontSize: 11, color: '#888' } }, `${doneToday.length} выполнено сегодня`)
-      )
-    ),
+    // Профиль с уровнем
+    (() => {
+      const allDone = data.ops.filter(op => op.workerId === workerId && op.status === 'done').length;
+      const lvl = getWorkerLevel(allDone);
+      const prog = getLevelProgress(allDone);
+      const ach = worker?.achievements || [];
+      // Следующее недостигнутое достижение
+      const nextAch = Object.entries(ACHIEVEMENTS).find(([id, a]) => !ach.includes(id));
+      return h('div', null,
+        // Имя + уровень
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 } },
+          h('div', { style: { width: 48, height: 48, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 500, color: AM2, position: 'relative' } },
+            worker?.name?.charAt(0) || '?',
+            h('div', { style: { position: 'absolute', bottom: -4, right: -4, background: AM, color: '#fff', fontSize: 10, fontWeight: 500, borderRadius: '50%', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, lvl)
+          ),
+          h('div', { style: { flex: 1 } },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+              h('div', { style: { fontSize: 15, fontWeight: 500 } }, worker?.name || 'Рабочий'),
+              h('span', { style: { fontSize: 10, padding: '1px 8px', background: AM3, color: AM2, borderRadius: 8, fontWeight: 500 } }, getLevelTitle(lvl))
+            ),
+            h('div', { style: { fontSize: 11, color: '#888', marginBottom: 4 } }, `${doneToday.length} выполнено сегодня · ${allDone} всего`),
+            // Прогресс-бар
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+              h('div', { style: { flex: 1, height: 6, background: '#eee', borderRadius: 3, overflow: 'hidden' } },
+                h('div', { style: { width: `${prog * 100}%`, height: 6, background: AM, borderRadius: 3, transition: 'width 0.3s' } })
+              ),
+              h('div', { style: { fontSize: 10, color: '#888' } }, `→ Ур.${lvl + 1}`)
+            )
+          )
+        ),
+
+        // Достижения (компактный блок)
+        h('div', { style: { ...S.card, marginBottom: 16, padding: 12 } },
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 } },
+            h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 500 } }, `Достижения · ${ach.length}/${Object.keys(ACHIEVEMENTS).length}`),
+            h('button', { type: 'button', style: { background: 'none', border: 'none', fontSize: 11, color: AM, cursor: 'pointer', padding: 0 }, onClick: () => setShowAchievements(prev => !prev) }, showAchievements ? 'Свернуть' : 'Все')
+          ),
+          // Полученные бейджи (всегда видны)
+          ach.length > 0 ? h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: nextAch ? 8 : 0 } },
+            ach.map(achId => {
+              const a = ACHIEVEMENTS[achId];
+              return a ? h('span', { key: achId, title: a.desc, style: { fontSize: 18, cursor: 'default' } }, a.icon) : null;
+            })
+          ) : h('div', { style: { fontSize: 12, color: '#888' } }, 'Завершите первую операцию!'),
+          // Следующая цель
+          nextAch && h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: '#f8f8f5', borderRadius: 8 } },
+            h('span', { style: { fontSize: 16, opacity: 0.4 } }, ACHIEVEMENTS[nextAch[0]].icon),
+            h('div', null,
+              h('div', { style: { fontSize: 11, fontWeight: 500, color: '#888' } }, `Следующее: ${ACHIEVEMENTS[nextAch[0]].title}`),
+              h('div', { style: { fontSize: 10, color: '#aaa' } }, ACHIEVEMENTS[nextAch[0]].desc)
+            )
+          ),
+          // Развёрнутый список всех
+          showAchievements && h('div', { style: { marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 } },
+            Object.entries(ACHIEVEMENTS).map(([id, a]) => {
+              const earned = ach.includes(id);
+              return h('div', { key: id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8, background: earned ? AM3 : '#f8f8f5', opacity: earned ? 1 : 0.5 } },
+                h('span', { style: { fontSize: 16 } }, a.icon),
+                h('div', { style: { flex: 1 } },
+                  h('div', { style: { fontSize: 12, fontWeight: 500, color: earned ? AM2 : '#888' } }, a.title),
+                  h('div', { style: { fontSize: 10, color: '#aaa' } }, a.desc)
+                ),
+                earned && h('span', { style: { fontSize: 10, color: GN, fontWeight: 500 } }, '✓')
+              );
+            })
+          )
+        )
+      );
+    })(),
 
     !active && canStartQr && h('div', { style: { ...S.card, border: `1px solid ${AM}`, background: AM3, marginBottom: 16 } },
       h('div', { style: { fontSize: 10, color: AM, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 } }, 'Назначено по QR-коду'),
