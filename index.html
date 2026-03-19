@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Производственный Анализ · ООО НТ</title>
+  <title>Производственный учёт · НТ</title>
   <!-- React -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -448,7 +448,9 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
   const downtimeByReason = {};
   downtimeEvents.forEach(e => {
     const reason = data.downtimeTypes.find(dt => dt.id === e.downtimeTypeId)?.name || 'Неизвестно';
-    downtimeByReason[reason] = (downtimeByReason[reason] || 0) + 1;
+    if (!downtimeByReason[reason]) downtimeByReason[reason] = { count: 0, totalDuration: 0 };
+    downtimeByReason[reason].count++;
+    downtimeByReason[reason].totalDuration += (e.duration || 0);
   });
 
   const recentOps = [...opsDone, ...opsDefect].sort((a,b) => (b.finishedAt || 0) - (a.finishedAt || 0)).slice(0, 10);
@@ -559,10 +561,11 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
         h('div', { style: S.sec }, `Простои (${downtimeEvents.length})`),
         Object.keys(downtimeByReason).length === 0 ? h('div', { style: { padding: 8, fontSize: 12, color: '#888' } }, 'Нет простоев за период') :
           h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-            h('thead', null, h('tr', null, ['Причина', 'Кол-во'].map((t,i) => h('th', { key: i, style: S.th }, t)))),
-            h('tbody', null, Object.entries(downtimeByReason).sort((a,b) => b[1] - a[1]).map(([reason, count]) => h('tr', { key: reason },
+            h('thead', null, h('tr', null, ['Причина', 'Кол-во', 'Общее время'].map((t,i) => h('th', { key: i, style: S.th }, t)))),
+            h('tbody', null, Object.entries(downtimeByReason).sort((a,b) => b[1].count - a[1].count).map(([reason, stat]) => h('tr', { key: reason },
               h('td', { style: S.td }, reason),
-              h('td', { style: S.td }, count)
+              h('td', { style: { ...S.td, textAlign: 'center' } }, stat.count),
+              h('td', { style: { ...S.td, fontFamily: 'monospace', color: stat.totalDuration > 0 ? RD : '#888' } }, stat.totalDuration > 0 ? fmtDur(stat.totalDuration) : '—')
             )))
           )
       ),
@@ -626,6 +629,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const [selectedDowntimeType, setSelectedDowntimeType] = useState('');
   const [weldParams, setWeldParams] = useState({ seamNumber: '', electrode: '', result: 'ok' });
   const [showAchievements, setShowAchievements] = useState(false);
+  const [downtimeStartedAt, setDowntimeStartedAt] = useState(null);
 
   useEffect(() => {
     if (initialOpId && workerId) {
@@ -670,6 +674,8 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     const finishedAt = now();
     let status = isDefect ? 'defect' : isRework ? 'rework' : 'done';
     let updatedOp = { ...op, status, finishedAt, defectNote: defNote || undefined };
+    if (isDefect) updatedOp.defectSource = 'previous_stage';
+    if (isRework) updatedOp.defectSource = 'previous_stage';
     if (op.requiresQC && status === 'done') {
       status = 'on_check';
       updatedOp.status = 'on_check';
@@ -686,7 +692,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     const updated = {
       ...data,
       ops: data.ops.map(o => o.id === op.id ? updatedOp : o),
-      events: [...data.events, { id: uid(), type: status, opId: op.id, workerId, ts: finishedAt, note: defNote || undefined, shift }]
+      events: [...data.events, { id: uid(), type: status, opId: op.id, workerId, ts: finishedAt, note: defNote || undefined, shift, defectSource: (isDefect || isRework) ? 'previous_stage' : undefined }]
     };
     await DB.save(updated);
     onUpdate(updated);
@@ -717,6 +723,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     }
     const ts = now();
     const shift = getCurrentShift();
+    const duration = downtimeStartedAt ? ts - downtimeStartedAt : 0;
     const newEvent = {
       id: uid(),
       type: 'downtime',
@@ -724,15 +731,18 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       opId: activeOp?.id || null,
       ts,
       downtimeTypeId: selectedDowntimeType,
-      shift
+      shift,
+      startedAt: downtimeStartedAt || ts,
+      duration
     };
     const updated = { ...data, events: [...data.events, newEvent] };
     await DB.save(updated);
     onUpdate(updated);
     setShowDowntimeModal(false);
     setSelectedDowntimeType('');
-    addToast('Простой зафиксирован', 'success');
-  }, [data, workerId, activeOp, selectedDowntimeType, onUpdate, addToast]);
+    setDowntimeStartedAt(null);
+    addToast(`Простой зафиксирован (${fmtDur(duration)})`, 'success');
+  }, [data, workerId, activeOp, selectedDowntimeType, downtimeStartedAt, onUpdate, addToast]);
 
   const getCurrentShift = () => {
     const d = new Date();
@@ -829,10 +839,11 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       h('div', { style: { fontSize: 40, fontWeight: 500, color: AM, textAlign: 'center', margin: '8px 0 16px' } }, fmtDur(elapsed)),
       showDefForm ? (
         h('div', null,
-          h('textarea', { style: { ...S.inp, width: '100%', marginBottom: 8 }, rows: 2, placeholder: 'Опишите дефект...', value: defNote, onChange: e => setDefNote(e.target.value) }),
+          h('div', { style: { fontSize: 11, color: RD, fontWeight: 500, marginBottom: 8, textTransform: 'uppercase' } }, 'Обнаружен брак с предыдущего участка'),
+          h('textarea', { style: { ...S.inp, width: '100%', marginBottom: 8 }, rows: 2, placeholder: 'Опишите обнаруженный дефект...', value: defNote, onChange: e => setDefNote(e.target.value) }),
           h('div', { style: { display: 'flex', gap: 6 } },
-            h('button', { type: 'button', style: rbtn({ flex: 1 }), onClick: () => doFinish(active, true, false) }, 'Брак'),
-            h('button', { type: 'button', style: { ...gbtn({ flex: 1 }), color: AM2, borderColor: AM4 }, onClick: () => doFinish(active, false, true) }, 'Переделка'),
+            h('button', { type: 'button', style: rbtn({ flex: 1 }), onClick: () => doFinish(active, true, false) }, 'Зафиксировать брак'),
+            h('button', { type: 'button', style: { ...gbtn({ flex: 1 }), color: AM2, borderColor: AM4 }, onClick: () => doFinish(active, false, true) }, 'На переделку'),
             h('button', { type: 'button', style: gbtn({ flex: 1 }), onClick: () => setShowDefForm(false) }, 'Отмена')
           )
         )
@@ -850,29 +861,31 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
           ),
           h('div', { style: { display: 'flex', gap: 8 } },
             h('button', { type: 'button', style: { ...abtn({ flex: 2, padding: '12px', fontSize: 14 }), background: GN, color: GN2 }, onClick: () => doFinish(active, weldParams.result === 'fail', false) }, '✓ Завершить'),
-            h('button', { type: 'button', style: rbtn({ flex: 1, padding: '12px' }), onClick: () => setShowDefForm(true) }, '⚠ Проблема'),
-            h('button', { type: 'button', style: gbtn({ flex: 1, padding: '12px' }), onClick: () => setShowDowntimeModal(true) }, '⏸ Простой')
+            h('button', { type: 'button', style: rbtn({ flex: 1, padding: '12px' }), onClick: () => setShowDefForm(true) }, '⚠ Брак с пред. уч.'),
+            h('button', { type: 'button', style: gbtn({ flex: 1, padding: '12px' }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
           )
         )
       ) : (
         h('div', { style: { display: 'flex', gap: 8 } },
           h('button', { type: 'button', style: { ...abtn({ flex: 2, padding: '12px', fontSize: 14 }), background: GN, color: GN2 }, onClick: () => doFinish(active) }, '✓ Завершено'),
-          h('button', { type: 'button', style: rbtn({ flex: 1, padding: '12px' }), onClick: () => setShowDefForm(true) }, '⚠ Проблема'),
-          h('button', { type: 'button', style: gbtn({ flex: 1, padding: '12px' }), onClick: () => setShowDowntimeModal(true) }, '⏸ Простой')
+          h('button', { type: 'button', style: rbtn({ flex: 1, padding: '12px' }), onClick: () => setShowDefForm(true) }, '⚠ Брак с пред. уч.'),
+          h('button', { type: 'button', style: gbtn({ flex: 1, padding: '12px' }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
         )
       )
     ),
 
     showDowntimeModal && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60 } },
-      h('div', { style: { background: '#fff', borderRadius: 12, padding: 24, width: 300 } },
-        h('div', { style: { fontSize: 14, fontWeight: 500, marginBottom: 12 } }, 'Выберите причину простоя'),
+      h('div', { style: { background: '#fff', borderRadius: 12, padding: 24, width: 320 } },
+        h('div', { style: { fontSize: 14, fontWeight: 500, marginBottom: 4 } }, 'Фиксация простоя'),
+        h('div', { style: { fontSize: 28, fontWeight: 500, color: RD, textAlign: 'center', margin: '12px 0' } }, downtimeStartedAt ? fmtDur(now() - downtimeStartedAt) : '—'),
+        h('div', { style: { fontSize: 11, color: '#888', textAlign: 'center', marginBottom: 12 } }, 'Время простоя идёт'),
         h('select', { style: { ...S.inp, width: '100%', marginBottom: 16 }, value: selectedDowntimeType, onChange: e => setSelectedDowntimeType(e.target.value) },
-          h('option', { value: '' }, '— выберите —'),
+          h('option', { value: '' }, '— причина простоя —'),
           data.downtimeTypes.map(dt => h('option', { key: dt.id, value: dt.id }, dt.name))
         ),
-        h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
-          h('button', { type: 'button', style: gbtn(), onClick: () => { setShowDowntimeModal(false); setSelectedDowntimeType(''); } }, 'Отмена'),
-          h('button', { type: 'button', style: abtn(), onClick: recordDowntime }, 'Зафиксировать')
+        h('div', { style: { display: 'flex', gap: 8 } },
+          h('button', { type: 'button', style: gbtn({ flex: 1 }), onClick: () => { setShowDowntimeModal(false); setSelectedDowntimeType(''); setDowntimeStartedAt(null); } }, 'Отмена'),
+          h('button', { type: 'button', style: rbtn({ flex: 1, fontWeight: 500 }), onClick: recordDowntime }, 'Завершить простой')
         )
       )
     ),
@@ -1796,7 +1809,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
   const edit = useCallback(w => {
     setForm({ name: w.name, position: w.position || '', grade: w.grade || '', tabNumber: w.tabNumber || '', pin: w.pin || '', sectionId: w.sectionId || '', competences: w.competences || [], status: w.status || 'working' });
     setEditingWorker(w.id);
-    setShowAddForm(true);
+    setShowAddForm(false); // форма появится инлайн в карточке
   }, []);
 
   const updateStatus = useCallback(async (id, status) => {
@@ -1897,6 +1910,36 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
     filtered.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', padding: 32 } }, 'Рабочие не найдены') :
       filtered.map(w => {
         const ws = WORKER_STATUS[w.status] || WORKER_STATUS.working;
+        // Инлайн-редактирование
+        if (editingWorker === w.id) {
+          return h('div', { key: w.id, style: { ...S.card, marginBottom: 10, padding: 16, border: `1px solid ${AM}` } },
+            h('div', { style: { ...S.sec, marginBottom: 8 } }, 'Редактирование'),
+            h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 } },
+              h('input', { style: { ...S.inp, flex: 2, minWidth: 150 }, placeholder: 'ФИО', value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })) }),
+              h('input', { style: { ...S.inp, flex: 1, minWidth: 100 }, placeholder: 'Должность', value: form.position, onChange: e => setForm(p => ({ ...p, position: e.target.value })) }),
+              h('input', { style: { ...S.inp, width: 70 }, placeholder: 'Разряд', value: form.grade, onChange: e => setForm(p => ({ ...p, grade: e.target.value })) }),
+              h('input', { style: { ...S.inp, width: 70 }, placeholder: 'Таб. №', value: form.tabNumber, onChange: e => setForm(p => ({ ...p, tabNumber: e.target.value })) }),
+              h('input', { type: 'password', style: { ...S.inp, width: 70 }, placeholder: 'PIN', value: form.pin, onChange: e => setForm(p => ({ ...p, pin: e.target.value })), maxLength: 6 }),
+              h('select', { style: { ...S.inp, minWidth: 110 }, value: form.sectionId, onChange: e => setForm(p => ({ ...p, sectionId: e.target.value })) },
+                h('option', { value: '' }, '— участок —'),
+                data.sections.map(s => h('option', { key: s.id, value: s.id }, s.name))
+              ),
+              h('select', { style: { ...S.inp, minWidth: 110 }, value: form.status, onChange: e => setForm(p => ({ ...p, status: e.target.value })) },
+                Object.entries(WORKER_STATUS).map(([k, v]) => h('option', { key: k, value: k }, v.label))
+              )
+            ),
+            h('div', { style: { marginBottom: 10 } },
+              h('div', { style: { fontSize: 11, color: '#888', marginBottom: 4 } }, 'Допуск к операциям'),
+              h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
+                OPERATION_STAGES.map(op => h('button', { key: op, type: 'button', style: { padding: '3px 8px', fontSize: 10, borderRadius: 8, border: '0.5px solid ' + (form.competences.includes(op) ? AM : 'rgba(0,0,0,0.15)'), background: form.competences.includes(op) ? AM3 : '#fff', color: form.competences.includes(op) ? AM2 : '#888', cursor: 'pointer' }, onClick: () => toggleCompetence(op) }, op))
+              )
+            ),
+            h('div', { style: { display: 'flex', gap: 8 } },
+              h('button', { style: abtn(), onClick: addOrUpdate }, '✓ Сохранить'),
+              h('button', { style: gbtn(), onClick: resetForm }, 'Отмена')
+            )
+          );
+        }
         return h('div', { key: w.id, style: { ...S.card, marginBottom: 10, padding: 16 } },
           h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 14 } },
             // Аватар
@@ -2234,7 +2277,7 @@ const MasterKanban = memo(({ data }) => {
       h('span', null, '▶ В работе'),
       h('span', null, '🔍 Контроль'),
       h('span', null, '✓ Готово'),
-      h('span', null, '⚠ Проблема')
+      h('span', null, '⚠ Брак с пред. уч.')
     )
   );
 });
@@ -2418,16 +2461,16 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
             h('div', { style: { display: 'flex', gap: 8 } },
               op.status === 'pending' && worker && h('button', { style: abtn({ flex: 1, padding: '12px' }), onClick: handleStart }, '▶ Старт'),
               op.status === 'in_progress' && h('button', { style: { ...abtn({ flex: 1 }), background: GN, color: GN2 }, onClick: () => handleFinish() }, '✓ Завершить'),
-              op.status === 'in_progress' && h('button', { style: rbtn({ flex: 1 }), onClick: () => setShowDefForm(true) }, '⚠ Проблема'),
-              (op.status === 'pending' || op.status === 'in_progress') && h('button', { style: gbtn({ flex: 1 }), onClick: () => setShowDowntimeModal(true) }, '⏸ Простой')
+              op.status === 'in_progress' && h('button', { style: rbtn({ flex: 1 }), onClick: () => setShowDefForm(true) }, '⚠ Брак с пред. уч.'),
+              (op.status === 'pending' || op.status === 'in_progress') && h('button', { style: gbtn({ flex: 1 }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
             )
           )
         ) : (
           h('div', { style: { display: 'flex', gap: 8 } },
             op.status === 'pending' && worker && h('button', { style: abtn({ flex: 1, padding: '12px' }), onClick: handleStart }, '▶ Старт'),
             op.status === 'in_progress' && h('button', { style: { ...abtn({ flex: 1 }), background: GN, color: GN2 }, onClick: () => handleFinish() }, '✓ Завершить'),
-            op.status === 'in_progress' && h('button', { style: rbtn({ flex: 1 }), onClick: () => setShowDefForm(true) }, '⚠ Проблема'),
-            (op.status === 'pending' || op.status === 'in_progress') && h('button', { style: gbtn({ flex: 1 }), onClick: () => setShowDowntimeModal(true) }, '⏸ Простой')
+            op.status === 'in_progress' && h('button', { style: rbtn({ flex: 1 }), onClick: () => setShowDefForm(true) }, '⚠ Брак с пред. уч.'),
+            (op.status === 'pending' || op.status === 'in_progress') && h('button', { style: gbtn({ flex: 1 }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
           )
         )
       ) : (
@@ -2565,7 +2608,7 @@ const Dashboard = memo(({ data, addToast }) => {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.orders.map(o => ({ Номер: o.number, Изделие: o.product, Количество: o.qty, 'Дата отгрузки': o.deadline, Приоритет: PRIORITY[o.priority]?.label }))), 'Заказы');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.ops.map(op => ({ ID: op.id, Заказ: data.orders.find(o => o.id === op.orderId)?.number, Операция: op.name, Статус: op.status, 'План, ч': op.plannedHours, Длительность: op.finishedAt && op.startedAt ? (op.finishedAt - op.startedAt) : '' }))), 'Операции');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.workers.map(w => ({ Имя: w.name, Должность: w.position || '', Разряд: w.grade || '', 'Таб. №': w.tabNumber || '', Участок: data.sections.find(s => s.id === w.sectionId)?.name || '', Статус: (WORKER_STATUS[w.status] || WORKER_STATUS.working).label, Компетенции: w.competences?.join(', ') || '' }))), 'Рабочие');
-    const downtimeEvents = data.events.filter(e => e.type === 'downtime').map(e => ({ Время: new Date(e.ts).toLocaleString(), Рабочий: data.workers.find(w => w.id === e.workerId)?.name, Причина: data.downtimeTypes.find(dt => dt.id === e.downtimeTypeId)?.name, Смена: e.shift }));
+    const downtimeEvents = data.events.filter(e => e.type === 'downtime').map(e => ({ Время: new Date(e.ts).toLocaleString(), Рабочий: data.workers.find(w => w.id === e.workerId)?.name, Причина: data.downtimeTypes.find(dt => dt.id === e.downtimeTypeId)?.name, 'Длительность (мин)': e.duration ? Math.round(e.duration / 60000) : '', Смена: e.shift }));
     if (downtimeEvents.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(downtimeEvents), 'Простои');
     const timeEvents = data.events.filter(e => e.type === 'checkin_manual' || e.type === 'checkout_manual').map(e => ({
       Время: new Date(e.ts).toLocaleString(),
