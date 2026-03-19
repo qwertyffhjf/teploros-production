@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Производственный анализ · ООО НТ</title>
+  <title>Производственный учёт · НТ</title>
   <!-- React -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -31,13 +31,28 @@
     .error-message { color: #E24B4A; font-size: 11px; margin-top: 2px; }
     .pagination { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; align-items: center; }
     .notification-badge { background: #E24B4A; color: white; border-radius: 50%; padding: 2px 6px; font-size: 10px; margin-left: 4px; }
+    /* Стили чата */
+    .chat-message { display: flex; gap: 8px; padding: 8px 0; border-bottom: 0.5px solid rgba(0,0,0,0.05); }
+    .chat-message-own { flex-direction: row-reverse; }
+    .chat-avatar { width: 32px; height: 32px; border-radius: 50%; background: #FAEEDA; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 500; color: #412402; flex-shrink: 0; }
+    .chat-bubble { max-width: 70%; background: #fff; border-radius: 12px; padding: 8px 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+    .chat-bubble-own { background: #FAEEDA; }
+    .chat-name { font-size: 11px; font-weight: 500; color: #BA7517; margin-bottom: 2px; }
+    .chat-text { font-size: 13px; word-break: break-word; }
+    .chat-time { font-size: 9px; color: #888; margin-top: 4px; text-align: right; }
+    .chat-footer { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+    .chat-like { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #888; cursor: pointer; }
+    .chat-like.active { color: #E24B4A; }
+    .chat-delete { font-size: 12px; color: #888; cursor: pointer; margin-left: auto; }
+    .chat-delete:hover { color: #E24B4A; }
+    .chat-input { display: flex; gap: 8px; margin-top: 16px; }
   </style>
 </head>
 <body>
 <div id="root"></div>
 <script>
 /* ============================================================
-   ПРОИЗВОДСТВЕННЫЙ УЧЁТ v12 — Firebase realtime sync
+   ПРОИЗВОДСТВЕННЫЙ УЧЁТ v12 — Firebase realtime sync + Чат + Геймификация
    ============================================================ */
 
 const { useState, useEffect, useRef, useMemo, useCallback, memo, createElement: h } = React;
@@ -101,7 +116,19 @@ const ACHIEVEMENTS = {
   no_downtime: { icon: '🛡️', title: 'Нет простоям', desc: '0 простоев за последние 30 дней', condition: (s) => s.downtimes30d === 0 && s.doneCount >= 5 },
   streak_5: { icon: '🎯', title: 'Серия 5', desc: '5 операций подряд без брака', condition: (s) => s.currentStreak >= 5 },
   streak_20: { icon: '🎪', title: 'Серия 20', desc: '20 операций подряд без брака', condition: (s) => s.currentStreak >= 20 },
-  multi_skill: { icon: '🌟', title: 'Универсал', desc: 'Выполнял 5+ разных типов операций', condition: (s) => s.uniqueOpTypes >= 5 }
+  multi_skill: { icon: '🌟', title: 'Универсал', desc: 'Выполнял 5+ разных типов операций', condition: (s) => s.uniqueOpTypes >= 5 },
+  detective_10: { icon: '🔍', title: 'Бдительный', desc: 'Обнаружил 10 браков на предыдущих этапах', condition: (s) => s.detectedDefects >= 10 },
+  thanks_5: { icon: '🤝', title: 'Спасибо, коллега!', desc: 'Получил 5 благодарностей', condition: (s) => s.thanksReceived >= 5 },
+  golden_hands_100: { icon: '🪙', title: 'Золотые руки', desc: '100 операций без брака', condition: (s) => s.doneCount >= 100 && s.defectCount === 0 },
+  universal_2_3: { icon: '🔄', title: 'Универсал 2.0', desc: 'Работал на 3+ разных участках', condition: (s) => s.uniqueSections >= 3 },
+  weekend_5: { icon: '🌙', title: 'Трудоголик', desc: '5 операций в выходные дни', condition: (s) => s.weekendOps >= 5 },
+  virtuoso_10: { icon: '🎻', title: 'Виртуоз', desc: '10 операций быстрее 50% плана', condition: (s) => s.fastOps >= 10 },
+  no_downtime_7: { icon: '🛡️', title: 'Антипростой', desc: '7 дней без простоев', condition: (s) => s.downtimes7d === 0 },
+  speed_streak_5: { icon: '🚀', title: 'Скоростной рывок', desc: '5 операций подряд быстрее плана на 20%', condition: (s) => s.bestSpeedStreak >= 5 },
+  // Достижения за лайки
+  likes_10: { icon: '👍', title: 'Народный любимец', desc: 'Получил 10 лайков', condition: (s) => s.totalLikes >= 10 },
+  likes_50: { icon: '🔥', title: 'Звезда цеха', desc: 'Получил 50 лайков', condition: (s) => s.totalLikes >= 50 },
+  likes_100: { icon: '👑', title: 'Легенда', desc: 'Получил 100 лайков', condition: (s) => s.totalLikes >= 100 }
 };
 
 const getWorkerLevel = (doneCount) => Math.floor(doneCount / 10) + 1;
@@ -116,6 +143,7 @@ const getLevelTitle = (level) => {
   return 'Новичок';
 };
 
+// Расширенная статистика для одного рабочего (добавлено totalLikes)
 const calcWorkerStats = (workerId, data) => {
   const allOps = data.ops.filter(op => op.workerId === workerId);
   const doneOps = allOps.filter(op => op.status === 'done');
@@ -125,28 +153,74 @@ const calcWorkerStats = (workerId, data) => {
   const total = doneCount + defectCount;
   const defectRate = total > 0 ? (defectCount / total * 100) : 0;
   const weldCount = doneOps.filter(op => op.name && op.name.toLowerCase().includes('свар')).length;
-  
-  // Среднее отношение факт/план
+
   const withPlan = doneOps.filter(op => op.plannedHours && op.startedAt && op.finishedAt);
   const doneWithPlan = withPlan.length;
   const avgRatio = doneWithPlan > 0 ? withPlan.reduce((s, op) => s + ((op.finishedAt - op.startedAt) / (op.plannedHours * 3600000)), 0) / doneWithPlan : 1;
-  
-  // Простои за 30 дней
-  const d30 = now() - 30 * 86400000;
+
+  const nowTime = now();
+  const d30 = nowTime - 30 * 86400000;
+  const d7 = nowTime - 7 * 86400000;
   const downtimes30d = data.events.filter(e => e.workerId === workerId && e.type === 'downtime' && e.ts >= d30).length;
-  
-  // Серия без брака (последние операции)
+  const downtimes7d = data.events.filter(e => e.workerId === workerId && e.type === 'downtime' && e.ts >= d7).length;
+
   const sorted = [...doneOps, ...defectOps].sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0));
   let currentStreak = 0;
   for (const op of sorted) {
     if (op.status === 'done') currentStreak++;
     else break;
   }
-  
-  // Уникальные типы операций
+
   const uniqueOpTypes = new Set(doneOps.map(op => op.name)).size;
-  
-  return { doneCount, defectCount, defectRate, weldCount, doneWithPlan, avgRatio, downtimes30d, currentStreak, uniqueOpTypes };
+  const detectedDefects = allOps.filter(op => op.defectSource === 'previous_stage').length;
+  const thanksReceived = data.events.filter(e => e.type === 'thanks' && e.toWorkerId === workerId).length;
+  const uniqueSections = new Set(doneOps.map(op => op.sectionId).filter(id => id)).size;
+  const weekendOps = doneOps.filter(op => {
+    if (!op.finishedAt) return false;
+    const d = new Date(op.finishedAt);
+    const day = d.getDay();
+    return day === 0 || day === 6;
+  }).length;
+  const fastOps = withPlan.filter(op => {
+    const actual = op.finishedAt - op.startedAt;
+    const planned = op.plannedHours * 3600000;
+    return actual < planned * 0.5;
+  }).length;
+  const withPlanSorted = [...withPlan].sort((a, b) => a.finishedAt - b.finishedAt);
+  let bestSpeedStreak = 0, currentSpeedStreak = 0;
+  for (const op of withPlanSorted) {
+    const actual = op.finishedAt - op.startedAt;
+    const planned = op.plannedHours * 3600000;
+    if (actual < planned * 0.8) {
+      currentSpeedStreak++;
+      if (currentSpeedStreak > bestSpeedStreak) bestSpeedStreak = currentSpeedStreak;
+    } else {
+      currentSpeedStreak = 0;
+    }
+  }
+
+  // Полученные лайки (хранятся в поле worker.totalLikes)
+  const totalLikes = data.workers.find(w => w.id === workerId)?.totalLikes || 0;
+
+  return {
+    doneCount,
+    defectCount,
+    defectRate,
+    weldCount,
+    doneWithPlan,
+    avgRatio,
+    downtimes30d,
+    downtimes7d,
+    currentStreak,
+    uniqueOpTypes,
+    detectedDefects,
+    thanksReceived,
+    uniqueSections,
+    weekendOps,
+    fastOps,
+    bestSpeedStreak,
+    totalLikes
+  };
 };
 
 const checkAchievements = (workerId, data) => {
@@ -156,14 +230,14 @@ const checkAchievements = (workerId, data) => {
   const current = worker.achievements || [];
   const newAch = [...current];
   let changed = false;
-  
+
   for (const [id, ach] of Object.entries(ACHIEVEMENTS)) {
     if (!newAch.includes(id) && ach.condition(stats)) {
       newAch.push(id);
       changed = true;
     }
   }
-  
+
   if (changed) {
     return {
       ...data,
@@ -172,6 +246,8 @@ const checkAchievements = (workerId, data) => {
   }
   return data;
 };
+
+// ==================== Вспомогательные функции ====================
 const uid = () => Math.random().toString(36).slice(2, 8).toUpperCase();
 const now = () => Date.now();
 const fmtDur = (ms) => {
@@ -202,6 +278,7 @@ firebase.initializeApp({
 });
 const firestore = firebase.firestore();
 const DOC_REF = firestore.collection('app').doc('production_v12');
+const MESSAGES_COLLECTION = firestore.collection('messages'); // коллекция для чата
 
 const EMPTY_DATA = {
   orders: [],
@@ -230,9 +307,7 @@ const DB = {
       const snap = await DOC_REF.get();
       if (snap.exists) {
         const d = snap.data();
-        // Firestore хранит данные как JSON-строку для обхода лимитов вложенности
         const parsed = typeof d.payload === 'string' ? JSON.parse(d.payload) : d;
-        // Кэш в localStorage для оффлайн-доступа
         try { localStorage.setItem('prod_app_v12_cache', JSON.stringify(parsed)); } catch {}
         return { ...EMPTY_DATA, ...parsed };
       }
@@ -243,12 +318,10 @@ const DB = {
         if (cached) return { ...EMPTY_DATA, ...JSON.parse(cached) };
       } catch {}
     }
-    // Миграция из старого localStorage
     try {
       const old = localStorage.getItem('prod_app_v12');
       if (old) {
         const parsed = JSON.parse(old);
-        console.log('Migrating data from localStorage to Firebase...');
         await DOC_REF.set({ payload: old, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
         return { ...EMPTY_DATA, ...parsed };
       }
@@ -259,14 +332,12 @@ const DB = {
     try {
       const payload = JSON.stringify(data);
       await DOC_REF.set({ payload, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
-      // Обновляем кэш
       try { localStorage.setItem('prod_app_v12_cache', payload); } catch {}
     } catch (e) {
       console.error('DB.save error:', e);
       alert('Ошибка сохранения в Firebase: ' + e.message);
     }
   },
-  // Реалтайм-подписка
   onSnapshot(callback) {
     return DOC_REF.onSnapshot(snap => {
       if (snap.exists) {
@@ -350,7 +421,90 @@ const QRModal = memo(({ ops, order, onClose }) => {
   );
 });
 
-// ==================== ЭКРАН ВХОДА ====================
+// ==================== КОМПОНЕНТ ЧАТА ====================
+const Chat = memo(({ messages, userId, userName, onSend, onDelete, onLike, isMaster }) => {
+  const [newMessage, setNewMessage] = useState('');
+  const messagesEndRef = useRef(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const handleSend = () => {
+    if (!newMessage.trim()) return;
+    onSend(newMessage.trim());
+    setNewMessage('');
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  // Группировка по дням
+  const grouped = useMemo(() => {
+    const groups = {};
+    messages.forEach(msg => {
+      const date = new Date(msg.ts).toLocaleDateString();
+      if (!groups[date]) groups[date] = [];
+      groups[date].push(msg);
+    });
+    return groups;
+  }, [messages]);
+
+  return h('div', { style: { ...S.card, display: 'flex', flexDirection: 'column', height: '60vh', maxHeight: 500, overflow: 'hidden', padding: 0 } },
+    h('div', { style: { flex: 1, overflowY: 'auto', padding: 16 } },
+      Object.entries(grouped).map(([date, msgs]) => [
+        h('div', { key: date, style: { textAlign: 'center', fontSize: 10, color: '#888', margin: '12px 0 8px' } }, date),
+        ...msgs.map(msg => {
+          const isOwn = msg.fromUserId === userId;
+          const likedByMe = msg.likes?.includes(userId);
+          return h('div', { key: msg.id, className: `chat-message ${isOwn ? 'chat-message-own' : ''}` },
+            !isOwn && h('div', { className: 'chat-avatar' }, msg.fromName.charAt(0)),
+            h('div', { className: `chat-bubble ${isOwn ? 'chat-bubble-own' : ''}` },
+              !isOwn && h('div', { className: 'chat-name' }, msg.fromName),
+              h('div', { className: 'chat-text' }, msg.text),
+              h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 } },
+                h('div', { className: 'chat-time' }, new Date(msg.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+                h('div', { style: { display: 'flex', gap: 8 } },
+                  // Лайки
+                  h('span', {
+                    className: `chat-like ${likedByMe ? 'active' : ''}`,
+                    onClick: () => onLike(msg.id, msg.fromUserId, likedByMe)
+                  }, `❤️ ${msg.likes?.length || 0}`),
+                  // Удаление (если своё или мастер)
+                  (isOwn || isMaster) && h('span', {
+                    className: 'chat-delete',
+                    onClick: () => onDelete(msg.id, msg.fromUserId)
+                  }, '🗑️')
+                )
+              )
+            )
+          );
+        })
+      ]),
+      h('div', { ref: messagesEndRef })
+    ),
+    h('div', { className: 'chat-input' },
+      h('input', {
+        style: { ...S.inp, flex: 1 },
+        placeholder: 'Написать сообщение...',
+        value: newMessage,
+        onChange: e => setNewMessage(e.target.value),
+        onKeyDown: handleKeyDown
+      }),
+      h('button', { style: abtn(), onClick: handleSend, disabled: !newMessage.trim() }, '→')
+    )
+  );
+});
+
+// ==================== ЭКРАН ВХОДА (изменён) ====================
 const LoginScreen = ({ data, onLogin }) => {
   const [role, setRole] = useState('worker');
   const [password, setPassword] = useState('');
@@ -362,18 +516,18 @@ const LoginScreen = ({ data, onLogin }) => {
     setLoginError('');
     if (role === 'master') {
       if (password === (settings.masterPassword || 'master')) {
-        onLogin('master', null, null);
+        onLogin('master', null, 'Мастер', null);
       } else {
         setLoginError('Неверный пароль мастера');
       }
     } else if (role === 'controller') {
       if (password === (settings.controllerPassword || 'controller')) {
-        onLogin('controller', null, null);
+        onLogin('controller', null, 'Контролёр', null);
       } else {
         setLoginError('Неверный пароль контролёра');
       }
     } else if (role === 'dashboard') {
-      onLogin('dashboard', null, null);
+      onLogin('dashboard', null, 'Дашборд', null);
     } else {
       if (!workerPin.trim()) {
         setLoginError('Введите PIN-код');
@@ -384,7 +538,7 @@ const LoginScreen = ({ data, onLogin }) => {
         setLoginError('Неверный PIN-код');
         return;
       }
-      onLogin('worker', worker.id, worker.sectionId || null);
+      onLogin('worker', worker.id, worker.name, worker.sectionId || null);
     }
   };
 
@@ -456,7 +610,6 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
   const recentOps = [...opsDone, ...opsDefect].sort((a,b) => (b.finishedAt || 0) - (a.finishedAt || 0)).slice(0, 10);
   const section = data.sections.find(s => s.id === worker.sectionId);
 
-  // Среднее время по типам операций
   const avgByType = {};
   opsDone.forEach(op => {
     if (!avgByType[op.name]) avgByType[op.name] = { total: 0, count: 0 };
@@ -464,10 +617,13 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
     avgByType[op.name].count++;
   });
 
+  const allDone = data.ops.filter(op => op.workerId === worker.id && op.status === 'done').length;
+  const level = getWorkerLevel(allDone);
+  const progress = getLevelProgress(allDone);
+
   return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 } },
     h('div', { style: { background: '#fff', borderRadius: 12, padding: 24, width: 680, maxHeight: '85vh', overflowY: 'auto' } },
       h('button', { onClick: onClose, style: { float: 'right', background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#888' } }, '×'),
-
       // Заголовок
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 14, marginBottom: 20 } },
         h('div', { style: { width: 52, height: 52, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 500, color: AM2 } }, worker.name?.charAt(0) || '?'),
@@ -481,13 +637,11 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
           )
         )
       ),
-
       // Период
       h('div', { style: { display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' } },
         h('span', { style: { fontSize: 12, color: '#888' } }, 'Период:'),
         [7, 30, 90].map(d => h('button', { key: d, style: period === d ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setPeriod(d) }, `${d} дней`))
       ),
-
       // Метрики
       h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 } },
         h('div', { style: { ...S.card, textAlign: 'center' } }, h('div', { style: { fontSize: 24, fontWeight: 500, color: GN } }, totalOps), h('div', { style: { fontSize: 10, color: '#888' } }, 'Выполнено')),
@@ -495,29 +649,22 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
         h('div', { style: { ...S.card, textAlign: 'center' } }, h('div', { style: { fontSize: 24, fontWeight: 500, color: Number(defectRate) > 5 ? RD : GN } }, `${defectRate}%`), h('div', { style: { fontSize: 10, color: '#888' } }, 'Брак')),
         h('div', { style: { ...S.card, textAlign: 'center' } }, h('div', { style: { fontSize: 24, fontWeight: 500, color: BL } }, `${opsInProgress.length}/${opsPending.length}`), h('div', { style: { fontSize: 10, color: '#888' } }, 'В работе / Ожидает'))
       ),
-
       // Уровень и прогресс
-      (() => {
-        const allDone = data.ops.filter(op => op.workerId === worker.id && op.status === 'done').length;
-        const lvl = getWorkerLevel(allDone);
-        const prog = getLevelProgress(allDone);
-        return h('div', { style: { ...S.card, marginBottom: 16 } },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 } },
-            h('div', { style: { fontSize: 28, fontWeight: 500, color: AM } }, `${lvl}`),
-            h('div', null,
-              h('div', { style: { fontSize: 14, fontWeight: 500 } }, getLevelTitle(lvl)),
-              h('div', { style: { fontSize: 11, color: '#888' } }, `${allDone} операций всего`)
-            )
-          ),
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-            h('div', { style: { flex: 1, height: 8, background: '#eee', borderRadius: 4, overflow: 'hidden' } },
-              h('div', { style: { width: `${prog * 100}%`, height: 8, background: AM, borderRadius: 4 } })
-            ),
-            h('div', { style: { fontSize: 11, color: '#888' } }, `${Math.round(prog * 100)}% → Ур. ${lvl + 1}`)
+      h('div', { style: { ...S.card, marginBottom: 16 } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 } },
+          h('div', { style: { fontSize: 28, fontWeight: 500, color: AM } }, `${level}`),
+          h('div', null,
+            h('div', { style: { fontSize: 14, fontWeight: 500 } }, getLevelTitle(level)),
+            h('div', { style: { fontSize: 11, color: '#888' } }, `${allDone} операций всего`)
           )
-        );
-      })(),
-
+        ),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+          h('div', { style: { flex: 1, height: 8, background: '#eee', borderRadius: 4, overflow: 'hidden' } },
+            h('div', { style: { width: `${progress * 100}%`, height: 8, background: AM, borderRadius: 4 } })
+          ),
+          h('div', { style: { fontSize: 11, color: '#888' } }, `${Math.round(progress * 100)}% → Ур. ${level + 1}`)
+        )
+      ),
       // Достижения
       h('div', { style: { marginBottom: 16 } },
         h('div', { style: S.sec }, `Достижения (${(worker.achievements || []).length} / ${Object.keys(ACHIEVEMENTS).length})`),
@@ -534,7 +681,6 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
           })
         )
       ),
-
       // Компетенции
       worker.competences && worker.competences.length > 0 && h('div', { style: { marginBottom: 16 } },
         h('div', { style: S.sec }, 'Допуск к операциям'),
@@ -542,7 +688,6 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
           worker.competences.map(c => h('span', { key: c, style: { padding: '3px 10px', fontSize: 11, background: AM3, color: AM2, borderRadius: 8 } }, c))
         )
       ),
-
       // Среднее время по операциям
       Object.keys(avgByType).length > 0 && h('div', { style: { marginBottom: 16 } },
         h('div', { style: S.sec }, 'Среднее время по типам операций'),
@@ -555,7 +700,6 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
           )))
         )
       ),
-
       // Простои
       h('div', { style: { marginBottom: 16 } },
         h('div', { style: S.sec }, `Простои (${downtimeEvents.length})`),
@@ -569,7 +713,6 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
             )))
           )
       ),
-
       // Последние операции
       recentOps.length > 0 && h('div', null,
         h('div', { style: S.sec }, 'Последние операции'),
@@ -591,8 +734,9 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
   );
 });
 
-// ==================== ЭКРАН РАБОЧЕГО ====================
-const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, addToast }) => {
+// ==================== ЭКРАН РАБОЧЕГО (с вкладкой чата) ====================
+const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, addToast, messages, onSendMessage, onDeleteMessage, onLikeMessage, userId, userName }) => {
+  const [tab, setTab] = useState('tasks');
   const worker = data.workers.find(w => w.id === workerId);
   const myOps = data.ops.filter(o => 
     (o.workerId === workerId || (!o.workerId && o.sectionId === sectionId)) && 
@@ -600,25 +744,21 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   ).sort((a,b) => {
     const orderA = data.orders.find(ord => ord.id === a.orderId);
     const orderB = data.orders.find(ord => ord.id === b.orderId);
-    // Критическое отношение: (дедлайн - сейчас) / оставшееся время работы
-    // Чем меньше CR — тем срочнее задача
     const getCR = (op, order) => {
       if (!order?.deadline) return 999;
       const deadlineMs = new Date(order.deadline).getTime();
-      const remaining = (op.plannedHours || 2) * 3600000; // если план не указан — 2ч по умолчанию
+      const remaining = (op.plannedHours || 2) * 3600000;
       const timeLeft = deadlineMs - now();
-      if (timeLeft <= 0) return -1; // просрочено
+      if (timeLeft <= 0) return -1;
       return timeLeft / remaining;
     };
     const crA = getCR(a, orderA);
     const crB = getCR(b, orderB);
-    // Сначала просроченные (CR < 0), потом по CR, потом по приоритету
     if (crA < 1 || crB < 1) return crA - crB;
     const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
     const pA = priorityOrder[orderA?.priority] ?? 4;
     const pB = priorityOrder[orderB?.priority] ?? 4;
     return pA !== pB ? pA - pB : crA - crB;
-    return (priorityOrder[orderA?.priority] || 4) - (priorityOrder[orderB?.priority] || 4);
   });
   const doneToday = data.ops.filter(o => o.workerId === workerId && o.status === 'done' && o.finishedAt && Date.now() - o.finishedAt < 86400000 && !o.archived);
   const [activeOp, setActiveOp] = useState(null);
@@ -635,7 +775,6 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     if (initialOpId && workerId) {
       const op = data.ops.find(o => o.id === initialOpId);
       if (op && op.status === 'pending' && !op.workerId && !op.archived) {
-        // Проверка компетенции
         if (worker?.competences && worker.competences.length > 0 && !worker.competences.includes(op.name)) {
           addToast('У вас нет компетенции для этой операции', 'error');
           return;
@@ -650,7 +789,6 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   useEffect(() => { const t = setInterval(() => setTick(n => n + 1), 1000); return () => clearInterval(t); }, []);
 
   const doStart = useCallback(async (op) => {
-    // Проверка компетенции
     if (worker?.competences && worker.competences.length > 0 && !worker.competences.includes(op.name)) {
       addToast('У вас нет компетенции для этой операции', 'error');
       return;
@@ -755,173 +893,172 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const canStartQr = qrOp && qrOp.status === 'pending' && !qrOp.workerId && !qrOp.archived;
 
   return h('div', { style: { maxWidth: 420, margin: '0 auto', padding: '16px 12px' } },
-    // Профиль с уровнем
-    (() => {
-      const allDone = data.ops.filter(op => op.workerId === workerId && op.status === 'done').length;
-      const lvl = getWorkerLevel(allDone);
-      const prog = getLevelProgress(allDone);
-      const ach = worker?.achievements || [];
-      // Следующее недостигнутое достижение
-      const nextAch = Object.entries(ACHIEVEMENTS).find(([id, a]) => !ach.includes(id));
-      return h('div', null,
-        // Имя + уровень
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 } },
-          h('div', { style: { width: 48, height: 48, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 500, color: AM2, position: 'relative' } },
-            worker?.name?.charAt(0) || '?',
-            h('div', { style: { position: 'absolute', bottom: -4, right: -4, background: AM, color: '#fff', fontSize: 10, fontWeight: 500, borderRadius: '50%', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, lvl)
-          ),
-          h('div', { style: { flex: 1 } },
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
-              h('div', { style: { fontSize: 15, fontWeight: 500 } }, worker?.name || 'Рабочий'),
-              h('span', { style: { fontSize: 10, padding: '1px 8px', background: AM3, color: AM2, borderRadius: 8, fontWeight: 500 } }, getLevelTitle(lvl))
-            ),
-            h('div', { style: { fontSize: 11, color: '#888', marginBottom: 4 } }, `${doneToday.length} выполнено сегодня · ${allDone} всего`),
-            // Прогресс-бар
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
-              h('div', { style: { flex: 1, height: 6, background: '#eee', borderRadius: 3, overflow: 'hidden' } },
-                h('div', { style: { width: `${prog * 100}%`, height: 6, background: AM, borderRadius: 3, transition: 'width 0.3s' } })
-              ),
-              h('div', { style: { fontSize: 10, color: '#888' } }, `→ Ур.${lvl + 1}`)
-            )
-          )
-        ),
-
-        // Достижения (компактный блок)
-        h('div', { style: { ...S.card, marginBottom: 16, padding: 12 } },
-          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 } },
-            h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 500 } }, `Достижения · ${ach.length}/${Object.keys(ACHIEVEMENTS).length}`),
-            h('button', { type: 'button', style: { background: 'none', border: 'none', fontSize: 11, color: AM, cursor: 'pointer', padding: 0 }, onClick: () => setShowAchievements(prev => !prev) }, showAchievements ? 'Свернуть' : 'Все')
-          ),
-          // Полученные бейджи (всегда видны)
-          ach.length > 0 ? h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: nextAch ? 8 : 0 } },
-            ach.map(achId => {
-              const a = ACHIEVEMENTS[achId];
-              return a ? h('span', { key: achId, title: a.desc, style: { fontSize: 18, cursor: 'default' } }, a.icon) : null;
-            })
-          ) : h('div', { style: { fontSize: 12, color: '#888' } }, 'Завершите первую операцию!'),
-          // Следующая цель
-          nextAch && h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: '#f8f8f5', borderRadius: 8 } },
-            h('span', { style: { fontSize: 16, opacity: 0.4 } }, ACHIEVEMENTS[nextAch[0]].icon),
-            h('div', null,
-              h('div', { style: { fontSize: 11, fontWeight: 500, color: '#888' } }, `Следующее: ${ACHIEVEMENTS[nextAch[0]].title}`),
-              h('div', { style: { fontSize: 10, color: '#aaa' } }, ACHIEVEMENTS[nextAch[0]].desc)
-            )
-          ),
-          // Развёрнутый список всех
-          showAchievements && h('div', { style: { marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 } },
-            Object.entries(ACHIEVEMENTS).map(([id, a]) => {
-              const earned = ach.includes(id);
-              return h('div', { key: id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8, background: earned ? AM3 : '#f8f8f5', opacity: earned ? 1 : 0.5 } },
-                h('span', { style: { fontSize: 16 } }, a.icon),
-                h('div', { style: { flex: 1 } },
-                  h('div', { style: { fontSize: 12, fontWeight: 500, color: earned ? AM2 : '#888' } }, a.title),
-                  h('div', { style: { fontSize: 10, color: '#aaa' } }, a.desc)
-                ),
-                earned && h('span', { style: { fontSize: 10, color: GN, fontWeight: 500 } }, '✓')
-              );
-            })
-          )
-        )
-      );
-    })(),
-
-    !active && canStartQr && h('div', { style: { ...S.card, border: `1px solid ${AM}`, background: AM3, marginBottom: 16 } },
-      h('div', { style: { fontSize: 10, color: AM, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 } }, 'Назначено по QR-коду'),
-      h('div', { style: { fontSize: 16, fontWeight: 500, color: AM2, marginBottom: 4 } }, qrOp.name),
-      h('div', { style: { fontSize: 10, color: AM, marginBottom: 12 } }, data.orders.find(o => o.id === qrOp.orderId)?.number || ''),
-      h('button', { type: 'button', style: abtn({ width: '100%', padding: '12px' }), onClick: () => doStart(qrOp) }, '▶ Начать операцию')
+    h('div', { style: { display: 'flex', gap: 8, marginBottom: 16, borderBottom: '0.5px solid rgba(0,0,0,0.1)' } },
+      h('button', { style: { padding: '8px 16px', background: 'transparent', border: 'none', borderBottom: tab === 'tasks' ? `2px solid ${AM}` : 'none', color: tab === 'tasks' ? AM : '#888', cursor: 'pointer' }, onClick: () => setTab('tasks') }, 'Задания'),
+      h('button', { style: { padding: '8px 16px', background: 'transparent', border: 'none', borderBottom: tab === 'chat' ? `2px solid ${AM}` : 'none', color: tab === 'chat' ? AM : '#888', cursor: 'pointer' }, onClick: () => setTab('chat') }, 'Чат')
     ),
-
-    active && h('div', { style: { ...S.card, border: `1px solid ${AM}`, background: AM3, marginBottom: 16 } },
-      h('div', { style: { fontSize: 10, color: AM, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 } }, 'Текущая операция'),
-      h('div', { style: { fontSize: 16, fontWeight: 500, color: AM2, marginBottom: 4 } }, active.name),
-      h('div', { style: { fontSize: 10, color: AM, marginBottom: 12 } }, data.orders.find(o => o.id === active.orderId)?.number || ''),
-      h('div', { style: { fontSize: 40, fontWeight: 500, color: AM, textAlign: 'center', margin: '8px 0 16px' } }, fmtDur(elapsed)),
-      showDefForm ? (
-        h('div', null,
-          h('div', { style: { fontSize: 11, color: RD, fontWeight: 500, marginBottom: 8, textTransform: 'uppercase' } }, 'Обнаружен брак с предыдущего участка'),
-          h('textarea', { style: { ...S.inp, width: '100%', marginBottom: 8 }, rows: 2, placeholder: 'Опишите обнаруженный дефект...', value: defNote, onChange: e => setDefNote(e.target.value) }),
-          h('div', { style: { display: 'flex', gap: 6 } },
-            h('button', { type: 'button', style: rbtn({ flex: 1 }), onClick: () => doFinish(active, true, false) }, 'Зафиксировать брак'),
-            h('button', { type: 'button', style: { ...gbtn({ flex: 1 }), color: AM2, borderColor: AM4 }, onClick: () => doFinish(active, false, true) }, 'На переделку'),
-            h('button', { type: 'button', style: gbtn({ flex: 1 }), onClick: () => setShowDefForm(false) }, 'Отмена')
+    tab === 'tasks' ? h('div', null,
+      // Профиль с уровнем (сокращён для экономии места, но в оригинале он тут)
+      (() => {
+        const allDone = data.ops.filter(op => op.workerId === workerId && op.status === 'done').length;
+        const lvl = getWorkerLevel(allDone);
+        const prog = getLevelProgress(allDone);
+        const ach = worker?.achievements || [];
+        const nextAch = Object.entries(ACHIEVEMENTS).find(([id, a]) => !ach.includes(id));
+        return h('div', null,
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 } },
+            h('div', { style: { width: 48, height: 48, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 500, color: AM2, position: 'relative' } },
+              worker?.name?.charAt(0) || '?',
+              h('div', { style: { position: 'absolute', bottom: -4, right: -4, background: AM, color: '#fff', fontSize: 10, fontWeight: 500, borderRadius: '50%', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, lvl)
+            ),
+            h('div', { style: { flex: 1 } },
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+                h('div', { style: { fontSize: 15, fontWeight: 500 } }, worker?.name || 'Рабочий'),
+                h('span', { style: { fontSize: 10, padding: '1px 8px', background: AM3, color: AM2, borderRadius: 8, fontWeight: 500 } }, getLevelTitle(lvl))
+              ),
+              h('div', { style: { fontSize: 11, color: '#888', marginBottom: 4 } }, `${doneToday.length} выполнено сегодня · ${allDone} всего`),
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+                h('div', { style: { flex: 1, height: 6, background: '#eee', borderRadius: 3, overflow: 'hidden' } },
+                  h('div', { style: { width: `${prog * 100}%`, height: 6, background: AM, borderRadius: 3, transition: 'width 0.3s' } })
+                ),
+                h('div', { style: { fontSize: 10, color: '#888' } }, `→ Ур.${lvl + 1}`)
+              )
+            )
+          ),
+          h('div', { style: { ...S.card, marginBottom: 16, padding: 12 } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 } },
+              h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 500 } }, `Достижения · ${ach.length}/${Object.keys(ACHIEVEMENTS).length}`),
+              h('button', { type: 'button', style: { background: 'none', border: 'none', fontSize: 11, color: AM, cursor: 'pointer', padding: 0 }, onClick: () => setShowAchievements(prev => !prev) }, showAchievements ? 'Свернуть' : 'Все')
+            ),
+            ach.length > 0 ? h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: nextAch ? 8 : 0 } },
+              ach.map(achId => {
+                const a = ACHIEVEMENTS[achId];
+                return a ? h('span', { key: achId, title: a.desc, style: { fontSize: 18, cursor: 'default' } }, a.icon) : null;
+              })
+            ) : h('div', { style: { fontSize: 12, color: '#888' } }, 'Завершите первую операцию!'),
+            nextAch && h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: '#f8f8f5', borderRadius: 8 } },
+              h('span', { style: { fontSize: 16, opacity: 0.4 } }, ACHIEVEMENTS[nextAch[0]].icon),
+              h('div', null,
+                h('div', { style: { fontSize: 11, fontWeight: 500, color: '#888' } }, `Следующее: ${ACHIEVEMENTS[nextAch[0]].title}`),
+                h('div', { style: { fontSize: 10, color: '#aaa' } }, ACHIEVEMENTS[nextAch[0]].desc)
+              )
+            ),
+            showAchievements && h('div', { style: { marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 } },
+              Object.entries(ACHIEVEMENTS).map(([id, a]) => {
+                const earned = ach.includes(id);
+                return h('div', { key: id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8, background: earned ? AM3 : '#f8f8f5', opacity: earned ? 1 : 0.5 } },
+                  h('span', { style: { fontSize: 16 } }, a.icon),
+                  h('div', { style: { flex: 1 } },
+                    h('div', { style: { fontSize: 12, fontWeight: 500, color: earned ? AM2 : '#888' } }, a.title),
+                    h('div', { style: { fontSize: 10, color: '#aaa' } }, a.desc)
+                  ),
+                  earned && h('span', { style: { fontSize: 10, color: GN, fontWeight: 500 } }, '✓')
+                );
+              })
+            )
           )
-        )
-      ) : active.name.includes('свар') ? (
-        h('div', null,
-          h('div', { style: { display: 'flex', gap: 8, marginBottom: 8 } },
-            h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Номер шва', value: weldParams.seamNumber, onChange: e => setWeldParams(p => ({ ...p, seamNumber: e.target.value })) }),
-            h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Тип электрода', value: weldParams.electrode, onChange: e => setWeldParams(p => ({ ...p, electrode: e.target.value })) })
-          ),
-          h('div', { style: { display: 'flex', gap: 8, marginBottom: 8 } },
-            h('label', { style: { display: 'flex', alignItems: 'center', gap: 4 } },
-              h('input', { type: 'radio', name: 'weldResult', value: 'ok', checked: weldParams.result === 'ok', onChange: e => setWeldParams(p => ({ ...p, result: e.target.value })) }), 'Принято'),
-            h('label', { style: { display: 'flex', alignItems: 'center', gap: 4 } },
-              h('input', { type: 'radio', name: 'weldResult', value: 'fail', checked: weldParams.result === 'fail', onChange: e => setWeldParams(p => ({ ...p, result: e.target.value })) }), 'Брак')
-          ),
+        );
+      })(),
+
+      !active && canStartQr && h('div', { style: { ...S.card, border: `1px solid ${AM}`, background: AM3, marginBottom: 16 } },
+        h('div', { style: { fontSize: 10, color: AM, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 } }, 'Назначено по QR-коду'),
+        h('div', { style: { fontSize: 16, fontWeight: 500, color: AM2, marginBottom: 4 } }, qrOp.name),
+        h('div', { style: { fontSize: 10, color: AM, marginBottom: 12 } }, data.orders.find(o => o.id === qrOp.orderId)?.number || ''),
+        h('button', { type: 'button', style: abtn({ width: '100%', padding: '12px' }), onClick: () => doStart(qrOp) }, '▶ Начать операцию')
+      ),
+
+      active && h('div', { style: { ...S.card, border: `1px solid ${AM}`, background: AM3, marginBottom: 16 } },
+        h('div', { style: { fontSize: 10, color: AM, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 } }, 'Текущая операция'),
+        h('div', { style: { fontSize: 16, fontWeight: 500, color: AM2, marginBottom: 4 } }, active.name),
+        h('div', { style: { fontSize: 10, color: AM, marginBottom: 12 } }, data.orders.find(o => o.id === active.orderId)?.number || ''),
+        h('div', { style: { fontSize: 40, fontWeight: 500, color: AM, textAlign: 'center', margin: '8px 0 16px' } }, fmtDur(elapsed)),
+        showDefForm ? (
+          h('div', null,
+            h('div', { style: { fontSize: 11, color: RD, fontWeight: 500, marginBottom: 8, textTransform: 'uppercase' } }, 'Обнаружен брак с предыдущего участка'),
+            h('textarea', { style: { ...S.inp, width: '100%', marginBottom: 8 }, rows: 2, placeholder: 'Опишите обнаруженный дефект...', value: defNote, onChange: e => setDefNote(e.target.value) }),
+            h('div', { style: { display: 'flex', gap: 6 } },
+              h('button', { type: 'button', style: rbtn({ flex: 1 }), onClick: () => doFinish(active, true, false) }, 'Зафиксировать брак'),
+              h('button', { type: 'button', style: { ...gbtn({ flex: 1 }), color: AM2, borderColor: AM4 }, onClick: () => doFinish(active, false, true) }, 'На переделку'),
+              h('button', { type: 'button', style: gbtn({ flex: 1 }), onClick: () => setShowDefForm(false) }, 'Отмена')
+            )
+          )
+        ) : active.name.includes('свар') ? (
+          h('div', null,
+            h('div', { style: { display: 'flex', gap: 8, marginBottom: 8 } },
+              h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Номер шва', value: weldParams.seamNumber, onChange: e => setWeldParams(p => ({ ...p, seamNumber: e.target.value })) }),
+              h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Тип электрода', value: weldParams.electrode, onChange: e => setWeldParams(p => ({ ...p, electrode: e.target.value })) })
+            ),
+            h('div', { style: { display: 'flex', gap: 8, marginBottom: 8 } },
+              h('label', { style: { display: 'flex', alignItems: 'center', gap: 4 } },
+                h('input', { type: 'radio', name: 'weldResult', value: 'ok', checked: weldParams.result === 'ok', onChange: e => setWeldParams(p => ({ ...p, result: e.target.value })) }), 'Принято'),
+              h('label', { style: { display: 'flex', alignItems: 'center', gap: 4 } },
+                h('input', { type: 'radio', name: 'weldResult', value: 'fail', checked: weldParams.result === 'fail', onChange: e => setWeldParams(p => ({ ...p, result: e.target.value })) }), 'Брак')
+            ),
+            h('div', { style: { display: 'flex', gap: 8 } },
+              h('button', { type: 'button', style: { ...abtn({ flex: 2, padding: '12px', fontSize: 14 }), background: GN, color: GN2 }, onClick: () => doFinish(active, weldParams.result === 'fail', false) }, '✓ Завершить'),
+              h('button', { type: 'button', style: rbtn({ flex: 1, padding: '12px' }), onClick: () => setShowDefForm(true) }, '⚠ Брак с пред. уч.'),
+              h('button', { type: 'button', style: gbtn({ flex: 1, padding: '12px' }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
+            )
+          )
+        ) : (
           h('div', { style: { display: 'flex', gap: 8 } },
-            h('button', { type: 'button', style: { ...abtn({ flex: 2, padding: '12px', fontSize: 14 }), background: GN, color: GN2 }, onClick: () => doFinish(active, weldParams.result === 'fail', false) }, '✓ Завершить'),
+            h('button', { type: 'button', style: { ...abtn({ flex: 2, padding: '12px', fontSize: 14 }), background: GN, color: GN2 }, onClick: () => doFinish(active) }, '✓ Завершено'),
             h('button', { type: 'button', style: rbtn({ flex: 1, padding: '12px' }), onClick: () => setShowDefForm(true) }, '⚠ Брак с пред. уч.'),
             h('button', { type: 'button', style: gbtn({ flex: 1, padding: '12px' }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
           )
         )
-      ) : (
-        h('div', { style: { display: 'flex', gap: 8 } },
-          h('button', { type: 'button', style: { ...abtn({ flex: 2, padding: '12px', fontSize: 14 }), background: GN, color: GN2 }, onClick: () => doFinish(active) }, '✓ Завершено'),
-          h('button', { type: 'button', style: rbtn({ flex: 1, padding: '12px' }), onClick: () => setShowDefForm(true) }, '⚠ Брак с пред. уч.'),
-          h('button', { type: 'button', style: gbtn({ flex: 1, padding: '12px' }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
-        )
-      )
-    ),
+      ),
 
-    showDowntimeModal && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60 } },
-      h('div', { style: { background: '#fff', borderRadius: 12, padding: 24, width: 320 } },
-        h('div', { style: { fontSize: 14, fontWeight: 500, marginBottom: 4 } }, 'Фиксация простоя'),
-        h('div', { style: { fontSize: 28, fontWeight: 500, color: RD, textAlign: 'center', margin: '12px 0' } }, downtimeStartedAt ? fmtDur(now() - downtimeStartedAt) : '—'),
-        h('div', { style: { fontSize: 11, color: '#888', textAlign: 'center', marginBottom: 12 } }, 'Время простоя идёт'),
-        h('select', { style: { ...S.inp, width: '100%', marginBottom: 16 }, value: selectedDowntimeType, onChange: e => setSelectedDowntimeType(e.target.value) },
-          h('option', { value: '' }, '— причина простоя —'),
-          data.downtimeTypes.map(dt => h('option', { key: dt.id, value: dt.id }, dt.name))
-        ),
-        h('div', { style: { display: 'flex', gap: 8 } },
-          h('button', { type: 'button', style: gbtn({ flex: 1 }), onClick: () => { setShowDowntimeModal(false); setSelectedDowntimeType(''); setDowntimeStartedAt(null); } }, 'Отмена'),
-          h('button', { type: 'button', style: rbtn({ flex: 1, fontWeight: 500 }), onClick: recordDowntime }, 'Завершить простой')
-        )
-      )
-    ),
-
-    !active && myOps.length > 0 && h('div', null,
-      h('div', { style: S.sec }, 'Задания'),
-      myOps.map(op => {
-        const order = data.orders.find(o => o.id === op.orderId);
-        const deadlineMs = order?.deadline ? new Date(order.deadline).getTime() : null;
-        const timeLeft = deadlineMs ? deadlineMs - now() : null;
-        const daysLeft = timeLeft ? Math.ceil(timeLeft / 86400000) : null;
-        const isUrgent = daysLeft !== null && daysLeft <= 2;
-        const isOverdue = daysLeft !== null && daysLeft < 0;
-        return h('div', { key: op.id, style: { ...S.card, marginBottom: 8, borderLeft: isOverdue ? `4px solid ${RD}` : isUrgent ? `4px solid ${AM}` : order?.priority === 'critical' ? `4px solid ${RD}` : 'none' } },
-          h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 8 } },
-            h('div', null,
-              h('div', { style: { fontSize: 14, fontWeight: 500 } }, op.name),
-              h('div', { style: { fontSize: 11, color: AM } }, order?.number || '—'),
-              h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', marginTop: 2 } },
-                order?.priority && h('span', { style: { fontSize: 10, color: PRIORITY[order.priority]?.color } }, PRIORITY[order.priority].label),
-                daysLeft !== null && h('span', { style: { fontSize: 10, color: isOverdue ? RD : isUrgent ? AM : '#888', fontWeight: isUrgent ? 500 : 400 } },
-                  isOverdue ? `просрочено ${Math.abs(daysLeft)}д` : daysLeft === 0 ? 'сегодня!' : `${daysLeft}д до отгрузки`
-                )
-              )
-            ),
-            h(Badge, { st: op.status })
+      showDowntimeModal && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60 } },
+        h('div', { style: { background: '#fff', borderRadius: 12, padding: 24, width: 320 } },
+          h('div', { style: { fontSize: 14, fontWeight: 500, marginBottom: 4 } }, 'Фиксация простоя'),
+          h('div', { style: { fontSize: 28, fontWeight: 500, color: RD, textAlign: 'center', margin: '12px 0' } }, downtimeStartedAt ? fmtDur(now() - downtimeStartedAt) : '—'),
+          h('div', { style: { fontSize: 11, color: '#888', textAlign: 'center', marginBottom: 12 } }, 'Время простоя идёт'),
+          h('select', { style: { ...S.inp, width: '100%', marginBottom: 16 }, value: selectedDowntimeType, onChange: e => setSelectedDowntimeType(e.target.value) },
+            h('option', { value: '' }, '— причина простоя —'),
+            data.downtimeTypes.map(dt => h('option', { key: dt.id, value: dt.id }, dt.name))
           ),
-          op.status === 'pending' && h('button', { type: 'button', style: abtn({ width: '100%' }), onClick: () => doStart(op) }, '▶ Начать')
-        );
-      })
-    )
+          h('div', { style: { display: 'flex', gap: 8 } },
+            h('button', { type: 'button', style: gbtn({ flex: 1 }), onClick: () => { setShowDowntimeModal(false); setSelectedDowntimeType(''); setDowntimeStartedAt(null); } }, 'Отмена'),
+            h('button', { type: 'button', style: rbtn({ flex: 1, fontWeight: 500 }), onClick: recordDowntime }, 'Завершить простой')
+          )
+        )
+      ),
+
+      !active && myOps.length > 0 && h('div', null,
+        h('div', { style: S.sec }, 'Задания'),
+        myOps.map(op => {
+          const order = data.orders.find(o => o.id === op.orderId);
+          const deadlineMs = order?.deadline ? new Date(order.deadline).getTime() : null;
+          const timeLeft = deadlineMs ? deadlineMs - now() : null;
+          const daysLeft = timeLeft ? Math.ceil(timeLeft / 86400000) : null;
+          const isUrgent = daysLeft !== null && daysLeft <= 2;
+          const isOverdue = daysLeft !== null && daysLeft < 0;
+          return h('div', { key: op.id, style: { ...S.card, marginBottom: 8, borderLeft: isOverdue ? `4px solid ${RD}` : isUrgent ? `4px solid ${AM}` : order?.priority === 'critical' ? `4px solid ${RD}` : 'none' } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 8 } },
+              h('div', null,
+                h('div', { style: { fontSize: 14, fontWeight: 500 } }, op.name),
+                h('div', { style: { fontSize: 11, color: AM } }, order?.number || '—'),
+                h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', marginTop: 2 } },
+                  order?.priority && h('span', { style: { fontSize: 10, color: PRIORITY[order.priority]?.color } }, PRIORITY[order.priority].label),
+                  daysLeft !== null && h('span', { style: { fontSize: 10, color: isOverdue ? RD : isUrgent ? AM : '#888', fontWeight: isUrgent ? 500 : 400 } },
+                    isOverdue ? `просрочено ${Math.abs(daysLeft)}д` : daysLeft === 0 ? 'сегодня!' : `${daysLeft}д до отгрузки`
+                  )
+                )
+              ),
+              h(Badge, { st: op.status })
+            ),
+            op.status === 'pending' && h('button', { type: 'button', style: abtn({ width: '100%' }), onClick: () => doStart(op) }, '▶ Начать')
+          );
+        })
+      )
+    ) : h(Chat, { messages, userId, userName, onSend: onSendMessage, onDelete: onDeleteMessage, onLike: onLikeMessage, isMaster: false })
   );
 });
 
-// ==================== ЭКРАН КОНТРОЛЁРА ====================
-const ControllerScreen = memo(({ data, onUpdate, addToast }) => {
+// ==================== ЭКРАН КОНТРОЛЁРА (с вкладкой чата) ====================
+const ControllerScreen = memo(({ data, onUpdate, addToast, messages, onSendMessage, onDeleteMessage, onLikeMessage, userId, userName }) => {
+  const [tab, setTab] = useState('qc');
   const pendingQC = data.ops.filter(o => o.status === 'on_check' && !o.archived);
 
   const acceptOp = useCallback(async (op) => {
@@ -947,7 +1084,11 @@ const ControllerScreen = memo(({ data, onUpdate, addToast }) => {
   }, [data, onUpdate, addToast]);
 
   return h('div', null,
-    h('div', { style: S.card },
+    h('div', { style: { display: 'flex', gap: 8, marginBottom: 16, borderBottom: '0.5px solid rgba(0,0,0,0.1)' } },
+      h('button', { style: { padding: '8px 16px', background: 'transparent', border: 'none', borderBottom: tab === 'qc' ? `2px solid ${AM}` : 'none', color: tab === 'qc' ? AM : '#888', cursor: 'pointer' }, onClick: () => setTab('qc') }, 'Контроль'),
+      h('button', { style: { padding: '8px 16px', background: 'transparent', border: 'none', borderBottom: tab === 'chat' ? `2px solid ${AM}` : 'none', color: tab === 'chat' ? AM : '#888', cursor: 'pointer' }, onClick: () => setTab('chat') }, 'Чат')
+    ),
+    tab === 'qc' ? h('div', { style: S.card },
       h('div', { style: S.sec }, 'Операции, ожидающие контроля'),
       pendingQC.length === 0 ? h('div', { style: { padding: 16, textAlign: 'center' } }, 'Нет операций на контроле') :
         h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
@@ -973,7 +1114,7 @@ const ControllerScreen = memo(({ data, onUpdate, addToast }) => {
             );
           }))
         )
-    )
+    ) : h(Chat, { messages, userId, userName, onSend: onSendMessage, onDelete: onDeleteMessage, onLike: onLikeMessage, isMaster: false })
   );
 });
 
@@ -1298,7 +1439,7 @@ const MasterTodayPlan = memo(({ data }) => {
         h('tbody', null, plannedToday.map(op => {
           const order = data.orders.find(o => o.id === op.orderId);
           const worker = data.workers.find(w => w.id === op.workerId);
-          const overdue = !op.startedAt && op.plannedStartDate < nowTime - 3600000; // просрочка >1ч
+          const overdue = !op.startedAt && op.plannedStartDate < nowTime - 3600000;
           return h('tr', { key: op.id, style: { background: overdue ? RD3 : 'transparent' } },
             h('td', { style: S.td }, order?.number || '—'),
             h('td', { style: S.td }, op.name),
@@ -1316,21 +1457,18 @@ const MasterNotifications = memo(({ data }) => {
   const notifications = useMemo(() => {
     const list = [];
     const nowTime = now();
-    // Просроченные операции
     data.ops.forEach(op => {
       if (op.status === 'pending' && op.plannedStartDate && op.plannedStartDate < nowTime - 3600000) {
         const order = data.orders.find(o => o.id === op.orderId);
         list.push({ id: `overdue-${op.id}`, type: 'overdue', message: `Операция "${op.name}" (заказ ${order?.number}) не начата более часа` });
       }
     });
-    // Простои >30 мин
     const recentDowntimes = data.events.filter(e => e.type === 'downtime' && e.ts > nowTime - 1800000);
     recentDowntimes.forEach(e => {
       const worker = data.workers.find(w => w.id === e.workerId);
       const reason = data.downtimeTypes.find(d => d.id === e.downtimeTypeId)?.name;
       list.push({ id: `downtime-${e.id}`, type: 'downtime', message: `Простой: ${worker?.name} — ${reason}` });
     });
-    // Близкие сроки отгрузки
     data.orders.forEach(order => {
       if (isShipmentNear(order.deadline) && !order.archived) {
         list.push({ id: `deadline-${order.id}`, type: 'deadline', message: `Заказ ${order.number} близок к дате отгрузки` });
@@ -1486,7 +1624,6 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast }) => {
             const section = data.sections.find(s => s.id === op.sectionId);
             const eq = data.equipment.find(e => e.id === op.equipmentId);
             const dur = op.startedAt && op.finishedAt ? fmtDur(op.finishedAt - op.startedAt) : op.startedAt ? fmtDur(now() - op.startedAt) + ' ↻' : '—';
-            // Фильтруем рабочих для выпадающего списка
             const availableWorkers = data.workers.filter(w => 
               !w.competences || w.competences.length === 0 || w.competences.includes(op.name)
             );
@@ -1555,7 +1692,6 @@ const MasterOrders = memo(({ data, onUpdate, addToast }) => {
   };
 
   const createDefaultOps = useCallback((orderId, bomId) => {
-    // В реальности здесь нужно брать операции из BOM, но пока используем стандартные
     return OPERATION_STAGES.map(name => ({
       id: uid(),
       orderId,
@@ -1659,7 +1795,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast }) => {
                 op.name,
                 data.workers.find(w => w.id === op.workerId)?.name || '—',
                 op.plannedHours ? `${op.plannedHours} ч` : '—',
-                { text: '', border: [true, true, true, true] } // пустая ячейка для отметки
+                { text: '', border: [true, true, true, true] }
               ])
             ]
           }
@@ -1772,13 +1908,15 @@ const MasterOrders = memo(({ data, onUpdate, addToast }) => {
   );
 });
 
-// ==================== МАСТЕР — РАБОЧИЕ (карточный интерфейс с метриками) ====================
+// ==================== МАСТЕР — РАБОЧИЕ (карточный интерфейс с метриками и кнопкой благодарности) ====================
 const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingWorker, setEditingWorker] = useState(null);
   const [cardWorker, setCardWorker] = useState(null);
+  const [thanksModal, setThanksModal] = useState(null);
+  const [thanksNote, setThanksNote] = useState('');
   const [form, setForm] = useState({ name: '', position: '', grade: '', tabNumber: '', pin: '', sectionId: '', competences: [], status: 'working' });
 
   const resetForm = () => { setForm({ name: '', position: '', grade: '', tabNumber: '', pin: '', sectionId: '', competences: [], status: 'working' }); setEditingWorker(null); setShowAddForm(false); };
@@ -1786,14 +1924,13 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
   const addOrUpdate = useCallback(async () => {
     if (!form.name.trim()) { addToast('Введите имя рабочего', 'error'); return; }
     if (!form.pin.trim()) { addToast('Введите PIN-код', 'error'); return; }
-    // Проверка уникальности PIN
     const pinExists = data.workers.some(w => w.pin === form.pin.trim() && w.id !== editingWorker);
     if (pinExists) { addToast('Такой PIN-код уже занят', 'error'); return; }
     if (editingWorker) {
       const d = { ...data, workers: data.workers.map(w => w.id === editingWorker ? { ...w, name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: form.pin.trim(), sectionId: form.sectionId || null, competences: form.competences, status: form.status } : w) };
       await DB.save(d); onUpdate(d); addToast('Рабочий обновлён', 'success');
     } else {
-      const w = { id: uid(), name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: form.pin.trim(), sectionId: form.sectionId || null, competences: form.competences, status: form.status };
+      const w = { id: uid(), name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: form.pin.trim(), sectionId: form.sectionId || null, competences: form.competences, status: form.status, totalLikes: 0 };
       const d = { ...data, workers: [...data.workers, w] };
       await DB.save(d); onUpdate(d); addToast('Рабочий добавлен', 'success');
     }
@@ -1809,7 +1946,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
   const edit = useCallback(w => {
     setForm({ name: w.name, position: w.position || '', grade: w.grade || '', tabNumber: w.tabNumber || '', pin: w.pin || '', sectionId: w.sectionId || '', competences: w.competences || [], status: w.status || 'working' });
     setEditingWorker(w.id);
-    setShowAddForm(false); // форма появится инлайн в карточке
+    setShowAddForm(false);
   }, []);
 
   const updateStatus = useCallback(async (id, status) => {
@@ -1817,7 +1954,29 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
     await DB.save(d); onUpdate(d);
   }, [data, onUpdate]);
 
-  // Метрики за 30 дней
+  // Отправка благодарности
+  const sendThanks = useCallback(async (toWorkerId, note) => {
+    const newEvent = {
+      id: uid(),
+      type: 'thanks',
+      toWorkerId,
+      fromWorkerId: null,
+      ts: now(),
+      note: note || ''
+    };
+    const updated = { ...data, events: [...data.events, newEvent] };
+    await DB.save(updated);
+    onUpdate(updated);
+    const withAch = checkAchievements(toWorkerId, updated);
+    if (withAch !== updated) {
+      await DB.save(withAch);
+      onUpdate(withAch);
+    }
+    setThanksModal(null);
+    setThanksNote('');
+    addToast('Благодарность отправлена', 'success');
+  }, [data, onUpdate, addToast]);
+
   const period30 = now() - 30 * 86400000;
 
   const workersEnriched = useMemo(() => {
@@ -1830,10 +1989,22 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
       const defectRate = total > 0 ? (opsDefect.length / total * 100) : 0;
       const downtimes = data.events.filter(e => e.workerId === w.id && e.type === 'downtime' && e.ts >= period30).length;
       const section = data.sections.find(s => s.id === w.sectionId);
-      // Время прихода сегодня
       const todayStart = new Date().setHours(0,0,0,0);
       const checkin = data.events.find(e => e.workerId === w.id && e.type === 'checkin_manual' && e.ts >= todayStart);
-      return { ...w, opsDone: opsDone.length, opsDefect: opsDefect.length, opsActive: opsActive.length, avgTime, defectRate, downtimes, sectionName: section?.name || '', checkinTime: checkin ? new Date(checkin.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null, allTimeDone: data.ops.filter(op => op.workerId === w.id && op.status === 'done').length, level: getWorkerLevel(data.ops.filter(op => op.workerId === w.id && op.status === 'done').length), levelProgress: getLevelProgress(data.ops.filter(op => op.workerId === w.id && op.status === 'done').length) };
+      return { 
+        ...w, 
+        opsDone: opsDone.length, 
+        opsDefect: opsDefect.length, 
+        opsActive: opsActive.length, 
+        avgTime, 
+        defectRate, 
+        downtimes, 
+        sectionName: section?.name || '', 
+        checkinTime: checkin ? new Date(checkin.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null, 
+        allTimeDone: data.ops.filter(op => op.workerId === w.id && op.status === 'done').length,
+        level: getWorkerLevel(data.ops.filter(op => op.workerId === w.id && op.status === 'done').length),
+        levelProgress: getLevelProgress(data.ops.filter(op => op.workerId === w.id && op.status === 'done').length)
+      };
     });
   }, [data.workers, data.ops, data.events, data.sections, period30]);
 
@@ -1857,8 +2028,17 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
 
   return h('div', null,
     cardWorker && h(WorkerCardModal, { worker: cardWorker, data, onClose: () => setCardWorker(null) }),
+    thanksModal && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 } },
+      h('div', { style: { background: '#fff', borderRadius: 12, padding: 24, width: 320 } },
+        h('div', { style: { fontSize: 16, fontWeight: 500, marginBottom: 16 } }, `Благодарность для ${thanksModal.name}`),
+        h('textarea', { style: { ...S.inp, width: '100%', marginBottom: 16 }, rows: 3, placeholder: 'Комментарий (необязательно)', value: thanksNote, onChange: e => setThanksNote(e.target.value) }),
+        h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
+          h('button', { style: gbtn(), onClick: () => { setThanksModal(null); setThanksNote(''); } }, 'Отмена'),
+          h('button', { style: abtn(), onClick: () => sendThanks(thanksModal.id, thanksNote) }, 'Отправить')
+        )
+      )
+    ),
 
-    // Сводка
     h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 } },
       h('div', { style: { ...S.card, textAlign: 'center' } }, h('div', { style: { fontSize: 24, fontWeight: 500 } }, summary.total), h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'Всего')),
       h('div', { style: { ...S.card, textAlign: 'center' } }, h('div', { style: { fontSize: 24, fontWeight: 500, color: GN } }, summary.working), h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'На смене')),
@@ -1866,7 +2046,6 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
       h('div', { style: { ...S.card, textAlign: 'center' } }, h('div', { style: { fontSize: 24, fontWeight: 500, color: AM } }, `${summary.avgLoad}%`), h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'Загрузка, ср.'))
     ),
 
-    // Поиск и фильтры
     h('div', { style: { display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' } },
       h('input', { style: { ...S.inp, flex: 1, minWidth: 180 }, placeholder: 'Поиск по имени...', value: search, onChange: e => setSearch(e.target.value) }),
       h('div', { style: { display: 'flex', gap: 4 } },
@@ -1877,7 +2056,6 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
       h('button', { style: abtn({ marginLeft: 'auto' }), onClick: () => { resetForm(); setShowAddForm(true); } }, '+ Добавить')
     ),
 
-    // Форма добавления/редактирования
     showAddForm && h('div', { style: { ...S.card, border: `1px solid ${AM}`, marginBottom: 16 } },
       h('div', { style: S.sec }, editingWorker ? 'Редактировать рабочего' : 'Новый рабочий'),
       h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 } },
@@ -1906,11 +2084,9 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
       )
     ),
 
-    // Карточки рабочих
     filtered.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', padding: 32 } }, 'Рабочие не найдены') :
       filtered.map(w => {
         const ws = WORKER_STATUS[w.status] || WORKER_STATUS.working;
-        // Инлайн-редактирование
         if (editingWorker === w.id) {
           return h('div', { key: w.id, style: { ...S.card, marginBottom: 10, padding: 16, border: `1px solid ${AM}` } },
             h('div', { style: { ...S.sec, marginBottom: 8 } }, 'Редактирование'),
@@ -1942,15 +2118,14 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
         }
         return h('div', { key: w.id, style: { ...S.card, marginBottom: 10, padding: 16 } },
           h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 14 } },
-            // Аватар
             h('div', { style: { width: 44, height: 44, borderRadius: '50%', background: ws.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 500, color: ws.cl, flexShrink: 0, border: '0.5px solid ' + ws.br } }, w.name?.charAt(0) || '?'),
             h('div', { style: { flex: 1, minWidth: 0 } },
-              // Верхняя строка: имя + уровень + статус
               h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 } },
                 h('div', null,
                   h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
                     h('div', { style: { fontSize: 15, fontWeight: 500 } }, w.name),
-                    h('span', { style: { display: 'inline-block', padding: '1px 8px', fontSize: 10, borderRadius: 8, background: AM3, color: AM2, fontWeight: 500 } }, `Ур. ${w.level} · ${getLevelTitle(w.level)}`)
+                    h('span', { style: { display: 'inline-block', padding: '1px 8px', fontSize: 10, borderRadius: 8, background: AM3, color: AM2, fontWeight: 500 } }, `Ур. ${w.level} · ${getLevelTitle(w.level)}`),
+                    h('button', { style: gbtn({ fontSize: 11, padding: '2px 6px' }), onClick: () => setThanksModal({ id: w.id, name: w.name }) }, '👏')
                   ),
                   h('div', { style: { fontSize: 12, color: '#888' } },
                     [w.position, w.grade ? `${w.grade} разр.` : null, w.tabNumber ? `Таб. ${w.tabNumber}` : null, w.sectionName].filter(Boolean).join(' · ') || '—'
@@ -1962,7 +2137,6 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
                 )
               ),
 
-              // Прогресс-бар уровня
               h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 } },
                 h('div', { style: { fontSize: 11, color: '#888', whiteSpace: 'nowrap' } }, `${w.allTimeDone} оп.`),
                 h('div', { style: { flex: 1, height: 5, background: '#eee', borderRadius: 3, overflow: 'hidden' } },
@@ -1971,7 +2145,6 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
                 h('div', { style: { fontSize: 10, color: '#888', whiteSpace: 'nowrap' } }, `→ Ур. ${w.level + 1}`)
               ),
 
-              // Метрики
               h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 10 } },
                 h('div', { style: { textAlign: 'center', padding: '6px 4px', background: '#f8f8f5', borderRadius: 8 } },
                   h('div', { style: { fontSize: 16, fontWeight: 500, color: GN } }, w.opsDone),
@@ -1991,7 +2164,6 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
                 )
               ),
 
-              // Достижения
               (w.achievements && w.achievements.length > 0) && h('div', { style: { marginBottom: 8 } },
                 h('div', { style: { fontSize: 10, color: '#888', marginBottom: 4 } }, `Достижения (${w.achievements.length})`),
                 h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
@@ -2003,7 +2175,6 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
                 )
               ),
 
-              // Компетенции
               w.competences && w.competences.length > 0 && h('div', { style: { marginBottom: 8 } },
                 h('div', { style: { fontSize: 10, color: '#888', marginBottom: 4 } }, 'Допуск к операциям'),
                 h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
@@ -2011,7 +2182,6 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
                 )
               ),
 
-              // Действия
               h('div', { style: { display: 'flex', gap: 6, alignItems: 'center' } },
                 h('button', { style: gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setCardWorker(w) }, '📊 Подробнее'),
                 h('button', { style: gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => edit(w) }, '✎ Редактировать'),
@@ -2103,7 +2273,6 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
   }, [data, onUpdate, addToast]);
 
   return h('div', null,
-    // Пароли ролей
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Пароли доступа'),
       h('div', { style: { display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 } },
@@ -2119,7 +2288,6 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
       h('button', { style: abtn(), onClick: savePasswords }, 'Сохранить пароли')
     ),
 
-    // Текст главной страницы
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Текст главной страницы'),
       h('div', { style: { display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 } },
@@ -2145,7 +2313,6 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
       h('button', { style: abtn(), onClick: saveWelcome }, 'Сохранить текст')
     ),
 
-    // PIN-коды рабочих
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'PIN-коды рабочих'),
       data.workers.length === 0 ? h('div', { style: { fontSize: 12, color: '#888', padding: 8 } }, 'Нет рабочих') :
@@ -2214,9 +2381,6 @@ const MasterSettings = memo(({ data, onUpdate, addToast }) => {
 
 // ==================== МАСТЕР — КАНБАН-ДОСКА ====================
 const MasterKanban = memo(({ data }) => {
-  const activeOrders = data.orders.filter(o => !o.archived);
-  
-  // Для каждого этапа считаем количество операций по статусам
   const columns = OPERATION_STAGES.map(stage => {
     const opsAtStage = data.ops.filter(op => op.name === stage && !op.archived);
     const byStatus = {
@@ -2233,12 +2397,8 @@ const MasterKanban = memo(({ data }) => {
     h('div', { style: S.sec }, 'Канбан-доска производства'),
     h('div', { style: { display: 'flex', gap: 8, minWidth: columns.length * 160 } },
       columns.map(col => {
-        const wip = col.in_progress.length + col.on_check.length;
-        const hasIssues = col.defect.length > 0;
         return h('div', { key: col.stage, style: { flex: '0 0 150px', background: '#fff', border: '0.5px solid rgba(0,0,0,0.1)', borderRadius: 10, padding: 10, fontSize: 11 } },
-          // Заголовок этапа
           h('div', { style: { fontSize: 10, fontWeight: 500, color: AM4, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8, lineHeight: 1.3 } }, col.stage),
-          // Счётчики
           h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 } },
             col.pending.length > 0 && h('span', { style: { padding: '2px 6px', fontSize: 10, borderRadius: 6, background: '#f0ede8', color: '#666' } }, `⏳ ${col.pending.length}`),
             col.in_progress.length > 0 && h('span', { style: { padding: '2px 6px', fontSize: 10, borderRadius: 6, background: AM3, color: AM2 } }, `▶ ${col.in_progress.length}`),
@@ -2246,11 +2406,9 @@ const MasterKanban = memo(({ data }) => {
             col.done.length > 0 && h('span', { style: { padding: '2px 6px', fontSize: 10, borderRadius: 6, background: GN3, color: GN2 } }, `✓ ${col.done.length}`),
             col.defect.length > 0 && h('span', { style: { padding: '2px 6px', fontSize: 10, borderRadius: 6, background: RD3, color: RD2 } }, `⚠ ${col.defect.length}`)
           ),
-          // Прогресс-бар
           col.total > 0 && h('div', { style: { height: 4, background: '#eee', borderRadius: 2, overflow: 'hidden', marginBottom: 6 } },
             h('div', { style: { width: `${(col.done.length / col.total) * 100}%`, height: 4, background: GN, borderRadius: 2 } })
           ),
-          // Карточки активных операций (в работе)
           col.in_progress.map(op => {
             const order = data.orders.find(o => o.id === op.orderId);
             const worker = data.workers.find(w => w.id === op.workerId);
@@ -2260,7 +2418,6 @@ const MasterKanban = memo(({ data }) => {
               op.startedAt && h('div', { style: { fontSize: 9, color: '#888' } }, fmtDur(now() - op.startedAt))
             );
           }),
-          // Проблемные операции
           col.defect.map(op => {
             const order = data.orders.find(o => o.id === op.orderId);
             return h('div', { key: op.id, style: { padding: '6px 8px', background: RD3, borderRadius: 6, marginBottom: 4, borderLeft: `3px solid ${RD}` } },
@@ -2271,7 +2428,6 @@ const MasterKanban = memo(({ data }) => {
         );
       })
     ),
-    // Легенда
     h('div', { style: { display: 'flex', gap: 12, marginTop: 12, fontSize: 10, color: '#888' } },
       h('span', null, '⏳ Ожидает'),
       h('span', null, '▶ В работе'),
@@ -2283,7 +2439,7 @@ const MasterKanban = memo(({ data }) => {
 });
 
 // ==================== МАСТЕР — КОНТЕЙНЕР ====================
-const MasterScreen = memo(({ data, onUpdate, addToast, sectionId }) => {
+const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, messages, onSendMessage, onDeleteMessage, onLikeMessage, userId, userName }) => {
   const [tab, setTab] = useState('ops');
   const [qrOp, setQrOp] = useState(null);
   const tabs = [
@@ -2300,6 +2456,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId }) => {
     ['sections', 'Участки'],
     ['plan', 'План на сегодня'],
     ['notifications', 'Уведомления'],
+    ['chat', 'Чат'],
     ['admin', 'Управление'],
     ['settings', 'Настройки']
   ];
@@ -2335,6 +2492,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId }) => {
     tab === 'sections' && h(MasterSections, { data, onUpdate, addToast }),
     tab === 'plan' && h(MasterTodayPlan, { data }),
     tab === 'notifications' && h(MasterNotifications, { data }),
+    tab === 'chat' && h(Chat, { messages, userId, userName, onSend: onSendMessage, onDelete: onDeleteMessage, onLike: onLikeMessage, isMaster: true }),
     tab === 'admin' && h(MasterAdmin, { data, onUpdate, addToast }),
     tab === 'settings' && h(MasterSettings, { data, onUpdate, addToast })
   );
@@ -2360,7 +2518,6 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
 
   const handleStart = useCallback(async () => {
     if (op.status !== 'pending') return;
-    // Проверка компетенции
     if (worker?.competences && worker.competences.length > 0 && !worker.competences.includes(op.name)) {
       addToast('У вас нет компетенции для этой операции', 'error');
       return;
@@ -2380,6 +2537,8 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
     const finishedAt = now();
     let status = isDefect ? 'defect' : isRework ? 'rework' : 'done';
     let updatedOp = { ...op, status, finishedAt, defectNote: defNote || undefined };
+    if (isDefect) updatedOp.defectSource = 'previous_stage';
+    if (isRework) updatedOp.defectSource = 'previous_stage';
     if (op.requiresQC && status === 'done') {
       status = 'on_check';
       updatedOp.status = 'on_check';
@@ -2396,10 +2555,9 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
     const updated = {
       ...data,
       ops: data.ops.map(o => o.id === op.id ? updatedOp : o),
-      events: [...data.events, { id: uid(), type: status, opId: op.id, workerId: op.workerId, ts: finishedAt, note: defNote || undefined, shift }]
+      events: [...data.events, { id: uid(), type: status, opId: op.id, workerId: op.workerId, ts: finishedAt, note: defNote || undefined, shift, defectSource: (isDefect || isRework) ? 'previous_stage' : undefined }]
     };
     await DB.save(updated); onUpdate(updated);
-    // Проверка достижений
     if (op.workerId) {
       const withAch = checkAchievements(op.workerId, updated);
       if (withAch !== updated) {
@@ -2414,7 +2572,7 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
       }
     }
     setShowDefForm(false); setDefNote(''); setWeldParams({ seamNumber: '', electrode: '', result: 'ok' }); addToast('Операция завершена', 'info');
-  }, [data, op, onUpdate, defNote, weldParams]);
+  }, [data, op, onUpdate, defNote, weldParams, addToast]);
 
   const recordDowntime = useCallback(async () => {
     if (!selectedDowntimeType) return addToast('Выберите причину', 'error');
@@ -2500,7 +2658,7 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
   );
 });
 
-// ==================== ДАШБОРД (с состоянием персонала) ====================
+// ==================== ДАШБОРД ====================
 const Dashboard = memo(({ data, addToast }) => {
   const [period, setPeriod] = useState(() => {
     const end = new Date();
@@ -2544,7 +2702,6 @@ const Dashboard = memo(({ data, addToast }) => {
   const pendingLong = pending.filter(o => o.createdAt && now() - o.createdAt > 3600000);
   const nearDeadlineOrders = data.orders.filter(o => isShipmentNear(o.deadline) && !o.archived && data.ops.some(op => op.orderId === o.id && op.status !== 'done'));
 
-  // Состояние персонала
   const workersByStatus = useMemo(() => {
     const stats = { working: 0, absent: 0, sick: 0, vacation: 0 };
     data.workers.forEach(w => stats[w.status || 'working']++);
@@ -2640,7 +2797,6 @@ const Dashboard = memo(({ data, addToast }) => {
       h('button', { style: gbtn(), onClick: setCustomPeriod }, 'Применить')
     ),
 
-    // Состояние персонала
     h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 16 } },
       h('div', { style: S.card }, h('div', { style: { fontSize: 12, color: '#888' } }, 'На смене'), h('div', { style: { fontSize: 24, fontWeight: 500 } }, workersByStatus.working)),
       h('div', { style: S.card }, h('div', { style: { fontSize: 12, color: '#888' } }, 'Отсутствует'), h('div', { style: { fontSize: 24, fontWeight: 500 } }, workersByStatus.absent)),
@@ -2682,18 +2838,14 @@ const Dashboard = memo(({ data, addToast }) => {
         h('thead', null, h('tr', null, ['Оборудование', 'Доступность', 'Производит.', 'Качество', 'OEE'].map((t,i) => h('th', { key: i, style: S.th }, t)))),
         h('tbody', null, equipmentUtilization.map(eq => {
           const totalPeriodHrs = (period.end - period.start) / 3600000;
-          // Доступность: время работы / общее время периода
           const availability = totalPeriodHrs > 0 ? Math.min((eq.busyTime / 3600000) / totalPeriodHrs * 100, 100) : 0;
-          // Производительность: плановое время / фактическое (если быстрее плана — >100%)
           const opsOnEq = data.ops.filter(op => op.equipmentId === eq.id && op.status === 'done' && op.plannedHours && op.startedAt && op.finishedAt && op.finishedAt >= period.start && op.finishedAt <= period.end);
           const totalPlanned = opsOnEq.reduce((s, op) => s + op.plannedHours * 3600000, 0);
           const totalActual = opsOnEq.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0);
           const performance = totalActual > 0 ? Math.min((totalPlanned / totalActual) * 100, 100) : 0;
-          // Качество: годные / (годные + брак) на этом оборудовании
           const doneOnEq = data.ops.filter(op => op.equipmentId === eq.id && op.status === 'done' && op.finishedAt >= period.start && op.finishedAt <= period.end).length;
           const defOnEq = data.ops.filter(op => op.equipmentId === eq.id && op.status === 'defect' && op.finishedAt >= period.start && op.finishedAt <= period.end).length;
           const quality = (doneOnEq + defOnEq) > 0 ? (doneOnEq / (doneOnEq + defOnEq)) * 100 : 100;
-          // OEE
           const oee = (availability / 100) * (performance / 100) * (quality / 100) * 100;
           const oeeColor = oee >= 85 ? GN : oee >= 60 ? AM : RD;
           return h('tr', { key: eq.id },
@@ -2724,9 +2876,7 @@ const Dashboard = memo(({ data, addToast }) => {
       )
     ),
 
-    // Лидерборд
     data.workers.length > 0 && h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 } },
-      // Топ по количеству
       h('div', { style: S.card },
         h('div', { style: S.sec }, 'Топ по выполнению'),
         (() => {
@@ -2741,7 +2891,6 @@ const Dashboard = memo(({ data, addToast }) => {
           ));
         })()
       ),
-      // Топ по качеству
       h('div', { style: S.card },
         h('div', { style: S.sec }, 'Топ по качеству'),
         (() => {
@@ -2760,7 +2909,6 @@ const Dashboard = memo(({ data, addToast }) => {
           ));
         })()
       ),
-      // Топ по скорости
       h('div', { style: S.card },
         h('div', { style: S.sec }, 'Топ по скорости'),
         (() => {
@@ -2789,20 +2937,20 @@ const Dashboard = memo(({ data, addToast }) => {
 
 // ==================== ROOT APP ====================
 function App() {
-  const [data, setData] = useState({ orders: [], ops: [], workers: [], downtimeTypes: [], events: [], materials: [], sections: [], equipment: [], bomTemplates: [], materialConsumptions: [] });
+  const [data, setData] = useState(EMPTY_DATA);
+  const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [synced, setSynced] = useState(false);
   const [role, setRole] = useState(null);
   const [workerId, setWorkerId] = useState(null);
+  const [userName, setUserName] = useState('');
   const [sectionId, setSectionId] = useState(null);
   const [initialOpId, setInitialOpId] = useState(null);
   const [toasts, setToasts] = useState([]);
   const savingRef = useRef(false);
 
   useEffect(() => {
-    // Первичная загрузка
     DB.load().then(d => { setData(d); setLoading(false); setSynced(true); });
-    // Реалтайм-подписка: обновляет данные когда другое устройство сохраняет
     const unsub = DB.onSnapshot(newData => {
       if (!savingRef.current) {
         setData(newData);
@@ -2814,18 +2962,110 @@ function App() {
     return () => unsub();
   }, []);
 
+  // Подписка на сообщения (только за последние 7 дней)
+  useEffect(() => {
+    const cutoff = now() - 7 * 24 * 3600 * 1000;
+    const messagesUnsub = MESSAGES_COLLECTION
+      .where('ts', '>=', cutoff)
+      .orderBy('ts', 'desc')
+      .onSnapshot(snap => {
+        const msgs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a,b) => a.ts - b.ts);
+        setMessages(msgs);
+      });
+    return () => messagesUnsub();
+  }, []);
+
+  // Функция для удаления старых сообщений (можно вызывать при загрузке)
+  useEffect(() => {
+    const cutoff = now() - 7 * 24 * 3600 * 1000;
+    MESSAGES_COLLECTION.where('ts', '<', cutoff).get().then(snapshot => {
+      const batch = firestore.batch();
+      snapshot.forEach(doc => batch.delete(doc.ref));
+      return batch.commit();
+    }).catch(err => console.error('Error cleaning old messages:', err));
+  }, []);
+
   const save = (d) => {
     savingRef.current = true;
     setData(d);
     DB.save(d).finally(() => { setTimeout(() => { savingRef.current = false; }, 1500); });
   };
-  const goBack = () => { setRole(null); setWorkerId(null); setSectionId(null); setInitialOpId(null); window.history.replaceState({}, '', window.location.pathname); };
+  const goBack = () => { setRole(null); setWorkerId(null); setUserName(''); setSectionId(null); setInitialOpId(null); window.history.replaceState({}, '', window.location.pathname); };
 
   const addToast = useCallback((message, type = 'info') => {
     const id = Date.now();
     setToasts(prev => [...prev, { id, message, type }]);
   }, []);
   const removeToast = useCallback(id => setToasts(prev => prev.filter(t => t.id !== id)), []);
+
+  // Отправка сообщения
+  const sendMessage = useCallback((text) => {
+    if (!userName) return;
+    const msg = {
+      fromUserId: role === 'worker' ? workerId : role,
+      fromName: userName,
+      text,
+      ts: now(),
+      likes: []
+    };
+    MESSAGES_COLLECTION.add(msg).catch(err => {
+      console.error('Error sending message:', err);
+      addToast('Ошибка отправки сообщения', 'error');
+    });
+  }, [role, workerId, userName, addToast]);
+
+  // Удаление сообщения
+  const deleteMessage = useCallback(async (messageId, authorId) => {
+    if (role !== 'master' && authorId !== (role === 'worker' ? workerId : role)) {
+      addToast('Недостаточно прав', 'error');
+      return;
+    }
+    try {
+      await MESSAGES_COLLECTION.doc(messageId).delete();
+      addToast('Сообщение удалено', 'success');
+    } catch (err) {
+      console.error('Error deleting message:', err);
+      addToast('Ошибка удаления', 'error');
+    }
+  }, [role, workerId, addToast]);
+
+  // Лайк / дизлайк
+  const likeMessage = useCallback(async (messageId, authorId, currentlyLiked) => {
+    const userId = role === 'worker' ? workerId : role;
+    const messageRef = MESSAGES_COLLECTION.doc(messageId);
+    try {
+      await firestore.runTransaction(async (transaction) => {
+        const msgDoc = await transaction.get(messageRef);
+        if (!msgDoc.exists) return;
+        const msg = msgDoc.data();
+        let likes = msg.likes || [];
+        if (currentlyLiked) {
+          likes = likes.filter(id => id !== userId);
+        } else {
+          likes.push(userId);
+        }
+        transaction.update(messageRef, { likes });
+
+        // Если автор – рабочий, обновляем totalLikes в основном документе (data.workers)
+        if (authorId && typeof authorId === 'string' && authorId.length === 6) {
+          // Получаем текущие данные
+          const currentData = data;
+          const workerIndex = currentData.workers.findIndex(w => w.id === authorId);
+          if (workerIndex >= 0) {
+            const newTotalLikes = (currentData.workers[workerIndex].totalLikes || 0) + (currentlyLiked ? -1 : 1);
+            const updatedWorkers = [...currentData.workers];
+            updatedWorkers[workerIndex] = { ...updatedWorkers[workerIndex], totalLikes: newTotalLikes };
+            const newData = { ...currentData, workers: updatedWorkers };
+            setData(newData);
+            await DB.save(newData);
+          }
+        }
+      });
+    } catch (err) {
+      console.error('Error liking message:', err);
+      addToast('Ошибка', 'error');
+    }
+  }, [role, workerId, data]);
 
   if (loading) return h('div', { style: { padding: 48, textAlign: 'center' } },
     h('div', { style: { fontSize: 16, marginBottom: 8 } }, 'Загрузка...'),
@@ -2844,8 +3084,17 @@ function App() {
   }
 
   if (!role) {
-    return h(LoginScreen, { data, onLogin: (r, wid, sid) => { setRole(r); setWorkerId(wid); setSectionId(sid); } });
+    return h(LoginScreen, { data, onLogin: (r, wid, name, sid) => { setRole(r); setWorkerId(wid); setUserName(name); setSectionId(sid); } });
   }
+
+  const commonProps = {
+    data, onUpdate: save, addToast,
+    messages, onSendMessage: sendMessage,
+    onDeleteMessage: deleteMessage,
+    onLikeMessage: likeMessage,
+    userId: role === 'worker' ? workerId : role,
+    userName
+  };
 
   return h('div', null,
     role && h('div', { style: { display: 'flex', gap: 12, padding: '10px 0', borderBottom: '0.5px solid rgba(0,0,0,0.08)', alignItems: 'center' } },
@@ -2854,16 +3103,16 @@ function App() {
         role === 'master' ? 'Мастер' : 
         role === 'controller' ? 'Контролёр' :
         role === 'dashboard' ? 'Дашборд' : 
-        data.workers.find(w => w.id === workerId)?.name
+        userName
       ),
       h('div', { style: { marginLeft: 'auto', fontSize: 10, color: synced ? GN : '#888', display: 'flex', alignItems: 'center', gap: 4 } },
         h('span', { style: { width: 6, height: 6, borderRadius: '50%', background: synced ? GN : '#ccc', display: 'inline-block' } }),
         synced ? 'Firebase' : 'Оффлайн'
       )
     ),
-    role === 'master' && h(MasterScreen, { data, onUpdate: save, addToast, sectionId }),
-    role === 'controller' && h(ControllerScreen, { data, onUpdate: save, addToast }),
-    role === 'worker' && workerId && h(WorkerScreen, { data, workerId, sectionId, onUpdate: save, initialOpId: null, addToast }),
+    role === 'master' && h(MasterScreen, { ...commonProps, sectionId }),
+    role === 'controller' && h(ControllerScreen, commonProps),
+    role === 'worker' && workerId && h(WorkerScreen, { ...commonProps, workerId, sectionId, initialOpId: null }),
     role === 'dashboard' && h(Dashboard, { data, addToast }),
     h('div', null, toasts.map(t => h(Toast, { key: t.id, message: t.message, onClose: () => removeToast(t.id) })))
   );
