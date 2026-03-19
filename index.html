@@ -213,7 +213,14 @@ const EMPTY_DATA = {
   sections: [],
   equipment: [],
   bomTemplates: [],
-  materialConsumptions: []
+  materialConsumptions: [],
+  settings: {
+    masterPassword: 'master',
+    controllerPassword: 'controller',
+    welcomeTitle: 'teploros',
+    welcomeSubtitle: 'надежная техника',
+    welcomeLabel: 'Производственный учёт · НТ'
+  }
 };
 
 // ==================== Хранилище (Firebase + localStorage fallback) ====================
@@ -347,70 +354,79 @@ const QRModal = memo(({ ops, order, onClose }) => {
 const LoginScreen = ({ data, onLogin }) => {
   const [role, setRole] = useState('worker');
   const [password, setPassword] = useState('');
-  const [selectedWorker, setSelectedWorker] = useState('');
-  const [selectedSection, setSelectedSection] = useState('');
+  const [workerPin, setWorkerPin] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const settings = data.settings || EMPTY_DATA.settings;
 
   const handleLogin = () => {
+    setLoginError('');
     if (role === 'master') {
-      if (password === 'master') {
-        onLogin('master', null, selectedSection);
+      if (password === (settings.masterPassword || 'master')) {
+        onLogin('master', null, null);
       } else {
-        alert('Неверный пароль');
+        setLoginError('Неверный пароль мастера');
       }
     } else if (role === 'controller') {
-      if (password === 'controller') {
+      if (password === (settings.controllerPassword || 'controller')) {
         onLogin('controller', null, null);
       } else {
-        alert('Неверный пароль');
+        setLoginError('Неверный пароль контролёра');
       }
     } else if (role === 'dashboard') {
       onLogin('dashboard', null, null);
     } else {
-      if (!selectedWorker) {
-        alert('Выберите рабочего');
+      if (!workerPin.trim()) {
+        setLoginError('Введите PIN-код');
         return;
       }
-      const worker = data.workers.find(w => w.id === selectedWorker);
-      onLogin('worker', selectedWorker, worker?.sectionId || null);
+      const worker = data.workers.find(w => w.pin === workerPin.trim());
+      if (!worker) {
+        setLoginError('Неверный PIN-код');
+        return;
+      }
+      onLogin('worker', worker.id, worker.sectionId || null);
     }
   };
 
   return h('div', { style: { minHeight: 480, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 12 } },
     h('div', { style: { textAlign: 'center', marginBottom: 16 } },
-      h('div', { style: { fontSize: 32, fontWeight: 700, color: AM, lineHeight: 1.2 } }, 'teploros'),
-      h('div', { style: { fontSize: 14, color: '#888', letterSpacing: '0.15em', textTransform: 'uppercase' } }, 'надежная техника')
+      h('div', { style: { fontSize: 32, fontWeight: 700, color: AM, lineHeight: 1.2 } }, settings.welcomeTitle || 'teploros'),
+      h('div', { style: { fontSize: 14, color: '#888', letterSpacing: '0.15em', textTransform: 'uppercase' } }, settings.welcomeSubtitle || 'надежная техника')
     ),
     h('div', { style: { textAlign: 'center', marginBottom: 24 } },
-      h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.15em' } }, 'Производственный учёт · НТ'),
+      h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.15em' } }, settings.welcomeLabel || 'Производственный учёт · НТ'),
       h('div', { style: { fontSize: 22, fontWeight: 500 } }, 'Вход в систему')
     ),
     h('div', { style: { display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap', justifyContent: 'center' } },
       ['worker', 'master', 'controller', 'dashboard'].map(r => h('button', {
         key: r,
         style: role === r ? abtn() : gbtn(),
-        onClick: () => setRole(r)
+        onClick: () => { setRole(r); setLoginError(''); setPassword(''); setWorkerPin(''); }
       }, r === 'worker' ? 'Рабочий' : r === 'master' ? 'Мастер' : r === 'controller' ? 'Контролёр' : 'Дашборд'))
     ),
     (role === 'master' || role === 'controller') && h('input', {
       type: 'password',
-      style: { ...S.inp, width: 200 },
+      style: { ...S.inp, width: 220 },
       placeholder: 'Пароль',
       value: password,
-      onChange: e => setPassword(e.target.value)
+      onChange: e => setPassword(e.target.value),
+      onKeyDown: e => e.key === 'Enter' && handleLogin()
     }),
-    role === 'worker' && [
-      h('select', {
-        key: 'workerSelect',
-        style: { ...S.inp, width: 200 },
-        value: selectedWorker,
-        onChange: e => setSelectedWorker(e.target.value)
-      },
-        h('option', { value: '' }, '— выберите рабочего —'),
-        data.workers.map(w => h('option', { key: w.id, value: w.id }, w.name))
-      ),
-      data.sections.length > 0 && h('div', { key: 'sectionInfo', style: { fontSize: 11, color: '#888' } }, 'Участок определяется автоматически')
-    ],
-    h('button', { style: abtn({ marginTop: 16 }), onClick: handleLogin }, 'Войти')
+    role === 'worker' && h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 } },
+      h('input', {
+        type: 'password',
+        inputMode: 'numeric',
+        style: { ...S.inp, width: 220, textAlign: 'center', fontSize: 20, letterSpacing: '0.3em' },
+        placeholder: 'PIN-код',
+        value: workerPin,
+        onChange: e => setWorkerPin(e.target.value),
+        onKeyDown: e => e.key === 'Enter' && handleLogin(),
+        maxLength: 6
+      }),
+      h('div', { style: { fontSize: 11, color: '#888' } }, 'Введите ваш персональный PIN-код')
+    ),
+    loginError && h('div', { style: { color: RD, fontSize: 12, fontWeight: 500 } }, loginError),
+    h('button', { style: abtn({ marginTop: 16, padding: '10px 32px' }), onClick: handleLogin }, 'Войти')
   );
 };
 
@@ -581,7 +597,24 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   ).sort((a,b) => {
     const orderA = data.orders.find(ord => ord.id === a.orderId);
     const orderB = data.orders.find(ord => ord.id === b.orderId);
+    // Критическое отношение: (дедлайн - сейчас) / оставшееся время работы
+    // Чем меньше CR — тем срочнее задача
+    const getCR = (op, order) => {
+      if (!order?.deadline) return 999;
+      const deadlineMs = new Date(order.deadline).getTime();
+      const remaining = (op.plannedHours || 2) * 3600000; // если план не указан — 2ч по умолчанию
+      const timeLeft = deadlineMs - now();
+      if (timeLeft <= 0) return -1; // просрочено
+      return timeLeft / remaining;
+    };
+    const crA = getCR(a, orderA);
+    const crB = getCR(b, orderB);
+    // Сначала просроченные (CR < 0), потом по CR, потом по приоритету
+    if (crA < 1 || crB < 1) return crA - crB;
     const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+    const pA = priorityOrder[orderA?.priority] ?? 4;
+    const pB = priorityOrder[orderB?.priority] ?? 4;
+    return pA !== pB ? pA - pB : crA - crB;
     return (priorityOrder[orderA?.priority] || 4) - (priorityOrder[orderB?.priority] || 4);
   });
   const doneToday = data.ops.filter(o => o.workerId === workerId && o.status === 'done' && o.finishedAt && Date.now() - o.finishedAt < 86400000 && !o.archived);
@@ -848,12 +881,22 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       h('div', { style: S.sec }, 'Задания'),
       myOps.map(op => {
         const order = data.orders.find(o => o.id === op.orderId);
-        return h('div', { key: op.id, style: { ...S.card, marginBottom: 8, borderLeft: order?.priority === 'critical' ? `4px solid ${RD}` : 'none' } },
+        const deadlineMs = order?.deadline ? new Date(order.deadline).getTime() : null;
+        const timeLeft = deadlineMs ? deadlineMs - now() : null;
+        const daysLeft = timeLeft ? Math.ceil(timeLeft / 86400000) : null;
+        const isUrgent = daysLeft !== null && daysLeft <= 2;
+        const isOverdue = daysLeft !== null && daysLeft < 0;
+        return h('div', { key: op.id, style: { ...S.card, marginBottom: 8, borderLeft: isOverdue ? `4px solid ${RD}` : isUrgent ? `4px solid ${AM}` : order?.priority === 'critical' ? `4px solid ${RD}` : 'none' } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 8 } },
             h('div', null,
               h('div', { style: { fontSize: 14, fontWeight: 500 } }, op.name),
               h('div', { style: { fontSize: 11, color: AM } }, order?.number || '—'),
-              order?.priority && h('div', { style: { fontSize: 10, color: PRIORITY[order.priority]?.color } }, PRIORITY[order.priority].label)
+              h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', marginTop: 2 } },
+                order?.priority && h('span', { style: { fontSize: 10, color: PRIORITY[order.priority]?.color } }, PRIORITY[order.priority].label),
+                daysLeft !== null && h('span', { style: { fontSize: 10, color: isOverdue ? RD : isUrgent ? AM : '#888', fontWeight: isUrgent ? 500 : 400 } },
+                  isOverdue ? `просрочено ${Math.abs(daysLeft)}д` : daysLeft === 0 ? 'сегодня!' : `${daysLeft}д до отгрузки`
+                )
+              )
             ),
             h(Badge, { st: op.status })
           ),
@@ -1723,17 +1766,21 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingWorker, setEditingWorker] = useState(null);
   const [cardWorker, setCardWorker] = useState(null);
-  const [form, setForm] = useState({ name: '', position: '', grade: '', tabNumber: '', sectionId: '', competences: [], status: 'working' });
+  const [form, setForm] = useState({ name: '', position: '', grade: '', tabNumber: '', pin: '', sectionId: '', competences: [], status: 'working' });
 
-  const resetForm = () => { setForm({ name: '', position: '', grade: '', tabNumber: '', sectionId: '', competences: [], status: 'working' }); setEditingWorker(null); setShowAddForm(false); };
+  const resetForm = () => { setForm({ name: '', position: '', grade: '', tabNumber: '', pin: '', sectionId: '', competences: [], status: 'working' }); setEditingWorker(null); setShowAddForm(false); };
 
   const addOrUpdate = useCallback(async () => {
     if (!form.name.trim()) { addToast('Введите имя рабочего', 'error'); return; }
+    if (!form.pin.trim()) { addToast('Введите PIN-код', 'error'); return; }
+    // Проверка уникальности PIN
+    const pinExists = data.workers.some(w => w.pin === form.pin.trim() && w.id !== editingWorker);
+    if (pinExists) { addToast('Такой PIN-код уже занят', 'error'); return; }
     if (editingWorker) {
-      const d = { ...data, workers: data.workers.map(w => w.id === editingWorker ? { ...w, name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), sectionId: form.sectionId || null, competences: form.competences, status: form.status } : w) };
+      const d = { ...data, workers: data.workers.map(w => w.id === editingWorker ? { ...w, name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: form.pin.trim(), sectionId: form.sectionId || null, competences: form.competences, status: form.status } : w) };
       await DB.save(d); onUpdate(d); addToast('Рабочий обновлён', 'success');
     } else {
-      const w = { id: uid(), name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), sectionId: form.sectionId || null, competences: form.competences, status: form.status };
+      const w = { id: uid(), name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: form.pin.trim(), sectionId: form.sectionId || null, competences: form.competences, status: form.status };
       const d = { ...data, workers: [...data.workers, w] };
       await DB.save(d); onUpdate(d); addToast('Рабочий добавлен', 'success');
     }
@@ -1747,7 +1794,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
   }, [data, onUpdate, addToast]);
 
   const edit = useCallback(w => {
-    setForm({ name: w.name, position: w.position || '', grade: w.grade || '', tabNumber: w.tabNumber || '', sectionId: w.sectionId || '', competences: w.competences || [], status: w.status || 'working' });
+    setForm({ name: w.name, position: w.position || '', grade: w.grade || '', tabNumber: w.tabNumber || '', pin: w.pin || '', sectionId: w.sectionId || '', competences: w.competences || [], status: w.status || 'working' });
     setEditingWorker(w.id);
     setShowAddForm(true);
   }, []);
@@ -1825,6 +1872,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
         h('input', { style: { ...S.inp, flex: 1, minWidth: 120 }, placeholder: 'Должность', value: form.position, onChange: e => setForm(p => ({ ...p, position: e.target.value })) }),
         h('input', { style: { ...S.inp, width: 80 }, placeholder: 'Разряд', value: form.grade, onChange: e => setForm(p => ({ ...p, grade: e.target.value })) }),
         h('input', { style: { ...S.inp, width: 80 }, placeholder: 'Таб. №', value: form.tabNumber, onChange: e => setForm(p => ({ ...p, tabNumber: e.target.value })) }),
+        h('input', { type: 'password', style: { ...S.inp, width: 80 }, placeholder: 'PIN', value: form.pin, onChange: e => setForm(p => ({ ...p, pin: e.target.value })), maxLength: 6 }),
         h('select', { style: { ...S.inp, minWidth: 120 }, value: form.sectionId, onChange: e => setForm(p => ({ ...p, sectionId: e.target.value })) },
           h('option', { value: '' }, '— участок —'),
           data.sections.map(s => h('option', { key: s.id, value: s.id }, s.name))
@@ -1984,6 +2032,94 @@ const MasterDowntimes = memo(({ data, onUpdate, addToast }) => {
   );
 });
 
+// ==================== МАСТЕР — УПРАВЛЕНИЕ ====================
+const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
+  const settings = data.settings || EMPTY_DATA.settings;
+  const [masterPwd, setMasterPwd] = useState(settings.masterPassword || 'master');
+  const [controllerPwd, setControllerPwd] = useState(settings.controllerPassword || 'controller');
+  const [welcomeTitle, setWelcomeTitle] = useState(settings.welcomeTitle || 'teploros');
+  const [welcomeSubtitle, setWelcomeSubtitle] = useState(settings.welcomeSubtitle || 'надежная техника');
+  const [welcomeLabel, setWelcomeLabel] = useState(settings.welcomeLabel || 'Производственный учёт · НТ');
+
+  const savePasswords = useCallback(async () => {
+    if (!masterPwd.trim() || masterPwd.trim().length < 3) { addToast('Пароль мастера: минимум 3 символа', 'error'); return; }
+    if (!controllerPwd.trim() || controllerPwd.trim().length < 3) { addToast('Пароль контролёра: минимум 3 символа', 'error'); return; }
+    const d = { ...data, settings: { ...settings, masterPassword: masterPwd.trim(), controllerPassword: controllerPwd.trim() } };
+    await DB.save(d); onUpdate(d); addToast('Пароли обновлены', 'success');
+  }, [data, settings, masterPwd, controllerPwd, onUpdate, addToast]);
+
+  const saveWelcome = useCallback(async () => {
+    const d = { ...data, settings: { ...settings, welcomeTitle: welcomeTitle.trim(), welcomeSubtitle: welcomeSubtitle.trim(), welcomeLabel: welcomeLabel.trim() } };
+    await DB.save(d); onUpdate(d); addToast('Текст главной страницы обновлён', 'success');
+  }, [data, settings, welcomeTitle, welcomeSubtitle, welcomeLabel, onUpdate, addToast]);
+
+  const resetWorkerPin = useCallback(async (workerId) => {
+    const newPin = String(Math.floor(1000 + Math.random() * 9000));
+    const d = { ...data, workers: data.workers.map(w => w.id === workerId ? { ...w, pin: newPin } : w) };
+    await DB.save(d); onUpdate(d); addToast(`Новый PIN: ${newPin}`, 'success');
+  }, [data, onUpdate, addToast]);
+
+  return h('div', null,
+    // Пароли ролей
+    h('div', { style: S.card },
+      h('div', { style: S.sec }, 'Пароли доступа'),
+      h('div', { style: { display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 } },
+        h('div', { style: { flex: 1, minWidth: 180 } },
+          h('label', { style: S.lbl }, 'Пароль мастера'),
+          h('input', { type: 'text', style: { ...S.inp, width: '100%' }, value: masterPwd, onChange: e => setMasterPwd(e.target.value) })
+        ),
+        h('div', { style: { flex: 1, minWidth: 180 } },
+          h('label', { style: S.lbl }, 'Пароль контролёра'),
+          h('input', { type: 'text', style: { ...S.inp, width: '100%' }, value: controllerPwd, onChange: e => setControllerPwd(e.target.value) })
+        )
+      ),
+      h('button', { style: abtn(), onClick: savePasswords }, 'Сохранить пароли')
+    ),
+
+    // Текст главной страницы
+    h('div', { style: S.card },
+      h('div', { style: S.sec }, 'Текст главной страницы'),
+      h('div', { style: { display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 } },
+        h('div', { style: { flex: 1, minWidth: 180 } },
+          h('label', { style: S.lbl }, 'Заголовок'),
+          h('input', { style: { ...S.inp, width: '100%' }, value: welcomeTitle, onChange: e => setWelcomeTitle(e.target.value) })
+        ),
+        h('div', { style: { flex: 1, minWidth: 180 } },
+          h('label', { style: S.lbl }, 'Подзаголовок'),
+          h('input', { style: { ...S.inp, width: '100%' }, value: welcomeSubtitle, onChange: e => setWelcomeSubtitle(e.target.value) })
+        ),
+        h('div', { style: { flex: 1, minWidth: 180 } },
+          h('label', { style: S.lbl }, 'Метка'),
+          h('input', { style: { ...S.inp, width: '100%' }, value: welcomeLabel, onChange: e => setWelcomeLabel(e.target.value) })
+        )
+      ),
+      h('div', { style: { ...S.card, background: '#f8f8f5', marginBottom: 12, textAlign: 'center' } },
+        h('div', { style: { fontSize: 10, color: '#888', marginBottom: 8 } }, 'Предпросмотр:'),
+        h('div', { style: { fontSize: 24, fontWeight: 700, color: AM } }, welcomeTitle),
+        h('div', { style: { fontSize: 12, color: '#888', letterSpacing: '0.15em', textTransform: 'uppercase' } }, welcomeSubtitle),
+        h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.15em', marginTop: 8 } }, welcomeLabel)
+      ),
+      h('button', { style: abtn(), onClick: saveWelcome }, 'Сохранить текст')
+    ),
+
+    // PIN-коды рабочих
+    h('div', { style: S.card },
+      h('div', { style: S.sec }, 'PIN-коды рабочих'),
+      data.workers.length === 0 ? h('div', { style: { fontSize: 12, color: '#888', padding: 8 } }, 'Нет рабочих') :
+        h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+          h('thead', null, h('tr', null, ['Рабочий', 'PIN', 'Действия'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
+          h('tbody', null, data.workers.map(w => h('tr', { key: w.id },
+            h('td', { style: S.td }, w.name),
+            h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 14, fontWeight: 500, letterSpacing: '0.2em' } }, w.pin || '—'),
+            h('td', { style: S.td },
+              h('button', { style: gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => resetWorkerPin(w.id) }, 'Сбросить PIN')
+            )
+          )))
+        )
+    )
+  );
+});
+
 // ==================== МАСТЕР — НАСТРОЙКИ (экспорт/импорт) ====================
 const MasterSettings = memo(({ data, onUpdate, addToast }) => {
   const exportData = () => {
@@ -2033,12 +2169,83 @@ const MasterSettings = memo(({ data, onUpdate, addToast }) => {
   );
 });
 
+// ==================== МАСТЕР — КАНБАН-ДОСКА ====================
+const MasterKanban = memo(({ data }) => {
+  const activeOrders = data.orders.filter(o => !o.archived);
+  
+  // Для каждого этапа считаем количество операций по статусам
+  const columns = OPERATION_STAGES.map(stage => {
+    const opsAtStage = data.ops.filter(op => op.name === stage && !op.archived);
+    const byStatus = {
+      pending: opsAtStage.filter(op => op.status === 'pending'),
+      in_progress: opsAtStage.filter(op => op.status === 'in_progress'),
+      on_check: opsAtStage.filter(op => op.status === 'on_check'),
+      done: opsAtStage.filter(op => op.status === 'done'),
+      defect: opsAtStage.filter(op => op.status === 'defect' || op.status === 'rework')
+    };
+    return { stage, ...byStatus, total: opsAtStage.length };
+  });
+
+  return h('div', { style: { overflowX: 'auto', paddingBottom: 16 } },
+    h('div', { style: S.sec }, 'Канбан-доска производства'),
+    h('div', { style: { display: 'flex', gap: 8, minWidth: columns.length * 160 } },
+      columns.map(col => {
+        const wip = col.in_progress.length + col.on_check.length;
+        const hasIssues = col.defect.length > 0;
+        return h('div', { key: col.stage, style: { flex: '0 0 150px', background: '#fff', border: '0.5px solid rgba(0,0,0,0.1)', borderRadius: 10, padding: 10, fontSize: 11 } },
+          // Заголовок этапа
+          h('div', { style: { fontSize: 10, fontWeight: 500, color: AM4, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8, lineHeight: 1.3 } }, col.stage),
+          // Счётчики
+          h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 } },
+            col.pending.length > 0 && h('span', { style: { padding: '2px 6px', fontSize: 10, borderRadius: 6, background: '#f0ede8', color: '#666' } }, `⏳ ${col.pending.length}`),
+            col.in_progress.length > 0 && h('span', { style: { padding: '2px 6px', fontSize: 10, borderRadius: 6, background: AM3, color: AM2 } }, `▶ ${col.in_progress.length}`),
+            col.on_check.length > 0 && h('span', { style: { padding: '2px 6px', fontSize: 10, borderRadius: 6, background: '#E1F5FE', color: '#0277BD' } }, `🔍 ${col.on_check.length}`),
+            col.done.length > 0 && h('span', { style: { padding: '2px 6px', fontSize: 10, borderRadius: 6, background: GN3, color: GN2 } }, `✓ ${col.done.length}`),
+            col.defect.length > 0 && h('span', { style: { padding: '2px 6px', fontSize: 10, borderRadius: 6, background: RD3, color: RD2 } }, `⚠ ${col.defect.length}`)
+          ),
+          // Прогресс-бар
+          col.total > 0 && h('div', { style: { height: 4, background: '#eee', borderRadius: 2, overflow: 'hidden', marginBottom: 6 } },
+            h('div', { style: { width: `${(col.done.length / col.total) * 100}%`, height: 4, background: GN, borderRadius: 2 } })
+          ),
+          // Карточки активных операций (в работе)
+          col.in_progress.map(op => {
+            const order = data.orders.find(o => o.id === op.orderId);
+            const worker = data.workers.find(w => w.id === op.workerId);
+            return h('div', { key: op.id, style: { padding: '6px 8px', background: AM3, borderRadius: 6, marginBottom: 4, borderLeft: `3px solid ${AM}` } },
+              h('div', { style: { fontSize: 11, fontWeight: 500, color: AM2 } }, order?.number || '—'),
+              worker && h('div', { style: { fontSize: 10, color: AM4 } }, worker.name),
+              op.startedAt && h('div', { style: { fontSize: 9, color: '#888' } }, fmtDur(now() - op.startedAt))
+            );
+          }),
+          // Проблемные операции
+          col.defect.map(op => {
+            const order = data.orders.find(o => o.id === op.orderId);
+            return h('div', { key: op.id, style: { padding: '6px 8px', background: RD3, borderRadius: 6, marginBottom: 4, borderLeft: `3px solid ${RD}` } },
+              h('div', { style: { fontSize: 11, fontWeight: 500, color: RD2 } }, order?.number || '—'),
+              h('div', { style: { fontSize: 10, color: RD } }, op.defectNote || 'Брак')
+            );
+          })
+        );
+      })
+    ),
+    // Легенда
+    h('div', { style: { display: 'flex', gap: 12, marginTop: 12, fontSize: 10, color: '#888' } },
+      h('span', null, '⏳ Ожидает'),
+      h('span', null, '▶ В работе'),
+      h('span', null, '🔍 Контроль'),
+      h('span', null, '✓ Готово'),
+      h('span', null, '⚠ Проблема')
+    )
+  );
+});
+
 // ==================== МАСТЕР — КОНТЕЙНЕР ====================
 const MasterScreen = memo(({ data, onUpdate, addToast, sectionId }) => {
   const [tab, setTab] = useState('ops');
   const [qrOp, setQrOp] = useState(null);
   const tabs = [
     ['ops', 'Операции'],
+    ['kanban', 'Канбан'],
     ['orders', 'Заказы'],
     ['workers', 'Рабочие'],
     ['downtimes', 'Простои'],
@@ -2050,6 +2257,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId }) => {
     ['sections', 'Участки'],
     ['plan', 'План на сегодня'],
     ['notifications', 'Уведомления'],
+    ['admin', 'Управление'],
     ['settings', 'Настройки']
   ];
 
@@ -2072,6 +2280,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId }) => {
       }, label)))
     ),
     tab === 'ops' && h(MasterOps, { data: filteredData, onUpdate, onShowQR: setQrOp, addToast }),
+    tab === 'kanban' && h(MasterKanban, { data }),
     tab === 'orders' && h(MasterOrders, { data, onUpdate, addToast }),
     tab === 'workers' && h(MasterWorkers, { data, onUpdate, addToast }),
     tab === 'downtimes' && h(MasterDowntimes, { data, onUpdate, addToast }),
@@ -2083,6 +2292,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId }) => {
     tab === 'sections' && h(MasterSections, { data, onUpdate, addToast }),
     tab === 'plan' && h(MasterTodayPlan, { data }),
     tab === 'notifications' && h(MasterNotifications, { data }),
+    tab === 'admin' && h(MasterAdmin, { data, onUpdate, addToast }),
     tab === 'settings' && h(MasterSettings, { data, onUpdate, addToast })
   );
 });
@@ -2424,16 +2634,35 @@ const Dashboard = memo(({ data, addToast }) => {
     ),
 
     equipmentUtilization.length > 0 && h('div', { style: { ...S.card, marginBottom: 12 } },
-      h('div', { style: S.sec }, 'Загрузка оборудования'),
+      h('div', { style: S.sec }, 'OEE — эффективность оборудования'),
       h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-        h('thead', null, h('tr', null, ['Оборудование', 'Тип', 'Занято (ч)', 'Загрузка'].map((t,i) => h('th', { key: i, style: S.th }, t)))),
-        h('tbody', null, equipmentUtilization.map(eq => h('tr', { key: eq.id },
-          h('td', { style: S.td }, eq.name),
-          h('td', { style: S.td }, eq.type),
-          h('td', { style: S.td }, (eq.busyTime / 3600000).toFixed(1)),
-          h('td', { style: S.td }, eq.utilization.toFixed(1) + '%')
-        )))
-      )
+        h('thead', null, h('tr', null, ['Оборудование', 'Доступность', 'Производит.', 'Качество', 'OEE'].map((t,i) => h('th', { key: i, style: S.th }, t)))),
+        h('tbody', null, equipmentUtilization.map(eq => {
+          const totalPeriodHrs = (period.end - period.start) / 3600000;
+          // Доступность: время работы / общее время периода
+          const availability = totalPeriodHrs > 0 ? Math.min((eq.busyTime / 3600000) / totalPeriodHrs * 100, 100) : 0;
+          // Производительность: плановое время / фактическое (если быстрее плана — >100%)
+          const opsOnEq = data.ops.filter(op => op.equipmentId === eq.id && op.status === 'done' && op.plannedHours && op.startedAt && op.finishedAt && op.finishedAt >= period.start && op.finishedAt <= period.end);
+          const totalPlanned = opsOnEq.reduce((s, op) => s + op.plannedHours * 3600000, 0);
+          const totalActual = opsOnEq.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0);
+          const performance = totalActual > 0 ? Math.min((totalPlanned / totalActual) * 100, 100) : 0;
+          // Качество: годные / (годные + брак) на этом оборудовании
+          const doneOnEq = data.ops.filter(op => op.equipmentId === eq.id && op.status === 'done' && op.finishedAt >= period.start && op.finishedAt <= period.end).length;
+          const defOnEq = data.ops.filter(op => op.equipmentId === eq.id && op.status === 'defect' && op.finishedAt >= period.start && op.finishedAt <= period.end).length;
+          const quality = (doneOnEq + defOnEq) > 0 ? (doneOnEq / (doneOnEq + defOnEq)) * 100 : 100;
+          // OEE
+          const oee = (availability / 100) * (performance / 100) * (quality / 100) * 100;
+          const oeeColor = oee >= 85 ? GN : oee >= 60 ? AM : RD;
+          return h('tr', { key: eq.id },
+            h('td', { style: S.td }, `${eq.name} (${eq.type})`),
+            h('td', { style: { ...S.td, textAlign: 'center' } }, `${availability.toFixed(0)}%`),
+            h('td', { style: { ...S.td, textAlign: 'center' } }, opsOnEq.length > 0 ? `${performance.toFixed(0)}%` : '—'),
+            h('td', { style: { ...S.td, textAlign: 'center' } }, (doneOnEq + defOnEq) > 0 ? `${quality.toFixed(0)}%` : '—'),
+            h('td', { style: { ...S.td, textAlign: 'center', fontWeight: 500, color: oeeColor, fontSize: 14 } }, `${oee.toFixed(0)}%`)
+          );
+        }))
+      ),
+      h('div', { style: { fontSize: 10, color: '#888', marginTop: 8, padding: '0 10px' } }, 'OEE = Доступность × Производительность × Качество. Мировой стандарт: 85%+')
     ),
 
     workerPerformance.length > 0 && h('div', { style: { ...S.card, marginBottom: 12 } },
