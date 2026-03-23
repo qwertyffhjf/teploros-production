@@ -326,6 +326,20 @@ const isShipmentNear = (deadline) => {
   const diffDays = Math.ceil(diffTime / (1000*60*60*24));
   return diffDays <= 2 && diffDays >= 0;
 };
+// Хэширование PIN (DJB2 + salt)
+const hashPin = (pin) => {
+  if (!pin) return '';
+  if (pin.startsWith('H_')) return pin;
+  let h = 5381;
+  const s = 'teploros_nt_' + pin;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h) + s.charCodeAt(i);
+  return 'H_' + (h >>> 0).toString(36).toUpperCase();
+};
+const pinMatch = (input, stored) => {
+  if (!stored || !input) return false;
+  if (stored.startsWith('H_')) return hashPin(input) === stored;
+  return input === stored; // обратная совместимость
+};
 
 // ==================== Firebase ====================
 firebase.initializeApp({
@@ -718,13 +732,9 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
   const resolvePin = (inputPin) => {
     const p = inputPin.trim();
     if (!p) return null;
-    // Мастер
-    if (p === (settings.masterPin || '0000')) return { role: 'master', workerId: null, sectionId: null, name: 'Мастер' };
-    // Контролёр
-    if (p === (settings.controllerPin || '1111')) return { role: 'controller', workerId: null, sectionId: null, name: 'Контролёр' };
-    // Дашборд — без PIN, отдельная кнопка
-    // Сотрудник
-    const worker = data.workers.find(w => w.pin === p);
+    if (pinMatch(p, settings.masterPin || '0000')) return { role: 'master', workerId: null, sectionId: null, name: 'Мастер' };
+    if (pinMatch(p, settings.controllerPin || '1111')) return { role: 'controller', workerId: null, sectionId: null, name: 'Контролёр' };
+    const worker = data.workers.find(w => pinMatch(p, w.pin));
     if (worker) return { role: 'worker', workerId: worker.id, sectionId: worker.sectionId || null, name: worker.name };
     return null;
   };
@@ -752,7 +762,7 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
     if (!resetTarget) { setResetError('Выберите сотрудника'); return; }
     if (!resetNewPin.trim() || resetNewPin.trim().length < 4) { setResetError('Новый PIN — минимум 4 цифры'); return; }
     // Проверяем что новый PIN не занят
-    const conflict = data.workers.find(w => w.pin === resetNewPin.trim() && w.id !== resetTarget);
+    const conflict = data.workers.find(w => w.id !== resetTarget && pinMatch(resetNewPin.trim(), w.pin));
     if (conflict) { setResetError(`PIN уже занят (${conflict.name})`); return; }
     onResetPin(resetTarget, resetNewPin.trim());
     setResetSuccess(`PIN успешно сброшен`);
@@ -1044,6 +1054,14 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const [pendingFinishOp, setPendingFinishOp] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
   const [historyOp, setHistoryOp] = useState(null);
+  const [opComment, setOpComment] = useState('');
+
+  // Сохранить комментарий к операции
+  const saveComment = useCallback(async (opId) => {
+    if (!opComment.trim()) return;
+    const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, comment: (o.comment ? o.comment + '\n' : '') + `[${worker?.name || 'Рабочий'}]: ${opComment.trim()}` } : o) };
+    await DB.save(d); onUpdate(d); setOpComment(''); addToast('Комментарий добавлен', 'success');
+  }, [data, opComment, worker, onUpdate, addToast]);
 
   // Таймер только когда есть активная операция
   useEffect(() => {
@@ -1075,7 +1093,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     const startedAt = now();
     const updatedOps = data.ops.map(o => o.id === op.id ? { ...o, status: 'in_progress', startedAt, workerIds: o.workerIds?.includes(workerId) ? o.workerIds : [...(o.workerIds || []), workerId] } : o);
     const shift = getCurrentShift();
-    const updated = { ...data, ops: updatedOps, events: [...data.events, { id: uid(), type: 'start', opId: op.id, workerId, ts: startedAt, shift }] };
+    const updated = { ...data, ops: updatedOps, events: [...data.events, { id: uid(), type: 'start', opId: op.id, workerId, workerIds: op.workerIds || [workerId], ts: startedAt, shift }] };
     await DB.save(updated); onUpdate(updated);
     setActiveOp({ ...op, status: 'in_progress', startedAt, workerIds: [...(op.workerIds || []), workerId] });
     addToast(`Операция "${op.name}" начата`, 'success');
@@ -1097,7 +1115,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     const updated = {
       ...data,
       ops: data.ops.map(o => o.id === op.id ? updatedOp : o),
-      events: [...data.events, { id: uid(), type: status, opId: op.id, workerId, ts: finishedAt, note: defNote || undefined, shift, defectSource: (isDefect || isRework) ? 'previous_stage' : undefined, defectReasonId: isDefect ? defectReasonId : undefined }]
+      events: [...data.events, { id: uid(), type: status, opId: op.id, workerId, workerIds: op.workerIds || [workerId], ts: finishedAt, note: defNote || undefined, shift, defectSource: (isDefect || isRework) ? 'previous_stage' : undefined, defectReasonId: isDefect ? defectReasonId : undefined }]
     };
     // Проверяем достижения и сохраняем ОДИН раз
     const withAch = checkAchievements(workerId, updated);
@@ -1221,7 +1239,13 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       h('div', { style: { fontSize: 10, color: AM, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 } }, 'Текущая операция'),
       h('div', { style: { fontSize: 16, fontWeight: 500, color: AM2, marginBottom: 4 } }, active.name),
       h('div', { style: { fontSize: 10, color: AM, marginBottom: 12 } }, data.orders.find(o => o.id === active.orderId)?.number || ''),
-      h(ElapsedTimer, { startedAt: active.startedAt, style: { fontSize: 40, fontWeight: 500, color: AM, textAlign: 'center', margin: '8px 0 16px' } }),
+      h(ElapsedTimer, { startedAt: active.startedAt, style: { fontSize: 40, fontWeight: 500, color: AM, textAlign: 'center', margin: '8px 0 12px' } }),
+      // Комментарий к операции
+      active.comment && h('div', { style: { fontSize: 11, color: '#666', background: 'rgba(255,255,255,0.7)', padding: '6px 10px', borderRadius: 8, marginBottom: 8, whiteSpace: 'pre-line' } }, `💬 ${active.comment}`),
+      h('div', { style: { display: 'flex', gap: 6, marginBottom: 10 } },
+        h('input', { style: { ...S.inp, flex: 1, fontSize: 12, padding: '6px 10px' }, placeholder: 'Комментарий к операции...', value: opComment, onChange: e => setOpComment(e.target.value), onKeyDown: e => e.key === 'Enter' && saveComment(active.id) }),
+        opComment.trim() && h('button', { style: abtn({ padding: '6px 10px', fontSize: 11 }), onClick: () => saveComment(active.id) }, '💬')
+      ),
       renderActionButtons(active)
     ),
     // QR-операция
@@ -1348,7 +1372,19 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
                   h('span', { style: { color: '#888' } }, 'Дефект: '), op.defectNote,
                   op.defectSource === 'previous_stage' && h('span', { style: { marginLeft: 6, fontSize: 10, color: AM } }, '(с пред. участка)')
                 ),
-                op.comment && h('div', { style: { marginTop: 6 } }, h('span', { style: { color: '#888' } }, 'Комментарий: '), op.comment)
+                op.comment && h('div', { style: { marginTop: 6, whiteSpace: 'pre-line' } }, h('span', { style: { color: '#888' } }, 'Комментарий: '), op.comment),
+                // Расход материалов
+                (() => {
+                  const consumption = (data.materialConsumptions || []).filter(mc => mc.opId === op.id);
+                  if (consumption.length === 0) return null;
+                  return h('div', { style: { marginTop: 6 } },
+                    h('span', { style: { color: '#888' } }, 'Расход материалов:'),
+                    consumption.map((mc, i) => {
+                      const mat = data.materials.find(m => m.id === mc.materialId);
+                      return h('div', { key: i, style: { fontSize: 11, marginLeft: 8, color: '#555' } }, `• ${mat?.name || '?'}: ${mc.qty} ${mat?.unit || ''}`);
+                    })
+                  );
+                })()
               )
             );
           }),
@@ -2286,6 +2322,18 @@ const MasterOrders = memo(({ data, onUpdate, addToast }) => {
     } else {
       const newOrder = { id: uid(), ...form, qty: Number(form.qty), createdAt: now(), archived: false };
       const newOps = createDefaultOps(newOrder.id);
+      // BOM: предупреждение о дефиците (не блокирует создание)
+      if (form.bomId) {
+        const bom = data.bomTemplates.find(b => b.id === form.bomId);
+        if (bom?.materials?.length) {
+          const qty = Number(form.qty) || 1;
+          const deficit = bom.materials.filter(m => {
+            const mat = data.materials.find(dm => dm.id === m.materialId);
+            return !mat || mat.quantity < m.qty * qty;
+          });
+          if (deficit.length > 0) addToast(`⚠ Дефицит ${deficit.length} материалов по BOM. Заказ создан, но проверьте остатки.`, 'warning');
+        }
+      }
       const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps] };
       await DB.save(d); onUpdate(d); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '' }); setFieldErrors({}); addToast('Заказ создан', 'success');
     }
@@ -2413,13 +2461,13 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
   const addOrUpdate = useCallback(async () => {
     if (!form.name.trim()) { addToast('Введите имя сотрудника', 'error'); return; }
     if (!form.pin.trim()) { addToast('Введите PIN-код', 'error'); return; }
-    const pinExists = data.workers.some(w => w.pin === form.pin.trim() && w.id !== editingWorker);
+    const pinExists = data.workers.some(w => w.id !== editingWorker && pinMatch(form.pin.trim(), w.pin));
     if (pinExists) { addToast('Такой PIN-код уже занят', 'error'); return; }
     if (editingWorker) {
-      const d = { ...data, workers: data.workers.map(w => w.id === editingWorker ? { ...w, name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: form.pin.trim(), sectionId: form.sectionId || null, competences: form.competences, status: form.status } : w) };
+      const d = { ...data, workers: data.workers.map(w => w.id === editingWorker ? { ...w, name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: hashPin(form.pin.trim()), sectionId: form.sectionId || null, competences: form.competences, status: form.status } : w) };
       await DB.save(d); onUpdate(d); addToast('Сотрудник обновлён', 'success');
     } else {
-      const w = { id: uid(), name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: form.pin.trim(), sectionId: form.sectionId || null, competences: form.competences, status: form.status };
+      const w = { id: uid(), name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: hashPin(form.pin.trim()), sectionId: form.sectionId || null, competences: form.competences, status: form.status };
       const d = { ...data, workers: [...data.workers, w] };
       await DB.save(d); onUpdate(d); addToast('Сотрудник добавлен', 'success');
     }
@@ -2654,12 +2702,12 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
     if (!masterPin.trim() || masterPin.trim().length < 4) { addToast('PIN мастера: минимум 4 цифры', 'error'); return; }
     if (!controllerPin.trim() || controllerPin.trim().length < 4) { addToast('PIN контролёра: минимум 4 цифры', 'error'); return; }
     if (!masterKey.trim() || masterKey.trim().length < 4) { addToast('Мастер-ключ: минимум 4 символа', 'error'); return; }
-    const conflictM = data.workers.find(w => w.pin === masterPin.trim());
+    const conflictM = data.workers.find(w => pinMatch(masterPin.trim(), w.pin));
     if (conflictM) { addToast(`PIN мастера совпадает с PIN сотрудника ${conflictM.name}`, 'error'); return; }
-    const conflictC = data.workers.find(w => w.pin === controllerPin.trim());
+    const conflictC = data.workers.find(w => pinMatch(controllerPin.trim(), w.pin));
     if (conflictC) { addToast(`PIN контролёра совпадает с PIN сотрудника ${conflictC.name}`, 'error'); return; }
     if (masterPin.trim() === controllerPin.trim()) { addToast('PIN мастера и контролёра должны отличаться', 'error'); return; }
-    const d = { ...data, settings: { ...settings, masterPin: masterPin.trim(), controllerPin: controllerPin.trim(), masterKey: masterKey.trim() } };
+    const d = { ...data, settings: { ...settings, masterPin: hashPin(masterPin.trim()), controllerPin: hashPin(controllerPin.trim()), masterKey: masterKey.trim() } };
     await DB.save(d); onUpdate(d); addToast('PIN-коды обновлены', 'success');
   }, [data, settings, masterPin, controllerPin, masterKey, onUpdate, addToast]);
 
@@ -2672,7 +2720,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
     const safePins = [settings.masterPin, settings.controllerPin, settings.masterKey, ...data.workers.filter(w => w.id !== workerId).map(w => w.pin)];
     let pin;
     do { pin = String(Math.floor(1000 + Math.random() * 9000)); } while (safePins.includes(pin));
-    const d = { ...data, workers: data.workers.map(w => w.id === workerId ? { ...w, pin } : w) };
+    const d = { ...data, workers: data.workers.map(w => w.id === workerId ? { ...w, pin: hashPin(pin) } : w) };
     await DB.save(d); onUpdate(d); addToast(`Новый PIN: ${pin}`, 'success');
   }, [data, settings, onUpdate, addToast]);
 
@@ -2680,9 +2728,9 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
     if (!newPin.trim() || newPin.trim().length < 4) { addToast('Минимум 4 цифры', 'error'); return; }
     const safePins = [settings.masterPin, settings.controllerPin, settings.masterKey];
     if (safePins.includes(newPin.trim())) { addToast('Этот PIN зарезервирован системой', 'error'); return; }
-    const conflict = data.workers.find(w => w.pin === newPin.trim() && w.id !== workerId);
+    const conflict = data.workers.find(w => w.id !== workerId && pinMatch(newPin.trim(), w.pin));
     if (conflict) { addToast(`PIN уже занят (${conflict.name})`, 'error'); return; }
-    const d = { ...data, workers: data.workers.map(w => w.id === workerId ? { ...w, pin: newPin.trim() } : w) };
+    const d = { ...data, workers: data.workers.map(w => w.id === workerId ? { ...w, pin: hashPin(newPin.trim()) } : w) };
     await DB.save(d); onUpdate(d);
     setEditPins(prev => ({ ...prev, [workerId]: '' }));
     addToast('PIN изменён', 'success');
@@ -2739,7 +2787,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
             h('tbody', null, data.workers.map(w =>
               h('tr', { key: w.id },
                 h('td', { style: S.td }, w.name),
-                h('td', { style: { ...S.td, fontFamily:'monospace', fontSize:14, fontWeight:500, letterSpacing:'0.2em' } }, w.pin || '—'),
+                h('td', { style: { ...S.td, fontFamily:'monospace', fontSize:14, fontWeight:500, letterSpacing:'0.2em' } }, w.pin ? (w.pin.startsWith('H_') ? '••••' : w.pin) : '—'),
                 h('td', { style: S.td },
                   h('input', {
                     type:'text', inputMode:'numeric',
@@ -3576,6 +3624,7 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
   const [, setTick] = useState(0);
   const [weldParams, setWeldParams] = useState({ seamNumber:'', electrode:'', result:'ok' });
   const [downtimeStartedAt, setDowntimeStartedAt] = useState(null);
+  const [downtimeEquipmentId, setDowntimeEquipmentId] = useState('');
 
   useEffect(() => {
     if (!op || op.status !== 'in_progress') return;
@@ -3597,7 +3646,7 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
     const worker = data.workers.find(w => w.id === workerId);
     if (worker && worker.competences && worker.competences.length > 0 && !worker.competences.includes(op.name)) { addToast('У сотрудника нет компетенции', 'error'); return; }
     const startedAt = now(); const shift = getCurrentShift();
-    const updated = { ...data, ops: data.ops.map(o => o.id === op.id ? { ...o, status:'in_progress', startedAt } : o), events: [...data.events, { id: uid(), type:'start', opId: op.id, workerId: op.workerIds?.[0], ts: startedAt, shift }] };
+    const updated = { ...data, ops: data.ops.map(o => o.id === op.id ? { ...o, status:'in_progress', startedAt } : o), events: [...data.events, { id: uid(), type:'start', opId: op.id, workerId: op.workerIds?.[0], workerIds: op.workerIds || [], ts: startedAt, shift }] };
     await DB.save(updated); onUpdate(updated); addToast('Операция начата', 'success');
   }, [data, op, onUpdate, addToast]);
 
@@ -3614,7 +3663,7 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
       if (weldParams.result === 'fail') { status = 'defect'; updatedOp.status = 'defect'; updatedOp.defectNote = 'Сварка забракована'; }
     }
     const shift = getCurrentShift();
-    const updated = { ...data, ops: data.ops.map(o => o.id === op.id ? updatedOp : o), events: [...data.events, { id: uid(), type: status, opId: op.id, workerId: op.workerIds?.[0], ts: finishedAt, note: defNote || undefined, shift, defectSource: (isDefect || isRework) ? 'previous_stage' : undefined, defectReasonId: isDefect ? defectReasonId : undefined }] };
+    const updated = { ...data, ops: data.ops.map(o => o.id === op.id ? updatedOp : o), events: [...data.events, { id: uid(), type: status, opId: op.id, workerId: op.workerIds?.[0], workerIds: op.workerIds || [], ts: finishedAt, note: defNote || undefined, shift, defectSource: (isDefect || isRework) ? 'previous_stage' : undefined, defectReasonId: isDefect ? defectReasonId : undefined }] };
     // Достижения — один save
     const allAchUpdated = (op.workerIds || []).reduce((acc, wid) => { const r = checkAchievements(wid, acc); return r; }, updated);
     const final = allAchUpdated !== updated ? allAchUpdated : updated;
@@ -3626,7 +3675,7 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
   const recordDowntime = useCallback(async () => {
     if (!selectedDowntimeType) return addToast('Выберите причину', 'error');
     const shift = getCurrentShift(); const duration = downtimeStartedAt ? now() - downtimeStartedAt : 0;
-    const newEvent = { id: uid(), type:'downtime', workerId: op.workerIds?.[0], opId: op.id, ts: now(), downtimeTypeId: selectedDowntimeType, shift, startedAt: downtimeStartedAt || now(), duration };
+    const newEvent = { id: uid(), type:'downtime', workerId: op.workerIds?.[0], opId: op.id, ts: now(), downtimeTypeId: selectedDowntimeType, shift, startedAt: downtimeStartedAt || now(), duration, equipmentId: downtimeEquipmentId || undefined };
     const updated = { ...data, events: [...data.events, newEvent] };
     await DB.save(updated); onUpdate(updated); setShowDowntimeModal(false); setSelectedDowntimeType(''); setDowntimeStartedAt(null); setDowntimeEquipmentId(''); addToast('Простой зафиксирован', 'success');
   }, [data, op, selectedDowntimeType, downtimeStartedAt, onUpdate, addToast]);
@@ -3941,6 +3990,53 @@ const Dashboard = memo(({ data, addToast }) => {
         h('tbody', null, workerPerformance.map(w => h('tr', { key: w.workerId }, h('td', { style: S.td }, w.workerName), h('td', { style: S.td }, w.opsCount), h('td', { style: S.td }, (w.totalPlanned/3600000).toFixed(1)), h('td', { style: S.td }, (w.totalActual/3600000).toFixed(1)), h('td', { style: { ...S.td, color: w.performance <= 100 ? GN : RD } }, `${w.performance.toFixed(1)}%`), h('td', { style: S.td }, w.defectCount), h('td', { style: S.td }, w.downtimeCount))))
       ))
     ),
+
+    // OEE — Overall Equipment Effectiveness
+    (() => {
+      const eqData = data.equipment.map(eq => {
+        const opsOnEq = data.ops.filter(op => op.equipmentId === eq.id && op.finishedAt >= period.start && op.finishedAt <= period.end);
+        const doneOnEq = opsOnEq.filter(op => op.status === 'done' && op.startedAt && op.finishedAt);
+        const defOnEq = opsOnEq.filter(op => op.status === 'defect');
+        if (doneOnEq.length === 0 && defOnEq.length === 0) return null;
+        const busyMs = doneOnEq.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0);
+        const downtimeMs = data.events.filter(e => e.type === 'downtime' && e.equipmentId === eq.id && e.ts >= period.start && e.ts <= period.end).reduce((s, e) => s + (e.duration || 0), 0);
+        const availability = busyMs > 0 ? Math.min(((busyMs - downtimeMs) / busyMs) * 100, 100) : 0;
+        const withPlan = doneOnEq.filter(op => op.plannedHours);
+        const totalPlanned = withPlan.reduce((s, op) => s + op.plannedHours * 3600000, 0);
+        const totalActual = withPlan.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0);
+        const performance = totalActual > 0 ? Math.min((totalPlanned / totalActual) * 100, 100) : 0;
+        const quality = (doneOnEq.length + defOnEq.length) > 0 ? (doneOnEq.length / (doneOnEq.length + defOnEq.length)) * 100 : 100;
+        const oee = (availability / 100) * (performance / 100) * (quality / 100) * 100;
+        return { ...eq, availability, performance, quality, oee, opsCount: doneOnEq.length + defOnEq.length };
+      }).filter(Boolean);
+      const opsWithoutEquip = doneOpsInPeriod.filter(op => !op.equipmentId).length;
+      if (eqData.length === 0 && opsWithoutEquip === 0) return null;
+      const avgOee = eqData.length > 0 ? eqData.reduce((s, e) => s + e.oee, 0) / eqData.length : 0;
+      const oeeColor = (v) => v >= 85 ? GN : v >= 60 ? AM : RD;
+      return h('div', { style: { ...S.card, marginBottom: 12 } },
+        h('div', { style: S.sec }, 'OEE — эффективность оборудования'),
+        eqData.length > 0 ? h('div', null,
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 } },
+            h('div', { style: { fontSize: 32, fontWeight: 500, color: oeeColor(avgOee) } }, `${avgOee.toFixed(0)}%`),
+            h('div', null, h('div', { style: { fontSize: 13, fontWeight: 500 } }, 'Средний OEE'), h('div', { style: { fontSize: 11, color: '#888' } }, avgOee >= 85 ? 'Мировой класс' : avgOee >= 60 ? 'Есть потенциал' : 'Требует внимания'))
+          ),
+          h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+            h('thead', null, h('tr', null, ['Оборудование', 'Опер.', 'Доступн.', 'Произв.', 'Качество', 'OEE'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
+            h('tbody', null, eqData.map(eq => h('tr', { key: eq.id },
+              h('td', { style: S.td }, eq.name),
+              h('td', { style: { ...S.td, textAlign: 'center' } }, eq.opsCount),
+              h('td', { style: { ...S.td, textAlign: 'center', color: oeeColor(eq.availability) } }, `${eq.availability.toFixed(0)}%`),
+              h('td', { style: { ...S.td, textAlign: 'center', color: oeeColor(eq.performance) } }, `${eq.performance.toFixed(0)}%`),
+              h('td', { style: { ...S.td, textAlign: 'center', color: oeeColor(eq.quality) } }, `${eq.quality.toFixed(0)}%`),
+              h('td', { style: { ...S.td, textAlign: 'center', fontWeight: 500, color: oeeColor(eq.oee) } }, `${eq.oee.toFixed(0)}%`)
+            )))
+          ))
+        ) : null,
+        opsWithoutEquip > 0 && h('div', { style: { fontSize: 11, color: AM, marginTop: 8, padding: '6px 10px', background: AM3, borderRadius: 6 } }, `⚠ ${opsWithoutEquip} операций за период не привязаны к оборудованию — они не участвуют в расчёте OEE. Привяжите оборудование при создании операции.`),
+        h('div', { style: { fontSize: 10, color: '#888', marginTop: 6 } }, 'OEE = Доступность × Производительность × Качество. Мировой стандарт: ≥85%')
+      );
+    })(),
+
     h('div', { style: { marginTop:16, textAlign:'right' } }, h('button', { style: abtn({ padding:'10px 20px' }), onClick: exportToExcel }, '📥 Экспорт в Excel'))
   );
 });
@@ -4055,7 +4151,7 @@ function App() {
 
   // Сброс PIN через мастер-ключ (вызывается из LoginScreen)
   const handleResetPin = useCallback(async (targetWorkerId, newPin) => {
-    const d = { ...data, workers: data.workers.map(w => w.id === targetWorkerId ? { ...w, pin: newPin } : w) };
+    const d = { ...data, workers: data.workers.map(w => w.id === targetWorkerId ? { ...w, pin: hashPin(newPin) } : w) };
     await DB.save(d);
     setData(d);
   }, [data]);
