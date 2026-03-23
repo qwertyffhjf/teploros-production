@@ -359,8 +359,9 @@ const EMPTY_DATA = {
   messages: [], savedReports: [], reclamations: [],
   settings: {
     // Единый PIN-вход: мастер и контролёр тоже входят по PIN
-    masterPin: '0000',       // PIN мастера (по умолчанию 0000 — сменить при первом входе)
-    controllerPin: '1111',   // PIN контролёра
+    masterPin: '0000',
+    controllerPin: '1111',
+    warehousePin: '2222',
     masterKey: '9999',       // Мастер-ключ: сбрасывает любой PIN, виден только в этом файле
     welcomeTitle: 'teploros', welcomeSubtitle: 'надежная техника',
     welcomeLabel: 'Производственный учёт · НТ'
@@ -717,6 +718,7 @@ const QRModal = memo(({ ops, order, worker, onClose }) => {
 const LoginScreen = ({ data, onLogin, onResetPin }) => {
   const [role, setRole] = useState('worker');
   const [pin, setPin] = useState('');
+  const [showPin, setShowPin] = useState(false);
   const [loginError, setLoginError] = useState('');
   // Состояние для режима сброса PIN мастер-ключом
   const [resetMode, setResetMode] = useState(false);
@@ -734,6 +736,7 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
     if (!p) return null;
     if (pinMatch(p, settings.masterPin || '0000')) return { role: 'master', workerId: null, sectionId: null, name: 'Мастер' };
     if (pinMatch(p, settings.controllerPin || '1111')) return { role: 'controller', workerId: null, sectionId: null, name: 'Контролёр' };
+    if (pinMatch(p, settings.warehousePin || '2222')) return { role: 'warehouse', workerId: null, sectionId: null, name: 'Склад' };
     const worker = data.workers.find(w => pinMatch(p, w.pin));
     if (worker) return { role: 'worker', workerId: worker.id, sectionId: worker.sectionId || null, name: worker.name };
     return null;
@@ -774,6 +777,7 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
     worker: 'PIN сотрудника',
     master: 'PIN мастера',
     controller: 'PIN контролёра',
+    warehouse: 'PIN кладовщика',
     chat: 'Любой PIN для чата',
     dashboard: '',
   };
@@ -823,6 +827,7 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
         ['worker', '👷 Сотрудник'],
         ['master', '🔑 Мастер'],
         ['controller', '🔍 Контролёр'],
+        ['warehouse', '📦 Склад'],
         ['dashboard', '📊 Дашборд'],
         ['chat', '💬 Чат'],
       ].map(([r, label]) => h('button', {
@@ -834,14 +839,17 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
     // PIN-поле — для всех кроме дашборда
     role !== 'dashboard'
       ? h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 } },
-          h('input', {
-            type: 'password', inputMode: 'numeric', autoFocus: true,
-            style: { ...S.inp, width: 220, textAlign: 'center', fontSize: 24, letterSpacing: '0.4em', padding: '10px' },
-            placeholder: '• • • •', value: pin,
-            onChange: e => setPin(e.target.value),
-            onKeyDown: e => e.key === 'Enter' && handleLogin(),
-            maxLength: 8
-          }),
+          h('div', { style: { position: 'relative', display: 'inline-block' } },
+            h('input', {
+              type: showPin ? 'text' : 'password', inputMode: 'numeric', autoFocus: true,
+              style: { ...S.inp, width: 220, textAlign: 'center', fontSize: 24, letterSpacing: '0.4em', padding: '10px 40px 10px 10px' },
+              placeholder: '• • • •', value: pin,
+              onChange: e => setPin(e.target.value),
+              onKeyDown: e => e.key === 'Enter' && handleLogin(),
+              maxLength: 8
+            }),
+            h('button', { type: 'button', style: { position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#888', padding: 4, minHeight: 'auto' }, onClick: () => setShowPin(v => !v) }, showPin ? '🙈' : '👁')
+          ),
           h('div', { style: { fontSize: 11, color: '#888' } }, roleHints[role] || 'Введите PIN-код')
         )
       : h('div', { style: { fontSize: 11, color: '#888', padding: '8px 0' } }, 'Открытый просмотр без PIN'),
@@ -1093,10 +1101,17 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     const startedAt = now();
     const updatedOps = data.ops.map(o => o.id === op.id ? { ...o, status: 'in_progress', startedAt, workerIds: o.workerIds?.includes(workerId) ? o.workerIds : [...(o.workerIds || []), workerId] } : o);
     const shift = getCurrentShift();
-    const updated = { ...data, ops: updatedOps, events: [...data.events, { id: uid(), type: 'start', opId: op.id, workerId, workerIds: op.workerIds || [workerId], ts: startedAt, shift }] };
+    const newEvents = [{ id: uid(), type: 'start', opId: op.id, workerId, workerIds: op.workerIds || [workerId], ts: startedAt, shift }];
+    // Пункт 5: Авто чек-ин при первой операции за день
+    const todayStart = new Date().setHours(0, 0, 0, 0);
+    const hasCheckinToday = data.events.some(e => e.workerId === workerId && e.type === 'checkin_auto' && e.ts >= todayStart);
+    if (!hasCheckinToday) {
+      newEvents.push({ id: uid(), type: 'checkin_auto', workerId, ts: startedAt, shift });
+    }
+    const updated = { ...data, ops: updatedOps, events: [...data.events, ...newEvents] };
     await DB.save(updated); onUpdate(updated);
     setActiveOp({ ...op, status: 'in_progress', startedAt, workerIds: [...(op.workerIds || []), workerId] });
-    addToast(`Операция "${op.name}" начата`, 'success');
+    addToast(`Операция "${op.name}" начата` + (!hasCheckinToday ? ' · Рабочий день начат' : ''), 'success');
   }, [data, workerId, worker, onUpdate, addToast]);
 
   const doFinish = useCallback(async (op, isDefect = false, isRework = false) => {
@@ -1214,9 +1229,32 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const ach = useMemo(() => worker?.achievements || [], [worker]);
   const nextAch = useMemo(() => Object.entries(ACHIEVEMENTS).find(([id]) => !ach.includes(id)), [ach]);
 
+  // Пункт 4: Личные метрики рабочего
+  const myStats = useMemo(() => {
+    const todayStart = new Date().setHours(0, 0, 0, 0);
+    const period30 = now() - 30 * 86400000;
+    const myDone = data.ops.filter(op => op.workerIds?.includes(workerId) && op.status === 'done');
+    const myDone30 = myDone.filter(op => op.finishedAt >= period30);
+    const myDefect30 = data.ops.filter(op => op.workerIds?.includes(workerId) && op.status === 'defect' && op.finishedAt >= period30);
+    const total30 = myDone30.length + myDefect30.length;
+    const quality = total30 > 0 ? Math.round(myDone30.length / total30 * 100) : 100;
+    const avgTime = myDone30.length > 0 ? myDone30.filter(op => op.startedAt && op.finishedAt).reduce((s, op) => s + (op.finishedAt - op.startedAt), 0) / myDone30.length : 0;
+    // Рабочее время сегодня (сумма всех операций)
+    const todayOps = myDone.filter(op => op.finishedAt >= todayStart && op.startedAt && op.finishedAt);
+    const workedToday = todayOps.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0);
+    // Активная операция добавляет текущее время
+    const activeTime = active?.startedAt ? now() - active.startedAt : 0;
+    // Производительность: план vs факт
+    const withPlan = myDone30.filter(op => op.plannedHours && op.startedAt && op.finishedAt);
+    const productivity = withPlan.length > 0 ? Math.round(withPlan.reduce((s, op) => s + op.plannedHours * 3600000, 0) / withPlan.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0) * 100) : null;
+    // Простои за 30 дней
+    const downtimeHrs = Math.round(data.events.filter(e => e.workerId === workerId && e.type === 'downtime' && e.ts >= period30).reduce((s, e) => s + (e.duration || 0), 0) / 3600000 * 10) / 10;
+    return { quality, avgTime, workedToday: workedToday + activeTime, doneToday: doneToday.length, done30: myDone30.length, productivity, downtimeHrs };
+  }, [data.ops, data.events, workerId, doneToday, active]);
+
   return h('div', { style: { maxWidth: 420, margin: '0 auto', padding: '16px 12px' } },
-    // Шапка сотрудника + счётчик новых заданий (П.12)
-    h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 } },
+    // Шапка сотрудника
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 } },
       h('div', { style: { width: 48, height: 48, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 500, color: AM2, position: 'relative' } },
         worker?.name?.charAt(0) || '?',
         h('div', { style: { position: 'absolute', bottom: -4, right: -4, background: AM, color: '#fff', fontSize: 10, fontWeight: 500, borderRadius: '50%', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, lvl)
@@ -1227,12 +1265,32 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
           h('span', { style: { fontSize: 10, padding: '1px 8px', background: AM3, color: AM2, borderRadius: 8, fontWeight: 500 } }, getLevelTitle(lvl)),
           myOps.length > 0 && h('span', { style: { background: RD, color: '#fff', borderRadius: '50%', padding: '2px 6px', fontSize: 10, fontWeight: 500, marginLeft: 4 } }, myOps.length)
         ),
-        h('div', { style: { fontSize: 11, color: '#888', marginBottom: 4 } }, `${doneToday.length} выполнено сегодня · ${allDone} всего`),
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
           h('div', { style: { flex: 1, height: 6, background: '#eee', borderRadius: 3, overflow: 'hidden' } }, h('div', { style: { width: `${prog * 100}%`, height: 6, background: AM, borderRadius: 3 } })),
           h('div', { style: { fontSize: 10, color: '#888' } }, `→ Ур.${lvl + 1}`)
         )
       )
+    ),
+    // Пункт 4: Личная панель метрик
+    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 12 } },
+      h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } },
+        h('div', { style: { fontSize: 18, fontWeight: 500, color: AM } }, fmtDur(myStats.workedToday)),
+        h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Отработано')
+      ),
+      h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } },
+        h('div', { style: { fontSize: 18, fontWeight: 500, color: myStats.quality >= 95 ? GN : myStats.quality >= 80 ? AM : RD } }, `${myStats.quality}%`),
+        h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Качество')
+      ),
+      h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } },
+        h('div', { style: { fontSize: 18, fontWeight: 500, color: myStats.productivity ? (myStats.productivity >= 100 ? GN : AM) : '#888' } }, myStats.productivity ? `${myStats.productivity}%` : '—'),
+        h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Производит.')
+      )
+    ),
+    h('div', { style: { display: 'flex', gap: 8, fontSize: 11, color: '#888', marginBottom: 12, justifyContent: 'center' } },
+      h('span', null, `Сегодня: ${myStats.doneToday} оп.`),
+      h('span', null, `·`),
+      h('span', null, `30д: ${myStats.done30} оп.`),
+      myStats.downtimeHrs > 0 && h('span', { style: { color: RD } }, `· Простои: ${myStats.downtimeHrs}ч`)
     ),
     // Активная операция (П.2: ElapsedTimer, П.11: первый экран)
     active && h('div', { style: { ...S.card, border: `1px solid ${AM}`, background: AM3, marginBottom: 16 } },
@@ -1800,9 +1858,10 @@ const MasterBOM = memo(({ data, onUpdate, addToast }) => {
     await DB.save(d); onUpdate(d); addToast('Удалена', 'info');
   }, [data, onUpdate, addToast]);
 
-  const addMaterial = useCallback(async () => {
-    if (!matForm.bomId || !matForm.materialId || !matForm.qty || Number(matForm.qty) <= 0) { addToast('Заполните все поля', 'error'); return; }
-    const d = { ...data, bomTemplates: data.bomTemplates.map(b => b.id === matForm.bomId ? { ...b, materials: [...(b.materials || []), { materialId: matForm.materialId, qty: Number(matForm.qty) }] } : b) };
+  const addMaterial = useCallback(async (bomId) => {
+    const bid = bomId || matForm.bomId;
+    if (!bid || !matForm.materialId || !matForm.qty || Number(matForm.qty) <= 0) { addToast('Заполните все поля', 'error'); return; }
+    const d = { ...data, bomTemplates: data.bomTemplates.map(b => b.id === bid ? { ...b, materials: [...(b.materials || []), { materialId: matForm.materialId, qty: Number(matForm.qty) }] } : b) };
     await DB.save(d); onUpdate(d); setMatForm(p => ({ ...p, materialId: '', qty: '' })); addToast('Материал добавлен в спецификацию', 'success');
   }, [data, matForm, onUpdate, addToast]);
 
@@ -1904,7 +1963,7 @@ const MasterBOM = memo(({ data, onUpdate, addToast }) => {
               data.materials.map(m => h('option', { key: m.id, value: m.id }, `${m.name} (${m.quantity} ${m.unit})`))
             ),
             h('input', { type: 'number', step: '0.1', style: { ...S.inp, width: 80 }, placeholder: 'Кол-во', value: matForm.bomId === bom.id ? matForm.qty : '', onChange: e => setMatForm({ bomId: bom.id, materialId: matForm.bomId === bom.id ? matForm.materialId : '', qty: e.target.value }) }),
-            h('button', { style: abtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => { setMatForm(p => ({ ...p, bomId: bom.id })); addMaterial(); } }, '+')
+            h('button', { style: abtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => addMaterial(bom.id) }, '+')
           )
         );
       })
@@ -2288,6 +2347,112 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast }) => {
 });
 
 // ==================== MasterOrders ====================
+// ==================== Редактор зависимостей операций ====================
+const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) => {
+  const order = data.orders.find(o => o.id === orderId);
+  const ops = useMemo(() => data.ops.filter(op => op.orderId === orderId && !op.archived), [data.ops, orderId]);
+
+  const toggleDep = useCallback(async (opId, depId) => {
+    const op = ops.find(o => o.id === opId);
+    if (!op) return;
+    const deps = op.dependsOn || [];
+    const newDeps = deps.includes(depId) ? deps.filter(d => d !== depId) : [...deps, depId];
+    // Проверка циклов
+    const checkCycle = (target, visited = new Set()) => {
+      if (visited.has(target)) return true;
+      visited.add(target);
+      const t = ops.find(o => o.id === target);
+      return (t?.dependsOn || []).some(d => d === opId || checkCycle(d, visited));
+    };
+    if (!deps.includes(depId) && checkCycle(depId)) {
+      addToast('Нельзя: циклическая зависимость', 'error'); return;
+    }
+    const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, dependsOn: newDeps.length > 0 ? newDeps : undefined } : o) };
+    await DB.save(d); onUpdate(d);
+  }, [data, ops, onUpdate, addToast, orderId]);
+
+  // Автоустановка: все последовательно
+  const setAllSequential = useCallback(async () => {
+    const sorted = [...ops];
+    const updated = data.ops.map(o => {
+      const idx = sorted.findIndex(s => s.id === o.id);
+      if (idx <= 0 || o.orderId !== orderId) return { ...o, dependsOn: o.orderId === orderId ? undefined : o.dependsOn };
+      return { ...o, dependsOn: [sorted[idx - 1].id] };
+    });
+    const d = { ...data, ops: updated };
+    await DB.save(d); onUpdate(d); addToast('Все операции последовательно', 'success');
+  }, [data, ops, orderId, onUpdate, addToast]);
+
+  // Автоустановка: все параллельно (без зависимостей)
+  const setAllParallel = useCallback(async () => {
+    const d = { ...data, ops: data.ops.map(o => o.orderId === orderId ? { ...o, dependsOn: undefined } : o) };
+    await DB.save(d); onUpdate(d); addToast('Все операции параллельно', 'success');
+  }, [data, orderId, onUpdate, addToast]);
+
+  // Визуальная карта: какие операции от каких зависят
+  const depMap = useMemo(() => {
+    const map = {};
+    ops.forEach(op => { map[op.id] = { op, deps: op.dependsOn || [], dependents: [] }; });
+    ops.forEach(op => { (op.dependsOn || []).forEach(depId => { if (map[depId]) map[depId].dependents.push(op.id); }); });
+    return map;
+  }, [ops]);
+
+  return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 } },
+    h('div', { className: 'modal-content', style: { background: '#fff', borderRadius: 12, padding: 20, width: 'min(700px, calc(100vw - 24px))', maxHeight: '90vh', overflowY: 'auto' } },
+      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 } },
+        h('div', null,
+          h('div', { style: { fontSize: 16, fontWeight: 500 } }, `Зависимости: ${order?.number || '—'}`),
+          h('div', { style: { fontSize: 11, color: '#888' } }, `${ops.length} операций · нажмите на ячейку для переключения`)
+        ),
+        h('button', { style: gbtn({ fontSize: 14, padding: '4px 12px' }), onClick: onClose }, '×')
+      ),
+      // Быстрые действия
+      h('div', { style: { display: 'flex', gap: 8, marginBottom: 12 } },
+        h('button', { style: gbtn({ fontSize: 11 }), onClick: setAllSequential }, '↓ Все последовательно'),
+        h('button', { style: gbtn({ fontSize: 11 }), onClick: setAllParallel }, '⇉ Все параллельно')
+      ),
+      // Матрица зависимостей
+      h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 11 } },
+        h('thead', null, h('tr', null,
+          h('th', { style: { ...S.th, position: 'sticky', left: 0, background: '#f8f8f5', zIndex: 1 } }, 'Операция ↓ зависит от →'),
+          ops.map(op => h('th', { key: op.id, style: { ...S.th, writingMode: 'vertical-lr', textOrientation: 'mixed', minWidth: 30, maxWidth: 40, height: 80, padding: '4px 2px' } }, op.name.length > 10 ? op.name.slice(0, 10) + '…' : op.name))
+        )),
+        h('tbody', null, ops.map(op => h('tr', { key: op.id },
+          h('td', { style: { ...S.td, fontWeight: 500, position: 'sticky', left: 0, background: '#fff', zIndex: 1, minWidth: 120 } },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 4 } },
+              h(Badge, { st: op.status }),
+              h('span', { style: { fontSize: 11 } }, op.name.length > 14 ? op.name.slice(0, 14) + '…' : op.name)
+            )
+          ),
+          ops.map(depOp => {
+            const isSelf = op.id === depOp.id;
+            const isDep = (op.dependsOn || []).includes(depOp.id);
+            return h('td', { key: depOp.id, style: { ...S.td, textAlign: 'center', padding: 2, cursor: isSelf ? 'default' : 'pointer', background: isSelf ? '#f0f0f0' : isDep ? GN3 : 'transparent' },
+              onClick: isSelf ? undefined : () => toggleDep(op.id, depOp.id)
+            }, isSelf ? '—' : isDep ? h('span', { style: { color: GN, fontWeight: 500, fontSize: 14 } }, '✓') : '');
+          })
+        )))
+      )),
+      // Визуальная последовательность
+      h('div', { style: { marginTop: 16 } },
+        h('div', { style: S.sec }, 'Последовательность выполнения'),
+        h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+          ops.map(op => {
+            const deps = (op.dependsOn || []).map(depId => ops.find(o => o.id === depId)?.name).filter(Boolean);
+            const isParallel = deps.length === 0;
+            return h('div', { key: op.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 8, background: isParallel ? '#E3F2FD' : '#f8f8f5', fontSize: 12 } },
+              h('span', { style: { fontSize: 14 } }, isParallel ? '⇉' : '↓'),
+              h('span', { style: { fontWeight: 500 } }, op.name),
+              h(Badge, { st: op.status }),
+              deps.length > 0 && h('span', { style: { color: '#888', fontSize: 10 } }, `после: ${deps.join(', ')}`)
+            );
+          })
+        )
+      )
+    )
+  );
+});
+
 const MasterOrders = memo(({ data, onUpdate, addToast }) => {
   const [form, setForm] = useState({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '' });
   const [editingId, setEditingId] = useState(null);
@@ -2295,6 +2460,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast }) => {
   const [page, setPage] = useState(1);
   const pageSize = 20;
   const [fieldErrors, setFieldErrors] = useState({});
+  const [depEditorOrderId, setDepEditorOrderId] = useState(null);
 
   const validate = () => {
     const errors = {};
@@ -2365,8 +2531,8 @@ const MasterOrders = memo(({ data, onUpdate, addToast }) => {
   useEffect(() => { setPage(1); }, [showArchived]);
 
   return h('div', null,
+    depEditorOrderId && h(DependencyEditor, { data, orderId: depEditorOrderId, onUpdate, addToast, onClose: () => setDepEditorOrderId(null) }),
     h('div', { style: S.card },
-      h('div', { style: S.sec }, editingId ? 'Редактировать' : 'Новый заказ'),
       h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
         h('div', { style: { minWidth: 120 } }, h('input', { style: S.inp, placeholder: 'Номер', value: form.number, onChange: e => setForm(p => ({ ...p, number: e.target.value })) }), fieldErrors.number && h('div', { className: 'error-message' }, fieldErrors.number)),
         h('div', { style: { flex: 1, minWidth: 160 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Изделие', value: form.product, onChange: e => setForm(p => ({ ...p, product: e.target.value })) }), fieldErrors.product && h('div', { className: 'error-message' }, fieldErrors.product)),
@@ -2427,6 +2593,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast }) => {
                   h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'В архив', onClick: () => del(ord.id) }, '✕'),
                   h('button', { key: 'passport', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Паспорт PDF', onClick: () => generateFullPassport(ord, data) }, '📄'),
                   h('button', { key: 'route', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Маршрутный лист PDF', onClick: () => generateRouteSheet(ord) }, '📋'),
+                  h('button', { key: 'deps', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Зависимости операций', onClick: () => setDepEditorOrderId(ord.id) }, '🔗'),
                   h('button', { key: 'cost', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Себестоимость', onClick: () => {
                     const c = calcOrderCost(ord, data);
                     alert(`Себестоимость заказа ${ord.number}:\n\nТрудозатраты: ${c.laborHours}ч = ${c.laborCost.toLocaleString()}₽\nМатериалы: ${c.materialCost.toLocaleString()}₽\nИТОГО: ${c.totalCost.toLocaleString()}₽\n\nОперации: ${c.opsDone}/${c.opsTotal} завершено`);
@@ -2631,23 +2798,57 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
               )
             );
           })
-    ) : h('div', { style: { ...S.card } }, h('div', { className: 'table-responsive' }, h('table', { style: { borderCollapse:'collapse', width:'100%', fontSize:12 } },
-      h('thead', null, h('tr', null, h('th', { style: S.th, scope: 'col' }, 'Сотрудник'), stagesForMatrix.map(s => h('th', { key: s.id, style: S.th, scope: 'col' }, s.name)))),
-      h('tbody', null, data.workers.map(w => h('tr', { key: w.id },
-        h('td', { style: { ...S.td, fontWeight:500 } }, w.name),
-        stagesForMatrix.map(s => {
-          const has = (w.competences || []).includes(s.name);
-          return h('td', { key: s.id, style: { ...S.td, textAlign:'center', cursor:'pointer' } },
-            h('input', { type:'checkbox', 'aria-label': `${w.name} — ${s.name}`, checked: has, onChange: async () => {
-              const newCompetences = has ? (w.competences || []).filter(c => c !== s.name) : [...(w.competences || []), s.name];
-              const updatedWorkers = data.workers.map(ww => ww.id === w.id ? { ...ww, competences: newCompetences } : ww);
-              const d = { ...data, workers: updatedWorkers };
+    ) : h('div', null,
+      // Светофор — покрытие навыков
+      h('div', { style: { ...S.card, marginBottom: 12, padding: 10 } },
+        h('div', { style: { ...S.sec, marginBottom: 6 } }, 'Покрытие навыков'),
+        h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+          stagesForMatrix.map(s => {
+            const count = data.workers.filter(w => (w.competences || []).includes(s.name) && (w.status || 'working') === 'working').length;
+            const color = count === 0 ? RD : count <= 2 ? AM : GN;
+            const bg = count === 0 ? RD3 : count <= 2 ? AM3 : GN3;
+            return h('div', { key: s.id, style: { padding: '6px 10px', borderRadius: 8, background: bg, border: `0.5px solid ${color}`, fontSize: 11, textAlign: 'center', minWidth: 80 } },
+              h('div', { style: { fontSize: 16, fontWeight: 500, color } }, count),
+              h('div', { style: { fontSize: 10, color, marginTop: 2 } }, s.name.length > 12 ? s.name.slice(0, 12) + '…' : s.name)
+            );
+          })
+        ),
+        h('div', { style: { display: 'flex', gap: 12, marginTop: 8, fontSize: 10, color: '#888' } },
+          h('span', null, '🔴 0 чел — критично'), h('span', null, '🟡 1-2 чел — риск'), h('span', null, '🟢 3+ чел — норма')
+        )
+      ),
+      // Матрица с уровнями
+      h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { borderCollapse:'collapse', width:'100%', fontSize:12 } },
+        h('thead', null, h('tr', null,
+          h('th', { style: S.th, scope: 'col' }, 'Сотрудник'),
+          stagesForMatrix.map(s => {
+            const count = data.workers.filter(w => (w.competences || []).includes(s.name) && (w.status || 'working') === 'working').length;
+            const color = count === 0 ? RD : count <= 2 ? AM : GN;
+            return h('th', { key: s.id, style: { ...S.th, borderBottom: `3px solid ${color}` } }, s.name);
+          })
+        )),
+        h('tbody', null, data.workers.map(w => h('tr', { key: w.id },
+          h('td', { style: { ...S.td, fontWeight:500 } }, w.name),
+          stagesForMatrix.map(s => {
+            const level = (w.competenceLevels || {})[s.name] || 0;
+            const has = (w.competences || []).includes(s.name);
+            const levelColors = { 0: { bg: '#f5f5f2', cl: '#ccc', label: '—' }, 1: { bg: '#FFF8E1', cl: '#F57F17', label: 'Нов.' }, 2: { bg: AM3, cl: AM2, label: 'Ком.' }, 3: { bg: GN3, cl: GN2, label: 'Эксп.' } };
+            const lc = levelColors[level] || levelColors[0];
+            return h('td', { key: s.id, style: { ...S.td, textAlign:'center', padding: '4px', cursor: 'pointer' }, onClick: async () => {
+              const newLevel = (level + 1) % 4;
+              const newLevels = { ...(w.competenceLevels || {}), [s.name]: newLevel };
+              const newComps = newLevel > 0 ? [...new Set([...(w.competences || []), s.name])] : (w.competences || []).filter(c => c !== s.name);
+              if (newLevel === 0) delete newLevels[s.name];
+              const d = { ...data, workers: data.workers.map(ww => ww.id === w.id ? { ...ww, competences: newComps, competenceLevels: newLevels } : ww) };
               await DB.save(d); onUpdate(d);
-            }})
-          );
-        })
-      )))
-    )))
+            }},
+              h('span', { style: { display: 'inline-block', padding: '3px 8px', borderRadius: 6, fontSize: 10, fontWeight: 500, background: lc.bg, color: lc.cl, minWidth: 36 } }, lc.label)
+            );
+          })
+        )))
+      ))),
+      h('div', { style: { fontSize: 10, color: '#888', marginTop: 6 } }, 'Нажмите на ячейку для переключения: — → Новичок → Компетентен → Эксперт → —')
+    )
   );
 });
 
@@ -2691,6 +2892,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
   const settings = data.settings || EMPTY_DATA.settings;
   const [masterPin, setMasterPin] = useState(settings.masterPin || '0000');
   const [controllerPin, setControllerPin] = useState(settings.controllerPin || '1111');
+  const [warehousePin, setWarehousePin] = useState(settings.warehousePin || '2222');
   const [masterKey, setMasterKey] = useState(settings.masterKey || '9999');
   const [showMasterKey, setShowMasterKey] = useState(false);
   const [welcomeTitle, setWelcomeTitle] = useState(settings.welcomeTitle || 'teploros');
@@ -2707,9 +2909,9 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
     const conflictC = data.workers.find(w => pinMatch(controllerPin.trim(), w.pin));
     if (conflictC) { addToast(`PIN контролёра совпадает с PIN сотрудника ${conflictC.name}`, 'error'); return; }
     if (masterPin.trim() === controllerPin.trim()) { addToast('PIN мастера и контролёра должны отличаться', 'error'); return; }
-    const d = { ...data, settings: { ...settings, masterPin: hashPin(masterPin.trim()), controllerPin: hashPin(controllerPin.trim()), masterKey: masterKey.trim() } };
+    const d = { ...data, settings: { ...settings, masterPin: hashPin(masterPin.trim()), controllerPin: hashPin(controllerPin.trim()), warehousePin: hashPin(warehousePin.trim()), masterKey: masterKey.trim() } };
     await DB.save(d); onUpdate(d); addToast('PIN-коды обновлены', 'success');
-  }, [data, settings, masterPin, controllerPin, masterKey, onUpdate, addToast]);
+  }, [data, settings, masterPin, controllerPin, warehousePin, masterKey, onUpdate, addToast]);
 
   const saveWelcome = useCallback(async () => {
     const d = { ...data, settings: { ...settings, welcomeTitle: welcomeTitle.trim(), welcomeSubtitle: welcomeSubtitle.trim(), welcomeLabel: welcomeLabel.trim() } };
@@ -2750,6 +2952,10 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         h('div', { style: { flex:1, minWidth:150 } },
           h('label', { style: S.lbl, htmlFor: 'adminControllerPin' }, 'PIN контролёра'),
           h('input', { id:'adminControllerPin', type:'text', inputMode:'numeric', style: { ...S.inp, width:'100%', fontFamily:'monospace', letterSpacing:'0.2em' }, value: controllerPin, maxLength: 8, onChange: e => setControllerPin(e.target.value) })
+        ),
+        h('div', { style: { flex:1, minWidth:150 } },
+          h('label', { style: S.lbl }, 'PIN склада'),
+          h('input', { type:'text', inputMode:'numeric', style: { ...S.inp, width:'100%', fontFamily:'monospace', letterSpacing:'0.2em' }, value: warehousePin, maxLength: 8, onChange: e => setWarehousePin(e.target.value) })
         ),
         h('div', { style: { flex:1, minWidth:150 } },
           h('label', { style: S.lbl }, 'Мастер-ключ (сброс любого PIN)'),
@@ -3730,19 +3936,24 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
 });
 
 // ==================== ChatScreen ====================
-const ChatScreen = memo(({ data, onUpdate, addToast, currentUser }) => {
+const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
   const [newMessage, setNewMessage] = useState('');
   const [showQuickActions, setShowQuickActions] = useState(false);
   const [showThanks, setShowThanks] = useState(false);
-  const [contextOp, setContextOp] = useState(''); // привязка к операции
+  const [contextOp, setContextOp] = useState('');
   const [isAnnouncement, setIsAnnouncement] = useState(false);
   const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); };
   useEffect(scrollToBottom, [data.messages]);
 
+  // П.4: Счётчик непрочитанных
+  const lastReadKey = `chat_lastRead_${currentUser.id || 'anon'}`;
+  useEffect(() => { localStorage.setItem(lastReadKey, String(now())); }, [data.messages?.length, lastReadKey]);
+
   const myId = currentUser.id || 'system';
   const isMaster = currentUser.role === 'master';
+  const isWarehouse = currentUser.role === 'warehouse';
 
   // Текущая операция рабочего (для контекста)
   const activeOp = useMemo(() => {
@@ -3760,18 +3971,24 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser }) => {
       senderRole: currentUser.role,
       text: text.trim(), type,
       timestamp: now(),
-      pinned: isAnnouncement && isMaster,
-      // Контекст операции
+      pinned: isAnnouncement && (isMaster || isWarehouse),
       opId: opData?.id || undefined,
       opName: opData?.name || undefined,
       orderNumber: orderData?.number || undefined,
       ...extra
     };
     const updatedMessages = [...(data.messages || []), message].slice(-200);
-    const updated = { ...data, messages: updatedMessages };
+    let updated = { ...data, messages: updatedMessages };
+    // Уведомления для мастера и склада при быстрых действиях
+    const notifyTypes = ['need_material', 'equipment_issue', 'need_help', 'drawing_question'];
+    if (notifyTypes.includes(type)) {
+      const notifTargets = type === 'need_material' ? ['master', 'warehouse'] : ['master'];
+      const notif = { id: uid(), type: 'chat_alert', alertType: type, senderId: myId, senderName: currentUser.name, text: text.trim(), opName: opData?.name, orderNumber: orderData?.number, targets: notifTargets, ts: now(), read: false };
+      updated = { ...updated, events: [...updated.events, notif] };
+    }
     await DB.save(updated); onUpdate(updated);
     setNewMessage(''); setContextOp(''); setIsAnnouncement(false); setShowQuickActions(false);
-  }, [data, myId, currentUser, contextOp, activeOp, isAnnouncement, isMaster, onUpdate]);
+  }, [data, myId, currentUser, contextOp, activeOp, isAnnouncement, isMaster, isWarehouse, onUpdate]);
 
   // Быстрые действия
   const quickActions = [
@@ -3816,7 +4033,11 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser }) => {
   };
 
   return h('div', { style: { ...S.card, height: '100%', minHeight: 500, display: 'flex', flexDirection: 'column', padding: 12 } },
-    h('div', { style: { ...S.sec, marginBottom: 8 } }, '💬 Чат производства'),
+    // Шапка с кнопкой назад
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 } },
+      h('div', { style: S.sec }, '💬 Чат производства'),
+      onBack && h('button', { style: gbtn({ fontSize: 11, padding: '4px 12px' }), onClick: onBack }, '← Назад')
+    ),
 
     // Закреплённые объявления
     pinnedMessages.length > 0 && h('div', { style: { marginBottom: 8 } },
@@ -3898,6 +4119,194 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser }) => {
       // Поле ввода
       h('input', { style: { ...S.inp, flex: 1, minWidth: 120 }, placeholder: isAnnouncement ? 'Объявление для всех...' : 'Сообщение...', value: newMessage, onChange: e => setNewMessage(e.target.value), onKeyDown: e => e.key === 'Enter' && !e.shiftKey && sendMessage(newMessage) }),
       h('button', { style: abtn({ padding: '10px 16px' }), onClick: () => sendMessage(newMessage) }, '→')
+    )
+  );
+});
+
+// ==================== WarehouseScreen (Склад) ====================
+const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
+  const [tab, setTab] = useState('stock');
+  const [receiveForm, setReceiveForm] = useState({ materialId: '', qty: '', batch: '' });
+
+  // Заявки на материалы (из чата)
+  const materialRequests = useMemo(() => {
+    return data.events.filter(e => e.type === 'chat_alert' && e.alertType === 'need_material' && !e.fulfilled)
+      .sort((a, b) => b.ts - a.ts);
+  }, [data.events]);
+
+  // Критические остатки
+  const criticalMaterials = useMemo(() => data.materials.filter(m => m.minStock && m.quantity <= m.minStock), [data.materials]);
+
+  // История движения
+  const movements = useMemo(() => {
+    const list = [];
+    // Списания
+    (data.materialConsumptions || []).forEach(mc => {
+      const mat = data.materials.find(m => m.id === mc.materialId);
+      const op = data.ops.find(o => o.id === mc.opId);
+      const order = op ? data.orders.find(o => o.id === op.orderId) : null;
+      list.push({ ts: mc.ts, type: 'out', materialName: mat?.name || '?', qty: mc.qty, unit: mat?.unit || '', context: order ? `${order.number} → ${op?.name}` : '—' });
+    });
+    // Поступления
+    data.events.filter(e => e.type === 'material_receive').forEach(e => {
+      const mat = data.materials.find(m => m.id === e.materialId);
+      list.push({ ts: e.ts, type: 'in', materialName: mat?.name || '?', qty: e.qty, unit: mat?.unit || '', context: e.batch ? `Партия: ${e.batch}` : '—' });
+    });
+    return list.sort((a, b) => b.ts - a.ts).slice(0, 50);
+  }, [data.materialConsumptions, data.events, data.materials, data.ops, data.orders]);
+
+  // Приёмка материала
+  const receiveMaterial = useCallback(async () => {
+    if (!receiveForm.materialId || !receiveForm.qty || Number(receiveForm.qty) <= 0) { addToast('Укажите материал и количество', 'error'); return; }
+    const qty = Number(receiveForm.qty);
+    const updatedMaterials = data.materials.map(m => m.id === receiveForm.materialId ? { ...m, quantity: m.quantity + qty, batch: receiveForm.batch || m.batch } : m);
+    const event = { id: uid(), type: 'material_receive', materialId: receiveForm.materialId, qty, batch: receiveForm.batch, ts: now() };
+    const d = { ...data, materials: updatedMaterials, events: [...data.events, event] };
+    await DB.save(d); onUpdate(d);
+    const mat = data.materials.find(m => m.id === receiveForm.materialId);
+    setReceiveForm({ materialId: '', qty: '', batch: '' });
+    addToast(`Принято: ${mat?.name} +${qty} ${mat?.unit}`, 'success');
+  }, [data, receiveForm, onUpdate, addToast]);
+
+  // Выдача по заявке
+  const fulfillRequest = useCallback(async (eventId) => {
+    const d = { ...data, events: data.events.map(e => e.id === eventId ? { ...e, fulfilled: true, fulfilledAt: now() } : e) };
+    await DB.save(d); onUpdate(d); addToast('Заявка выполнена', 'success');
+  }, [data, onUpdate, addToast]);
+
+  // Импорт остатков
+  const importStock = useCallback((event) => {
+    const file = event.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: 'array' });
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+        if (rows.length === 0) { addToast('Файл пустой', 'error'); return; }
+        let added = 0, updated = 0;
+        const newMats = [...data.materials];
+        rows.forEach(r => {
+          const name = (r['Название'] || r['Наименование'] || r['Name'] || '').toString().trim();
+          if (!name) return;
+          const unit = (r['Ед. изм.'] || r['Единица'] || 'шт').toString().trim();
+          const qty = Number(r['Количество'] || r['Кол-во'] || r['Остаток'] || 0);
+          const unitCost = Number(r['Цена'] || r['Цена/ед.'] || 0);
+          const minStock = Number(r['Мин. остаток'] || r['MinStock'] || 0);
+          const existing = newMats.find(m => m.name.toLowerCase() === name.toLowerCase());
+          if (existing) { existing.quantity = qty; if (unitCost) existing.unitCost = unitCost; if (minStock) existing.minStock = minStock; updated++; }
+          else { newMats.push({ id: uid(), name, unit, quantity: qty, unitCost, minStock, batch: '' }); added++; }
+        });
+        DB.save({ ...data, materials: newMats }).then(() => { onUpdate({ ...data, materials: newMats }); addToast(`+${added} новых, ${updated} обновлено`, 'success'); });
+      } catch(ex) { addToast('Ошибка: ' + ex.message, 'error'); }
+    };
+    reader.readAsArrayBuffer(file); event.target.value = '';
+  }, [data, onUpdate, addToast]);
+
+  const totalValue = data.materials.reduce((s, m) => s + m.quantity * (m.unitCost || 0), 0);
+
+  return h('div', { style: { maxWidth: 800, margin: '0 auto', padding: '0 0 24px' } },
+    // Вкладки
+    h('div', { style: { display: 'flex', gap: 4, marginBottom: 16, borderBottom: '0.5px solid rgba(0,0,0,0.08)', paddingBottom: 8 } },
+      [['stock', '📦 Остатки'], ['requests', `🔔 Заявки (${materialRequests.length})`], ['receive', '📥 Приёмка'], ['history', '📋 Движение']].map(([id, label]) =>
+        h('button', { key: id, style: tab === id ? abtn({ fontSize: 12 }) : gbtn({ fontSize: 12 }), onClick: () => setTab(id) }, label)
+      )
+    ),
+
+    // Заявки (уведомления)
+    materialRequests.length > 0 && tab !== 'requests' && h('div', { role: 'alert', style: { padding: '8px 12px', background: AM3, border: `0.5px solid ${AM}`, borderRadius: 8, marginBottom: 12, fontSize: 12, cursor: 'pointer' }, onClick: () => setTab('requests') },
+      h('span', { style: { fontWeight: 500, color: AM2 } }, `🔔 ${materialRequests.length} новых заявок на материалы`)
+    ),
+
+    // Остатки
+    tab === 'stock' && h('div', null,
+      // Сводка
+      h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 10, marginBottom: 12 } },
+        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 24, fontWeight: 500 } }, data.materials.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Позиций')),
+        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 24, fontWeight: 500, color: criticalMaterials.length > 0 ? RD : GN } }, criticalMaterials.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Критич.')),
+        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 20, fontWeight: 500, color: AM } }, `${totalValue.toLocaleString()}₽`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Стоимость'))
+      ),
+      // Критические
+      criticalMaterials.length > 0 && h('div', { role: 'alert', style: { ...S.card, background: RD3, border: `0.5px solid ${RD}`, marginBottom: 12, padding: 10 } },
+        h('div', { style: { fontSize: 10, color: RD, fontWeight: 500, textTransform: 'uppercase', marginBottom: 4 } }, '⚠ Критические остатки'),
+        criticalMaterials.map(m => h('div', { key: m.id, style: { fontSize: 12, color: RD2 } }, `${m.name}: ${m.quantity} ${m.unit} (мин: ${m.minStock})`))
+      ),
+      // Импорт/Экспорт
+      h('div', { style: { display: 'flex', gap: 8, marginBottom: 12 } },
+        h('button', { style: abtn({ fontSize: 12 }), onClick: () => document.getElementById('wh-import').click() }, '📤 Импорт Excel'),
+        h('input', { type: 'file', id: 'wh-import', style: { display: 'none' }, accept: '.xlsx,.xls,.csv', onChange: importStock }),
+        h('button', { style: gbtn({ fontSize: 12 }), onClick: () => {
+          const ws = XLSX.utils.json_to_sheet(data.materials.map(m => ({ 'Название': m.name, 'Ед.': m.unit, 'Остаток': m.quantity, 'Мин.': m.minStock || '', 'Цена': m.unitCost || '', 'Стоимость': m.quantity * (m.unitCost || 0) })));
+          const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Остатки');
+          XLSX.writeFile(wb, `stock_${new Date().toISOString().slice(0, 10)}.xlsx`);
+        }}, '📥 Экспорт Excel')
+      ),
+      // Таблица
+      data.materials.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888' } }, 'Нет материалов') :
+        h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+          h('thead', null, h('tr', null, ['Материал', 'Остаток', 'Мин.', 'Цена', 'Стоимость'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
+          h('tbody', null, data.materials.sort((a, b) => {
+            const aCrit = a.minStock && a.quantity <= a.minStock;
+            const bCrit = b.minStock && b.quantity <= b.minStock;
+            if (aCrit && !bCrit) return -1; if (!aCrit && bCrit) return 1;
+            return a.name.localeCompare(b.name);
+          }).map(m => {
+            const crit = m.minStock && m.quantity <= m.minStock;
+            return h('tr', { key: m.id, style: { background: crit ? RD3 : 'transparent' } },
+              h('td', { style: { ...S.td, fontWeight: crit ? 500 : 400 } }, `${m.name} (${m.unit})`),
+              h('td', { style: { ...S.td, color: crit ? RD : 'inherit', fontWeight: crit ? 500 : 400, textAlign: 'center' } }, m.quantity),
+              h('td', { style: { ...S.td, textAlign: 'center', color: '#888' } }, m.minStock || '—'),
+              h('td', { style: { ...S.td, textAlign: 'center' } }, m.unitCost ? `${m.unitCost}₽` : '—'),
+              h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'right' } }, m.unitCost ? `${(m.quantity * m.unitCost).toLocaleString()}₽` : '—')
+            );
+          }))
+        )))
+    ),
+
+    // Заявки
+    tab === 'requests' && h('div', null,
+      materialRequests.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888', padding: 24 } }, 'Нет открытых заявок') :
+        materialRequests.map(req => h('div', { key: req.id, style: { ...S.card, padding: 12, borderLeft: `4px solid ${AM}` } },
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+            h('div', null,
+              h('div', { style: { fontSize: 13, fontWeight: 500 } }, req.senderName),
+              h('div', { style: { fontSize: 12, color: '#666' } }, req.text),
+              req.opName && h('div', { style: { fontSize: 11, color: AM } }, `${req.orderNumber || ''} → ${req.opName}`),
+              h('div', { style: { fontSize: 10, color: '#888' } }, new Date(req.ts).toLocaleString())
+            ),
+            h('button', { style: abtn({ fontSize: 12, padding: '8px 16px' }), onClick: () => fulfillRequest(req.id) }, '✓ Выдано')
+          )
+        ))
+    ),
+
+    // Приёмка
+    tab === 'receive' && h('div', { style: S.card },
+      h('div', { style: S.sec }, 'Приёмка материала на склад'),
+      h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
+        h('div', { style: { flex: 2, minWidth: 150 } },
+          h('select', { style: { ...S.inp, width: '100%' }, value: receiveForm.materialId, onChange: e => setReceiveForm(p => ({ ...p, materialId: e.target.value })) },
+            h('option', { value: '' }, '— выберите материал —'),
+            data.materials.map(m => h('option', { key: m.id, value: m.id }, `${m.name} (${m.quantity} ${m.unit})`))
+          )
+        ),
+        h('div', { style: { flex: 1, minWidth: 80 } }, h('input', { type: 'number', step: '0.1', style: { ...S.inp, width: '100%' }, placeholder: 'Кол-во', value: receiveForm.qty, onChange: e => setReceiveForm(p => ({ ...p, qty: e.target.value })) })),
+        h('div', { style: { flex: 1, minWidth: 100 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Партия', value: receiveForm.batch, onChange: e => setReceiveForm(p => ({ ...p, batch: e.target.value })) })),
+        h('button', { style: abtn({ padding: '10px 20px' }), onClick: receiveMaterial }, '📥 Принять')
+      )
+    ),
+
+    // Движение
+    tab === 'history' && h('div', null,
+      movements.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888' } }, 'Нет движений') :
+        h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+          h('thead', null, h('tr', null, ['Дата', 'Тип', 'Материал', 'Кол-во', 'Контекст'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
+          h('tbody', null, movements.map((m, i) => h('tr', { key: i },
+            h('td', { style: { ...S.td, fontSize: 11 } }, new Date(m.ts).toLocaleString()),
+            h('td', { style: S.td }, h('span', { style: { padding: '2px 8px', fontSize: 10, borderRadius: 6, background: m.type === 'in' ? GN3 : RD3, color: m.type === 'in' ? GN2 : RD2 } }, m.type === 'in' ? '📥 Приход' : '📤 Расход')),
+            h('td', { style: S.td }, m.materialName),
+            h('td', { style: { ...S.td, fontWeight: 500, color: m.type === 'in' ? GN : RD } }, `${m.type === 'in' ? '+' : '-'}${m.qty} ${m.unit}`),
+            h('td', { style: { ...S.td, fontSize: 11, color: '#888' } }, m.context)
+          )))
+        )))
     )
   );
 });
@@ -4164,6 +4573,7 @@ function App() {
     if (role === 'worker' || role === 'chat') { const w = data.workers.find(w => w.id === workerId); return { id: workerId, name: w?.name || 'Сотрудник', role: 'worker' }; }
     if (role === 'master' || role === 'chat_master') return { id: 'master', name: 'Мастер', role: 'master' };
     if (role === 'controller' || role === 'chat_controller') return { id: 'controller', name: 'Контролёр', role: 'controller' };
+    if (role === 'warehouse') return { id: 'warehouse', name: 'Склад', role: 'warehouse' };
     return { id: 'system', name: 'Система', role: 'system' };
   }, [role, workerId, data.workers]);
 
@@ -4204,15 +4614,22 @@ function App() {
       h('button', { style: gbtn({ fontSize:11 }), onClick: goBack }, '← Выход'),
       h('div', { style: { fontSize:12, color:'#888' } }, `Чат · ${currentUser.name}`)
     ),
-    h(ChatScreen, { data, onUpdate: save, addToast, currentUser }),
+    h(ChatScreen, { data, onUpdate: save, addToast, currentUser, onBack: goBack }),
     h('div', null, toasts.map(t => h(Toast, { key: t.id, message: t.message, onClose: () => removeToast(t.id) })))
   );
 
   return h('div', null,
     h('div', { style: { display:'flex', gap:12, padding:'10px 0', borderBottom:'0.5px solid rgba(0,0,0,0.08)', alignItems:'center', flexWrap:'wrap' } },
       h('button', { style: gbtn({ fontSize:11 }), onClick: goBack }, '← Выход'),
-      h('div', { style: { fontSize:12, color:'#888' } }, effectiveRole === 'master' ? 'Мастер' : effectiveRole === 'controller' ? 'Контролёр' : effectiveRole === 'dashboard' ? 'Дашборд' : currentUser.name),
-      effectiveRole !== 'dashboard' && h('button', { style: showChat ? abtn({ fontSize:11 }) : gbtn({ fontSize:11 }), onClick: () => setShowChat(!showChat) }, showChat ? '💬 Чат (скрыть)' : '💬 Чат'),
+      h('div', { style: { fontSize:12, color:'#888' } }, effectiveRole === 'master' ? 'Мастер' : effectiveRole === 'controller' ? 'Контролёр' : effectiveRole === 'warehouse' ? 'Склад' : effectiveRole === 'dashboard' ? 'Дашборд' : currentUser.name),
+      effectiveRole !== 'dashboard' && (() => {
+        const chatLastRead = Number(localStorage.getItem(`chat_lastRead_${currentUser.id || 'anon'}`)) || 0;
+        const unread = (data.messages || []).filter(m => m.timestamp > chatLastRead && m.senderId !== (currentUser.id || 'system')).length;
+        return h('button', { style: showChat ? abtn({ fontSize:11 }) : gbtn({ fontSize:11, position: 'relative' }), onClick: () => setShowChat(!showChat) },
+          showChat ? '💬 Чат (скрыть)' : '💬 Чат',
+          !showChat && unread > 0 && h('span', { style: { position: 'absolute', top: -4, right: -4, background: RD, color: '#fff', borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 500 } }, unread > 9 ? '9+' : unread)
+        );
+      })(),
       h('div', { style: { marginLeft:'auto', fontSize:10, display:'flex', alignItems:'center', gap:8 } },
         isSaving && h('div', { style: { display:'flex', alignItems:'center', gap:4, color: AM4, fontWeight:500 } },
           h('span', { style: {
@@ -4228,11 +4645,12 @@ function App() {
       )
     ),
     showChat
-      ? h(ChatScreen, { data, onUpdate: save, addToast, currentUser })
+      ? h(ChatScreen, { data, onUpdate: save, addToast, currentUser, onBack: () => setShowChat(false) })
       : h('div', null,
           effectiveRole === 'master' && h(MasterScreen, { data, onUpdate: save, addToast, sectionId }),
           effectiveRole === 'controller' && h(ControllerScreen, { data, onUpdate: save, addToast }),
           effectiveRole === 'worker' && workerId && h(WorkerScreen, { data, workerId, sectionId, onUpdate: save, initialOpId: null, addToast }),
+          effectiveRole === 'warehouse' && h(WarehouseScreen, { data, onUpdate: save, addToast }),
           effectiveRole === 'dashboard' && h(Dashboard, { data, addToast })
         ),
     h('div', { 'aria-live': 'polite' }, toasts.map(t => h(Toast, { key: t.id, message: t.message, onClose: () => removeToast(t.id) })))
