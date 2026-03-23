@@ -447,22 +447,47 @@ const logAction = (data, action, details) => {
 
 // ==================== QR-сканер (встроенный) ====================
 const QRScannerModal = memo(({ onScan, onClose }) => {
-  const scannerRef = useRef(null);
+  const [error, setError] = useState(null);
+  const [ready, setReady] = useState(false);
   const scannerInstance = useRef(null);
+
   useEffect(() => {
-    if (!scannerRef.current || !window.Html5Qrcode) return;
-    const scanner = new window.Html5Qrcode('qr-scanner-region');
-    scannerInstance.current = scanner;
-    scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 250, height: 250 } },
-      (text) => { scanner.stop().catch(() => {}); onScan(text); },
-      () => {}
-    ).catch(err => console.error('QR scanner error:', err));
-    return () => { scanner.stop().catch(() => {}); };
+    if (!window.Html5Qrcode) { setError('Библиотека QR не загружена'); return; }
+    // Задержка — ждём пока DOM отрисуется
+    const timer = setTimeout(() => {
+      const el = document.getElementById('qr-scanner-region');
+      if (!el) { setError('Элемент не найден'); return; }
+      try {
+        const scanner = new window.Html5Qrcode('qr-scanner-region');
+        scannerInstance.current = scanner;
+        scanner.start(
+          { facingMode: 'environment' },
+          { fps: 15, qrbox: { width: 220, height: 220 }, aspectRatio: 1.0 },
+          (decodedText) => {
+            scanner.stop().catch(() => {});
+            onScan(decodedText);
+          },
+          () => {} // игнорируем кадры без QR
+        ).then(() => setReady(true)).catch(err => {
+          setError('Нет доступа к камере: ' + err.message);
+        });
+      } catch(e) { setError('Ошибка: ' + e.message); }
+    }, 500);
+    return () => {
+      clearTimeout(timer);
+      if (scannerInstance.current) {
+        scannerInstance.current.stop().catch(() => {});
+        scannerInstance.current = null;
+      }
+    };
   }, [onScan]);
-  return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 200 } },
-    h('div', { style: { color: '#fff', fontSize: 14, marginBottom: 12 } }, 'Наведите камеру на QR-код'),
-    h('div', { id: 'qr-scanner-region', ref: scannerRef, style: { width: 300, height: 300, borderRadius: 12, overflow: 'hidden' } }),
-    h('button', { style: { ...gbtn(), color: '#fff', borderColor: 'rgba(255,255,255,0.3)', marginTop: 16, padding: '12px 32px' }, onClick: onClose }, 'Закрыть')
+
+  return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 } },
+    h('div', { style: { color: '#fff', fontSize: 16, marginBottom: 16, textAlign: 'center' } }, ready ? 'Наведите камеру на QR-код' : 'Запуск камеры...'),
+    error && h('div', { style: { color: RD, fontSize: 13, marginBottom: 12, textAlign: 'center', maxWidth: 300 } }, error),
+    h('div', { id: 'qr-scanner-region', style: { width: 280, height: 280, borderRadius: 16, overflow: 'hidden', background: '#111' } }),
+    h('div', { style: { color: '#888', fontSize: 11, marginTop: 12, textAlign: 'center' } }, 'QR-код должен содержать ссылку с ?opId='),
+    h('button', { style: { ...gbtn(), color: '#fff', borderColor: 'rgba(255,255,255,0.3)', marginTop: 16, padding: '14px 40px', fontSize: 15 }, onClick: onClose }, 'Закрыть')
   );
 });
 
@@ -963,12 +988,15 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
 
   const myOps = useMemo(() => data.ops.filter(o => {
     if (o.status === 'done' || o.status === 'defect' || o.archived) return false;
-    // 1. Явно назначена на этого рабочего
+    // 1. Явно назначена на этого рабочего — всегда показываем
     if (o.workerIds?.includes(workerId)) return true;
-    // 2. Не назначена ни на кого + совпадает участок + есть компетенция
+    // 2. Не назначена ни на кого — показываем только если:
+    //    - совпадает участок
+    //    - у рабочего ЕСТЬ компетенции и они включают эту операцию
     if (!o.workerIds?.length && sectionId && o.sectionId === sectionId) {
       const w = data.workers.find(w => w.id === workerId);
-      if (!w?.competences?.length) return true; // нет ограничений по компетенциям
+      // Без компетенций — не показываем неназначенные (только явно назначенные)
+      if (!w?.competences?.length) return false;
       return w.competences.includes(o.name);
     }
     return false;
@@ -1014,6 +1042,8 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [showMaterialModal, setShowMaterialModal] = useState(false);
   const [pendingFinishOp, setPendingFinishOp] = useState(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyOp, setHistoryOp] = useState(null);
 
   // Таймер только когда есть активная операция
   useEffect(() => {
@@ -1274,6 +1304,59 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       })
     ),
     !active && myOps.length === 0 && h('div', { style: { ...S.card, textAlign: 'center', padding: 24, color: '#888' } }, 'Нет активных заданий'),
+
+    // Завершённые операции (Баг 3)
+    (() => {
+      const doneOps = data.ops.filter(o => o.workerIds?.includes(workerId) && (o.status === 'done' || o.status === 'defect' || o.status === 'on_check') && !o.archived)
+        .sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0));
+      if (doneOps.length === 0) return null;
+      return h('div', { style: { marginTop: 12 } },
+        h('button', { type: 'button', style: { background: 'none', border: 'none', fontSize: 12, color: AM, cursor: 'pointer', padding: '4px 0', fontWeight: 500 }, onClick: () => setShowHistory(v => !v) },
+          showHistory ? `▾ Скрыть выполненные (${doneOps.length})` : `▸ Выполненные операции (${doneOps.length})`
+        ),
+        showHistory && h('div', { style: { marginTop: 8 } },
+          doneOps.slice(0, 20).map(op => {
+            const order = data.orders.find(o => o.id === op.orderId);
+            const dur = op.startedAt && op.finishedAt ? fmtDur(op.finishedAt - op.startedAt) : '—';
+            const isExpanded = historyOp === op.id;
+            return h('div', { key: op.id, style: { ...S.card, marginBottom: 6, padding: 10, cursor: 'pointer', borderLeft: op.status === 'defect' ? `3px solid ${RD}` : op.status === 'on_check' ? `3px solid ${BL}` : `3px solid ${GN}` }, onClick: () => setHistoryOp(isExpanded ? null : op.id) },
+              h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                h('div', null,
+                  h('div', { style: { fontSize: 13, fontWeight: 500 } }, op.name),
+                  h('div', { style: { fontSize: 11, color: '#888' } }, `${order?.number || '—'} · ${dur}`)
+                ),
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+                  h(Badge, { st: op.status }),
+                  h('span', { style: { fontSize: 10, color: '#aaa' } }, isExpanded ? '▾' : '▸')
+                )
+              ),
+              // Развёрнутые детали
+              isExpanded && h('div', { style: { marginTop: 10, paddingTop: 8, borderTop: '0.5px solid rgba(0,0,0,0.06)', fontSize: 12 } },
+                h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 16px' } },
+                  h('div', null, h('span', { style: { color: '#888' } }, 'Начало: '), op.startedAt ? new Date(op.startedAt).toLocaleString() : '—'),
+                  h('div', null, h('span', { style: { color: '#888' } }, 'Окончание: '), op.finishedAt ? new Date(op.finishedAt).toLocaleString() : '—'),
+                  h('div', null, h('span', { style: { color: '#888' } }, 'Длительность: '), dur),
+                  op.plannedHours && h('div', null, h('span', { style: { color: '#888' } }, 'План: '), `${op.plannedHours}ч`),
+                  op.equipmentId && h('div', null, h('span', { style: { color: '#888' } }, 'Оборудование: '), data.equipment.find(e => e.id === op.equipmentId)?.name || '—')
+                ),
+                op.weldParams && h('div', { style: { marginTop: 6 } },
+                  h('span', { style: { color: '#888' } }, 'Сварка: '),
+                  `шов ${op.weldParams.seamNumber}, электрод ${op.weldParams.electrode}, `,
+                  h('span', { style: { color: op.weldParams.result === 'ok' ? GN : RD, fontWeight: 500 } }, op.weldParams.result === 'ok' ? 'принято' : 'брак')
+                ),
+                op.defectNote && h('div', { style: { marginTop: 6, color: RD } },
+                  h('span', { style: { color: '#888' } }, 'Дефект: '), op.defectNote,
+                  op.defectSource === 'previous_stage' && h('span', { style: { marginLeft: 6, fontSize: 10, color: AM } }, '(с пред. участка)')
+                ),
+                op.comment && h('div', { style: { marginTop: 6 } }, h('span', { style: { color: '#888' } }, 'Комментарий: '), op.comment)
+              )
+            );
+          }),
+          doneOps.length > 20 && h('div', { style: { textAlign: 'center', fontSize: 11, color: '#888', padding: 8 } }, `...и ещё ${doneOps.length - 20} операций`)
+        )
+      );
+    })(),
+
     // Достижения (П.11: свёрнуты внизу)
     h('div', { style: { ...S.card, padding: 10, marginTop: 8 } },
       h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
@@ -3600,42 +3683,172 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
 // ==================== ChatScreen ====================
 const ChatScreen = memo(({ data, onUpdate, addToast, currentUser }) => {
   const [newMessage, setNewMessage] = useState('');
+  const [showQuickActions, setShowQuickActions] = useState(false);
+  const [showThanks, setShowThanks] = useState(false);
+  const [contextOp, setContextOp] = useState(''); // привязка к операции
+  const [isAnnouncement, setIsAnnouncement] = useState(false);
   const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); };
   useEffect(scrollToBottom, [data.messages]);
 
-  const sendMessage = async () => {
-    if (!newMessage.trim()) return;
+  const myId = currentUser.id || 'system';
+  const isMaster = currentUser.role === 'master';
+
+  // Текущая операция рабочего (для контекста)
+  const activeOp = useMemo(() => {
+    if (!currentUser.id || currentUser.role !== 'worker') return null;
+    return data.ops.find(op => op.status === 'in_progress' && op.workerIds?.includes(currentUser.id));
+  }, [data.ops, currentUser]);
+
+  const sendMessage = useCallback(async (text, type = 'text', extra = {}) => {
+    if (!text?.trim()) return;
+    const opData = contextOp ? data.ops.find(o => o.id === contextOp) : activeOp;
+    const orderData = opData ? data.orders.find(o => o.id === opData.orderId) : null;
     const message = {
-      id: uid(),
-      senderId: currentUser.id || 'system',
-      senderName: currentUser.name || (currentUser.role === 'master' ? 'Мастер' : currentUser.role === 'controller' ? 'Контролёр' : 'Система'),
-      text: newMessage.trim(),
-      timestamp: now()
+      id: uid(), senderId: myId,
+      senderName: currentUser.name || 'Система',
+      senderRole: currentUser.role,
+      text: text.trim(), type,
+      timestamp: now(),
+      pinned: isAnnouncement && isMaster,
+      // Контекст операции
+      opId: opData?.id || undefined,
+      opName: opData?.name || undefined,
+      orderNumber: orderData?.number || undefined,
+      ...extra
     };
     const updatedMessages = [...(data.messages || []), message].slice(-200);
     const updated = { ...data, messages: updatedMessages };
-    await DB.save(updated); onUpdate(updated); setNewMessage('');
+    await DB.save(updated); onUpdate(updated);
+    setNewMessage(''); setContextOp(''); setIsAnnouncement(false); setShowQuickActions(false);
+  }, [data, myId, currentUser, contextOp, activeOp, isAnnouncement, isMaster, onUpdate]);
+
+  // Быстрые действия
+  const quickActions = [
+    { icon: '🔧', label: 'Нужен материал', type: 'need_material' },
+    { icon: '⚠️', label: 'Проблема с оборудованием', type: 'equipment_issue' },
+    { icon: '📋', label: 'Вопрос по чертежу', type: 'drawing_question' },
+    { icon: '🆘', label: 'Нужна помощь', type: 'need_help' },
+    { icon: '✅', label: 'Задача выполнена', type: 'task_done' },
+    { icon: '⏸', label: 'Жду решения', type: 'waiting' }
+  ];
+
+  // Отправить благодарность
+  const sendThanks = useCallback(async (toWorkerId) => {
+    const toWorker = data.workers.find(w => w.id === toWorkerId);
+    if (!toWorker) return;
+    const text = `🤝 ${currentUser.name} благодарит ${toWorker.name}!`;
+    const thankEvent = { id: uid(), type: 'thanks', toWorkerId, fromWorkerId: myId, ts: now() };
+    const message = { id: uid(), senderId: 'system', senderName: 'Система', senderRole: 'system', text, type: 'thanks', timestamp: now(), toWorkerId, fromWorkerId: myId };
+    const updatedMessages = [...(data.messages || []), message].slice(-200);
+    const updated = { ...data, messages: updatedMessages, events: [...data.events, thankEvent] };
+    // Проверить достижение "Спасибо, коллега!"
+    const withAch = checkAchievements(toWorkerId, updated);
+    await DB.save(withAch !== updated ? withAch : updated);
+    onUpdate(withAch !== updated ? withAch : updated);
+    setShowThanks(false);
+    addToast(`Благодарность отправлена ${toWorker.name}`, 'success');
+  }, [data, myId, currentUser, onUpdate, addToast]);
+
+  const messages = (data.messages || []).sort((a, b) => a.timestamp - b.timestamp);
+  const pinnedMessages = messages.filter(m => m.pinned);
+  const regularMessages = messages.filter(m => !m.pinned);
+
+  // Стили сообщений по типу
+  const typeStyles = {
+    need_material: { bg: '#FFF3E0', border: '#FF9800', icon: '🔧' },
+    equipment_issue: { bg: RD3, border: RD, icon: '⚠️' },
+    drawing_question: { bg: '#E3F2FD', border: BL, icon: '📋' },
+    need_help: { bg: '#FCE4EC', border: '#E91E63', icon: '🆘' },
+    task_done: { bg: GN3, border: GN, icon: '✅' },
+    waiting: { bg: AM3, border: AM, icon: '⏸' },
+    thanks: { bg: '#FFF8E1', border: '#FFC107', icon: '🤝' }
   };
 
-  const messages = (data.messages || []).sort((a,b) => a.timestamp - b.timestamp);
-  const myId = currentUser.id || 'system';
+  return h('div', { style: { ...S.card, height: '100%', minHeight: 500, display: 'flex', flexDirection: 'column', padding: 12 } },
+    h('div', { style: { ...S.sec, marginBottom: 8 } }, '💬 Чат производства'),
 
-  return h('div', { style: { ...S.card, height:'500px', display:'flex', flexDirection:'column' } },
-    h('div', { style: S.sec }, '💬 Чат производства'),
-    h('div', { 'aria-live': 'polite', 'aria-label': 'История сообщений', style: { flex:1, overflowY:'auto', padding:'8px', background:'#fafaf8', borderRadius:8, marginBottom:12 } },
-      messages.length === 0 && h('div', { style: { textAlign:'center', color:'#888', fontSize:12, marginTop:32 } }, 'Сообщений пока нет'),
-      messages.map(m => h('div', { key: m.id, style: { marginBottom:8, display:'flex', flexDirection:'column', alignItems: m.senderId === myId ? 'flex-end' : 'flex-start' } },
-        h('div', { style: { fontSize:11, color:'#888', marginBottom:2 } }, m.senderName),
-        h('div', { style: { background: m.senderId === myId ? AM3 : '#fff', border:'0.5px solid rgba(0,0,0,0.1)', borderRadius:12, padding:'6px 12px', maxWidth:'80%', fontSize:13 } }, m.text),
-        h('div', { style: { fontSize:9, color:'#aaa', marginTop:2 } }, new Date(m.timestamp).toLocaleTimeString())
-      )),
+    // Закреплённые объявления
+    pinnedMessages.length > 0 && h('div', { style: { marginBottom: 8 } },
+      pinnedMessages.slice(-3).map(m => h('div', { key: m.id, style: { padding: '8px 12px', background: AM3, borderLeft: `3px solid ${AM}`, borderRadius: '0 8px 8px 0', marginBottom: 4, fontSize: 12 } },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+          h('div', null, h('span', { style: { fontWeight: 500, color: AM2 } }, '📌 '), m.text),
+          h('div', { style: { fontSize: 9, color: AM4, whiteSpace: 'nowrap', marginLeft: 8 } }, new Date(m.timestamp).toLocaleDateString())
+        )
+      ))
+    ),
+
+    // Сообщения
+    h('div', { 'aria-live': 'polite', style: { flex: 1, overflowY: 'auto', padding: 8, background: '#fafaf8', borderRadius: 8, marginBottom: 8 } },
+      regularMessages.length === 0 && h('div', { style: { textAlign: 'center', color: '#888', fontSize: 12, marginTop: 32 } }, 'Сообщений пока нет. Используйте быстрые кнопки для общения.'),
+      regularMessages.map(m => {
+        const ts = typeStyles[m.type];
+        const isMe = m.senderId === myId;
+        return h('div', { key: m.id, style: { marginBottom: 10, display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start' } },
+          h('div', { style: { fontSize: 10, color: '#888', marginBottom: 2, display: 'flex', gap: 6, alignItems: 'center' } },
+            h('span', { style: { fontWeight: 500 } }, m.senderName),
+            m.senderRole === 'master' && h('span', { style: { fontSize: 9, padding: '1px 4px', background: AM3, color: AM2, borderRadius: 4 } }, 'мастер'),
+            m.orderNumber && h('span', { style: { fontSize: 9, color: AM } }, `📋 ${m.orderNumber}`),
+            m.opName && h('span', { style: { fontSize: 9, color: '#666' } }, `→ ${m.opName}`)
+          ),
+          h('div', { style: {
+            background: ts ? ts.bg : isMe ? AM3 : '#fff',
+            border: ts ? `1px solid ${ts.border}` : '0.5px solid rgba(0,0,0,0.1)',
+            borderRadius: 12, padding: '8px 14px', maxWidth: '85%', fontSize: 13
+          }},
+            ts && h('span', { style: { marginRight: 6 } }, ts.icon),
+            m.text
+          ),
+          h('div', { style: { fontSize: 9, color: '#aaa', marginTop: 2 } }, new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+        );
+      }),
       h('div', { ref: messagesEndRef })
     ),
-    h('div', { style: { display:'flex', gap:8 } },
-      h('input', { style: { ...S.inp, flex:1 }, placeholder:'Введите сообщение...', value: newMessage, 'aria-label': 'Текст сообщения', onChange: e => setNewMessage(e.target.value), onKeyDown: e => e.key === 'Enter' && !e.shiftKey && sendMessage() }),
-      h('button', { style: abtn(), 'aria-label': 'Отправить сообщение', onClick: sendMessage }, 'Отправить')
+
+    // Быстрые действия (раскрывающиеся)
+    showQuickActions && h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 8 } },
+      quickActions.map(qa => h('button', { key: qa.type, type: 'button',
+        style: { padding: '10px 6px', fontSize: 12, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: (typeStyles[qa.type]?.bg) || '#fff', color: '#333', cursor: 'pointer', textAlign: 'center', minHeight: 44 },
+        onClick: () => sendMessage(`${qa.icon} ${qa.label}`, qa.type)
+      }, `${qa.icon}\n${qa.label}`))
+    ),
+
+    // Благодарности (выбор коллеги)
+    showThanks && h('div', { style: { ...S.card, marginBottom: 8, padding: 10 } },
+      h('div', { style: { fontSize: 11, fontWeight: 500, marginBottom: 6 } }, '🤝 Кому сказать спасибо?'),
+      h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+        data.workers.filter(w => w.id !== myId && (w.status || 'working') === 'working').map(w =>
+          h('button', { key: w.id, style: { padding: '8px 14px', fontSize: 12, borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)', background: '#fff', cursor: 'pointer', minHeight: 40 }, onClick: () => sendThanks(w.id) }, w.name)
+        ),
+        h('button', { style: gbtn({ fontSize: 11 }), onClick: () => setShowThanks(false) }, '✕ Отмена')
+      )
+    ),
+
+    // Привязка к операции
+    contextOp && (() => {
+      const op = data.ops.find(o => o.id === contextOp);
+      const order = op ? data.orders.find(o => o.id === op.orderId) : null;
+      return h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', background: AM3, borderRadius: 6, marginBottom: 6, fontSize: 11 } },
+        h('span', { style: { color: AM } }, `📋 ${order?.number || '—'} → ${op?.name || '—'}`),
+        h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', color: '#888', fontSize: 14, padding: 0 }, onClick: () => setContextOp('') }, '×')
+      );
+    })(),
+
+    // Панель ввода
+    h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
+      // Кнопки инструментов
+      h('div', { style: { display: 'flex', gap: 4 } },
+        h('button', { type: 'button', title: 'Быстрые действия', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: showQuickActions ? AM3 : 'transparent' }, onClick: () => { setShowQuickActions(v => !v); setShowThanks(false); } }, '⚡'),
+        h('button', { type: 'button', title: 'Спасибо коллеге', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: showThanks ? AM3 : 'transparent' }, onClick: () => { setShowThanks(v => !v); setShowQuickActions(false); } }, '🤝'),
+        // Привязать к операции
+        activeOp && h('button', { type: 'button', title: 'Привязать к текущей операции', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: contextOp ? AM3 : 'transparent' }, onClick: () => setContextOp(contextOp ? '' : activeOp.id) }, '📋'),
+        // Объявление (только мастер)
+        isMaster && h('button', { type: 'button', title: 'Закрепить как объявление', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: isAnnouncement ? AM3 : 'transparent' }, onClick: () => setIsAnnouncement(v => !v) }, '📌')
+      ),
+      // Поле ввода
+      h('input', { style: { ...S.inp, flex: 1, minWidth: 120 }, placeholder: isAnnouncement ? 'Объявление для всех...' : 'Сообщение...', value: newMessage, onChange: e => setNewMessage(e.target.value), onKeyDown: e => e.key === 'Enter' && !e.shiftKey && sendMessage(newMessage) }),
+      h('button', { style: abtn({ padding: '10px 16px' }), onClick: () => sendMessage(newMessage) }, '→')
     )
   );
 });
