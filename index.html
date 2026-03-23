@@ -378,19 +378,13 @@ const DB = {
       const toSave = data.events.length > 2000
         ? { ...data, events: data.events.slice(-2000) }
         : data;
-      // Debounce: отменяем предыдущий таймер
-      if (DB._saveTimer) clearTimeout(DB._saveTimer);
-      // Сохраняем локально сразу
+      // Локально — мгновенно
       localStorage.setItem('prod_app_v14_cache', JSON.stringify(toSave));
-      // Firebase — с задержкой 2с (группировка быстрых действий)
-      await new Promise((resolve, reject) => {
-        DB._saveTimer = setTimeout(async () => {
-          try {
-            await DOC_REF.set({ payload: JSON.stringify(toSave), updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
-            resolve();
-          } catch(e) { reject(e); }
-        }, 2000);
-      });
+      // Firebase — debounce 1с (fire-and-forget, не блокирует UI)
+      if (DB._saveTimer) clearTimeout(DB._saveTimer);
+      DB._saveTimer = setTimeout(() => {
+        DOC_REF.set({ payload: JSON.stringify(toSave), updatedAt: firebase.firestore.FieldValue.serverTimestamp() }).catch(e => console.error('Firebase save error:', e));
+      }, 1000);
     } catch(e) { console.error(e); }
   },
   _saveTimer: null,
@@ -967,10 +961,18 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
 const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, addToast }) => {
   const worker = useMemo(() => data.workers.find(w => w.id === workerId), [data.workers, workerId]);
 
-  const myOps = useMemo(() => data.ops.filter(o =>
-    (o.workerIds?.includes(workerId) || (!o.workerIds?.length && o.sectionId === sectionId)) &&
-    o.status !== 'done' && o.status !== 'defect' && !o.archived
-  ).sort((a,b) => {
+  const myOps = useMemo(() => data.ops.filter(o => {
+    if (o.status === 'done' || o.status === 'defect' || o.archived) return false;
+    // 1. Явно назначена на этого рабочего
+    if (o.workerIds?.includes(workerId)) return true;
+    // 2. Не назначена ни на кого + совпадает участок + есть компетенция
+    if (!o.workerIds?.length && sectionId && o.sectionId === sectionId) {
+      const w = data.workers.find(w => w.id === workerId);
+      if (!w?.competences?.length) return true; // нет ограничений по компетенциям
+      return w.competences.includes(o.name);
+    }
+    return false;
+  }).sort((a,b) => {
     const orderA = data.orders.find(ord => ord.id === a.orderId);
     const orderB = data.orders.find(ord => ord.id === b.orderId);
     const getCR = (op, order) => {
@@ -1204,21 +1206,31 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Фиксация простоя',
       style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60 }
     },
-      h('div', { style: { background: '#fff', borderRadius: 12, padding: 24, width: 'min(320px, calc(100vw - 32px))' } },
-        h('div', { style: { fontSize: 14, fontWeight: 500, marginBottom: 4 } }, 'Фиксация простоя'),
-        h(ElapsedTimer, { startedAt: downtimeStartedAt, style: { fontSize: 28, fontWeight: 500, color: RD, textAlign: 'center', margin: '12px 0' } }),
-        h('div', { style: { fontSize: 11, color: '#888', textAlign: 'center', marginBottom: 12 } }, 'Время простоя идёт'),
-        h('select', { style: { ...S.inp, width: '100%', marginBottom: 8 }, value: selectedDowntimeType, onChange: e => setSelectedDowntimeType(e.target.value) },
-          h('option', { value: '' }, '— причина простоя —'),
-          data.downtimeTypes.map(dt => h('option', { key: dt.id, value: dt.id }, dt.name))
+      h('div', { className: 'modal-content', style: { background: '#fff', borderRadius: 12, padding: 20, width: 'min(360px, calc(100vw - 24px))', maxHeight: '85vh', overflowY: 'auto' } },
+        h('div', { style: { fontSize: 14, fontWeight: 500, marginBottom: 4, textAlign: 'center' } }, 'Фиксация простоя'),
+        h(ElapsedTimer, { startedAt: downtimeStartedAt, style: { fontSize: 32, fontWeight: 500, color: RD, textAlign: 'center', margin: '12px 0' } }),
+        h('div', { style: { fontSize: 11, color: '#888', textAlign: 'center', marginBottom: 12 } }, 'Выберите причину:'),
+        // Причины — крупные кнопки
+        h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 } },
+          data.downtimeTypes.map(dt => h('button', { key: dt.id, type: 'button',
+            style: { padding: '14px 16px', fontSize: 14, fontWeight: selectedDowntimeType === dt.id ? 500 : 400, borderRadius: 10, border: selectedDowntimeType === dt.id ? `2px solid ${AM}` : '1px solid rgba(0,0,0,0.12)', background: selectedDowntimeType === dt.id ? AM3 : '#fff', color: selectedDowntimeType === dt.id ? AM2 : '#333', cursor: 'pointer', textAlign: 'left', minHeight: 48 },
+            onClick: () => setSelectedDowntimeType(dt.id)
+          }, dt.name))
         ),
-        data.equipment.length > 0 && h('select', { style: { ...S.inp, width: '100%', marginBottom: 12 }, value: downtimeEquipmentId || '', onChange: e => setDowntimeEquipmentId(e.target.value) },
-          h('option', { value: '' }, '— оборудование (если связано) —'),
-          data.equipment.map(eq => h('option', { key: eq.id, value: eq.id }, `${eq.name} (${eq.type})`))
+        // Оборудование (если есть)
+        data.equipment.length > 0 && h('div', { style: { marginBottom: 12 } },
+          h('div', { style: { fontSize: 11, color: '#888', marginBottom: 6 } }, 'Оборудование (если связано):'),
+          h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+            h('button', { type: 'button', style: { padding: '8px 12px', fontSize: 12, borderRadius: 8, border: !downtimeEquipmentId ? `2px solid ${AM}` : '1px solid rgba(0,0,0,0.12)', background: !downtimeEquipmentId ? AM3 : '#fff', color: !downtimeEquipmentId ? AM2 : '#666', cursor: 'pointer' }, onClick: () => setDowntimeEquipmentId('') }, 'Не связано'),
+            data.equipment.filter(eq => eq.status === 'active').map(eq => h('button', { key: eq.id, type: 'button',
+              style: { padding: '8px 12px', fontSize: 12, borderRadius: 8, border: downtimeEquipmentId === eq.id ? `2px solid ${AM}` : '1px solid rgba(0,0,0,0.12)', background: downtimeEquipmentId === eq.id ? AM3 : '#fff', color: downtimeEquipmentId === eq.id ? AM2 : '#666', cursor: 'pointer' },
+              onClick: () => setDowntimeEquipmentId(eq.id)
+            }, eq.name))
+          )
         ),
-        h('div', { style: { display: 'flex', gap: 8 } },
-          h('button', { style: gbtn({ flex: 1 }), onClick: () => { setShowDowntimeModal(false); setSelectedDowntimeType(''); setDowntimeStartedAt(null); setDowntimeEquipmentId(''); setDowntimeEquipmentId(''); } }, 'Отмена'),
-          h('button', { style: rbtn({ flex: 1, fontWeight: 500 }), onClick: recordDowntime }, 'Завершить простой')
+        h('div', { style: { display: 'flex', gap: 8, marginTop: 8 } },
+          h('button', { style: gbtn({ flex: 1, padding: '12px', fontSize: 14 }), onClick: () => { setShowDowntimeModal(false); setSelectedDowntimeType(''); setDowntimeStartedAt(null); setDowntimeEquipmentId(''); } }, 'Отмена'),
+          h('button', { style: rbtn({ flex: 1, padding: '12px', fontSize: 14, fontWeight: 500 }), onClick: recordDowntime, disabled: !selectedDowntimeType }, 'Завершить простой')
         )
       )
     ),
@@ -3488,7 +3500,12 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
     return () => clearInterval(t);
   }, [op?.status]);
 
-  if (!op || op.archived) return h('div', { style: { ...S.card, textAlign:'center' } }, 'Операция не найдена или архивирована');
+  if (!op || op.archived) return h('div', { style: { ...S.card, textAlign:'center', padding: 24 } },
+    h('div', { style: { fontSize: 16, marginBottom: 8 } }, '⏳ Поиск операции...'),
+    h('div', { style: { fontSize: 12, color: '#888', marginBottom: 16 } }, `ID: ${opId}`),
+    h('div', { style: { fontSize: 12, color: '#888' } }, 'Если операция не появится — данные ещё не синхронизированы. Обновите страницу.'),
+    h('button', { style: abtn({ marginTop: 12 }), onClick: () => window.location.reload() }, '🔄 Обновить')
+  );
   const elapsed = op.startedAt && !op.finishedAt ? now() - op.startedAt : 0;
 
   const handleStart = useCallback(async () => {
@@ -3813,14 +3830,10 @@ function App() {
 
   const save = useCallback((d) => {
     savingRef.current = true;
-    setIsSaving(true);
     setData(d);
-    DB.save(d).finally(() => {
-      setTimeout(() => {
-        savingRef.current = false;
-        setIsSaving(false);
-      }, 800);
-    });
+    DB.save(d);
+    // Разблокировать входящие данные через 1.5с (после debounce Firebase)
+    setTimeout(() => { savingRef.current = false; }, 1500);
   }, []);
 
   const goBack = () => { setRole(null); setWorkerId(null); setSectionId(null); setInitialOpId(null); setShowChat(false); window.history.replaceState({}, '', window.location.pathname); };
