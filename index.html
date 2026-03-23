@@ -245,13 +245,62 @@ const checkAchievements = (workerId, data) => {
 };
 
 // ==================== Автоподбор исполнителя ====================
+// ==================== Автоподбор исполнителя (с учётом уровня, опыта, качества, загрузки) ====================
+const scoreWorkerForOp = (worker, opName, data) => {
+  const wid = worker.id;
+  const allOps = data.ops.filter(op => op.workerIds?.includes(wid));
+  const doneThisType = allOps.filter(op => op.name === opName && op.status === 'done');
+  const defectThisType = allOps.filter(op => op.name === opName && op.status === 'defect');
+  const activeCount = data.ops.filter(op => (op.status === 'in_progress' || op.status === 'pending') && op.workerIds?.includes(wid)).length;
+  const allDone = allOps.filter(op => op.status === 'done').length;
+  const level = getWorkerLevel(allDone);
+
+  // Опыт по этому типу операции (0-30 баллов)
+  const expScore = Math.min(doneThisType.length * 2, 30);
+  // Качество по этому типу (0-25 баллов)
+  const total = doneThisType.length + defectThisType.length;
+  const qualityScore = total > 0 ? Math.round((doneThisType.length / total) * 25) : 12;
+  // Скорость: средний факт/план (0-20 баллов)
+  const withPlan = doneThisType.filter(op => op.plannedHours && op.startedAt && op.finishedAt);
+  const avgRatio = withPlan.length > 0 ? withPlan.reduce((s, op) => s + (op.finishedAt - op.startedAt) / (op.plannedHours * 3600000), 0) / withPlan.length : 1;
+  const speedScore = Math.max(0, Math.round((2 - avgRatio) * 10));
+  // Уровень (0-15 баллов)
+  const levelScore = Math.min(level, 15);
+  // Загрузка (штраф: -10 за каждую активную задачу)
+  const loadPenalty = activeCount * 10;
+
+  return { workerId: wid, workerName: worker.name, level, expScore, qualityScore, speedScore, levelScore, loadPenalty,
+    totalScore: expScore + qualityScore + speedScore + levelScore - loadPenalty,
+    details: { experience: doneThisType.length, defects: defectThisType.length, avgRatio: Math.round(avgRatio * 100), activeOps: activeCount }
+  };
+};
+
 const autoAssignWorker = (data, opName) => {
-  const free = data.workers.filter(w =>
+  const candidates = data.workers.filter(w =>
     (w.status || 'working') === 'working' &&
     (!w.competences?.length || w.competences.includes(opName)) &&
     !data.ops.some(op => op.status === 'in_progress' && op.workerIds?.includes(w.id))
   );
-  return free[0]?.id || null;
+  if (candidates.length === 0) return null;
+  const scored = candidates.map(w => scoreWorkerForOp(w, opName, data)).sort((a, b) => b.totalScore - a.totalScore);
+  return scored[0]?.workerId || null;
+};
+
+// Рекомендации по всем ожидающим операциям
+const getAssignmentRecommendations = (data) => {
+  const pendingOps = data.ops.filter(op => op.status === 'pending' && !op.archived && (!op.workerIds || op.workerIds.length === 0));
+  return pendingOps.map(op => {
+    const order = data.orders.find(o => o.id === op.orderId);
+    const candidates = data.workers.filter(w =>
+      (w.status || 'working') === 'working' &&
+      (!w.competences?.length || w.competences.includes(op.name))
+    );
+    const scored = candidates.map(w => scoreWorkerForOp(w, op.name, data)).sort((a, b) => b.totalScore - a.totalScore);
+    return { opId: op.id, opName: op.name, orderNumber: order?.number || '—', orderPriority: order?.priority || 'medium', deadline: order?.deadline, candidates: scored.slice(0, 3) };
+  }).sort((a, b) => {
+    const prio = { critical: 0, high: 1, medium: 2, low: 3 };
+    return (prio[a.orderPriority] || 4) - (prio[b.orderPriority] || 4);
+  });
 };
 
 // ==================== Утилиты ====================
@@ -2792,6 +2841,169 @@ const MasterKanban = memo(({ data, onUpdate, addToast }) => {
   );
 });
 
+// ==================== KPI-отчёт для премирования ====================
+const KPIReport = memo(({ data }) => {
+  const [period, setPeriod] = useState(30);
+  const periodStart = useMemo(() => now() - period * 86400000, [period]);
+
+  const workerKPIs = useMemo(() => {
+    return data.workers.map(w => {
+      const wid = w.id;
+      const allOps = data.ops.filter(op => op.workerIds?.includes(wid));
+      const doneInPeriod = allOps.filter(op => op.status === 'done' && op.finishedAt >= periodStart);
+      const defectInPeriod = allOps.filter(op => op.status === 'defect' && op.finishedAt >= periodStart);
+      const totalInPeriod = doneInPeriod.length + defectInPeriod.length;
+      const allDone = allOps.filter(op => op.status === 'done').length;
+      const level = getWorkerLevel(allDone);
+      const levelTitle = getLevelTitle(level);
+
+      // Производительность: факт/план
+      const withPlan = doneInPeriod.filter(op => op.plannedHours && op.startedAt && op.finishedAt);
+      const productivity = withPlan.length > 0 ? Math.round(withPlan.reduce((s, op) => s + op.plannedHours * 3600000, 0) / withPlan.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0) * 100) : null;
+
+      // Качество: % без брака
+      const quality = totalInPeriod > 0 ? Math.round(doneInPeriod.length / totalInPeriod * 100) : 100;
+
+      // Дисциплина: простои по вине рабочего
+      const downtimes = data.events.filter(e => e.workerId === wid && e.type === 'downtime' && e.ts >= periodStart);
+      const downtimeHrs = Math.round(downtimes.reduce((s, e) => s + (e.duration || 0), 0) / 3600000 * 10) / 10;
+
+      // Универсальность: количество разных типов операций
+      const uniqueOps = new Set(doneInPeriod.map(op => op.name)).size;
+
+      // Достижения за период
+      const achievements = (w.achievements || []).length;
+
+      // Итоговый KPI-балл (0-100)
+      const kpiScore = Math.min(100, Math.round(
+        (doneInPeriod.length > 0 ? 20 : 0) + // есть выработка
+        Math.min((productivity || 0) / 5, 25) + // производительность до 25
+        Math.min(quality / 4, 25) + // качество до 25
+        Math.min(uniqueOps * 3, 15) + // универсальность до 15
+        Math.min(level, 10) + // уровень до 10
+        (downtimeHrs === 0 ? 5 : 0) // без простоев +5
+      ));
+
+      // Рекомендация по премированию
+      const bonusLevel = kpiScore >= 85 ? 'A' : kpiScore >= 70 ? 'B' : kpiScore >= 50 ? 'C' : 'D';
+      const bonusPct = bonusLevel === 'A' ? 30 : bonusLevel === 'B' ? 15 : bonusLevel === 'C' ? 0 : -10;
+
+      return { ...w, level, levelTitle, doneCount: doneInPeriod.length, defectCount: defectInPeriod.length, productivity, quality, downtimeHrs, uniqueOps, achievements, kpiScore, bonusLevel, bonusPct };
+    }).filter(w => (w.status || 'working') === 'working' || w.doneCount > 0).sort((a, b) => b.kpiScore - a.kpiScore);
+  }, [data, periodStart]);
+
+  const exportKPI = useCallback(() => {
+    const ws = XLSX.utils.json_to_sheet(workerKPIs.map(w => ({
+      'Сотрудник': w.name, 'Должность': w.position || '', 'Уровень': `${w.level} (${w.levelTitle})`,
+      'Операций': w.doneCount, 'Брак': w.defectCount, 'Качество %': w.quality,
+      'Производит. %': w.productivity || '', 'Универсальность': w.uniqueOps,
+      'Простои (ч)': w.downtimeHrs, 'KPI': w.kpiScore, 'Грейд': w.bonusLevel, 'Премия %': w.bonusPct
+    })));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'KPI');
+    XLSX.writeFile(wb, `kpi_report_${period}d_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }, [workerKPIs, period]);
+
+  const bonusColors = { A: GN, B: AM, C: '#888', D: RD };
+
+  return h('div', null,
+    h('div', { style: { display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' } },
+      h('span', { style: { fontSize: 12, fontWeight: 500 } }, 'Период:'),
+      [7, 14, 30, 60, 90].map(d => h('button', { key: d, style: period === d ? abtn({ fontSize: 11 }) : gbtn({ fontSize: 11 }), onClick: () => setPeriod(d) }, `${d} дней`)),
+      h('button', { style: gbtn({ marginLeft: 'auto' }), onClick: exportKPI }, '📥 Экспорт KPI в Excel')
+    ),
+    // Легенда грейдов
+    h('div', { style: { ...S.card, marginBottom: 12, padding: 10, display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 11 } },
+      h('span', { style: { fontWeight: 500 } }, 'Грейды:'),
+      h('span', { style: { color: GN } }, 'A (85+) = +30% премия'),
+      h('span', { style: { color: AM } }, 'B (70-84) = +15%'),
+      h('span', { style: { color: '#888' } }, 'C (50-69) = 0%'),
+      h('span', { style: { color: RD } }, 'D (<50) = −10%')
+    ),
+    workerKPIs.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888' } }, 'Нет данных за период') :
+      h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+        h('thead', null, h('tr', null, ['Сотрудник', 'Ур.', 'Операций', 'Качество', 'Произв.', 'Универс.', 'Простои', 'KPI', 'Грейд'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
+        h('tbody', null, workerKPIs.map((w, i) => h('tr', { key: w.id, style: { background: i === 0 ? '#FFFDE7' : 'transparent' } },
+          h('td', { style: { ...S.td, fontWeight: 500 } }, w.name, i === 0 && h('span', { style: { marginLeft: 4 } }, '🏆')),
+          h('td', { style: { ...S.td, textAlign: 'center' } }, h('span', { style: { padding: '2px 6px', fontSize: 10, borderRadius: 6, background: AM3, color: AM2 } }, `${w.level}`)),
+          h('td', { style: { ...S.td, textAlign: 'center' } }, w.doneCount, w.defectCount > 0 && h('span', { style: { color: RD, marginLeft: 4, fontSize: 10 } }, `−${w.defectCount}`)),
+          h('td', { style: { ...S.td, textAlign: 'center', color: w.quality >= 95 ? GN : w.quality >= 80 ? AM : RD, fontWeight: 500 } }, `${w.quality}%`),
+          h('td', { style: { ...S.td, textAlign: 'center', color: w.productivity ? (w.productivity >= 100 ? GN : w.productivity >= 80 ? AM : RD) : '#888' } }, w.productivity ? `${w.productivity}%` : '—'),
+          h('td', { style: { ...S.td, textAlign: 'center' } }, w.uniqueOps),
+          h('td', { style: { ...S.td, textAlign: 'center', color: w.downtimeHrs > 0 ? RD : GN } }, w.downtimeHrs > 0 ? `${w.downtimeHrs}ч` : '✓'),
+          h('td', { style: { ...S.td, textAlign: 'center', fontSize: 16, fontWeight: 500, color: bonusColors[w.bonusLevel] || '#888' } }, w.kpiScore),
+          h('td', { style: { ...S.td, textAlign: 'center' } },
+            h('span', { style: { display: 'inline-block', width: 28, height: 28, lineHeight: '28px', textAlign: 'center', borderRadius: '50%', fontWeight: 700, fontSize: 13, color: '#fff', background: bonusColors[w.bonusLevel] || '#888' } }, w.bonusLevel),
+            h('div', { style: { fontSize: 9, color: bonusColors[w.bonusLevel], marginTop: 2 } }, `${w.bonusPct > 0 ? '+' : ''}${w.bonusPct}%`)
+          )
+        )))
+      )))
+  );
+});
+
+// ==================== Рекомендации по назначениям ====================
+const AssignmentRecommendations = memo(({ data, onUpdate, addToast }) => {
+  const recommendations = useMemo(() => getAssignmentRecommendations(data), [data]);
+
+  const assignWorker = useCallback(async (opId, workerId) => {
+    const op = data.ops.find(o => o.id === opId);
+    if (!op) return;
+    const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, workerIds: [...new Set([...(o.workerIds || []), workerId])] } : o) };
+    const worker = data.workers.find(w => w.id === workerId);
+    await DB.save(d); onUpdate(d);
+    addToast(`${worker?.name} назначен на "${op.name}"`, 'success');
+  }, [data, onUpdate, addToast]);
+
+  const assignAll = useCallback(async () => {
+    if (!confirm(`Назначить лучших кандидатов на ${recommendations.length} операций?`)) return;
+    let updated = { ...data };
+    let count = 0;
+    recommendations.forEach(rec => {
+      if (rec.candidates.length > 0) {
+        const bestId = rec.candidates[0].workerId;
+        updated = { ...updated, ops: updated.ops.map(o => o.id === rec.opId ? { ...o, workerIds: [...new Set([...(o.workerIds || []), bestId])] } : o) };
+        count++;
+      }
+    });
+    if (count > 0) {
+      await DB.save(updated); onUpdate(updated);
+      addToast(`Назначено: ${count} операций`, 'success');
+    }
+  }, [data, recommendations, onUpdate, addToast]);
+
+  return h('div', null,
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } },
+      h('div', { style: S.sec }, `Рекомендации по назначениям (${recommendations.length} без исполнителя)`),
+      recommendations.length > 0 && h('button', { style: abtn(), onClick: assignAll }, `🤖 Назначить всех (${recommendations.length})`)
+    ),
+    recommendations.length === 0
+      ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888', padding: 20 } }, 'Все операции имеют исполнителей')
+      : recommendations.slice(0, 20).map(rec => h('div', { key: rec.opId, style: { ...S.card, padding: 12, marginBottom: 8, borderLeft: `4px solid ${PRIORITY[rec.orderPriority]?.color || '#888'}` } },
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 8 } },
+            h('div', null,
+              h('span', { style: { fontSize: 13, fontWeight: 500 } }, rec.opName),
+              h('span', { style: { marginLeft: 8, fontSize: 11, color: AM } }, rec.orderNumber),
+              rec.deadline && h('span', { style: { marginLeft: 8, fontSize: 10, color: '#888' } }, `до ${rec.deadline}`)
+            ),
+            h('span', { style: { fontSize: 10, color: PRIORITY[rec.orderPriority]?.color } }, PRIORITY[rec.orderPriority]?.label)
+          ),
+          rec.candidates.length === 0
+            ? h('div', { style: { fontSize: 11, color: RD } }, 'Нет подходящих кандидатов (проверьте компетенции и статусы)')
+            : h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+                rec.candidates.map((c, i) => h('div', { key: c.workerId, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 8, background: i === 0 ? GN3 : '#f8f8f5', border: i === 0 ? `0.5px solid ${GN}` : '0.5px solid rgba(0,0,0,0.08)', cursor: 'pointer' }, onClick: () => assignWorker(rec.opId, c.workerId) },
+                  h('div', null,
+                    h('div', { style: { fontSize: 12, fontWeight: i === 0 ? 500 : 400 } }, c.workerName, i === 0 && h('span', { style: { marginLeft: 4, fontSize: 10, color: GN } }, '★ лучший')),
+                    h('div', { style: { fontSize: 10, color: '#888' } },
+                      `Ур.${c.level} · Опыт:${c.details.experience} · Кач:${c.qualityScore}/25 · Загр:${c.details.activeOps}`
+                    )
+                  ),
+                  h('div', { style: { fontSize: 16, fontWeight: 500, color: i === 0 ? GN : AM, marginLeft: 'auto' } }, c.totalScore)
+                ))
+              )
+        ))
+  );
+});
+
 // ==================== MasterReclamations (рекламации от заказчиков) ====================
 const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
   const [form, setForm] = useState({ orderId: '', description: '', severity: 'minor', detectedDate: '', operationName: '' });
@@ -3187,9 +3399,9 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId }) => {
   const [qrOpData, setQrOpData] = useState(null);
   const [activeGroup, setActiveGroup] = useState('production');
   const tabGroups = {
-    production: { label: '⚙ Производство', tabs: [['ops','Операции'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['orders','Заказы'],['plan','План']] },
+    production: { label: '⚙ Производство', tabs: [['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['orders','Заказы'],['plan','План']] },
     reference: { label: '📋 Справочники', tabs: [['workers','Сотрудники'],['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],['materials','Материалы'],['equipment','Оборудование'],['bom','Спецификации'],['sections','Участки']] },
-    analytics: { label: '📊 Аналитика', tabs: [['reports','Отчёты'],['analytics','Аналитика'],['reclamations','Рекламации'],['journal','Журнал'],['notifications','Уведомления']] },
+    analytics: { label: '📊 Аналитика', tabs: [['reports','Отчёты'],['analytics','Аналитика'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['journal','Журнал'],['notifications','Уведомления']] },
     system: { label: '🔧 Система', tabs: [['time','Учёт времени'],['admin','Управление']] }
   };
   const currentTabs = tabGroups[activeGroup]?.tabs || [];
@@ -3231,6 +3443,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId }) => {
       h(LoadForecastWidget, { data }),
       h(MasterOps, { data: filteredData, onUpdate, onShowQR: (op, worker) => setQrOpData({ op, worker }), addToast })
     ),
+    tab === 'recommend' && h(AssignmentRecommendations, { data, onUpdate, addToast }),
     tab === 'kanban' && h(MasterKanban, { data, onUpdate, addToast }),
     tab === 'gantt' && h(GanttChart, { data }),
     tab === 'calendar' && h(ResourceCalendar, { data, onUpdate, addToast }),
@@ -3249,6 +3462,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId }) => {
     tab === 'notifications' && h(MasterNotifications, { data }),
     tab === 'reports' && h(ReportsBuilder, { data, onUpdate, addToast }),
     tab === 'analytics' && h(AnalyticsDashboard, { data }),
+    tab === 'kpi' && h(KPIReport, { data }),
     tab === 'reclamations' && h(MasterReclamations, { data, onUpdate, addToast }),
     tab === 'admin' && h(MasterAdmin, { data, onUpdate, addToast })
   );
