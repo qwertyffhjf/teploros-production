@@ -293,7 +293,7 @@ const DOC_REF = firestore.collection('app').doc('production_v14');
 const EMPTY_DATA = {
   orders: [], ops: [], workers: [], downtimeTypes: [], events: [], materials: [], sections: [], equipment: [],
   bomTemplates: [], materialConsumptions: [], productionStages: [], defectReasons: [], workerAvailabilities: [],
-  messages: [], savedReports: [],
+  messages: [], savedReports: [], reclamations: [],
   settings: {
     // Единый PIN-вход: мастер и контролёр тоже входят по PIN
     masterPin: '0000',       // PIN мастера (по умолчанию 0000 — сменить при первом входе)
@@ -1401,166 +1401,427 @@ const MasterSections = memo(({ data, onUpdate, addToast }) => {
 
 // ==================== MasterEquipment ====================
 const MasterEquipment = memo(({ data, onUpdate, addToast }) => {
-  const [form, setForm] = useState({ name: '', type: '' });
+  const EQ_STATUS = { active: { label: 'Работает', bg: GN3, cl: GN2 }, maintenance: { label: 'На ТО', bg: AM3, cl: AM2 }, repair: { label: 'Ремонт', bg: RD3, cl: RD2 }, decommissioned: { label: 'Списано', bg: '#f0f0f0', cl: '#888' } };
+  const [form, setForm] = useState({ name: '', type: '', inventoryNo: '', status: 'active' });
+  const [editingId, setEditingId] = useState(null);
   const add = useCallback(async () => {
     if (!form.name.trim()) return;
-    const newEq = { id: uid(), name: form.name.trim(), type: form.type.trim() || 'станок' };
-    const d = { ...data, equipment: [...data.equipment, newEq] };
-    await DB.save(d); onUpdate(d); setForm({ name: '', type: '' }); addToast('Оборудование добавлено', 'success');
-  }, [data, form, onUpdate, addToast]);
-  const del = useCallback(async (id) => {
-    if (!confirm('Удалить оборудование?')) return;
-    const d = { ...data, equipment: data.equipment.filter(e => e.id !== id) };
-    await DB.save(d); onUpdate(d); addToast('Оборудование удалено', 'info');
-  }, [data, onUpdate, addToast]);
+    const eq = { id: uid(), name: form.name.trim(), type: form.type.trim() || 'станок', inventoryNo: form.inventoryNo.trim(), status: form.status, totalHours: 0 };
+    if (editingId) {
+      const d = { ...data, equipment: data.equipment.map(e => e.id === editingId ? { ...e, name: form.name.trim(), type: form.type.trim(), inventoryNo: form.inventoryNo.trim(), status: form.status } : e) };
+      await DB.save(d); onUpdate(d); setEditingId(null); addToast('Оборудование обновлено', 'success');
+    } else {
+      const d = { ...data, equipment: [...data.equipment, eq] };
+      await DB.save(d); onUpdate(d); addToast('Оборудование добавлено', 'success');
+    }
+    setForm({ name: '', type: '', inventoryNo: '', status: 'active' });
+  }, [data, form, editingId, onUpdate, addToast]);
+  const del = useCallback(async (id) => { if (!confirm('Удалить?')) return; const d = { ...data, equipment: data.equipment.filter(e => e.id !== id) }; await DB.save(d); onUpdate(d); addToast('Удалено', 'info'); }, [data, onUpdate, addToast]);
+  const edit = useCallback((eq) => { setForm({ name: eq.name, type: eq.type || '', inventoryNo: eq.inventoryNo || '', status: eq.status || 'active' }); setEditingId(eq.id); }, []);
+
+  // Подсчёт наработки
+  const eqHours = useMemo(() => {
+    const hours = {};
+    data.ops.filter(op => op.equipmentId && op.status === 'done' && op.startedAt && op.finishedAt).forEach(op => {
+      hours[op.equipmentId] = (hours[op.equipmentId] || 0) + (op.finishedAt - op.startedAt) / 3600000;
+    });
+    return hours;
+  }, [data.ops]);
+
   return h('div', null,
     h('div', { style: S.card },
-      h('div', { style: S.sec }, 'Добавить оборудование'),
-      h('div', { style: { display: 'flex', gap: 8 } },
-        h('input', { style: { ...S.inp, flex: 2 }, placeholder: 'Наименование', value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })) }),
-        h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Тип', value: form.type, onChange: e => setForm(p => ({ ...p, type: e.target.value })) }),
-        h('button', { type: 'button', style: abtn(), onClick: add }, '+')
+      h('div', { style: S.sec }, editingId ? 'Редактировать' : 'Добавить оборудование'),
+      h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
+        h('input', { style: { ...S.inp, flex: 2, minWidth: 150 }, placeholder: 'Наименование', value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })) }),
+        h('input', { style: { ...S.inp, flex: 1, minWidth: 80 }, placeholder: 'Тип', value: form.type, onChange: e => setForm(p => ({ ...p, type: e.target.value })) }),
+        h('input', { style: { ...S.inp, flex: 1, minWidth: 100 }, placeholder: 'Инв. №', value: form.inventoryNo, onChange: e => setForm(p => ({ ...p, inventoryNo: e.target.value })) }),
+        h('select', { style: { ...S.inp, minWidth: 110 }, value: form.status, onChange: e => setForm(p => ({ ...p, status: e.target.value })) },
+          Object.entries(EQ_STATUS).map(([k, v]) => h('option', { key: k, value: k }, v.label))
+        ),
+        h('button', { style: abtn(), onClick: add }, editingId ? '✓' : '+'),
+        editingId && h('button', { style: gbtn(), onClick: () => { setEditingId(null); setForm({ name: '', type: '', inventoryNo: '', status: 'active' }); } }, '✕')
       )
     ),
     data.equipment.length === 0
       ? h('div', { style: { ...S.card, textAlign: 'center' } }, 'Нет оборудования')
-      : h('div', { style: { ...S.card } }, data.equipment.map(eq =>
-          h('div', { key: eq.id, style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)' } },
-            h('span', { style: { fontSize: 13 } }, `${eq.name} (${eq.type})`),
-            h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': `Удалить ${eq.name}`, onClick: () => del(eq.id) }, 'Удалить')
-          )
-        ))
+      : h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+          h('thead', null, h('tr', null, ['Наименование', 'Тип', 'Инв. №', 'Статус', 'Наработка', ''].map((t, i) => h('th', { key: i, style: S.th }, t)))),
+          h('tbody', null, data.equipment.map(eq => {
+            const st = EQ_STATUS[eq.status] || EQ_STATUS.active;
+            const hrs = eqHours[eq.id] || 0;
+            return h('tr', { key: eq.id },
+              h('td', { style: S.td }, eq.name),
+              h('td', { style: S.td }, eq.type),
+              h('td', { style: { ...S.td, fontFamily: 'monospace' } }, eq.inventoryNo || '—'),
+              h('td', { style: S.td }, h('span', { style: { padding: '2px 8px', fontSize: 10, borderRadius: 6, background: st.bg, color: st.cl } }, st.label)),
+              h('td', { style: { ...S.td, fontFamily: 'monospace' } }, `${hrs.toFixed(1)} ч`),
+              h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
+                h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => edit(eq) }, '✎'),
+                h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => del(eq.id) }, '✕')
+              ))
+            );
+          }))
+        )))
   );
 });
 
 // ==================== MasterMaterials ====================
 const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
-  const [form, setForm] = useState({ name: '', unit: '', quantity: '', batch: '' });
+  const [form, setForm] = useState({ name: '', unit: '', quantity: '', batch: '', unitCost: '', minStock: '' });
   const [editingId, setEditingId] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
+  const [search, setSearch] = useState('');
+
   const validate = () => {
     const errors = {};
     if (!form.name.trim()) errors.name = 'Введите название';
-    if (!form.unit.trim()) errors.unit = 'Введите единицу измерения';
+    if (!form.unit.trim()) errors.unit = 'Ед. изм.';
     const qty = Number(form.quantity);
-    if (form.quantity === '' || isNaN(qty) || qty < 0) errors.quantity = 'Количество должно быть неотрицательным числом';
+    if (form.quantity === '' || isNaN(qty) || qty < 0) errors.quantity = 'Кол-во ≥ 0';
     setFieldErrors(errors);
     return Object.keys(errors).length === 0;
   };
+  const resetForm = () => { setForm({ name: '', unit: '', quantity: '', batch: '', unitCost: '', minStock: '' }); setFieldErrors({}); setEditingId(null); };
   const addOrUpdate = useCallback(async () => {
     if (!validate()) return;
+    const mat = { name: form.name.trim(), unit: form.unit.trim(), quantity: Number(form.quantity), batch: form.batch.trim(), unitCost: form.unitCost ? Number(form.unitCost) : 0, minStock: form.minStock ? Number(form.minStock) : 0 };
     if (editingId) {
-      const updated = data.materials.map(m => m.id === editingId ? { ...m, name: form.name.trim(), unit: form.unit.trim(), quantity: Number(form.quantity), batch: form.batch.trim(), unitCost: form.unitCost ? Number(form.unitCost) : 0 } : m);
-      const d = { ...data, materials: updated };
-      await DB.save(d); onUpdate(d); setEditingId(null); addToast('Материал обновлён', 'success');
+      const d = { ...data, materials: data.materials.map(m => m.id === editingId ? { ...m, ...mat } : m) };
+      await DB.save(d); onUpdate(d); resetForm(); addToast('Материал обновлён', 'success');
     } else {
-      const newMaterial = { id: uid(), name: form.name.trim(), unit: form.unit.trim(), quantity: Number(form.quantity), batch: form.batch.trim(), unitCost: form.unitCost ? Number(form.unitCost) : 0 };
-      const d = { ...data, materials: [...data.materials, newMaterial] };
-      await DB.save(d); onUpdate(d); addToast('Материал добавлен', 'success');
+      const d = { ...data, materials: [...data.materials, { id: uid(), ...mat }] };
+      await DB.save(d); onUpdate(d); resetForm(); addToast('Материал добавлен', 'success');
     }
-    setForm({ name: '', unit: '', quantity: '', batch: '', unitCost: '' }); setFieldErrors({});
   }, [form, editingId, data, onUpdate, addToast]);
-  const del = useCallback(async (id) => {
-    if (!confirm('Удалить материал?')) return;
-    const d = { ...data, materials: data.materials.filter(m => m.id !== id) };
-    await DB.save(d); onUpdate(d); addToast('Материал удалён', 'info');
+  const del = useCallback(async (id) => { if (!confirm('Удалить материал?')) return; const d = { ...data, materials: data.materials.filter(m => m.id !== id) }; await DB.save(d); onUpdate(d); addToast('Удалён', 'info'); }, [data, onUpdate, addToast]);
+  const edit = useCallback((m) => { setForm({ name: m.name, unit: m.unit, quantity: String(m.quantity), batch: m.batch || '', unitCost: m.unitCost ? String(m.unitCost) : '', minStock: m.minStock ? String(m.minStock) : '' }); setEditingId(m.id); }, []);
+
+  // Импорт из Excel
+  const importExcel = useCallback((event) => {
+    const file = event.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws);
+        if (rows.length === 0) { addToast('Файл пустой', 'error'); return; }
+        const imported = rows.map(r => {
+          const name = r['Название'] || r['Наименование'] || r['name'] || r['Name'] || Object.values(r)[0] || '';
+          const unit = r['Ед. изм.'] || r['Единица'] || r['unit'] || r['Unit'] || 'шт';
+          const qty = Number(r['Количество'] || r['Кол-во'] || r['Остаток'] || r['quantity'] || r['Qty'] || 0);
+          const cost = Number(r['Цена'] || r['Цена/ед.'] || r['unitCost'] || r['Price'] || 0);
+          const batch = r['Партия'] || r['batch'] || r['Batch'] || '';
+          const minStock = Number(r['Мин. остаток'] || r['minStock'] || 0);
+          if (!name.toString().trim()) return null;
+          // Обновляем существующий материал по имени, или создаём новый
+          const existing = data.materials.find(m => m.name.toLowerCase() === name.toString().trim().toLowerCase());
+          if (existing) return { ...existing, quantity: qty || existing.quantity, unitCost: cost || existing.unitCost, batch: batch || existing.batch, minStock: minStock || existing.minStock };
+          return { id: uid(), name: name.toString().trim(), unit: unit.toString(), quantity: qty, unitCost: cost, batch: batch.toString(), minStock };
+        }).filter(Boolean);
+        const existingIds = imported.filter(m => data.materials.some(dm => dm.id === m.id)).map(m => m.id);
+        const newMats = imported.filter(m => !existingIds.includes(m.id));
+        const updatedMats = data.materials.map(m => { const upd = imported.find(im => im.id === m.id); return upd || m; });
+        const d = { ...data, materials: [...updatedMats, ...newMats] };
+        DB.save(d).then(() => { onUpdate(d); addToast(`Импортировано: ${imported.length} позиций`, 'success'); });
+      } catch(ex) { addToast('Ошибка чтения Excel: ' + ex.message, 'error'); }
+    };
+    reader.readAsArrayBuffer(file);
+    event.target.value = '';
   }, [data, onUpdate, addToast]);
-  const edit = useCallback((mat) => { setForm({ name: mat.name, unit: mat.unit, quantity: String(mat.quantity), batch: mat.batch || '', unitCost: mat.unitCost ? String(mat.unitCost) : '' }); setEditingId(mat.id); }, []);
+
+  // Экспорт в Excel
+  const exportExcel = useCallback(() => {
+    const rows = data.materials.map(m => ({ 'Название': m.name, 'Ед. изм.': m.unit, 'Количество': m.quantity, 'Цена/ед.': m.unitCost || '', 'Партия': m.batch || '', 'Мин. остаток': m.minStock || '', 'Стоимость': (m.quantity * (m.unitCost || 0)) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Материалы');
+    XLSX.writeFile(wb, `materials_${new Date().toISOString().slice(0,10)}.xlsx`);
+    addToast('Экспорт завершён', 'success');
+  }, [data.materials, addToast]);
+
+  const lowStock = data.materials.filter(m => m.minStock > 0 && m.quantity <= m.minStock);
+  const filtered = search ? data.materials.filter(m => m.name.toLowerCase().includes(search.toLowerCase())) : data.materials;
+  const totalValue = data.materials.reduce((s, m) => s + m.quantity * (m.unitCost || 0), 0);
+
   return h('div', null,
-    h('div', { style: S.card },
-      h('div', { style: S.sec }, editingId ? 'Редактировать материал' : 'Добавить материал'),
-      h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
-        h('div', { style: { flex: 2, minWidth: 150 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Название', value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })) }), fieldErrors.name && h('div', { className: 'error-message' }, fieldErrors.name)),
-        h('div', { style: { flex: 1, minWidth: 80 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Ед. изм.', value: form.unit, onChange: e => setForm(p => ({ ...p, unit: e.target.value })) }), fieldErrors.unit && h('div', { className: 'error-message' }, fieldErrors.unit)),
-        h('div', { style: { flex: 1, minWidth: 80 } }, h('input', { type: 'number', step: '0.01', style: { ...S.inp, width: '100%' }, placeholder: 'Кол-во', value: form.quantity, onChange: e => setForm(p => ({ ...p, quantity: e.target.value })) }), fieldErrors.quantity && h('div', { className: 'error-message' }, fieldErrors.quantity)),
-        h('div', { style: { flex: 1, minWidth: 100 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Партия', value: form.batch, onChange: e => setForm(p => ({ ...p, batch: e.target.value })) })),
-        h('div', { style: { flex: 1, minWidth: 80 } }, h('input', { type: 'number', step: '1', style: { ...S.inp, width: '100%' }, placeholder: 'Цена/ед.₽', value: form.unitCost || '', onChange: e => setForm(p => ({ ...p, unitCost: e.target.value })) })),
-        h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, editingId ? '✓' : '+'),
-        editingId && h('button', { type: 'button', style: gbtn(), onClick: () => { setEditingId(null); setForm({ name: '', unit: '', quantity: '', batch: '', unitCost: '' }); setFieldErrors({}); } }, 'Отмена')
-      )
+    // Предупреждение о критических остатках
+    lowStock.length > 0 && h('div', { role: 'alert', style: { ...S.card, background: RD3, border: `0.5px solid ${RD}`, marginBottom: 12 } },
+      h('div', { style: { fontSize: 10, color: RD, textTransform: 'uppercase', fontWeight: 500, marginBottom: 6 } }, `⚠ Критические остатки (${lowStock.length})`),
+      lowStock.map(m => h('div', { key: m.id, style: { fontSize: 12, color: RD2 } }, `${m.name}: ${m.quantity} ${m.unit} (мин. ${m.minStock})`))
     ),
-    data.materials.length === 0
-      ? h('div', { style: { ...S.card, textAlign: 'center' } }, 'Нет материалов')
-      : h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null, ['Название','Ед. изм.','Количество','Цена/ед.','Партия',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
-          h('tbody', null, data.materials.map(mat =>
-            h('tr', { key: mat.id },
-              h('td', { style: S.td }, mat.name),
-              h('td', { style: S.td }, mat.unit),
-              h('td', { style: S.td }, mat.quantity),
-              h('td', { style: S.td }, mat.unitCost ? `${mat.unitCost}₽` : '—'),
-              h('td', { style: S.td }, mat.batch || '—'),
-              h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
-                h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': `Редактировать ${mat.name}`, onClick: () => edit(mat) }, '✎'),
-                h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': `Удалить ${mat.name}`, onClick: () => del(mat.id) }, '✕')
-              ))
-            )
-          ))
-        )))
+    // Сводка
+    h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 8, marginBottom: 12 } },
+      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500 } }, data.materials.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Позиций')),
+      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500, color: RD } }, lowStock.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Критично')),
+      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 18, fontWeight: 500, color: AM } }, `${Math.round(totalValue).toLocaleString()}₽`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Стоимость склада'))
+    ),
+    // Импорт / Экспорт
+    h('div', { style: { display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' } },
+      h('button', { style: abtn(), onClick: () => document.getElementById('mat-import-xlsx').click() }, '📤 Импорт Excel'),
+      h('input', { type: 'file', id: 'mat-import-xlsx', style: { display: 'none' }, accept: '.xlsx,.xls,.csv', onChange: importExcel }),
+      h('button', { style: gbtn(), onClick: exportExcel }, '📥 Экспорт Excel'),
+      h('input', { style: { ...S.inp, flex: 1, minWidth: 150 }, placeholder: 'Поиск материала...', value: search, onChange: e => setSearch(e.target.value) })
+    ),
+    // Форма
+    h('div', { style: S.card },
+      h('div', { style: S.sec }, editingId ? 'Редактировать' : 'Добавить материал'),
+      h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
+        h('div', { style: { flex: 2, minWidth: 150 } }, h('input', { style: { ...S.inp }, placeholder: 'Название', value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })) }), fieldErrors.name && h('div', { className: 'error-message' }, fieldErrors.name)),
+        h('div', { style: { flex: 1, minWidth: 60 } }, h('input', { style: { ...S.inp }, placeholder: 'Ед.', value: form.unit, onChange: e => setForm(p => ({ ...p, unit: e.target.value })) }), fieldErrors.unit && h('div', { className: 'error-message' }, fieldErrors.unit)),
+        h('div', { style: { flex: 1, minWidth: 70 } }, h('input', { type: 'number', step: '0.01', style: { ...S.inp }, placeholder: 'Кол-во', value: form.quantity, onChange: e => setForm(p => ({ ...p, quantity: e.target.value })) }), fieldErrors.quantity && h('div', { className: 'error-message' }, fieldErrors.quantity)),
+        h('div', { style: { flex: 1, minWidth: 70 } }, h('input', { type: 'number', style: { ...S.inp }, placeholder: 'Цена₽', value: form.unitCost, onChange: e => setForm(p => ({ ...p, unitCost: e.target.value })) })),
+        h('div', { style: { flex: 1, minWidth: 70 } }, h('input', { type: 'number', style: { ...S.inp }, placeholder: 'Мин.ост.', value: form.minStock, onChange: e => setForm(p => ({ ...p, minStock: e.target.value })) })),
+        h('div', { style: { flex: 1, minWidth: 80 } }, h('input', { style: { ...S.inp }, placeholder: 'Партия', value: form.batch, onChange: e => setForm(p => ({ ...p, batch: e.target.value })) })),
+        h('button', { style: abtn(), onClick: addOrUpdate }, editingId ? '✓' : '+'),
+        editingId && h('button', { style: gbtn(), onClick: resetForm }, '✕')
+      ),
+      h('div', { style: { fontSize: 10, color: '#888', marginTop: 6 } }, 'Excel: колонки «Название», «Ед. изм.», «Количество», «Цена/ед.», «Партия», «Мин. остаток». При совпадении названия — обновляет остаток.')
+    ),
+    // Таблица
+    filtered.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center' } }, 'Нет материалов') :
+      h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+        h('thead', null, h('tr', null, ['Название','Ед.','Остаток','Мин.','Цена','Стоимость','Партия',''].map((t,i) => h('th', { key: i, style: S.th }, t)))),
+        h('tbody', null, filtered.map(m => {
+          const isLow = m.minStock > 0 && m.quantity <= m.minStock;
+          return h('tr', { key: m.id, style: { background: isLow ? RD3 : 'transparent' } },
+            h('td', { style: S.td }, m.name),
+            h('td', { style: S.td }, m.unit),
+            h('td', { style: { ...S.td, fontWeight: 500, color: isLow ? RD : 'inherit' } }, m.quantity),
+            h('td', { style: { ...S.td, color: '#888' } }, m.minStock || '—'),
+            h('td', { style: S.td }, m.unitCost ? `${m.unitCost}₽` : '—'),
+            h('td', { style: { ...S.td, color: AM } }, m.unitCost ? `${Math.round(m.quantity * m.unitCost).toLocaleString()}₽` : '—'),
+            h('td', { style: S.td }, m.batch || '—'),
+            h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
+              h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => edit(m) }, '✎'),
+              h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => del(m.id) }, '✕')
+            ))
+          );
+        }))
+      )))
   );
 });
 
 // ==================== MasterBOM ====================
 const MasterBOM = memo(({ data, onUpdate, addToast }) => {
-  const [form, setForm] = useState({ productName: '', materials: [] });
-  const add = useCallback(() => {
-    if (!form.productName.trim()) return;
-    const newBOM = { id: uid(), productName: form.productName.trim(), materials: form.materials };
-    const d = { ...data, bomTemplates: [...data.bomTemplates, newBOM] };
-    DB.save(d).then(() => { onUpdate(d); setForm({ productName: '', materials: [] }); addToast('Спецификация добавлена', 'success'); });
+  const [form, setForm] = useState({ productName: '' });
+  const [editingId, setEditingId] = useState(null);
+  const [matForm, setMatForm] = useState({ bomId: '', materialId: '', qty: '' });
+
+  const add = useCallback(async () => {
+    if (!form.productName.trim()) { addToast('Введите название изделия', 'error'); return; }
+    const bom = { id: uid(), productName: form.productName.trim(), materials: [] };
+    const d = { ...data, bomTemplates: [...data.bomTemplates, bom] };
+    await DB.save(d); onUpdate(d); setForm({ productName: '' }); addToast('Спецификация создана', 'success');
   }, [data, form, onUpdate, addToast]);
-  const del = useCallback((id) => {
+
+  const del = useCallback(async (id) => {
+    if (!confirm('Удалить спецификацию?')) return;
     const d = { ...data, bomTemplates: data.bomTemplates.filter(b => b.id !== id) };
-    DB.save(d).then(() => { onUpdate(d); addToast('Спецификация удалена', 'info'); });
+    await DB.save(d); onUpdate(d); addToast('Удалена', 'info');
   }, [data, onUpdate, addToast]);
+
+  const addMaterial = useCallback(async () => {
+    if (!matForm.bomId || !matForm.materialId || !matForm.qty || Number(matForm.qty) <= 0) { addToast('Заполните все поля', 'error'); return; }
+    const d = { ...data, bomTemplates: data.bomTemplates.map(b => b.id === matForm.bomId ? { ...b, materials: [...(b.materials || []), { materialId: matForm.materialId, qty: Number(matForm.qty) }] } : b) };
+    await DB.save(d); onUpdate(d); setMatForm(p => ({ ...p, materialId: '', qty: '' })); addToast('Материал добавлен в спецификацию', 'success');
+  }, [data, matForm, onUpdate, addToast]);
+
+  const removeMaterial = useCallback(async (bomId, idx) => {
+    const d = { ...data, bomTemplates: data.bomTemplates.map(b => b.id === bomId ? { ...b, materials: b.materials.filter((_, i) => i !== idx) } : b) };
+    await DB.save(d); onUpdate(d);
+  }, [data, onUpdate]);
+
+  // Импорт BOM из Excel
+  const importBOM = useCallback((event) => {
+    const file = event.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws);
+        if (rows.length === 0) { addToast('Файл пустой', 'error'); return; }
+        // Группируем по изделию
+        const grouped = {};
+        rows.forEach(r => {
+          const product = (r['Изделие'] || r['Продукт'] || r['Product'] || '').toString().trim();
+          const matName = (r['Материал'] || r['Название'] || r['Material'] || '').toString().trim();
+          const qty = Number(r['Количество'] || r['Кол-во'] || r['Qty'] || 0);
+          if (!product || !matName) return;
+          if (!grouped[product]) grouped[product] = [];
+          // Найти materialId по имени
+          const mat = data.materials.find(m => m.name.toLowerCase() === matName.toLowerCase());
+          grouped[product].push({ materialId: mat?.id || null, materialName: matName, qty });
+        });
+        const newBoms = Object.entries(grouped).map(([productName, materials]) => {
+          const existing = data.bomTemplates.find(b => b.productName.toLowerCase() === productName.toLowerCase());
+          if (existing) return { ...existing, materials: materials.map(m => ({ materialId: m.materialId, qty: m.qty, _name: m.materialName })) };
+          return { id: uid(), productName, materials: materials.map(m => ({ materialId: m.materialId, qty: m.qty, _name: m.materialName })) };
+        });
+        const existingIds = newBoms.filter(b => data.bomTemplates.some(db => db.id === b.id)).map(b => b.id);
+        const updated = data.bomTemplates.map(b => { const upd = newBoms.find(nb => nb.id === b.id); return upd || b; });
+        const brandNew = newBoms.filter(b => !existingIds.includes(b.id));
+        const d = { ...data, bomTemplates: [...updated, ...brandNew] };
+        DB.save(d).then(() => { onUpdate(d); addToast(`Импортировано: ${newBoms.length} спецификаций`, 'success'); });
+      } catch(ex) { addToast('Ошибка чтения: ' + ex.message, 'error'); }
+    };
+    reader.readAsArrayBuffer(file); event.target.value = '';
+  }, [data, onUpdate, addToast]);
+
+  // Проверка остатков по BOM
+  const checkStock = useCallback((bom, qty = 1) => {
+    return (bom.materials || []).map(m => {
+      const mat = data.materials.find(dm => dm.id === m.materialId);
+      const need = m.qty * qty;
+      const have = mat?.quantity || 0;
+      return { name: mat?.name || m._name || '?', unit: mat?.unit || '', need, have, deficit: Math.max(0, need - have), ok: have >= need };
+    });
+  }, [data.materials]);
+
   return h('div', null,
+    // Импорт
+    h('div', { style: { display: 'flex', gap: 8, marginBottom: 12 } },
+      h('button', { style: abtn(), onClick: () => document.getElementById('bom-import-xlsx').click() }, '📤 Импорт BOM из Excel'),
+      h('input', { type: 'file', id: 'bom-import-xlsx', style: { display: 'none' }, accept: '.xlsx,.xls,.csv', onChange: importBOM }),
+      h('div', { style: { fontSize: 10, color: '#888', alignSelf: 'center' } }, 'Excel: колонки «Изделие», «Материал», «Количество»')
+    ),
+    // Создать
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Создать спецификацию'),
-      h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
-        h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Название изделия', value: form.productName, onChange: e => setForm(p => ({ ...p, productName: e.target.value })) }),
-        h('button', { style: abtn(), onClick: add }, 'Сохранить')
-      ),
-      h('div', { style: { fontSize: 11, color: '#888', marginTop: 8 } }, 'Материалы можно будет добавить после создания')
-    ),
-    data.bomTemplates.map(bom => h('div', { key: bom.id, style: { ...S.card, padding: 12 } },
-      h('div', { style: { display: 'flex', justifyContent: 'space-between' } },
-        h('span', { style: { fontSize: 14, fontWeight: 500 } }, bom.productName),
-        h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': `Удалить ${bom.productName}`, onClick: () => del(bom.id) }, 'Удалить')
+      h('div', { style: { display: 'flex', gap: 8 } },
+        h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Название изделия (Котёл КВ-100...)', value: form.productName, onChange: e => setForm(p => ({ ...p, productName: e.target.value })), onKeyDown: e => e.key === 'Enter' && add() }),
+        h('button', { style: abtn(), onClick: add }, '+ Создать')
       )
-    ))
+    ),
+    // Спецификации
+    data.bomTemplates.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888' } }, 'Нет спецификаций. Создайте или импортируйте из Excel.') :
+      data.bomTemplates.map(bom => {
+        const stock = checkStock(bom);
+        const allOk = stock.every(s => s.ok);
+        return h('div', { key: bom.id, style: { ...S.card, padding: 14 } },
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 } },
+            h('div', null,
+              h('span', { style: { fontSize: 15, fontWeight: 500 } }, bom.productName),
+              h('span', { style: { marginLeft: 8, fontSize: 10, padding: '2px 8px', borderRadius: 6, background: allOk ? GN3 : RD3, color: allOk ? GN2 : RD2 } }, allOk ? '✓ В наличии' : '⚠ Дефицит')
+            ),
+            h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => del(bom.id) }, '✕')
+          ),
+          // Материалы спецификации
+          (bom.materials || []).length > 0 ? h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+            h('thead', null, h('tr', null, ['Материал', 'Нужно', 'На складе', 'Статус', ''].map((t, i) => h('th', { key: i, style: S.th }, t)))),
+            h('tbody', null, stock.map((s, i) => h('tr', { key: i, style: { background: s.ok ? 'transparent' : RD3 } },
+              h('td', { style: S.td }, s.name),
+              h('td', { style: S.td }, `${s.need} ${s.unit}`),
+              h('td', { style: S.td }, `${s.have} ${s.unit}`),
+              h('td', { style: { ...S.td, color: s.ok ? GN : RD, fontWeight: 500 } }, s.ok ? '✓' : `−${s.deficit}`),
+              h('td', { style: S.td }, h('button', { style: { background: 'none', border: 'none', color: RD, cursor: 'pointer' }, onClick: () => removeMaterial(bom.id, i) }, '×'))
+            )))
+          )) : h('div', { style: { fontSize: 12, color: '#888', marginBottom: 8 } }, 'Нет материалов. Добавьте ниже.'),
+          // Добавить материал
+          h('div', { style: { display: 'flex', gap: 6, marginTop: 8 } },
+            h('select', { style: { ...S.inp, flex: 2 }, value: matForm.bomId === bom.id ? matForm.materialId : '', onChange: e => setMatForm({ bomId: bom.id, materialId: e.target.value, qty: matForm.bomId === bom.id ? matForm.qty : '' }) },
+              h('option', { value: '' }, '— материал —'),
+              data.materials.map(m => h('option', { key: m.id, value: m.id }, `${m.name} (${m.quantity} ${m.unit})`))
+            ),
+            h('input', { type: 'number', step: '0.1', style: { ...S.inp, width: 80 }, placeholder: 'Кол-во', value: matForm.bomId === bom.id ? matForm.qty : '', onChange: e => setMatForm({ bomId: bom.id, materialId: matForm.bomId === bom.id ? matForm.materialId : '', qty: e.target.value }) }),
+            h('button', { style: abtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => { setMatForm(p => ({ ...p, bomId: bom.id })); addMaterial(); } }, '+')
+          )
+        );
+      })
   );
 });
 
-// ==================== MasterTodayPlan ====================
+// ==================== MasterTodayPlan (с автопересчётом и каскадными алертами) ====================
 const MasterTodayPlan = memo(({ data }) => {
-  const { plannedToday, nowTime } = useMemo(() => {
+  const { plannedToday, nowTime, cascadeAlerts, delayedOrders } = useMemo(() => {
     const todayStart = new Date().setHours(0,0,0,0);
-    const todayEnd   = new Date().setHours(23,59,59,999);
-    const nowTime    = now();
+    const todayEnd = new Date().setHours(23,59,59,999);
+    const nowTime = now();
     const plannedToday = data.ops
       .filter(op => op.plannedStartDate && op.plannedStartDate >= todayStart && op.plannedStartDate <= todayEnd && !op.archived)
       .sort((a,b) => a.plannedStartDate - b.plannedStartDate);
-    return { plannedToday, nowTime };
-  }, [data.ops]);
-  return h('div', { style: { ...S.card, overflowX: 'auto' } },
-    h('div', { style: S.sec }, 'План на сегодня'),
-    plannedToday.length === 0
-      ? h('div', { style: { padding: 16, textAlign: 'center' } }, 'Нет запланированных операций')
-      : h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null, ['Заказ','Операция','Исполнитель','Начало','Статус'].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
-          h('tbody', null, plannedToday.map(op => {
-            const order = data.orders.find(o => o.id === op.orderId);
-            const workerNames = op.workerIds?.map(id => data.workers.find(w => w.id === id)?.name).filter(Boolean).join(', ') || '—';
-            const overdue = !op.startedAt && op.plannedStartDate < nowTime - 3600000;
-            return h('tr', { key: op.id, style: { background: overdue ? RD3 : 'transparent' } },
-              h('td', { style: S.td }, order?.number || '—'),
-              h('td', { style: S.td }, op.name),
-              h('td', { style: S.td }, workerNames),
-              h('td', { style: S.td }, new Date(op.plannedStartDate).toLocaleTimeString()),
-              h('td', { style: S.td }, h(Badge, { st: op.status }))
-            );
-          }))
-        ))
+
+    // Каскадный анализ задержек
+    const cascadeAlerts = [];
+    const delayedOrders = new Set();
+    // Для каждого заказа: если текущая операция задерживается → пересчитать последующие
+    data.orders.filter(o => !o.archived).forEach(order => {
+      const ops = data.ops.filter(op => op.orderId === order.id && !op.archived).sort((a, b) => (a.plannedStartDate || 0) - (b.plannedStartDate || 0));
+      let accumulatedDelay = 0;
+      ops.forEach((op, idx) => {
+        if (op.status === 'in_progress' && op.plannedHours && op.startedAt) {
+          const expectedEnd = op.startedAt + op.plannedHours * 3600000;
+          if (nowTime > expectedEnd) {
+            const delay = nowTime - expectedEnd;
+            accumulatedDelay += delay;
+          }
+        }
+        if (op.status === 'done' && op.finishedAt && op.plannedHours && op.startedAt) {
+          const expectedEnd = op.startedAt + op.plannedHours * 3600000;
+          if (op.finishedAt > expectedEnd) accumulatedDelay += (op.finishedAt - expectedEnd);
+        }
+      });
+      if (accumulatedDelay > 1800000) { // > 30 минут
+        delayedOrders.add(order.id);
+        // Проверить дедлайн
+        if (order.deadline) {
+          const deadlineMs = new Date(order.deadline).getTime();
+          const remainingOps = ops.filter(op => op.status !== 'done' && op.status !== 'defect');
+          const remainingHours = remainingOps.reduce((s, op) => s + (op.plannedHours || 2), 0);
+          const newExpectedEnd = nowTime + remainingHours * 3600000;
+          if (newExpectedEnd > deadlineMs) {
+            cascadeAlerts.push({
+              orderId: order.id, orderNumber: order.number, delay: accumulatedDelay,
+              deadline: order.deadline, expectedEnd: newExpectedEnd,
+              overshoot: newExpectedEnd - deadlineMs,
+              remainingOps: remainingOps.length
+            });
+          }
+        }
+      }
+    });
+    cascadeAlerts.sort((a, b) => a.overshoot - b.overshoot);
+    return { plannedToday, nowTime, cascadeAlerts, delayedOrders };
+  }, [data.ops, data.orders]);
+
+  return h('div', null,
+    // Каскадные алерты
+    cascadeAlerts.length > 0 && h('div', { role: 'alert', style: { ...S.card, background: RD3, border: `0.5px solid ${RD}`, marginBottom: 12 } },
+      h('div', { style: { fontSize: 10, color: RD, textTransform: 'uppercase', fontWeight: 500, marginBottom: 8 } }, `⚠ Прогноз срыва дедлайна (${cascadeAlerts.length} заказов)`),
+      cascadeAlerts.map(a => h('div', { key: a.orderId, style: { padding: '6px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', fontSize: 12 } },
+        h('div', { style: { fontWeight: 500, color: RD2 } }, `Заказ ${a.orderNumber}`),
+        h('div', { style: { color: '#666', fontSize: 11 } },
+          `Накопленная задержка: ${fmtDur(a.delay)} · Дедлайн: ${a.deadline} · `,
+          h('span', { style: { fontWeight: 500, color: RD } }, `Опоздание: ~${fmtDur(a.overshoot)}`),
+          ` · Осталось операций: ${a.remainingOps}`
+        )
+      ))
+    ),
+
+    // План на сегодня
+    h('div', { style: { ...S.card, overflowX: 'auto' } },
+      h('div', { style: S.sec }, `План на сегодня (${plannedToday.length})`),
+      plannedToday.length === 0
+        ? h('div', { style: { padding: 16, textAlign: 'center', color: '#888' } }, 'Нет запланированных операций на сегодня')
+        : h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+            h('thead', null, h('tr', null, ['Заказ','Операция','Исполнитель','Плановое начало','Статус','Задержка'].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
+            h('tbody', null, plannedToday.map(op => {
+              const order = data.orders.find(o => o.id === op.orderId);
+              const workerNames = op.workerIds?.map(id => data.workers.find(w => w.id === id)?.name).filter(Boolean).join(', ') || '—';
+              const overdue = !op.startedAt && op.plannedStartDate < nowTime;
+              const delay = overdue ? nowTime - op.plannedStartDate : 0;
+              const isDelayedOrder = delayedOrders.has(op.orderId);
+              return h('tr', { key: op.id, style: { background: overdue ? RD3 : isDelayedOrder ? '#FFF8E1' : 'transparent' } },
+                h('td', { style: { ...S.td, color: AM, fontWeight: 500 } }, order?.number || '—'),
+                h('td', { style: S.td }, op.name),
+                h('td', { style: S.td }, workerNames),
+                h('td', { style: S.td }, new Date(op.plannedStartDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+                h('td', { style: S.td }, h(Badge, { st: op.status })),
+                h('td', { style: { ...S.td, color: delay > 0 ? RD : GN, fontWeight: delay > 0 ? 500 : 400 } }, delay > 0 ? `+${fmtDur(delay)}` : '✓')
+              );
+            }))
+          ))
+    )
   );
 });
 
@@ -1901,12 +2162,6 @@ const MasterOrders = memo(({ data, onUpdate, addToast }) => {
 
   const edit = useCallback(ord => { setForm({ number: ord.number, product: ord.product, qty: String(ord.qty), deadline: ord.deadline || '', priority: ord.priority || 'medium', bomId: '' }); setEditingId(ord.id); }, []);
 
-  const generatePassport = useCallback((order) => {
-    const orderOps = data.ops.filter(op => op.orderId === order.id && !op.archived);
-    const docDefinition = { content: [ { text: 'Паспорт изделия', style: 'header' }, { text: `Заказ №: ${order.number}`, style: 'subheader' }, { text: `Изделие: ${order.product}`, margin: [0,0,0,10] }, { text: `Количество: ${order.qty}`, margin: [0,0,0,10] }, { text: `Дата отгрузки: ${order.deadline || 'не указана'}`, margin: [0,0,0,20] }, { text: 'Операции:', style: 'subheader' }, { table: { headerRows: 1, widths: ['auto','auto','auto','auto','auto'], body: [ ['Операция','Исполнитель','Начало','Окончание','Статус'], ...orderOps.map(op => [ op.name, op.workerIds?.map(id => data.workers.find(w => w.id === id)?.name).filter(Boolean).join(', ') || '—', op.startedAt ? new Date(op.startedAt).toLocaleString() : '—', op.finishedAt ? new Date(op.finishedAt).toLocaleString() : '—', STATUS[op.status]?.label || op.status ]) ] } } ], styles: { header: { fontSize: 18, bold: true, margin: [0,0,0,10] }, subheader: { fontSize: 14, bold: true, margin: [0,10,0,5] } } };
-    pdfMake.createPdf(docDefinition).download(`passport_${order.number}.pdf`);
-  }, [data.workers, data.ops]);
-
   const generateRouteSheet = useCallback((order) => {
     const orderOps = data.ops.filter(op => op.orderId === order.id && !op.archived);
     const docDefinition = { content: [ { text: 'Маршрутный лист', style: 'header' }, { text: `Заказ №: ${order.number}`, style: 'subheader' }, { text: `Изделие: ${order.product}`, margin: [0,0,0,10] }, { text: `Количество: ${order.qty}`, margin: [0,0,0,20] }, { table: { headerRows: 1, widths: ['auto','auto','auto','auto'], body: [ ['Операция','Исполнитель','План. время','Отметка'], ...orderOps.map(op => [ op.name, op.workerIds?.map(id => data.workers.find(w => w.id === id)?.name).filter(Boolean).join(', ') || '—', op.plannedHours ? `${op.plannedHours} ч` : '—', { text: '' } ]) ] } } ], styles: { header: { fontSize: 18, bold: true, margin: [0,0,0,10] }, subheader: { fontSize: 14, bold: true, margin: [0,10,0,5] } } };
@@ -1929,7 +2184,24 @@ const MasterOrders = memo(({ data, onUpdate, addToast }) => {
         h('div', { style: { minWidth: 140 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.bomId, onChange: e => setForm(p => ({ ...p, bomId: e.target.value })) }, h('option', { value: '' }, '— без BOM —'), data.bomTemplates.map(b => h('option', { key: b.id, value: b.id }, b.productName)))),
         h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, editingId ? '✓' : '+'),
         editingId && h('button', { type: 'button', style: gbtn(), onClick: () => { setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '' }); setFieldErrors({}); } }, 'Отмена')
-      )
+      ),
+      // Проверка остатков при выборе BOM
+      form.bomId && form.qty && (() => {
+        const bom = data.bomTemplates.find(b => b.id === form.bomId);
+        if (!bom || !bom.materials?.length) return null;
+        const qty = Number(form.qty) || 1;
+        const checks = bom.materials.map(m => {
+          const mat = data.materials.find(dm => dm.id === m.materialId);
+          const need = m.qty * qty;
+          const have = mat?.quantity || 0;
+          return { name: mat?.name || '?', need, have, unit: mat?.unit || '', ok: have >= need };
+        });
+        const allOk = checks.every(c => c.ok);
+        return h('div', { style: { marginTop: 10, padding: '8px 12px', borderRadius: 8, background: allOk ? GN3 : RD3, border: `0.5px solid ${allOk ? GN : RD}` } },
+          h('div', { style: { fontSize: 11, fontWeight: 500, color: allOk ? GN2 : RD2, marginBottom: allOk ? 0 : 4 } }, allOk ? `✓ Все материалы в наличии (BOM: ${bom.productName})` : `⚠ Дефицит материалов (BOM: ${bom.productName}):`),
+          !allOk && checks.filter(c => !c.ok).map((c, i) => h('div', { key: i, style: { fontSize: 11, color: RD2 } }, `${c.name}: нужно ${c.need} ${c.unit}, есть ${c.have} ${c.unit}`))
+        );
+      })()
     ),
     h('div', { style: { display: 'flex', justifyContent: 'flex-end', marginBottom: 12 } },
       h('label', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 } },
@@ -1939,13 +2211,15 @@ const MasterOrders = memo(({ data, onUpdate, addToast }) => {
     paginated.length === 0
       ? h('div', { style: { ...S.card, textAlign: 'center' } }, 'Заказов нет')
       : h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null, ['Номер','Изделие','Кол-во','Дата отгрузки','Приоритет','Операций','Статус',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
+          h('thead', null, h('tr', null, ['Номер','Изделие','Кол-во','Дата отгрузки','Приоритет','Операций','Материалы','Статус',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
           h('tbody', null, paginated.map(ord => {
             const ops = data.ops.filter(o => o.orderId === ord.id);
             const done = ops.filter(o => o.status === 'done').length;
             const def = ops.filter(o => o.status === 'defect').length;
             const st = ops.length === 0 ? 'pending' : done === ops.length ? 'done' : ops.some(o => o.status === 'in_progress') ? 'in_progress' : 'pending';
             const nearDeadline = isShipmentNear(ord.deadline) && st !== 'done';
+            const matConsumption = (data.materialConsumptions || []).filter(mc => ops.some(op => op.id === mc.opId));
+            const matCost = matConsumption.reduce((s, mc) => { const mat = data.materials.find(m => m.id === mc.materialId); return s + mc.qty * (mat?.unitCost || 0); }, 0);
             return h('tr', { key: ord.id, style: { background: ord.archived ? '#eee' : 'transparent' } },
               h('td', { style: { ...S.td, color: AM, fontWeight: 500 } }, ord.number, nearDeadline && h('span', { style: { marginLeft: 6, color: RD } }, '⏳')),
               h('td', { style: S.td }, ord.product),
@@ -1953,6 +2227,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast }) => {
               h('td', { style: { ...S.td, color: nearDeadline ? RD : '#888' } }, ord.deadline || '—'),
               h('td', { style: { ...S.td, color: PRIORITY[ord.priority]?.color || '#888' } }, PRIORITY[ord.priority]?.label || '—'),
               h('td', { style: S.td }, `${done}/${ops.length}`, def > 0 && h('span', { style: { marginLeft: 4, color: RD } }, `⚠ ${def}`)),
+              h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 11 } }, matConsumption.length > 0 ? `${matCost.toLocaleString()}₽` : '—'),
               h('td', { style: S.td }, h(Badge, { st })),
               h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
                 !ord.archived ? [
@@ -2349,40 +2624,6 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
   );
 });
 
-// ==================== MasterSettings ====================
-const MasterSettings = memo(({ data, onUpdate, addToast }) => {
-  const exportData = () => {
-    const jsonStr = JSON.stringify(data, null, 2);
-    const blob = new Blob([jsonStr], { type:'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `backup_${new Date().toISOString().slice(0,10)}.json`; a.click(); URL.revokeObjectURL(url);
-    addToast('Резервная копия создана', 'success');
-  };
-  const importData = (event) => {
-    const file = event.target.files[0]; if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const imported = JSON.parse(e.target.result);
-        if (imported.orders && imported.ops && imported.workers) { DB.save(imported).then(() => { onUpdate(imported); addToast('Данные импортированы', 'success'); }); }
-        else { addToast('Неверный формат файла', 'error'); }
-      } catch (ex) { addToast('Ошибка при чтении файла', 'error'); }
-    };
-    reader.readAsText(file);
-  };
-  return h('div', null,
-    h('div', { style: S.card },
-      h('div', { style: S.sec }, 'Резервное копирование'),
-      h('div', { style: { display:'flex', gap:8, marginBottom:12 } },
-        h('button', { style: abtn(), onClick: exportData }, '📥 Экспорт JSON'),
-        h('button', { style: gbtn(), onClick: () => document.getElementById('import-file').click() }, '📤 Импорт JSON')
-      ),
-      h('input', { type:'file', id:'import-file', style: { display:'none' }, accept:'.json', onChange: importData }),
-      h('div', { style: { fontSize:11, color:'#888' } }, 'Импорт заменит все текущие данные.')
-    )
-  );
-});
-
 // ==================== GanttChart ====================
 const GanttChart = memo(({ data }) => {
   const [startDate, setStartDate] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 7); return d; });
@@ -2484,18 +2725,58 @@ const ResourceCalendar = memo(({ data, onUpdate, addToast }) => {
   );
 });
 
-// ==================== MasterKanban ====================
-const MasterKanban = memo(({ data }) => {
+// ==================== MasterKanban (с WIP-лимитами) ====================
+const MasterKanban = memo(({ data, onUpdate, addToast }) => {
   const stagesList = useMemo(() => { if (data.productionStages && data.productionStages.length > 0) return data.productionStages.map(s => s.name); return OPERATION_STAGES; }, [data.productionStages]);
+  const wipLimits = data.settings?.wipLimits || {};
+  const [editingWip, setEditingWip] = useState(null);
+  const [wipValue, setWipValue] = useState('');
+
+  const saveWipLimit = useCallback(async (stage, limit) => {
+    const val = Number(limit);
+    if (isNaN(val) || val < 0) return;
+    const newLimits = { ...wipLimits, [stage]: val || undefined };
+    if (!val) delete newLimits[stage];
+    const d = { ...data, settings: { ...data.settings, wipLimits: newLimits } };
+    await DB.save(d); onUpdate(d); setEditingWip(null); setWipValue('');
+    addToast(val ? `WIP-лимит: ${stage} = ${val}` : `WIP-лимит снят: ${stage}`, 'success');
+  }, [data, wipLimits, onUpdate, addToast]);
+
   const columns = useMemo(() => stagesList.map(stage => {
     const opsAtStage = data.ops.filter(op => op.name === stage && !op.archived);
-    return { stage, pending: opsAtStage.filter(op => op.status === 'pending'), in_progress: opsAtStage.filter(op => op.status === 'in_progress'), on_check: opsAtStage.filter(op => op.status === 'on_check'), done: opsAtStage.filter(op => op.status === 'done'), defect: opsAtStage.filter(op => op.status === 'defect' || op.status === 'rework'), total: opsAtStage.length };
-  }), [stagesList, data.ops]);
+    const active = opsAtStage.filter(op => op.status === 'in_progress' || op.status === 'pending' || op.status === 'on_check');
+    const wip = wipLimits[stage] || 0;
+    const overWip = wip > 0 && active.length > wip;
+    return { stage, pending: opsAtStage.filter(op => op.status === 'pending'), in_progress: opsAtStage.filter(op => op.status === 'in_progress'), on_check: opsAtStage.filter(op => op.status === 'on_check'), done: opsAtStage.filter(op => op.status === 'done'), defect: opsAtStage.filter(op => op.status === 'defect' || op.status === 'rework'), total: opsAtStage.length, activeCount: active.length, wipLimit: wip, overWip };
+  }), [stagesList, data.ops, wipLimits]);
+
+  const overWipStages = columns.filter(c => c.overWip);
+
   return h('div', { style: { overflowX:'auto', paddingBottom:16 } },
-    h('div', { style: S.sec }, 'Канбан-доска производства'),
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 } },
+      h('div', { style: S.sec }, 'Канбан-доска производства'),
+      h('div', { style: { fontSize: 10, color: '#888' } }, 'Нажмите на лимит для изменения')
+    ),
+    // Алерт превышения WIP
+    overWipStages.length > 0 && h('div', { role: 'alert', style: { padding: '8px 12px', background: RD3, border: `0.5px solid ${RD}`, borderRadius: 8, marginBottom: 10, fontSize: 11 } },
+      h('span', { style: { fontWeight: 500, color: RD } }, '⚠ Превышен WIP-лимит: '),
+      h('span', { style: { color: RD2 } }, overWipStages.map(c => `${c.stage} (${c.activeCount}/${c.wipLimit})`).join(', '))
+    ),
     h('div', { style: { display:'flex', gap:8, minWidth: columns.length*160 } },
-      columns.map(col => h('div', { key: col.stage, className: 'kanban-col', style: { flex:'0 0 150px', background:'#fff', border:'0.5px solid rgba(0,0,0,0.1)', borderRadius:10, padding:10, fontSize:11 } },
-        h('div', { style: { fontSize:10, fontWeight:500, color:AM4, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:8 } }, col.stage),
+      columns.map(col => h('div', { key: col.stage, className: 'kanban-col', style: { flex:'0 0 150px', background: col.overWip ? '#FFF0F0' : '#fff', border: col.overWip ? `1px solid ${RD}` : '0.5px solid rgba(0,0,0,0.1)', borderRadius:10, padding:10, fontSize:11 } },
+        h('div', { style: { fontSize:10, fontWeight:500, color:AM4, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 } }, col.stage),
+        // WIP-лимит
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 } },
+          editingWip === col.stage
+            ? h('div', { style: { display: 'flex', gap: 4 } },
+                h('input', { type: 'number', style: { ...S.inp, width: 40, padding: '2px 4px', fontSize: 11 }, value: wipValue, onChange: e => setWipValue(e.target.value), onKeyDown: e => e.key === 'Enter' && saveWipLimit(col.stage, wipValue), autoFocus: true }),
+                h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: GN }, onClick: () => saveWipLimit(col.stage, wipValue) }, '✓'),
+                h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: '#888' }, onClick: () => setEditingWip(null) }, '✕')
+              )
+            : h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: col.overWip ? RD : col.wipLimit ? AM : '#bbb', padding: 0 }, onClick: () => { setEditingWip(col.stage); setWipValue(col.wipLimit || ''); } },
+                col.wipLimit ? `WIP: ${col.activeCount}/${col.wipLimit}` : 'Лимит: ∞'
+              )
+        ),
         h('div', { style: { display:'flex', gap:4, flexWrap:'wrap', marginBottom:8 } },
           col.pending.length>0 && h('span', { style:{ padding:'2px 6px', fontSize:10, borderRadius:6, background:'#f0ede8', color:'#666' } }, `⏳ ${col.pending.length}`),
           col.in_progress.length>0 && h('span', { style:{ padding:'2px 6px', fontSize:10, borderRadius:6, background:AM3, color:AM2 } }, `▶ ${col.in_progress.length}`),
@@ -2511,30 +2792,360 @@ const MasterKanban = memo(({ data }) => {
   );
 });
 
-// ==================== AnalyticsDashboard (заглушка с Chart.js) ====================
-const AnalyticsDashboard = memo(({ data }) => {
-  const canvasRef = useRef(null);
-  const chartRef = useRef(null);
-  const period30 = useMemo(() => now() - 30*86400000, []);
-  const byOp = useMemo(() => {
+// ==================== MasterReclamations (рекламации от заказчиков) ====================
+const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
+  const [form, setForm] = useState({ orderId: '', description: '', severity: 'minor', detectedDate: '', operationName: '' });
+  const [showForm, setShowForm] = useState(false);
+
+  const addReclamation = useCallback(async () => {
+    if (!form.orderId || !form.description.trim()) { addToast('Укажите заказ и описание', 'error'); return; }
+    const rec = { id: uid(), orderId: form.orderId, description: form.description.trim(), severity: form.severity, detectedDate: form.detectedDate || new Date().toISOString().slice(0, 10), operationName: form.operationName, status: 'open', createdAt: now() };
+    let d = { ...data, reclamations: [...(data.reclamations || []), rec] };
+    d = logAction(d, 'reclamation_add', { orderId: form.orderId, orderNumber: data.orders.find(o => o.id === form.orderId)?.number });
+    await DB.save(d); onUpdate(d);
+    setForm({ orderId: '', description: '', severity: 'minor', detectedDate: '', operationName: '' }); setShowForm(false);
+    addToast('Рекламация зарегистрирована', 'success');
+  }, [data, form, onUpdate, addToast]);
+
+  const updateStatus = useCallback(async (recId, status) => {
+    const d = { ...data, reclamations: (data.reclamations || []).map(r => r.id === recId ? { ...r, status, resolvedAt: status === 'closed' ? now() : r.resolvedAt } : r) };
+    await DB.save(d); onUpdate(d); addToast(`Статус обновлён: ${status === 'open' ? 'Открыта' : status === 'in_work' ? 'В работе' : 'Закрыта'}`, 'success');
+  }, [data, onUpdate, addToast]);
+
+  const delRec = useCallback(async (id) => {
+    if (!confirm('Удалить рекламацию?')) return;
+    const d = { ...data, reclamations: (data.reclamations || []).filter(r => r.id !== id) };
+    await DB.save(d); onUpdate(d); addToast('Удалена', 'info');
+  }, [data, onUpdate, addToast]);
+
+  const reclamations = (data.reclamations || []).sort((a, b) => b.createdAt - a.createdAt);
+  const severityStyle = { critical: { bg: RD3, cl: RD2, label: 'Критическая' }, major: { bg: '#FFF3E0', cl: '#E65100', label: 'Серьёзная' }, minor: { bg: '#FFF8E1', cl: '#F57F17', label: 'Незначительная' } };
+  const statusStyle = { open: { bg: RD3, cl: RD, label: 'Открыта' }, in_work: { bg: AM3, cl: AM2, label: 'В работе' }, closed: { bg: GN3, cl: GN2, label: 'Закрыта' } };
+  const openCount = reclamations.filter(r => r.status !== 'closed').length;
+
+  // Статистика: какие операции чаще порождают рекламации
+  const opStats = useMemo(() => {
     const counts = {};
-    data.ops.filter(op => op.status === 'done' && op.finishedAt >= period30).forEach(op => { counts[op.name] = (counts[op.name] || 0) + 1; });
-    return Object.entries(counts).sort((a,b) => b[1]-a[1]).slice(0,8);
-  }, [data.ops, period30]);
-  useEffect(() => {
-    if (!canvasRef.current || !window.Chart) return;
-    if (chartRef.current) chartRef.current.destroy();
-    chartRef.current = new Chart(canvasRef.current, {
-      type: 'bar',
-      data: { labels: byOp.map(([n]) => n), datasets: [{ label: 'Выполнено за 30 дней', data: byOp.map(([,v]) => v), backgroundColor: AM, borderRadius: 4 }] },
-      options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
-    });
-    return () => { if (chartRef.current) chartRef.current.destroy(); };
-  }, [byOp]);
+    reclamations.forEach(r => { if (r.operationName) counts[r.operationName] = (counts[r.operationName] || 0) + 1; });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [reclamations]);
+
   return h('div', null,
-    h('div', { style: { ...S.card, marginBottom: 16 } },
-      h('div', { style: S.sec }, 'Операции за последние 30 дней'),
-      byOp.length === 0 ? h('div', { style: { padding: 16, textAlign: 'center', color: '#888' } }, 'Нет данных за период') : h('canvas', { ref: canvasRef })
+    // Сводка
+    h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 10, marginBottom: 12 } },
+      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: reclamations.length > 0 ? AM : GN } }, reclamations.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Всего')),
+      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: openCount > 0 ? RD : GN } }, openCount), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Открытых')),
+      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: '#888' } }, reclamations.filter(r => r.severity === 'critical').length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Критических'))
+    ),
+
+    // Кнопка добавления
+    h('div', { style: { marginBottom: 12 } },
+      h('button', { style: abtn(), onClick: () => setShowForm(v => !v) }, showForm ? '✕ Скрыть форму' : '+ Новая рекламация')
+    ),
+
+    // Форма
+    showForm && h('div', { style: { ...S.card, marginBottom: 12 } },
+      h('div', { style: S.sec }, 'Регистрация рекламации'),
+      h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
+        h('div', { style: { flex: 1, minWidth: 140 } },
+          h('label', { style: S.lbl }, 'Заказ'),
+          h('select', { style: { ...S.inp, width: '100%' }, value: form.orderId, onChange: e => setForm(p => ({ ...p, orderId: e.target.value })) },
+            h('option', { value: '' }, '— выберите заказ —'),
+            data.orders.map(o => h('option', { key: o.id, value: o.id }, `${o.number} — ${o.product}`))
+          )
+        ),
+        h('div', { style: { flex: 1, minWidth: 140 } },
+          h('label', { style: S.lbl }, 'Связанная операция'),
+          h('select', { style: { ...S.inp, width: '100%' }, value: form.operationName, onChange: e => setForm(p => ({ ...p, operationName: e.target.value })) },
+            h('option', { value: '' }, '— не определено —'),
+            OPERATION_STAGES.map(s => h('option', { key: s, value: s }, s))
+          )
+        ),
+        h('div', { style: { flex: 1, minWidth: 120 } },
+          h('label', { style: S.lbl }, 'Серьёзность'),
+          h('select', { style: { ...S.inp, width: '100%' }, value: form.severity, onChange: e => setForm(p => ({ ...p, severity: e.target.value })) },
+            h('option', { value: 'minor' }, 'Незначительная'), h('option', { value: 'major' }, 'Серьёзная'), h('option', { value: 'critical' }, 'Критическая')
+          )
+        ),
+        h('div', { style: { flex: 1, minWidth: 120 } },
+          h('label', { style: S.lbl }, 'Дата обнаружения'),
+          h('input', { type: 'date', style: { ...S.inp, width: '100%' }, value: form.detectedDate, onChange: e => setForm(p => ({ ...p, detectedDate: e.target.value })) })
+        )
+      ),
+      h('div', { style: { marginTop: 8 } },
+        h('label', { style: S.lbl }, 'Описание проблемы'),
+        h('textarea', { style: { ...S.inp, width: '100%' }, rows: 3, placeholder: 'Что обнаружил заказчик, при каких условиях...', value: form.description, onChange: e => setForm(p => ({ ...p, description: e.target.value })) })
+      ),
+      h('div', { style: { marginTop: 8, display: 'flex', gap: 8 } },
+        h('button', { style: abtn(), onClick: addReclamation }, 'Зарегистрировать'),
+        h('button', { style: gbtn(), onClick: () => setShowForm(false) }, 'Отмена')
+      )
+    ),
+
+    // Статистика по операциям
+    opStats.length > 0 && h('div', { style: { ...S.card, marginBottom: 12 } },
+      h('div', { style: S.sec }, 'Рекламации по операциям (источники проблем)'),
+      h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+        opStats.map(([name, count]) => h('div', { key: name, style: { padding: '6px 12px', background: count >= 3 ? RD3 : '#FFF8E1', borderRadius: 8, fontSize: 12 } },
+          h('span', { style: { fontWeight: 500 } }, name), h('span', { style: { marginLeft: 6, color: count >= 3 ? RD : AM } }, `×${count}`)
+        ))
+      )
+    ),
+
+    // Список
+    reclamations.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888' } }, 'Нет зарегистрированных рекламаций') :
+      reclamations.map(rec => {
+        const order = data.orders.find(o => o.id === rec.orderId);
+        const sev = severityStyle[rec.severity] || severityStyle.minor;
+        const st = statusStyle[rec.status] || statusStyle.open;
+        return h('div', { key: rec.id, style: { ...S.card, padding: 12, borderLeft: `4px solid ${sev.cl}` } },
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 } },
+            h('div', null,
+              h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 } },
+                h('span', { style: { fontSize: 13, fontWeight: 500 } }, order ? `${order.number} — ${order.product}` : 'Заказ удалён'),
+                h('span', { style: { padding: '2px 8px', fontSize: 10, borderRadius: 6, background: sev.bg, color: sev.cl } }, sev.label),
+                h('span', { style: { padding: '2px 8px', fontSize: 10, borderRadius: 6, background: st.bg, color: st.cl } }, st.label)
+              ),
+              rec.operationName && h('div', { style: { fontSize: 11, color: AM } }, `Этап: ${rec.operationName}`),
+              h('div', { style: { fontSize: 11, color: '#888' } }, `Обнаружено: ${rec.detectedDate || new Date(rec.createdAt).toLocaleDateString()}`)
+            ),
+            h('div', { style: { display: 'flex', gap: 4 } },
+              rec.status === 'open' && h('button', { style: abtn({ fontSize: 10, padding: '3px 8px' }), onClick: () => updateStatus(rec.id, 'in_work') }, 'В работу'),
+              rec.status === 'in_work' && h('button', { style: { ...gbtn({ fontSize: 10, padding: '3px 8px' }), background: GN3, color: GN2 }, onClick: () => updateStatus(rec.id, 'closed') }, 'Закрыть'),
+              rec.status === 'closed' && h('button', { style: gbtn({ fontSize: 10, padding: '3px 8px' }), onClick: () => updateStatus(rec.id, 'open') }, 'Переоткрыть'),
+              h('button', { style: rbtn({ fontSize: 10, padding: '3px 8px' }), onClick: () => delRec(rec.id) }, '✕')
+            )
+          ),
+          h('div', { style: { fontSize: 12, color: '#333', lineHeight: 1.5 } }, rec.description),
+          rec.resolvedAt && h('div', { style: { fontSize: 10, color: GN, marginTop: 4 } }, `Закрыта: ${new Date(rec.resolvedAt).toLocaleDateString()}`)
+        );
+      })
+  );
+});
+
+// ==================== AnalyticsDashboard (Волна 1: Lead Time, Такт, Нормы, Парето, Тренды) ====================
+const AnalyticsDashboard = memo(({ data }) => {
+  const [period, setPeriod] = useState(30);
+  const periodStart = useMemo(() => now() - period * 86400000, [period]);
+  const chartRef1 = useRef(null); const canvasRef1 = useRef(null);
+  const chartRef2 = useRef(null); const canvasRef2 = useRef(null);
+
+  // ===== 1. Lead Time по заказам =====
+  const leadTimeData = useMemo(() => {
+    return data.orders.filter(o => !o.archived).map(order => {
+      const ops = data.ops.filter(op => op.orderId === order.id);
+      const doneOps = ops.filter(op => op.status === 'done' && op.startedAt && op.finishedAt);
+      if (doneOps.length === 0) return null;
+      const firstStart = Math.min(...doneOps.map(op => op.startedAt));
+      const lastFinish = Math.max(...doneOps.map(op => op.finishedAt));
+      const totalElapsed = lastFinish - firstStart; // общее время от начала до конца
+      const workingTime = doneOps.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0); // время в работе
+      const waitingTime = totalElapsed - workingTime; // время ожидания между этапами
+      const allDone = ops.every(op => op.status === 'done' || op.status === 'defect');
+      return { id: order.id, number: order.number, product: order.product, totalElapsed, workingTime, waitingTime, waitingPct: totalElapsed > 0 ? Math.round(waitingTime / totalElapsed * 100) : 0, opsDone: doneOps.length, opsTotal: ops.length, completed: allDone, firstStart, lastFinish };
+    }).filter(Boolean).sort((a, b) => b.lastFinish - a.lastFinish);
+  }, [data.orders, data.ops]);
+
+  const avgLeadTime = leadTimeData.length > 0 ? leadTimeData.reduce((s, d) => s + d.totalElapsed, 0) / leadTimeData.length : 0;
+  const avgWaitingPct = leadTimeData.length > 0 ? Math.round(leadTimeData.reduce((s, d) => s + d.waitingPct, 0) / leadTimeData.length) : 0;
+
+  // ===== 2. Автонормирование =====
+  const normSuggestions = useMemo(() => {
+    const byName = {};
+    data.ops.filter(op => op.status === 'done' && op.startedAt && op.finishedAt && op.finishedAt >= periodStart).forEach(op => {
+      if (!byName[op.name]) byName[op.name] = { times: [], currentNorm: null };
+      byName[op.name].times.push((op.finishedAt - op.startedAt) / 3600000);
+      if (op.plannedHours) byName[op.name].currentNorm = op.plannedHours;
+    });
+    return Object.entries(byName).map(([name, stats]) => {
+      const sorted = stats.times.sort((a, b) => a - b);
+      const median = sorted[Math.floor(sorted.length / 2)];
+      const avg = stats.times.reduce((s, t) => s + t, 0) / stats.times.length;
+      const suggested = Math.round(median * 10) / 10;
+      const current = stats.currentNorm;
+      const deviation = current ? Math.round((avg / current - 1) * 100) : null;
+      return { name, count: stats.times.length, avg: Math.round(avg * 10) / 10, median: suggested, min: Math.round(Math.min(...stats.times) * 10) / 10, max: Math.round(Math.max(...stats.times) * 10) / 10, current, suggested, deviation };
+    }).filter(s => s.count >= 3).sort((a, b) => Math.abs(b.deviation || 0) - Math.abs(a.deviation || 0));
+  }, [data.ops, periodStart]);
+
+  // ===== 3. Расчёт такта =====
+  const taktData = useMemo(() => {
+    const completedOrders = data.orders.filter(o => {
+      const ops = data.ops.filter(op => op.orderId === o.id);
+      return ops.length > 0 && ops.every(op => op.status === 'done' || op.status === 'defect');
+    });
+    const completedInPeriod = completedOrders.filter(o => {
+      const lastOp = data.ops.filter(op => op.orderId === o.id && op.finishedAt).sort((a, b) => b.finishedAt - a.finishedAt)[0];
+      return lastOp && lastOp.finishedAt >= periodStart;
+    });
+    const pendingOrders = data.orders.filter(o => !o.archived && data.ops.some(op => op.orderId === o.id && op.status !== 'done' && op.status !== 'defect'));
+    const daysInPeriod = period;
+    const actualRate = completedInPeriod.length / daysInPeriod; // заказов в день
+    // Требуемый такт: незавершённые заказы / оставшееся время до ближайшего дедлайна
+    const withDeadline = pendingOrders.filter(o => o.deadline);
+    const avgDaysToDeadline = withDeadline.length > 0 ? withDeadline.reduce((s, o) => s + Math.max(1, (new Date(o.deadline).getTime() - now()) / 86400000), 0) / withDeadline.length : 30;
+    const requiredRate = pendingOrders.length > 0 ? pendingOrders.length / avgDaysToDeadline : 0;
+    const taktOk = actualRate >= requiredRate || requiredRate === 0;
+    return { completedInPeriod: completedInPeriod.length, pendingOrders: pendingOrders.length, actualRate: Math.round(actualRate * 100) / 100, requiredRate: Math.round(requiredRate * 100) / 100, taktOk, avgDaysToDeadline: Math.round(avgDaysToDeadline) };
+  }, [data.orders, data.ops, period, periodStart]);
+
+  // ===== 4. Парето-анализ простоев =====
+  const paretoData = useMemo(() => {
+    const downtimes = data.events.filter(e => e.type === 'downtime' && e.ts >= periodStart);
+    const byReason = {};
+    downtimes.forEach(e => {
+      const reason = data.downtimeTypes.find(dt => dt.id === e.downtimeTypeId)?.name || 'Неизвестно';
+      if (!byReason[reason]) byReason[reason] = { count: 0, totalMs: 0 };
+      byReason[reason].count++;
+      byReason[reason].totalMs += (e.duration || 0);
+    });
+    const sorted = Object.entries(byReason).sort((a, b) => b[1].totalMs - a[1].totalMs);
+    const totalMs = sorted.reduce((s, [, v]) => s + v.totalMs, 0);
+    let cumulative = 0;
+    return sorted.map(([reason, stat]) => {
+      cumulative += stat.totalMs;
+      return { reason, count: stat.count, totalHrs: Math.round(stat.totalMs / 3600000 * 10) / 10, pct: totalMs > 0 ? Math.round(stat.totalMs / totalMs * 100) : 0, cumPct: totalMs > 0 ? Math.round(cumulative / totalMs * 100) : 0 };
+    });
+  }, [data.events, data.downtimeTypes, periodStart]);
+
+  // ===== 5. Тренды качества =====
+  const qualityTrends = useMemo(() => {
+    const weeks = [];
+    for (let i = 0; i < Math.min(period / 7, 12); i++) {
+      const weekEnd = now() - i * 7 * 86400000;
+      const weekStart = weekEnd - 7 * 86400000;
+      const done = data.ops.filter(op => op.status === 'done' && op.finishedAt >= weekStart && op.finishedAt < weekEnd).length;
+      const defect = data.ops.filter(op => op.status === 'defect' && op.finishedAt >= weekStart && op.finishedAt < weekEnd).length;
+      const total = done + defect;
+      const rate = total > 0 ? Math.round(defect / total * 1000) / 10 : 0;
+      weeks.push({ weekNum: i, label: i === 0 ? 'Тек.' : `-${i}нед`, done, defect, total, rate });
+    }
+    weeks.reverse();
+    // Тренд: растёт ли брак последние 3 недели
+    const recent = weeks.slice(-3);
+    const trending = recent.length >= 3 && recent[2].rate > recent[1].rate && recent[1].rate > recent[0].rate && recent[2].rate > 2;
+    return { weeks, trending };
+  }, [data.ops, period]);
+
+  // Chart.js для Парето
+  useEffect(() => {
+    if (!canvasRef1.current || !window.Chart || paretoData.length === 0) return;
+    if (chartRef1.current) chartRef1.current.destroy();
+    chartRef1.current = new Chart(canvasRef1.current, {
+      type: 'bar',
+      data: { labels: paretoData.map(d => d.reason.length > 15 ? d.reason.slice(0, 15) + '…' : d.reason), datasets: [
+        { label: 'Часы простоя', data: paretoData.map(d => d.totalHrs), backgroundColor: RD, borderRadius: 4, yAxisID: 'y' },
+        { label: 'Накопительный %', data: paretoData.map(d => d.cumPct), type: 'line', borderColor: AM, pointBackgroundColor: AM, yAxisID: 'y1', tension: 0.3 }
+      ]},
+      options: { responsive: true, plugins: { legend: { display: true, position: 'bottom', labels: { font: { size: 10 } } } }, scales: { y: { beginAtZero: true, title: { display: true, text: 'Часы' } }, y1: { position: 'right', min: 0, max: 100, title: { display: true, text: '%' }, grid: { display: false } } } }
+    });
+    return () => { if (chartRef1.current) chartRef1.current.destroy(); };
+  }, [paretoData]);
+
+  // Chart.js для трендов качества
+  useEffect(() => {
+    if (!canvasRef2.current || !window.Chart || qualityTrends.weeks.length === 0) return;
+    if (chartRef2.current) chartRef2.current.destroy();
+    chartRef2.current = new Chart(canvasRef2.current, {
+      type: 'bar',
+      data: { labels: qualityTrends.weeks.map(w => w.label), datasets: [
+        { label: 'Выполнено', data: qualityTrends.weeks.map(w => w.done), backgroundColor: GN, borderRadius: 4, stack: 'a' },
+        { label: 'Брак', data: qualityTrends.weeks.map(w => w.defect), backgroundColor: RD, borderRadius: 4, stack: 'a' },
+        { label: 'Брак %', data: qualityTrends.weeks.map(w => w.rate), type: 'line', borderColor: AM, pointBackgroundColor: AM, yAxisID: 'y1', tension: 0.3 }
+      ]},
+      options: { responsive: true, plugins: { legend: { display: true, position: 'bottom', labels: { font: { size: 10 } } } }, scales: { y: { beginAtZero: true, stacked: true, title: { display: true, text: 'Операций' } }, y1: { position: 'right', min: 0, title: { display: true, text: 'Брак %' }, grid: { display: false } } } }
+    });
+    return () => { if (chartRef2.current) chartRef2.current.destroy(); };
+  }, [qualityTrends]);
+
+  return h('div', null,
+    // Период
+    h('div', { style: { display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' } },
+      [7, 14, 30, 60, 90].map(d => h('button', { key: d, style: period === d ? abtn({ fontSize: 11 }) : gbtn({ fontSize: 11 }), onClick: () => setPeriod(d) }, `${d} дней`))
+    ),
+
+    // Алерт: тренд качества
+    qualityTrends.trending && h('div', { role: 'alert', style: { ...S.card, background: RD3, border: `0.5px solid ${RD}`, marginBottom: 12, padding: 12 } },
+      h('div', { style: { fontSize: 12, color: RD, fontWeight: 500 } }, '⚠ Брак растёт 3 недели подряд! Возможна системная проблема — проверьте оборудование и материалы.')
+    ),
+
+    // Такт производства
+    h('div', { style: { ...S.card, marginBottom: 12 } },
+      h('div', { style: S.sec }, 'Такт производства'),
+      h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 10, marginBottom: 8 } },
+        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: GN } }, taktData.completedInPeriod), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, `Завершено за ${period}д`)),
+        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: AM } }, taktData.pendingOrders), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'В очереди')),
+        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: taktData.taktOk ? GN : RD } }, `${taktData.actualRate}`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Факт (заказов/день)')),
+        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: taktData.taktOk ? GN : RD } }, `${taktData.requiredRate}`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Нужно (заказов/день)'))
+      ),
+      !taktData.taktOk && taktData.requiredRate > 0 && h('div', { style: { fontSize: 11, color: RD, fontWeight: 500, marginTop: 4 } }, `⚠ Производство не успевает: нужно ${taktData.requiredRate} заказов/день, факт ${taktData.actualRate}. Среднее время до дедлайна: ${taktData.avgDaysToDeadline} дней.`)
+    ),
+
+    // Lead Time
+    h('div', { style: { ...S.card, marginBottom: 12 } },
+      h('div', { style: S.sec }, 'Lead Time — время прохождения заказа'),
+      leadTimeData.length === 0 ? h('div', { style: { padding: 12, color: '#888', textAlign: 'center' } }, 'Нет завершённых операций') : h('div', null,
+        h('div', { style: { display: 'flex', gap: 16, marginBottom: 12 } },
+          h('div', null, h('div', { style: { fontSize: 24, fontWeight: 500, color: AM } }, fmtDur(avgLeadTime)), h('div', { style: { fontSize: 10, color: '#888' } }, 'Средний Lead Time')),
+          h('div', null, h('div', { style: { fontSize: 24, fontWeight: 500, color: avgWaitingPct > 50 ? RD : AM } }, `${avgWaitingPct}%`), h('div', { style: { fontSize: 10, color: '#888' } }, 'Среднее ожидание'))
+        ),
+        h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+          h('thead', null, h('tr', null, ['Заказ', 'Изделие', 'Lead Time', 'В работе', 'Ожидание', '% ожид.', 'Операций'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
+          h('tbody', null, leadTimeData.slice(0, 15).map(d => h('tr', { key: d.id },
+            h('td', { style: { ...S.td, color: AM, fontWeight: 500 } }, d.number),
+            h('td', { style: S.td }, d.product),
+            h('td', { style: { ...S.td, fontFamily: 'monospace' } }, fmtDur(d.totalElapsed)),
+            h('td', { style: { ...S.td, fontFamily: 'monospace', color: GN } }, fmtDur(d.workingTime)),
+            h('td', { style: { ...S.td, fontFamily: 'monospace', color: d.waitingPct > 50 ? RD : '#888' } }, fmtDur(d.waitingTime)),
+            h('td', { style: { ...S.td, color: d.waitingPct > 50 ? RD : d.waitingPct > 30 ? AM : GN, fontWeight: 500 } }, `${d.waitingPct}%`),
+            h('td', { style: S.td }, `${d.opsDone}/${d.opsTotal}`)
+          )))
+        ))
+      )
+    ),
+
+    // Тренды качества (график)
+    h('div', { style: { ...S.card, marginBottom: 12 } },
+      h('div', { style: S.sec }, 'Тренды качества (по неделям)'),
+      qualityTrends.weeks.length === 0 ? h('div', { style: { padding: 12, color: '#888', textAlign: 'center' } }, 'Нет данных') : h('canvas', { ref: canvasRef2 })
+    ),
+
+    // Парето-анализ простоев (график + таблица)
+    h('div', { style: { ...S.card, marginBottom: 12 } },
+      h('div', { style: S.sec }, 'Парето-анализ простоев'),
+      paretoData.length === 0 ? h('div', { style: { padding: 12, color: '#888', textAlign: 'center' } }, 'Нет простоев за период') : h('div', null,
+        h('canvas', { ref: canvasRef1, style: { marginBottom: 12 } }),
+        h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+          h('thead', null, h('tr', null, ['Причина', 'Кол-во', 'Потеряно (ч)', 'Доля', 'Накопит.'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
+          h('tbody', null, paretoData.map((d, i) => h('tr', { key: i, style: { background: d.cumPct <= 80 ? '#FFF8E1' : 'transparent' } },
+            h('td', { style: { ...S.td, fontWeight: d.cumPct <= 80 ? 500 : 400 } }, d.reason),
+            h('td', { style: { ...S.td, textAlign: 'center' } }, d.count),
+            h('td', { style: { ...S.td, fontFamily: 'monospace', color: RD } }, `${d.totalHrs}`),
+            h('td', { style: { ...S.td, textAlign: 'center' } }, `${d.pct}%`),
+            h('td', { style: { ...S.td, textAlign: 'center', fontWeight: 500, color: d.cumPct <= 80 ? RD : '#888' } }, `${d.cumPct}%`)
+          )))
+        )),
+        h('div', { style: { fontSize: 10, color: '#888', marginTop: 6 } }, 'Жёлтым выделены причины, дающие 80% потерь (правило Парето)')
+      )
+    ),
+
+    // Автонормирование
+    h('div', { style: { ...S.card, marginBottom: 12 } },
+      h('div', { style: S.sec }, 'Нормирование операций (факт vs план)'),
+      normSuggestions.length === 0 ? h('div', { style: { padding: 12, color: '#888', textAlign: 'center' } }, 'Недостаточно данных (нужно ≥3 завершённых операций каждого типа)') :
+        h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+          h('thead', null, h('tr', null, ['Операция', 'Замеров', 'Текущая норма', 'Медиана факт', 'Мин', 'Макс', 'Отклонение', 'Рекомендация'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
+          h('tbody', null, normSuggestions.map((s, i) => h('tr', { key: i, style: { background: s.deviation && Math.abs(s.deviation) > 30 ? '#FFF8E1' : 'transparent' } },
+            h('td', { style: S.td }, s.name),
+            h('td', { style: { ...S.td, textAlign: 'center' } }, s.count),
+            h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'center' } }, s.current ? `${s.current}ч` : '—'),
+            h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'center', fontWeight: 500 } }, `${s.median}ч`),
+            h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'center', color: '#888' } }, `${s.min}ч`),
+            h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'center', color: '#888' } }, `${s.max}ч`),
+            h('td', { style: { ...S.td, textAlign: 'center', color: s.deviation === null ? '#888' : Math.abs(s.deviation) > 30 ? RD : GN, fontWeight: 500 } }, s.deviation !== null ? `${s.deviation > 0 ? '+' : ''}${s.deviation}%` : '—'),
+            h('td', { style: { ...S.td, fontSize: 11 } }, s.deviation !== null && Math.abs(s.deviation) > 20 ? `Обновить до ${s.suggested}ч` : '✓ Норма актуальна')
+          )))
+        ))
     )
   );
 });
@@ -2578,8 +3189,8 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId }) => {
   const tabGroups = {
     production: { label: '⚙ Производство', tabs: [['ops','Операции'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['orders','Заказы'],['plan','План']] },
     reference: { label: '📋 Справочники', tabs: [['workers','Сотрудники'],['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],['materials','Материалы'],['equipment','Оборудование'],['bom','Спецификации'],['sections','Участки']] },
-    analytics: { label: '📊 Аналитика', tabs: [['reports','Отчёты'],['analytics','Аналитика'],['journal','Журнал'],['notifications','Уведомления']] },
-    system: { label: '🔧 Система', tabs: [['time','Учёт времени'],['admin','Управление'],['settings','Настройки']] }
+    analytics: { label: '📊 Аналитика', tabs: [['reports','Отчёты'],['analytics','Аналитика'],['reclamations','Рекламации'],['journal','Журнал'],['notifications','Уведомления']] },
+    system: { label: '🔧 Система', tabs: [['time','Учёт времени'],['admin','Управление']] }
   };
   const currentTabs = tabGroups[activeGroup]?.tabs || [];
   const switchGroup = (g) => { setActiveGroup(g); setTab(tabGroups[g].tabs[0][0]); };
@@ -2620,7 +3231,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId }) => {
       h(LoadForecastWidget, { data }),
       h(MasterOps, { data: filteredData, onUpdate, onShowQR: (op, worker) => setQrOpData({ op, worker }), addToast })
     ),
-    tab === 'kanban' && h(MasterKanban, { data }),
+    tab === 'kanban' && h(MasterKanban, { data, onUpdate, addToast }),
     tab === 'gantt' && h(GanttChart, { data }),
     tab === 'calendar' && h(ResourceCalendar, { data, onUpdate, addToast }),
     tab === 'orders' && h(MasterOrders, { data, onUpdate, addToast }),
@@ -2638,8 +3249,8 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId }) => {
     tab === 'notifications' && h(MasterNotifications, { data }),
     tab === 'reports' && h(ReportsBuilder, { data, onUpdate, addToast }),
     tab === 'analytics' && h(AnalyticsDashboard, { data }),
-    tab === 'admin' && h(MasterAdmin, { data, onUpdate, addToast }),
-    tab === 'settings' && h(MasterSettings, { data, onUpdate, addToast })
+    tab === 'reclamations' && h(MasterReclamations, { data, onUpdate, addToast }),
+    tab === 'admin' && h(MasterAdmin, { data, onUpdate, addToast })
   );
 });
 
@@ -2869,6 +3480,8 @@ const Dashboard = memo(({ data, addToast }) => {
       metrics.map(([v,l,c]) => h('div', { key: l, style: { ...S.card, textAlign:'center' } }, h('div', { style: { fontSize:32, fontWeight:500, color:c } }, v), h('div', { style: { fontSize:9, color:'#888', textTransform:'uppercase' } }, l)))
     ),
     nearDeadlineOrders.length > 0 && h('div', { role:'alert', style: { ...S.card, background:RD3, border:`0.5px solid ${RD}`, marginBottom:12 } }, h('div', { style: { fontSize:10, color:RD, textTransform:'uppercase', marginBottom:8, fontWeight:500 } }, '⚠ Заказы с близкой датой отгрузки'), nearDeadlineOrders.map(ord => h('div', { key: ord.id, style: { fontSize:12, color:RD2 } }, `${ord.number} · отгрузка: ${ord.deadline}`))),
+    // Критические остатки на дашборде
+    (() => { const critical = data.materials.filter(m => m.minStock && m.quantity <= m.minStock); return critical.length > 0 && h('div', { role:'alert', style: { ...S.card, background:RD3, border:`0.5px solid ${RD}`, marginBottom:12 } }, h('div', { style: { fontSize:10, color:RD, textTransform:'uppercase', marginBottom:8, fontWeight:500 } }, `⚠ Критические остатки материалов (${critical.length})`), critical.map(m => h('div', { key: m.id, style: { fontSize:12, color:RD2 } }, `${m.name}: ${m.quantity} ${m.unit} (мин: ${m.minStock})`))); })(),
     pendingLong.length > 0 && h('div', { style: { ...S.card, background:RD3, border:`0.5px solid ${RD}`, marginBottom:12 } }, h('div', { style: { fontSize:10, color:RD, textTransform:'uppercase', marginBottom:8, fontWeight:500 } }, '⚠ Операции, ожидающие >1 часа'), pendingLong.map(op => h('div', { key: op.id, style: { fontSize:12, color:RD2 } }, `${op.name} · ${fmtDur(now() - op.createdAt)}`))),
     bottlenecks.length > 0 && h('div', { style: { ...S.card, marginBottom:12 } },
       h('div', { style: { ...S.sec, marginBottom:6 } }, '⚠ Узкие места (факт > план на 20%)'),
