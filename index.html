@@ -3470,25 +3470,34 @@ const AssignmentRecommendations = memo(({ data, onUpdate, addToast }) => {
   );
 });
 
-// ==================== MasterReclamations (рекламации от заказчиков) ====================
+// ==================== MasterReclamations ====================
 const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
   const [form, setForm] = useState({ orderId: '', description: '', severity: 'minor', detectedDate: '', operationName: '' });
   const [showForm, setShowForm] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
+  const [resolutionText, setResolutionText] = useState({});
+  const [filterStatus, setFilterStatus] = useState('all');
+
+  const severityStyle = { critical: { bg: RD3, cl: RD2, label: 'Критическая', border: RD }, major: { bg: '#FFF3E0', cl: '#E65100', label: 'Серьёзная', border: '#FF9800' }, minor: { bg: '#FFF8E1', cl: '#F57F17', label: 'Незначительная', border: '#FFC107' } };
+  const statusStyle = { open: { bg: RD3, cl: RD, label: 'Открыта' }, in_work: { bg: AM3, cl: AM2, label: 'В работе' }, closed: { bg: GN3, cl: GN2, label: 'Закрыта' } };
+  const sourceLabel = { current: 'Текущий этап', previous_stage: 'С предыдущего участка', external: 'Внешняя (от заказчика)' };
 
   const addReclamation = useCallback(async () => {
     if (!form.orderId || !form.description.trim()) { addToast('Укажите заказ и описание', 'error'); return; }
-    const rec = { id: uid(), orderId: form.orderId, description: form.description.trim(), severity: form.severity, detectedDate: form.detectedDate || new Date().toISOString().slice(0, 10), operationName: form.operationName, status: 'open', createdAt: now() };
+    const rec = { id: uid(), orderId: form.orderId, description: form.description.trim(), severity: form.severity, detectedDate: form.detectedDate || new Date().toISOString().slice(0, 10), operationName: form.operationName, status: 'open', createdAt: now(), defectSource: 'external', resolution: '' };
     let d = { ...data, reclamations: [...(data.reclamations || []), rec] };
-    d = logAction(d, 'reclamation_add', { orderId: form.orderId, orderNumber: data.orders.find(o => o.id === form.orderId)?.number });
+    d = logAction(d, 'reclamation_add', { orderId: form.orderId });
     await DB.save(d); onUpdate(d);
     setForm({ orderId: '', description: '', severity: 'minor', detectedDate: '', operationName: '' }); setShowForm(false);
     addToast('Рекламация зарегистрирована', 'success');
   }, [data, form, onUpdate, addToast]);
 
   const updateStatus = useCallback(async (recId, status) => {
-    const d = { ...data, reclamations: (data.reclamations || []).map(r => r.id === recId ? { ...r, status, resolvedAt: status === 'closed' ? now() : r.resolvedAt } : r) };
-    await DB.save(d); onUpdate(d); addToast(`Статус обновлён: ${status === 'open' ? 'Открыта' : status === 'in_work' ? 'В работе' : 'Закрыта'}`, 'success');
-  }, [data, onUpdate, addToast]);
+    const resolution = resolutionText[recId] || '';
+    const d = { ...data, reclamations: (data.reclamations || []).map(r => r.id === recId ? { ...r, status, resolvedAt: status === 'closed' ? now() : r.resolvedAt, resolution: status === 'closed' && resolution ? resolution : r.resolution } : r) };
+    await DB.save(d); onUpdate(d);
+    addToast(status === 'closed' ? 'Рекламация закрыта' : 'Статус обновлён', 'success');
+  }, [data, resolutionText, onUpdate, addToast]);
 
   const delRec = useCallback(async (id) => {
     if (!confirm('Удалить рекламацию?')) return;
@@ -3496,47 +3505,49 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
     await DB.save(d); onUpdate(d); addToast('Удалена', 'info');
   }, [data, onUpdate, addToast]);
 
-  const reclamations = (data.reclamations || []).sort((a, b) => b.createdAt - a.createdAt);
-  const severityStyle = { critical: { bg: RD3, cl: RD2, label: 'Критическая' }, major: { bg: '#FFF3E0', cl: '#E65100', label: 'Серьёзная' }, minor: { bg: '#FFF8E1', cl: '#F57F17', label: 'Незначительная' } };
-  const statusStyle = { open: { bg: RD3, cl: RD, label: 'Открыта' }, in_work: { bg: AM3, cl: AM2, label: 'В работе' }, closed: { bg: GN3, cl: GN2, label: 'Закрыта' } };
-  const openCount = reclamations.filter(r => r.status !== 'closed').length;
+  const allRecs = useMemo(() => (data.reclamations || []).sort((a, b) => b.createdAt - a.createdAt), [data.reclamations]);
+  const reclamations = useMemo(() => filterStatus === 'all' ? allRecs : allRecs.filter(r => r.status === filterStatus), [allRecs, filterStatus]);
+  const openCount = allRecs.filter(r => r.status !== 'closed').length;
 
-  // Статистика: какие операции чаще порождают рекламации
   const opStats = useMemo(() => {
     const counts = {};
-    reclamations.forEach(r => { if (r.operationName) counts[r.operationName] = (counts[r.operationName] || 0) + 1; });
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  }, [reclamations]);
+    allRecs.forEach(r => { const key = r.operationName || r.opId; if (key) counts[key] = (counts[key] || 0) + 1; });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  }, [allRecs]);
 
   return h('div', null,
     // Сводка
     h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 10, marginBottom: 12 } },
-      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: reclamations.length > 0 ? AM : GN } }, reclamations.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Всего')),
+      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: allRecs.length > 0 ? AM : GN } }, allRecs.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Всего')),
       h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: openCount > 0 ? RD : GN } }, openCount), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Открытых')),
-      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: '#888' } }, reclamations.filter(r => r.severity === 'critical').length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Критических'))
+      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: '#888' } }, allRecs.filter(r => r.severity === 'critical').length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Критических')),
+      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: GN } }, allRecs.filter(r => r.status === 'closed').length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Закрытых'))
     ),
 
-    // Кнопка добавления
-    h('div', { style: { marginBottom: 12 } },
-      h('button', { style: abtn(), onClick: () => setShowForm(v => !v) }, showForm ? '✕ Скрыть форму' : '+ Новая рекламация')
+    // Фильтр + кнопка
+    h('div', { style: { display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' } },
+      [['all','Все'],['open','Открытые'],['in_work','В работе'],['closed','Закрытые']].map(([id, label]) =>
+        h('button', { key: id, style: filterStatus === id ? abtn({ fontSize: 11 }) : gbtn({ fontSize: 11 }), onClick: () => setFilterStatus(id) }, label)
+      ),
+      h('button', { style: abtn({ marginLeft: 'auto' }), onClick: () => setShowForm(v => !v) }, showForm ? '✕ Свернуть' : '+ Новая рекламация')
     ),
 
-    // Форма
-    showForm && h('div', { style: { ...S.card, marginBottom: 12 } },
-      h('div', { style: S.sec }, 'Регистрация рекламации'),
-      h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
-        h('div', { style: { flex: 1, minWidth: 140 } },
+    // Форма новой рекламации (внешней — от заказчика)
+    showForm && h('div', { style: { ...S.card, marginBottom: 12, border: `0.5px solid ${AM}` } },
+      h('div', { style: S.sec }, 'Регистрация рекламации от заказчика'),
+      h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+        h('div', { style: { flex: 2, minWidth: 160 } },
           h('label', { style: S.lbl }, 'Заказ'),
           h('select', { style: { ...S.inp, width: '100%' }, value: form.orderId, onChange: e => setForm(p => ({ ...p, orderId: e.target.value })) },
             h('option', { value: '' }, '— выберите заказ —'),
-            data.orders.map(o => h('option', { key: o.id, value: o.id }, `${o.number} — ${o.product}`))
+            data.orders.filter(o => !o.archived).map(o => h('option', { key: o.id, value: o.id }, `${o.number} — ${o.product}`))
           )
         ),
         h('div', { style: { flex: 1, minWidth: 140 } },
-          h('label', { style: S.lbl }, 'Связанная операция'),
+          h('label', { style: S.lbl }, 'Этап (если известен)'),
           h('select', { style: { ...S.inp, width: '100%' }, value: form.operationName, onChange: e => setForm(p => ({ ...p, operationName: e.target.value })) },
             h('option', { value: '' }, '— не определено —'),
-            OPERATION_STAGES.map(s => h('option', { key: s, value: s }, s))
+            (data.productionStages?.length ? data.productionStages.map(s => s.name) : OPERATION_STAGES).map(s => h('option', { key: s, value: s }, s))
           )
         ),
         h('div', { style: { flex: 1, minWidth: 120 } },
@@ -3552,52 +3563,125 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
       ),
       h('div', { style: { marginTop: 8 } },
         h('label', { style: S.lbl }, 'Описание проблемы'),
-        h('textarea', { style: { ...S.inp, width: '100%' }, rows: 3, placeholder: 'Что обнаружил заказчик, при каких условиях...', value: form.description, onChange: e => setForm(p => ({ ...p, description: e.target.value })) })
+        h('textarea', { style: { ...S.inp, width: '100%' }, rows: 3, placeholder: 'Что обнаружил заказчик, при каких условиях, какой дефект...', value: form.description, onChange: e => setForm(p => ({ ...p, description: e.target.value })) })
       ),
-      h('div', { style: { marginTop: 8, display: 'flex', gap: 8 } },
+      h('div', { style: { marginTop: 10, display: 'flex', gap: 8 } },
         h('button', { style: abtn(), onClick: addReclamation }, 'Зарегистрировать'),
         h('button', { style: gbtn(), onClick: () => setShowForm(false) }, 'Отмена')
       )
     ),
 
-    // Статистика по операциям
+    // Горячие точки — какие этапы чаще порождают рекламации
     opStats.length > 0 && h('div', { style: { ...S.card, marginBottom: 12 } },
-      h('div', { style: S.sec }, 'Рекламации по операциям (источники проблем)'),
+      h('div', { style: S.sec }, 'Источники рекламаций по этапам'),
       h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
-        opStats.map(([name, count]) => h('div', { key: name, style: { padding: '6px 12px', background: count >= 3 ? RD3 : '#FFF8E1', borderRadius: 8, fontSize: 12 } },
-          h('span', { style: { fontWeight: 500 } }, name), h('span', { style: { marginLeft: 6, color: count >= 3 ? RD : AM } }, `×${count}`)
-        ))
+        opStats.map(([name, count]) => {
+          const op = data.ops.find(o => o.id === name);
+          const label = op ? op.name : name;
+          return h('div', { key: name, style: { padding: '6px 12px', background: count >= 3 ? RD3 : '#FFF8E1', borderRadius: 8, fontSize: 12, border: `0.5px solid ${count >= 3 ? RD : '#FFC107'}` } },
+            h('span', { style: { fontWeight: 500 } }, label),
+            h('span', { style: { marginLeft: 6, color: count >= 3 ? RD : AM, fontWeight: 500 } }, `×${count}`)
+          );
+        })
       )
     ),
 
-    // Список
-    reclamations.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888' } }, 'Нет зарегистрированных рекламаций') :
-      reclamations.map(rec => {
-        const order = data.orders.find(o => o.id === rec.orderId);
-        const sev = severityStyle[rec.severity] || severityStyle.minor;
-        const st = statusStyle[rec.status] || statusStyle.open;
-        return h('div', { key: rec.id, style: { ...S.card, padding: 12, borderLeft: `4px solid ${sev.cl}` } },
-          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 } },
-            h('div', null,
-              h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 } },
-                h('span', { style: { fontSize: 13, fontWeight: 500 } }, order ? `${order.number} — ${order.product}` : 'Заказ удалён'),
-                h('span', { style: { padding: '2px 8px', fontSize: 10, borderRadius: 6, background: sev.bg, color: sev.cl } }, sev.label),
-                h('span', { style: { padding: '2px 8px', fontSize: 10, borderRadius: 6, background: st.bg, color: st.cl } }, st.label)
+    // Список рекламаций
+    reclamations.length === 0
+      ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888', padding: 32 } }, filterStatus === 'all' ? 'Рекламаций нет' : 'Нет рекламаций с таким статусом')
+      : reclamations.map(rec => {
+          const order = data.orders.find(o => o.id === rec.orderId);
+          const sev = severityStyle[rec.severity] || severityStyle.minor;
+          const st = statusStyle[rec.status] || statusStyle.open;
+          const isExpanded = expandedId === rec.id;
+
+          // Исполнители из связанной операции (если рекламация создана автоматически из брака)
+          const linkedOp = rec.opId ? data.ops.find(o => o.id === rec.opId) : null;
+          const workerNames = linkedOp?.workerIds?.map(wid => data.workers.find(w => w.id === wid)?.name).filter(Boolean) || [];
+          // Причина брака
+          const defectReason = rec.defectReasonId ? data.defectReasons?.find(r => r.id === rec.defectReasonId)?.name : null;
+
+          return h('div', { key: rec.id, style: { ...S.card, padding: 0, marginBottom: 10, borderLeft: `4px solid ${sev.border}`, overflow: 'hidden' } },
+            // Шапка карточки — всегда видна
+            h('div', { style: { padding: '12px 14px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }, onClick: () => setExpandedId(isExpanded ? null : rec.id) },
+              h('div', { style: { flex: 1, minWidth: 0 } },
+                h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 4 } },
+                  h('span', { style: { fontSize: 13, fontWeight: 500 } }, order ? `${order.number} — ${order.product}` : '—'),
+                  h('span', { style: { padding: '2px 8px', fontSize: 10, borderRadius: 6, background: sev.bg, color: sev.cl, fontWeight: 500 } }, sev.label),
+                  h('span', { style: { padding: '2px 8px', fontSize: 10, borderRadius: 6, background: st.bg, color: st.cl, fontWeight: 500 } }, st.label),
+                  rec.defectSource && rec.defectSource !== 'external' && h('span', { style: { padding: '2px 8px', fontSize: 10, borderRadius: 6, background: '#f0f0ff', color: '#333' } }, sourceLabel[rec.defectSource] || rec.defectSource)
+                ),
+                h('div', { style: { fontSize: 11, color: '#888', display: 'flex', gap: 12, flexWrap: 'wrap' } },
+                  h('span', null, `Создана: ${new Date(rec.createdAt).toLocaleDateString()}`),
+                  rec.detectedDate && h('span', null, `Обнаружена: ${rec.detectedDate}`),
+                  linkedOp && h('span', { style: { color: AM } }, `Этап: ${linkedOp.name}`),
+                  !linkedOp && rec.operationName && h('span', { style: { color: AM } }, `Этап: ${rec.operationName}`)
+                )
               ),
-              rec.operationName && h('div', { style: { fontSize: 11, color: AM } }, `Этап: ${rec.operationName}`),
-              h('div', { style: { fontSize: 11, color: '#888' } }, `Обнаружено: ${rec.detectedDate || new Date(rec.createdAt).toLocaleDateString()}`)
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, marginLeft: 8 } },
+                h('span', { style: { fontSize: 11, color: '#aaa' } }, isExpanded ? '▾' : '▸')
+              )
             ),
-            h('div', { style: { display: 'flex', gap: 4 } },
-              rec.status === 'open' && h('button', { style: abtn({ fontSize: 10, padding: '3px 8px' }), onClick: () => updateStatus(rec.id, 'in_work') }, 'В работу'),
-              rec.status === 'in_work' && h('button', { style: { ...gbtn({ fontSize: 10, padding: '3px 8px' }), background: GN3, color: GN2 }, onClick: () => updateStatus(rec.id, 'closed') }, 'Закрыть'),
-              rec.status === 'closed' && h('button', { style: gbtn({ fontSize: 10, padding: '3px 8px' }), onClick: () => updateStatus(rec.id, 'open') }, 'Переоткрыть'),
-              h('button', { style: rbtn({ fontSize: 10, padding: '3px 8px' }), onClick: () => delRec(rec.id) }, '✕')
+
+            // Раскрытая карточка — детали
+            isExpanded && h('div', { style: { padding: '0 14px 14px', borderTop: '0.5px solid rgba(0,0,0,0.06)' } },
+
+              // Блок: кто допустил
+              (workerNames.length > 0 || defectReason || rec.defectNote) && h('div', { style: { background: RD3, borderRadius: 8, padding: '10px 12px', marginTop: 12, marginBottom: 12 } },
+                h('div', { style: { fontSize: 10, color: RD2, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 500, marginBottom: 6 } }, 'Данные о браке'),
+                workerNames.length > 0 && h('div', { style: { fontSize: 12, marginBottom: 4 } },
+                  h('span', { style: { color: '#888' } }, 'Исполнитель: '),
+                  h('span', { style: { fontWeight: 500, color: RD2 } }, workerNames.join(', '))
+                ),
+                defectReason && h('div', { style: { fontSize: 12, marginBottom: 4 } },
+                  h('span', { style: { color: '#888' } }, 'Причина: '),
+                  h('span', { style: { fontWeight: 500 } }, defectReason)
+                ),
+                rec.defectNote && h('div', { style: { fontSize: 12 } },
+                  h('span', { style: { color: '#888' } }, 'Описание брака: '),
+                  h('span', null, rec.defectNote)
+                )
+              ),
+
+              // Описание рекламации
+              h('div', { style: { fontSize: 12, lineHeight: 1.6, marginBottom: 12, marginTop: workerNames.length === 0 && !defectReason ? 12 : 0 } },
+                h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 } }, 'Суть рекламации'),
+                rec.description || '—'
+              ),
+
+              // Связанная операция — детали
+              linkedOp && h('div', { style: { background: '#f8f8f5', borderRadius: 8, padding: '10px 12px', marginBottom: 12, fontSize: 12 } },
+                h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 } }, 'Связанная операция'),
+                h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px' } },
+                  h('div', null, h('span', { style: { color: '#888' } }, 'Операция: '), linkedOp.name),
+                  h('div', null, h('span', { style: { color: '#888' } }, 'Заказ: '), order?.number || '—'),
+                  linkedOp.startedAt && h('div', null, h('span', { style: { color: '#888' } }, 'Начата: '), new Date(linkedOp.startedAt).toLocaleString()),
+                  linkedOp.finishedAt && h('div', null, h('span', { style: { color: '#888' } }, 'Завершена: '), new Date(linkedOp.finishedAt).toLocaleString()),
+                  linkedOp.startedAt && linkedOp.finishedAt && h('div', null, h('span', { style: { color: '#888' } }, 'Длительность: '), fmtDur(linkedOp.finishedAt - linkedOp.startedAt))
+                )
+              ),
+
+              // Решение / результат
+              h('div', { style: { marginBottom: 12 } },
+                h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 } }, rec.status === 'closed' && rec.resolution ? 'Принятое решение' : 'Решение / действия по устранению'),
+                rec.status === 'closed' && rec.resolution
+                  ? h('div', { style: { fontSize: 12, lineHeight: 1.6, padding: '8px 10px', background: GN3, borderRadius: 6, color: GN2 } }, rec.resolution)
+                  : h('textarea', { style: { ...S.inp, width: '100%', fontSize: 12 }, rows: 2, placeholder: 'Опишите что было сделано для устранения...', value: resolutionText[rec.id] || rec.resolution || '', onChange: e => setResolutionText(p => ({ ...p, [rec.id]: e.target.value })) })
+              ),
+
+              // Даты закрытия
+              rec.resolvedAt && h('div', { style: { fontSize: 11, color: GN, marginBottom: 10 } }, `Закрыта: ${new Date(rec.resolvedAt).toLocaleString()}`),
+
+              // Кнопки действий
+              h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+                rec.status === 'open' && h('button', { style: abtn({ fontSize: 11 }), onClick: () => updateStatus(rec.id, 'in_work') }, '→ Взять в работу'),
+                rec.status === 'in_work' && h('button', { style: { ...gbtn({ fontSize: 11 }), background: GN3, color: GN2, borderColor: GN }, onClick: () => updateStatus(rec.id, 'closed') }, '✓ Закрыть рекламацию'),
+                rec.status === 'closed' && h('button', { style: gbtn({ fontSize: 11 }), onClick: () => updateStatus(rec.id, 'open') }, '↩ Переоткрыть'),
+                h('button', { style: rbtn({ fontSize: 11, marginLeft: 'auto' }), onClick: () => delRec(rec.id) }, 'Удалить')
+              )
             )
-          ),
-          h('div', { style: { fontSize: 12, color: '#333', lineHeight: 1.5 } }, rec.description),
-          rec.resolvedAt && h('div', { style: { fontSize: 10, color: GN, marginTop: 4 } }, `Закрыта: ${new Date(rec.resolvedAt).toLocaleDateString()}`)
-        );
-      })
+          );
+        })
   );
 });
 
