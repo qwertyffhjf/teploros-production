@@ -1347,6 +1347,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       h('div', { style: { fontSize: 10, color: AM, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 } }, 'Текущая операция'),
       h('div', { style: { fontSize: 16, fontWeight: 500, color: AM2, marginBottom: 4 } }, active.name),
       h('div', { style: { fontSize: 10, color: AM, marginBottom: 12 } }, data.orders.find(o => o.id === active.orderId)?.number || ''),
+      active.drawingUrl && h('a', { href: active.drawingUrl, target: '_blank', rel: 'noopener', style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: BL, textDecoration: 'none', padding: '6px 10px', background: 'rgba(255,255,255,0.8)', borderRadius: 6, marginBottom: 8 } }, '📐 Открыть чертёж'),
       h(ElapsedTimer, { startedAt: active.startedAt, style: { fontSize: 40, fontWeight: 500, color: AM, textAlign: 'center', margin: '8px 0 12px' } }),
       // Комментарий к операции
       active.comment && h('div', { style: { fontSize: 11, color: '#666', background: 'rgba(255,255,255,0.7)', padding: '6px 10px', borderRadius: 8, marginBottom: 8, whiteSpace: 'pre-line' } }, `💬 ${active.comment}`),
@@ -1424,7 +1425,9 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
             h(Badge, { st: op.status })
           ),
           // П.19: Комментарий к операции
-          op.comment && h('div', { style: { fontSize: 11, color: '#666', background: '#f8f8f5', padding: '4px 8px', borderRadius: 6, marginBottom: 6 } }, `💬 ${op.comment}`),
+          op.comment && h('div', { style: { fontSize: 11, color: '#666', background: '#f8f8f5', padding: '4px 8px', borderRadius: 6, marginBottom: 6, whiteSpace: 'pre-line' } }, `💬 ${op.comment}`),
+          // Ссылка на чертёж
+          op.drawingUrl && h('a', { href: op.drawingUrl, target: '_blank', rel: 'noopener', style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: BL, textDecoration: 'none', padding: '6px 10px', background: '#E3F2FD', borderRadius: 6, marginBottom: 6 } }, '📐 Открыть чертёж'),
           // П.13: Кнопка начала (с приёмкой)
           op.status === 'pending' && depsComplete && h('div', null,
             h('button', { type: 'button', style: abtn({ width: '100%', padding: '10px' }), onClick: () => {
@@ -2243,7 +2246,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast }) => {
     if (data.productionStages && data.productionStages.length > 0) return data.productionStages.map(s => s.name);
     return OPERATION_STAGES;
   }, [data.productionStages]);
-  const [form, setForm] = useState({ orderId: '', name: '', workerIds: [], plannedHours: '', sectionId: '', equipmentId: '', plannedStartDate: '' });
+  const [form, setForm] = useState({ orderId: '', name: '', workerIds: [], plannedHours: '', sectionId: '', equipmentId: '', plannedStartDate: '', drawingUrl: '' });
   const [filt, setFilt] = useState('all');
   const [editingId, setEditingId] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -2268,16 +2271,16 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast }) => {
     return Object.keys(errors).length === 0;
   };
 
-  const resetForm = () => { setForm({ orderId: '', name: '', workerIds: [], plannedHours: '', sectionId: '', equipmentId: '', plannedStartDate: '' }); setFieldErrors({}); setEditingId(null); };
+  const resetForm = () => { setForm({ orderId: '', name: '', workerIds: [], plannedHours: '', sectionId: '', equipmentId: '', plannedStartDate: '', drawingUrl: '' }); setFieldErrors({}); setEditingId(null); };
 
   const addOrUpdate = useCallback(async () => {
     if (!validate()) return;
     if (editingId) {
-      const updatedOps = data.ops.map(o => o.id === editingId ? { ...o, orderId: form.orderId, name: form.name.trim(), workerIds: form.workerIds, plannedHours: form.plannedHours ? Number(form.plannedHours) : undefined, sectionId: form.sectionId || null, equipmentId: form.equipmentId || null, plannedStartDate: form.plannedStartDate ? new Date(form.plannedStartDate).getTime() : undefined } : o);
+      const updatedOps = data.ops.map(o => o.id === editingId ? { ...o, orderId: form.orderId, name: form.name.trim(), workerIds: form.workerIds, plannedHours: form.plannedHours ? Number(form.plannedHours) : undefined, sectionId: form.sectionId || null, equipmentId: form.equipmentId || null, plannedStartDate: form.plannedStartDate ? new Date(form.plannedStartDate).getTime() : undefined, drawingUrl: form.drawingUrl.trim() || undefined } : o);
       const d = { ...data, ops: updatedOps };
       await DB.save(d); onUpdate(d); resetForm(); addToast('Операция обновлена', 'success');
     } else {
-      const op = { id: uid(), orderId: form.orderId, name: form.name.trim(), workerIds: form.workerIds, status: 'pending', createdAt: now(), plannedHours: form.plannedHours ? Number(form.plannedHours) : undefined, archived: false, sectionId: form.sectionId || null, equipmentId: form.equipmentId || null, plannedStartDate: form.plannedStartDate ? new Date(form.plannedStartDate).getTime() : undefined, requiresQC: form.name.includes('свар') || form.name.includes('Опресовка') };
+      const op = { id: uid(), orderId: form.orderId, name: form.name.trim(), workerIds: form.workerIds, status: 'pending', createdAt: now(), plannedHours: form.plannedHours ? Number(form.plannedHours) : undefined, archived: false, sectionId: form.sectionId || null, equipmentId: form.equipmentId || null, plannedStartDate: form.plannedStartDate ? new Date(form.plannedStartDate).getTime() : undefined, drawingUrl: form.drawingUrl.trim() || undefined, requiresQC: form.name.includes('свар') || form.name.includes('Опресовка') };
       const d = { ...data, ops: [...data.ops, op] };
       await DB.save(d); onUpdate(d); resetForm(); addToast('Операция добавлена', 'success');
     }
@@ -2304,7 +2307,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast }) => {
   }, [data, onUpdate, addToast]);
 
   const edit = useCallback(op => {
-    setForm({ orderId: op.orderId, name: op.name, workerIds: op.workerIds || [], plannedHours: op.plannedHours || '', sectionId: op.sectionId || '', equipmentId: op.equipmentId || '', plannedStartDate: op.plannedStartDate ? new Date(op.plannedStartDate).toISOString().slice(0,16) : '' });
+    setForm({ orderId: op.orderId, name: op.name, workerIds: op.workerIds || [], plannedHours: op.plannedHours || '', sectionId: op.sectionId || '', equipmentId: op.equipmentId || '', plannedStartDate: op.plannedStartDate ? new Date(op.plannedStartDate).toISOString().slice(0,16) : '', drawingUrl: op.drawingUrl || '' });
     setEditingId(op.id);
   }, []);
 
@@ -2341,6 +2344,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast }) => {
         h('div', { style: { minWidth: 120 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.equipmentId, onChange: e => setForm(p => ({ ...p, equipmentId: e.target.value })) }, h('option', { value: '' }, '— оборудование —'), data.equipment.map(eq => h('option', { key: eq.id, value: eq.id }, eq.name)))),
         h('div', { style: { minWidth: 100 } }, h('input', { type: 'number', step: '0.1', style: { ...S.inp, width: '100%' }, placeholder: 'План, ч', value: form.plannedHours, onChange: e => setForm(p => ({ ...p, plannedHours: e.target.value })) }), fieldErrors.plannedHours && h('div', { className: 'error-message' }, fieldErrors.plannedHours)),
         h('div', { style: { minWidth: 140 } }, h('input', { type: 'datetime-local', style: { ...S.inp, width: '100%' }, value: form.plannedStartDate, onChange: e => setForm(p => ({ ...p, plannedStartDate: e.target.value })) })),
+        h('div', { style: { minWidth: 140 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Ссылка на чертёж', value: form.drawingUrl, onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value })) })),
         h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, editingId ? '✓' : '+'),
         editingId && h('button', { type: 'button', style: gbtn(), onClick: resetForm }, 'Отмена')
       )
@@ -2355,7 +2359,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast }) => {
     paginated.length === 0
       ? h('div', { style: { ...S.card, textAlign: 'center' } }, 'Нет операций')
       : h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null, ['ID','Операция','Заказ','Исполнители','Участок','Оборуд.','План, ч','План. старт','Статус','Время',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
+          h('thead', null, h('tr', null, ['ID','Операция','Заказ','Исполнители','Участок','Оборуд.','План, ч','План. старт','Чертёж','Статус','Время',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
           h('tbody', null, paginated.map(op => {
             const ord = data.orders.find(o => o.id === op.orderId);
             const section = data.sections.find(s => s.id === op.sectionId);
@@ -2365,15 +2369,34 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast }) => {
               h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 10 } }, op.id),
               h('td', { style: { ...S.td, fontWeight: 500 } }, op.name, op.defectNote && h('div', { style: { fontSize: 10, color: RD } }, op.defectNote)),
               h('td', { style: { ...S.td, fontSize: 11, color: AM } }, ord?.number || '—'),
-              h('td', { style: S.td },
-                h('select', { style: { ...S.inp, padding: '4px', height: 'auto' }, multiple: true, size: 3, 'aria-label': 'Исполнители', value: op.workerIds || [], onChange: e => { const selected = Array.from(e.target.selectedOptions, opt => opt.value); assignWorkers(op.id, selected); }, disabled: op.archived },
-                  data.workers.filter(w => !w.competences || w.competences.length === 0 || w.competences.includes(op.name)).map(w => h('option', { key: w.id, value: w.id }, w.name))
+              h('td', { style: { ...S.td, minWidth: 120 } },
+                // Назначенные — чипсы с удалением
+                (op.workerIds || []).length > 0 && h('div', { style: { display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 4 } },
+                  (op.workerIds || []).map(wid => {
+                    const w = data.workers.find(w => w.id === wid);
+                    return w ? h('span', { key: wid, style: { display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', fontSize: 10, background: AM3, color: AM2, borderRadius: 6 } },
+                      w.name.split(' ')[0],
+                      !op.archived && h('span', { style: { cursor: 'pointer', fontWeight: 500, marginLeft: 2 }, onClick: () => assignWorkers(op.id, (op.workerIds || []).filter(id => id !== wid)) }, '×')
+                    ) : null;
+                  })
+                ),
+                // Добавить — компактный список чекбоксов
+                !op.archived && h('details', { style: { fontSize: 10 } },
+                  h('summary', { style: { cursor: 'pointer', color: AM, userSelect: 'none', padding: '2px 0' } }, '+ назначить'),
+                  h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, padding: '4px 0', maxHeight: 120, overflowY: 'auto' } },
+                    data.workers.filter(w => (w.status || 'working') === 'working' && (!w.competences || w.competences.length === 0 || w.competences.includes(op.name)) && !(op.workerIds || []).includes(w.id))
+                      .map(w => h('label', { key: w.id, style: { display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '3px 4px', borderRadius: 4, fontSize: 11 }, onClick: () => assignWorkers(op.id, [...(op.workerIds || []), w.id]) },
+                        h('span', { style: { color: GN } }, '+'),
+                        w.name
+                      ))
+                  )
                 )
               ),
               h('td', { style: { ...S.td, fontSize: 11 } }, section?.name || '—'),
               h('td', { style: { ...S.td, fontSize: 11 } }, eq?.name || '—'),
               h('td', { style: { ...S.td, textAlign: 'center' } }, op.plannedHours || '—'),
               h('td', { style: { ...S.td, fontSize: 11 } }, op.plannedStartDate ? new Date(op.plannedStartDate).toLocaleString() : '—'),
+              h('td', { style: { ...S.td, fontSize: 11 } }, op.drawingUrl ? h('a', { href: op.drawingUrl, target: '_blank', rel: 'noopener', style: { color: BL, textDecoration: 'none' } }, '📐 Чертёж') : '—'),
               h('td', { style: S.td }, h(Badge, { st: op.status })),
               h('td', { style: { ...S.td, fontFamily: 'monospace' } }, dur),
               h('td', { style: S.td },
@@ -3932,7 +3955,9 @@ const ReportsBuilder = memo(({ data, onUpdate, addToast }) => {
         const worker = data.workers.find(w => w.id === e.workerId);
         const reason = data.downtimeTypes?.find(d => d.id === e.downtimeTypeId);
         const eq = e.equipmentId ? data.equipment?.find(eq => eq.id === e.equipmentId) : null;
-        return { worker: worker?.name || '—', reason: reason?.name || '—', duration: fmtDur(e.duration || 0), equipment: eq?.name || '—', shift: e.shift || '—', date: new Date(e.ts).toLocaleString() };
+        const op = e.opId ? data.ops.find(o => o.id === e.opId) : null;
+        const order = op ? data.orders.find(o => o.id === op.orderId) : null;
+        return { worker: worker?.name || '—', reason: reason?.name || '—', duration: fmtDur(e.duration || 0), equipment: eq?.name || '—', order: order?.number || '—', operation: op?.name || '—', shift: e.shift || '—', date: new Date(e.ts).toLocaleString() };
       });
     }
     if (reportType === 'orders') {
@@ -3985,7 +4010,7 @@ const ReportsBuilder = memo(({ data, onUpdate, addToast }) => {
 
   const reportConfig = {
     defects:   { label: 'Брак',                headers: ['Операция','Заказ','Причина','Источник','Исполнитель','Дата'],      keys: ['op','order','reason','source','worker','date'] },
-    downtimes: { label: 'Простои',             headers: ['Сотрудник','Причина','Длительность','Оборудование','Смена','Дата'], keys: ['worker','reason','duration','equipment','shift','date'] },
+    downtimes: { label: 'Простои',             headers: ['Сотрудник','Причина','Длительность','Заказ','Операция','Оборудование','Смена','Дата'], keys: ['worker','reason','duration','order','operation','equipment','shift','date'] },
     orders:    { label: 'Выполнение заказов',  headers: ['Заказ','Изделие','Кол-во','Приоритет','Прогресс','Брак','Дедлайн','Lead Time'], keys: ['number','product','qty','priority','progress','defects','deadline','leadTime'] },
     workers:   { label: 'Эффективность',       headers: ['Сотрудник','Должность','Участок','Выполнено','Брак','Брак %','Ср. время','Простои'], keys: ['name','position','section','done','defects','defectRate','avgTime','downtimes'] },
     materials: { label: 'Расход материалов',   headers: ['Материал','Ед.','Кол-во','Стоимость','Заказ','Операция','Дата'],   keys: ['material','unit','qty','cost','order','operation','date'] },
