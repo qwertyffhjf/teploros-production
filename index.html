@@ -356,7 +356,7 @@ const DOC_REF = firestore.collection('app').doc('production_v14');
 const EMPTY_DATA = {
   orders: [], ops: [], workers: [], downtimeTypes: [], events: [], materials: [], sections: [], equipment: [],
   bomTemplates: [], materialConsumptions: [], productionStages: [], defectReasons: [], workerAvailabilities: [],
-  messages: [], savedReports: [], reclamations: [],
+  messages: [], reclamations: [],
   settings: {
     // Единый PIN-вход: мастер и контролёр тоже входят по PIN
     masterPin: '0000',
@@ -390,19 +390,22 @@ const DB = {
   },
   async save(data) {
     try {
-      const toSave = data.events.length > 2000
-        ? { ...data, events: data.events.slice(-2000) }
-        : data;
-      // Локально — мгновенно
+      let toSave = { ...data };
+      // Cap unbounded arrays
+      if (toSave.events?.length > 2000) toSave.events = toSave.events.slice(-2000);
+      if (toSave.materialConsumptions?.length > 2000) toSave.materialConsumptions = toSave.materialConsumptions.slice(-2000);
+      if (toSave.reclamations?.length > 500) toSave.reclamations = toSave.reclamations.slice(-500);
+      if (toSave.messages?.length > 200) toSave.messages = toSave.messages.slice(-200);
       localStorage.setItem('prod_app_v14_cache', JSON.stringify(toSave));
-      // Firebase — debounce 1с (fire-and-forget, не блокирует UI)
       if (DB._saveTimer) clearTimeout(DB._saveTimer);
       DB._saveTimer = setTimeout(() => {
-        DOC_REF.set({ payload: JSON.stringify(toSave), updatedAt: firebase.firestore.FieldValue.serverTimestamp() }).catch(e => console.error('Firebase save error:', e));
+        DOC_REF.set({ payload: JSON.stringify(toSave), updatedAt: firebase.firestore.FieldValue.serverTimestamp() })
+          .catch(e => { console.error('Firebase save error:', e); DB._lastError = e.message; });
       }, 1000);
-    } catch(e) { console.error(e); }
+    } catch(e) { console.error(e); DB._lastError = e.message; }
   },
   _saveTimer: null,
+  _lastError: null,
   onSnapshot(callback) {
     return DOC_REF.onSnapshot(snap => {
       if (snap.exists) {
@@ -424,7 +427,11 @@ const S = {
   td: { padding: '9px 10px', fontSize: 12, borderBottom: '0.5px solid rgba(0,0,0,0.06)', color: '#1a1a18', verticalAlign: 'middle' },
   inp: { background: '#fff', border: '0.5px solid rgba(0,0,0,0.22)', borderRadius: 8, padding: '7px 10px', fontSize: 13, outline: 'none' },
   lbl: { fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4, display: 'block' },
-  sec: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10, fontWeight: 500 }
+  sec: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10, fontWeight: 500 },
+  muted: { fontSize: 11, color: '#888' },
+  mono: { fontFamily: 'monospace' },
+  center: { textAlign: 'center' },
+  alert: (color) => ({ ...{ padding: '8px 12px', borderRadius: 8, marginBottom: 12, fontSize: 12 }, background: color === RD ? RD3 : AM3, border: `0.5px solid ${color}` })
 };
 const abtn = (e) => ({ padding: '8px 14px', background: AM, color: AM2, border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 500, ...e });
 const gbtn = (e) => ({ padding: '8px 14px', background: 'transparent', color: '#666', border: '0.5px solid rgba(0,0,0,0.2)', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 500, ...e });
@@ -440,7 +447,6 @@ const Toast = memo(({ message, onClose }) => {
   return h('div', { className: 'toast', role: 'status', 'aria-live': 'polite' }, message);
 });
 
-// П.2: Отдельный таймер (не вызывает ре-рендер родителя)
 const ElapsedTimer = memo(({ startedAt, style }) => {
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -449,6 +455,63 @@ const ElapsedTimer = memo(({ startedAt, style }) => {
     return () => clearInterval(t);
   }, [startedAt]);
   return h('div', { style }, startedAt ? fmtDur(now() - startedAt) : '—');
+});
+
+// Общий компонент таблицы
+const DataTable = memo(({ headers, rows, renderRow, emptyText }) => {
+  if (!rows || rows.length === 0) return h('div', { style: { ...S.card, textAlign: 'center', color: '#888', padding: 20 } }, emptyText || 'Нет данных');
+  return h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+    h('thead', null, h('tr', null, headers.map((t, i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
+    h('tbody', null, rows.map(renderRow))
+  )));
+});
+
+// Общий CRUD для простых справочников (Участки, Простои, Причины брака)
+const SimpleCRUD = memo(({ data, collection, label, fields, onUpdate, addToast, renderExtra }) => {
+  const [form, setForm] = useState({});
+  const [editingId, setEditingId] = useState(null);
+  const items = data[collection] || [];
+  const add = useCallback(async () => {
+    const main = fields[0];
+    if (!form[main.key]?.trim()) { addToast(`Введите ${main.placeholder.toLowerCase()}`, 'error'); return; }
+    const newItem = { id: uid() };
+    fields.forEach(f => { newItem[f.key] = (form[f.key] || '').trim() || f.default || ''; });
+    if (editingId) {
+      const d = { ...data, [collection]: items.map(i => i.id === editingId ? { ...i, ...newItem, id: editingId } : i) };
+      await DB.save(d); onUpdate(d); addToast(`${label} обновлён`, 'success');
+    } else {
+      const d = { ...data, [collection]: [...items, newItem] };
+      await DB.save(d); onUpdate(d); addToast(`${label} добавлен`, 'success');
+    }
+    setForm({}); setEditingId(null);
+  }, [data, collection, items, form, fields, editingId, label, onUpdate, addToast]);
+  const del = useCallback(async (id) => {
+    if (!confirm(`Удалить?`)) return;
+    const d = { ...data, [collection]: items.filter(i => i.id !== id) };
+    await DB.save(d); onUpdate(d); addToast('Удалено', 'info');
+  }, [data, collection, items, onUpdate, addToast]);
+  return h('div', null,
+    h('div', { style: S.card },
+      h('div', { style: S.sec }, editingId ? `Редактировать` : `Добавить ${label.toLowerCase()}`),
+      h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+        fields.map(f => h('input', { key: f.key, style: { ...S.inp, flex: f.flex || 1, minWidth: f.minWidth || 120 }, placeholder: f.placeholder, value: form[f.key] || '', onChange: e => setForm(p => ({ ...p, [f.key]: e.target.value })) })),
+        h('button', { style: abtn(), onClick: add }, editingId ? '✓' : '+'),
+        editingId && h('button', { style: gbtn(), onClick: () => { setForm({}); setEditingId(null); } }, '✕')
+      )
+    ),
+    items.length === 0
+      ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888' } }, `Нет записей`)
+      : h('div', { style: S.card }, items.map(item =>
+          h('div', { key: item.id, style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)' } },
+            h('span', { style: { fontSize: 13 } }, fields.map(f => item[f.key]).filter(Boolean).join(' · ')),
+            h('div', { style: { display: 'flex', gap: 4 } },
+              h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => { const f = {}; fields.forEach(fi => f[fi.key] = item[fi.key] || ''); setForm(f); setEditingId(item.id); } }, '✎'),
+              h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => del(item.id) }, '✕')
+            )
+          )
+        )),
+    renderExtra && renderExtra(items)
+  );
 });
 
 // П.6: Вибро при достижении
@@ -715,13 +778,15 @@ const LoadForecastWidget = memo(({ data }) => {
 // ==================== QRModal ====================
 const QRModal = memo(({ ops, order, worker, onClose }) => {
   const [index, setIndex] = useState(0);
+  const [qrError, setQrError] = useState(false);
   const op = ops[index];
   const ref = useRef(null);
   useEffect(() => {
     if (!op) return;
+    setQrError(false);
     const render = () => {
       if (!ref.current || !window.QRCode) return;
-      ref.current.innerHTML = '';
+      while (ref.current.firstChild) ref.current.removeChild(ref.current.firstChild);
       const url = new URL(window.location.href);
       url.searchParams.set('opId', op.id);
       new window.QRCode(ref.current, { text: url.toString(), width: 140, height: 140, colorDark: AM4, colorLight: '#ffffff' });
@@ -730,7 +795,7 @@ const QRModal = memo(({ ops, order, worker, onClose }) => {
     const s = document.createElement('script');
     s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
     s.onload = render;
-    s.onerror = () => { if (ref.current) ref.current.innerHTML = '<div style="color:#E24B4A;font-size:11px;padding:8px">Не удалось загрузить библиотеку QR-кода</div>'; };
+    s.onerror = () => setQrError(true);
     document.head.appendChild(s);
   }, [op, index]);
   if (!op) return null;
@@ -742,7 +807,10 @@ const QRModal = memo(({ ops, order, worker, onClose }) => {
     h('div', { style: { background: '#fff', border: '0.5px solid rgba(0,0,0,0.15)', borderRadius: 12, padding: 24, width: 'min(320px, calc(100vw - 32px))', textAlign: 'center', position: 'relative' } },
       h('button', { type: 'button', onClick: onClose, 'aria-label': 'Закрыть', style: { position: 'absolute', top: 10, right: 12, background: 'transparent', border: 'none', color: '#888', cursor: 'pointer', fontSize: 18 } }, '×'),
       h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12 } }, 'QR-код операции'),
-      h('div', { style: { background: '#fff', borderRadius: 8, padding: 12, display: 'inline-block', marginBottom: 10, border: '0.5px solid rgba(0,0,0,0.08)' } }, h('div', { ref })),
+      h('div', { style: { background: '#fff', borderRadius: 8, padding: 12, display: 'inline-block', marginBottom: 10, border: '0.5px solid rgba(0,0,0,0.08)' } },
+        h('div', { ref }),
+        qrError && h('div', { style: { color: RD, fontSize: 11, padding: 8 } }, 'Не удалось загрузить библиотеку QR-кода')
+      ),
       worker && h('div', { style: { fontSize: 11, color: AM, marginTop: 8, fontWeight: 500 } }, `Исполнитель: ${worker.name}`),
       h('div', { style: { fontFamily: 'monospace', fontSize: 13, fontWeight: 500, color: AM, marginBottom: 4 } }, op.id),
       h('div', { style: { fontSize: 11, color: '#888', marginBottom: 4 } }, op.name),
@@ -4813,7 +4881,7 @@ function App() {
   const savingRef = useRef(false);
 
   useEffect(() => {
-    DB.load().then(d => {
+    DB.load().then(async d => {
       // П.9: Автоархивация — заказы, все операции которых завершены более 30 дней назад
       const threshold = now() - 30 * 86400000;
       let archiveCount = 0;
@@ -4826,7 +4894,7 @@ function App() {
         if (allDone && lastFinished > 0 && lastFinished < threshold) { archiveCount++; return { ...order, archived: true, autoArchived: true }; }
         return order;
       })};
-      if (archiveCount > 0) { DB.save(updated); console.log(`Автоархивация: ${archiveCount} заказов`); }
+      if (archiveCount > 0) { await DB.save(updated); console.log(`Автоархивация: ${archiveCount} заказов`); }
       setData(archiveCount > 0 ? updated : d);
       setLoading(false); setSynced(true);
     });
@@ -4859,8 +4927,19 @@ function App() {
     savingRef.current = true;
     setData(d);
     DB.save(d);
-    // Разблокировать входящие данные через 1.5с (после debounce Firebase)
     setTimeout(() => { savingRef.current = false; }, 1500);
+  }, []);
+
+  // Мониторинг ошибок сохранения
+  useEffect(() => {
+    const check = setInterval(() => {
+      if (DB._lastError) {
+        const err = DB._lastError;
+        DB._lastError = null;
+        setToasts(prev => [...prev, { id: Date.now(), message: `⚠ Ошибка сохранения: ${err}`, type: 'error' }]);
+      }
+    }, 3000);
+    return () => clearInterval(check);
   }, []);
 
   const goBack = () => { setRole(null); setWorkerId(null); setSectionId(null); setInitialOpId(null); setShowChat(false); window.history.replaceState({}, '', window.location.pathname); };
@@ -4970,11 +5049,13 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   React.createElement(ErrorBoundary, null, React.createElement(App))
 );
 
-// PWA: Service Worker registration
+// PWA: Service Worker registration with auto-update
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').then(reg => {
+    navigator.serviceWorker.register('sw.js').then(reg => {
       console.log('SW registered:', reg.scope);
+      // Check for updates every 30 minutes
+      setInterval(() => reg.update(), 30 * 60 * 1000);
     }).catch(err => console.log('SW registration failed:', err));
   });
 }
