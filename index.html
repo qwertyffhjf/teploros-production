@@ -456,8 +456,58 @@ const vibrateOnAchievement = () => { try { if (navigator.vibrate) navigator.vibr
 
 // П.10+15: Логирование действий (мастер + история операции)
 const logAction = (data, action, details) => {
-  const entry = { id: uid(), type: 'action_log', action, details, ts: now(), shift: getCurrentShift() };
+  const entry = { id: uid(), type: 'action_log', action, details, ts: now(), shift: getCurrentShift(data?.settings?.shifts) };
   return { ...data, events: [...data.events, entry] };
+};
+
+// ==================== Общие утилиты операций (WorkerScreen + QRScreen) ====================
+// Строит обновление стейта для СТАРТА операции
+const buildStartUpdate = (data, op, workerId) => {
+  const startedAt = now();
+  const shift = getCurrentShift(data?.settings?.shifts);
+  const newEvents = [{ id: uid(), type: 'start', opId: op.id, workerId, workerIds: op.workerIds || [workerId], ts: startedAt, shift }];
+  // Авто чек-ин при первой операции за день
+  const todayStart = new Date().setHours(0, 0, 0, 0);
+  const hasCheckinToday = data.events.some(e => e.workerId === workerId && e.type === 'checkin_auto' && e.ts >= todayStart);
+  if (!hasCheckinToday) newEvents.push({ id: uid(), type: 'checkin_auto', workerId, ts: startedAt, shift });
+  return {
+    ops: data.ops.map(o => o.id === op.id ? { ...o, status: 'in_progress', startedAt, workerIds: o.workerIds?.includes(workerId) ? o.workerIds : [...(o.workerIds || []), workerId] } : o),
+    events: [...data.events, ...newEvents],
+    _startedAt: startedAt,
+    _hasCheckin: hasCheckinToday
+  };
+};
+
+// Строит обновление стейта для ЗАВЕРШЕНИЯ операции
+// params: { defNote, defectReasonId, weldParams, isDefect, isRework, source }
+const buildFinishUpdate = (data, op, workerId, params = {}) => {
+  const { defNote = '', defectReasonId = '', weldParams = null, isDefect = false, isRework = false, source = 'current' } = params;
+  const finishedAt = now();
+  const shift = getCurrentShift(data?.settings?.shifts);
+  let status = isDefect ? 'defect' : isRework ? 'rework' : 'done';
+  let updatedOp = { ...op, finishedAt, defectNote: defNote || undefined };
+  if (isDefect) { updatedOp.defectSource = source; updatedOp.defectReasonId = defectReasonId; }
+  if (isRework) updatedOp.defectSource = source;
+  if (op.requiresQC && status === 'done') { status = 'on_check'; }
+  if (op.name.includes('свар') && weldParams?.seamNumber && weldParams?.electrode) {
+    updatedOp.weldParams = { seamNumber: weldParams.seamNumber, electrode: weldParams.electrode, result: weldParams.result };
+    if (weldParams.result === 'fail') { status = 'defect'; updatedOp.defectNote = 'Сварка забракована'; }
+  }
+  updatedOp.status = status;
+  const eventEntry = { id: uid(), type: status, opId: op.id, workerId, workerIds: op.workerIds || [workerId], ts: finishedAt, note: defNote || undefined, shift, defectSource: (isDefect || isRework) ? source : undefined, defectReasonId: isDefect ? defectReasonId : undefined };
+  // Если брак — создать запись рекламации
+  let reclamations = data.reclamations || [];
+  if (isDefect) {
+    reclamations = [...reclamations, { id: uid(), opId: op.id, orderId: op.orderId, workerIds: op.workerIds || [workerId], defectReasonId, defectNote: defNote, defectSource: source, createdAt: finishedAt, status: 'open' }];
+  }
+  return {
+    ops: data.ops.map(o => o.id === op.id ? updatedOp : o),
+    events: [...data.events, eventEntry],
+    reclamations,
+    _status: status,
+    _finishedAt: finishedAt,
+    _updatedOp: updatedOp
+  };
 };
 
 // ==================== QR-сканер (встроенный) ====================
@@ -1051,6 +1101,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const [defNote, setDefNote] = useState('');
   const [defectReasonId, setDefectReasonId] = useState('');
   const [showDefForm, setShowDefForm] = useState(false);
+  const [defectFromPrev, setDefectFromPrev] = useState(false); // true = с предыдущего участка, false = текущий
   const [showDowntimeModal, setShowDowntimeModal] = useState(false);
   const [selectedDowntimeType, setSelectedDowntimeType] = useState('');
   const [weldParams, setWeldParams] = useState({ seamNumber: '', electrode: '', result: 'ok' });
@@ -1098,40 +1149,24 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       addToast('У вас нет компетенции для этой операции', 'error');
       return;
     }
-    const startedAt = now();
-    const updatedOps = data.ops.map(o => o.id === op.id ? { ...o, status: 'in_progress', startedAt, workerIds: o.workerIds?.includes(workerId) ? o.workerIds : [...(o.workerIds || []), workerId] } : o);
-    const shift = getCurrentShift();
-    const newEvents = [{ id: uid(), type: 'start', opId: op.id, workerId, workerIds: op.workerIds || [workerId], ts: startedAt, shift }];
-    // Пункт 5: Авто чек-ин при первой операции за день
-    const todayStart = new Date().setHours(0, 0, 0, 0);
-    const hasCheckinToday = data.events.some(e => e.workerId === workerId && e.type === 'checkin_auto' && e.ts >= todayStart);
-    if (!hasCheckinToday) {
-      newEvents.push({ id: uid(), type: 'checkin_auto', workerId, ts: startedAt, shift });
+    // Блокировка двойного запуска: рабочий не может вести две операции одновременно
+    const alreadyActive = data.ops.find(o => o.status === 'in_progress' && o.workerIds?.includes(workerId) && o.id !== op.id);
+    if (alreadyActive) {
+      addToast(`Сначала завершите "${alreadyActive.name}"`, 'error');
+      return;
     }
-    const updated = { ...data, ops: updatedOps, events: [...data.events, ...newEvents] };
+    const result = buildStartUpdate(data, op, workerId);
+    const updated = { ...data, ops: result.ops, events: result.events };
     await DB.save(updated); onUpdate(updated);
-    setActiveOp({ ...op, status: 'in_progress', startedAt, workerIds: [...(op.workerIds || []), workerId] });
-    addToast(`Операция "${op.name}" начата` + (!hasCheckinToday ? ' · Рабочий день начат' : ''), 'success');
+    setActiveOp({ ...op, status: 'in_progress', startedAt: result._startedAt, workerIds: [...(op.workerIds || []), workerId] });
+    addToast(`Операция "${op.name}" начата` + (!result._hasCheckin ? ' · Рабочий день начат' : ''), 'success');
   }, [data, workerId, worker, onUpdate, addToast]);
 
-  const doFinish = useCallback(async (op, isDefect = false, isRework = false) => {
+  const doFinish = useCallback(async (op, isDefect = false, isRework = false, source = 'current') => {
     if (op.status !== 'in_progress') return;
-    const finishedAt = now();
-    let status = isDefect ? 'defect' : isRework ? 'rework' : 'done';
-    let updatedOp = { ...op, status, finishedAt, defectNote: defNote || undefined };
-    if (isDefect) { updatedOp.defectSource = 'previous_stage'; updatedOp.defectReasonId = defectReasonId; }
-    if (isRework) updatedOp.defectSource = 'previous_stage';
-    if (op.requiresQC && status === 'done') { status = 'on_check'; updatedOp.status = 'on_check'; }
-    if (op.name.includes('свар') && weldParams.seamNumber && weldParams.electrode) {
-      updatedOp.weldParams = { seamNumber: weldParams.seamNumber, electrode: weldParams.electrode, result: weldParams.result };
-      if (weldParams.result === 'fail') { status = 'defect'; updatedOp.status = 'defect'; updatedOp.defectNote = 'Сварка забракована'; }
-    }
-    const shift = getCurrentShift();
-    const updated = {
-      ...data,
-      ops: data.ops.map(o => o.id === op.id ? updatedOp : o),
-      events: [...data.events, { id: uid(), type: status, opId: op.id, workerId, workerIds: op.workerIds || [workerId], ts: finishedAt, note: defNote || undefined, shift, defectSource: (isDefect || isRework) ? 'previous_stage' : undefined, defectReasonId: isDefect ? defectReasonId : undefined }]
-    };
+    const result = buildFinishUpdate(data, op, workerId, { isDefect, isRework, source, defNote, defectReasonId, weldParams });
+    const updated = { ...data, ops: result.ops, events: result.events, reclamations: result.reclamations };
+    const status = result._status;
     // Проверяем достижения и сохраняем ОДИН раз
     const withAch = checkAchievements(workerId, updated);
     const final = withAch !== updated ? withAch : updated;
@@ -1155,7 +1190,13 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   }, [data, workerId, onUpdate, defNote, defectReasonId, weldParams, addToast]);
 
   const saveMaterialConsumption = useCallback(async (consumptions) => {
-    if (consumptions.length === 0) { setShowMaterialModal(false); setPendingFinishOp(null); return; }
+    if (consumptions.length === 0) {
+      // Записать факт пропуска как событие для аудита
+      const skipEvent = { id: uid(), type: 'material_skip', opId: pendingFinishOp?.id, workerId, ts: now() };
+      const d = { ...data, events: [...data.events, skipEvent] };
+      await DB.save(d); onUpdate(d);
+      setShowMaterialModal(false); setPendingFinishOp(null); return;
+    }
     const updatedMaterials = data.materials.map(m => {
       const used = consumptions.filter(c => c.materialId === m.id).reduce((s, c) => s + c.qty, 0);
       return used > 0 ? { ...m, quantity: Math.max(0, m.quantity - used) } : m;
@@ -1164,11 +1205,11 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     await DB.save(d); onUpdate(d);
     setShowMaterialModal(false); setPendingFinishOp(null);
     addToast('Расход материалов записан', 'success');
-  }, [data, onUpdate, addToast]);
+  }, [data, workerId, pendingFinishOp, onUpdate, addToast]);
 
   const recordDowntime = useCallback(async () => {
     if (!selectedDowntimeType) { addToast('Выберите причину простоя', 'error'); return; }
-    const ts = now(); const shift = getCurrentShift(); const duration = downtimeStartedAt ? ts - downtimeStartedAt : 0;
+    const ts = now(); const shift = getCurrentShift(data?.settings?.shifts); const duration = downtimeStartedAt ? ts - downtimeStartedAt : 0;
     const newEvent = { id: uid(), type: 'downtime', workerId, opId: activeOp?.id || null, ts, downtimeTypeId: selectedDowntimeType, shift, startedAt: downtimeStartedAt || ts, duration, equipmentId: downtimeEquipmentId || undefined };
     const updated = { ...data, events: [...data.events, newEvent] };
     await DB.save(updated); onUpdate(updated);
@@ -1184,17 +1225,24 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   // Кнопки действий — разделены по типу операции
   const renderActionButtons = (op) => {
     if (showDefForm) {
+      const source = defectFromPrev ? 'previous_stage' : 'current';
       return h('div', null,
-        h('div', { style: { fontSize: 11, color: RD, fontWeight: 500, marginBottom: 8, textTransform: 'uppercase' } }, 'Обнаружен брак с предыдущего участка'),
+        h('div', { style: { fontSize: 11, color: RD, fontWeight: 500, marginBottom: 8, textTransform: 'uppercase' } },
+          defectFromPrev ? '⚠ Брак с предыдущего участка' : '⚠ Брак текущего этапа'
+        ),
+        h('div', { style: { display: 'flex', gap: 6, marginBottom: 8 } },
+          h('button', { type: 'button', style: defectFromPrev ? rbtn({ flex: 1, fontSize: 11 }) : gbtn({ flex: 1, fontSize: 11 }), onClick: () => setDefectFromPrev(true) }, 'С предыдущего участка'),
+          h('button', { type: 'button', style: !defectFromPrev ? rbtn({ flex: 1, fontSize: 11 }) : gbtn({ flex: 1, fontSize: 11 }), onClick: () => setDefectFromPrev(false) }, 'Текущий этап')
+        ),
         h('select', { style: { ...S.inp, width: '100%', marginBottom: 8 }, value: defectReasonId, onChange: e => setDefectReasonId(e.target.value) },
           h('option', { value: '' }, '— выберите причину —'),
           (data.defectReasons || []).map(r => h('option', { key: r.id, value: r.id }, r.name))
         ),
         h('textarea', { style: { ...S.inp, width: '100%', marginBottom: 8 }, rows: 2, placeholder: 'Опишите дефект...', value: defNote, onChange: e => setDefNote(e.target.value) }),
         h('div', { style: { display: 'flex', gap: 6 } },
-          h('button', { type: 'button', style: rbtn({ flex: 1 }), onClick: () => doFinish(op, true, false) }, 'Зафиксировать брак'),
-          h('button', { type: 'button', style: { ...gbtn({ flex: 1 }), color: AM2, borderColor: AM4 }, onClick: () => doFinish(op, false, true) }, 'На переделку'),
-          h('button', { type: 'button', style: gbtn({ flex: 1 }), onClick: () => setShowDefForm(false) }, 'Отмена')
+          h('button', { type: 'button', style: rbtn({ flex: 1 }), onClick: () => doFinish(op, true, false, source) }, 'Зафиксировать брак'),
+          h('button', { type: 'button', style: { ...gbtn({ flex: 1 }), color: AM2, borderColor: AM4 }, onClick: () => doFinish(op, false, true, source) }, 'На переделку'),
+          h('button', { type: 'button', style: gbtn({ flex: 1 }), onClick: () => { setShowDefForm(false); setDefectFromPrev(false); } }, 'Отмена')
         )
       );
     }
@@ -1212,14 +1260,16 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
         ),
         h('div', { className: 'action-btns', style: { display: 'flex', gap: 8 } },
           h('button', { style: { ...abtn({ flex: 1 }), background: GN, color: GN2 }, onClick: () => doFinish(op) }, '✓ Завершить'),
-          h('button', { style: rbtn({ flex: 1 }), onClick: () => setShowDefForm(true) }, '⚠ Брак с пред. уч.'),
+          h('button', { style: rbtn({ flex: 1 }), onClick: () => { setShowDefForm(true); setDefectFromPrev(true); } }, '⚠ Брак с пред. уч.'),
+          h('button', { style: { ...rbtn({ flex: 1 }), background: '#FFF0F0', color: RD2, borderColor: '#F09595' }, onClick: () => { setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
           h('button', { style: gbtn({ flex: 1 }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
         )
       );
     }
     return h('div', { className: 'action-btns', style: { display: 'flex', gap: 8 } },
       h('button', { style: { ...abtn({ flex: 1 }), background: GN, color: GN2 }, onClick: () => doFinish(op) }, '✓ Завершить'),
-      h('button', { style: rbtn({ flex: 1 }), onClick: () => setShowDefForm(true) }, '⚠ Брак с пред. уч.'),
+      h('button', { style: rbtn({ flex: 1 }), onClick: () => { setShowDefForm(true); setDefectFromPrev(true); } }, '⚠ Брак с пред. уч.'),
+      h('button', { style: { ...rbtn({ flex: 1 }), background: '#FFF0F0', color: RD2, borderColor: '#F09595' }, onClick: () => { setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
       h('button', { style: gbtn({ flex: 1 }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
     );
   };
@@ -1533,7 +1583,7 @@ const ControllerScreen = memo(({ data, onUpdate, addToast }) => {
 // ==================== MasterTimeTracking ====================
 const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
   const recordEvent = useCallback((workerId, type) => {
-    const shift = getCurrentShift();
+    const shift = getCurrentShift(data?.settings?.shifts);
     const newEvent = { id: uid(), type, workerId, ts: now(), source: 'master', shift };
     const updated = { ...data, events: [...data.events, newEvent] };
     DB.save(updated).then(() => {
@@ -2498,6 +2548,16 @@ const MasterOrders = memo(({ data, onUpdate, addToast }) => {
             return !mat || mat.quantity < m.qty * qty;
           });
           if (deficit.length > 0) addToast(`⚠ Дефицит ${deficit.length} материалов по BOM. Заказ создан, но проверьте остатки.`, 'warning');
+          // Создать резервирование материалов
+          const reservations = bom.materials.filter(m => m.materialId).map(m => ({
+            id: uid(), orderId: newOrder.id, materialId: m.materialId,
+            qty: m.qty * qty, reservedAt: now()
+          }));
+          if (reservations.length > 0) {
+            const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps], materialReservations: [...(data.materialReservations || []), ...reservations] };
+            await DB.save(d); onUpdate(d); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '' }); setFieldErrors({}); addToast('Заказ создан, материалы зарезервированы', 'success');
+            return;
+          }
         }
       }
       const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps] };
@@ -2642,11 +2702,16 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
   }, [form, editingWorker, data, onUpdate, addToast]);
 
   const del = useCallback(async id => {
-    if (!confirm('Удалить сотрудника?')) return;
+    if (!confirm('Архивировать сотрудника? Его история операций сохранится.')) return;
     const name = data.workers.find(w => w.id === id)?.name;
-    let d = { ...data, workers: data.workers.filter(w => w.id !== id) };
-    d = logAction(d, 'worker_delete', { workerId: id, workerName: name });
-    await DB.save(d); onUpdate(d); addToast('Сотрудник удалён', 'info');
+    // Мягкое удаление: архивируем, не удаляем — сохраняется история и аналитика
+    let d = { ...data,
+      workers: data.workers.map(w => w.id === id ? { ...w, archived: true, status: 'absent' } : w),
+      // Снять с незапущенных операций
+      ops: data.ops.map(o => (o.status === 'pending' && o.workerIds?.includes(id)) ? { ...o, workerIds: o.workerIds.filter(wid => wid !== id) } : o)
+    };
+    d = logAction(d, 'worker_archive', { workerId: id, workerName: name });
+    await DB.save(d); onUpdate(d); addToast('Сотрудник архивирован (история сохранена)', 'info');
   }, [data, onUpdate, addToast]);
 
   const edit = useCallback(w => { setForm({ name: w.name, position: w.position || '', grade: w.grade || '', tabNumber: w.tabNumber || '', pin: w.pin || '', sectionId: w.sectionId || '', competences: w.competences || [], status: w.status || 'working' }); setEditingWorker(w.id); setShowAddForm(false); }, []);
@@ -2658,6 +2723,8 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
     const final = withAch !== updated ? withAch : updated;
     await DB.save(final); onUpdate(final); setThanksModal(null); setThanksNote(''); addToast('Благодарность отправлена', 'success');
   }, [data, onUpdate, addToast]);
+
+  const [showArchivedWorkers, setShowArchivedWorkers] = useState(false);
 
   const period30 = useMemo(() => now() - 30*86400000, []);
 
@@ -2677,16 +2744,23 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
   }), [data.workers, data.ops, data.events, data.sections, period30]);
 
   const filtered = useMemo(() => {
-    let list = workersEnriched;
+    let list = workersEnriched.filter(w => showArchivedWorkers ? w.archived : !w.archived);
     if (search) list = list.filter(w => w.name.toLowerCase().includes(search.toLowerCase()));
     if (statusFilter !== 'all') list = list.filter(w => (w.status || 'working') === statusFilter);
     return list.sort((a,b) => a.name.localeCompare(b.name));
-  }, [workersEnriched, search, statusFilter]);
+  }, [workersEnriched, search, statusFilter, showArchivedWorkers]);
+
+  const restoreWorker = useCallback(async id => {
+    let d = { ...data, workers: data.workers.map(w => w.id === id ? { ...w, archived: false, status: 'working' } : w) };
+    d = logAction(d, 'worker_restore', { workerId: id, workerName: data.workers.find(w => w.id === id)?.name });
+    await DB.save(d); onUpdate(d); addToast('Сотрудник восстановлен', 'success');
+  }, [data, onUpdate, addToast]);
 
   const summary = useMemo(() => {
-    const s = { total: data.workers.length, working:0, absent:0, sick:0, vacation:0 };
-    data.workers.forEach(w => { const k = w.status || 'working'; if (s[k] !== undefined) s[k]++; });
-    const workingWorkers = workersEnriched.filter(w => (w.status || 'working') === 'working');
+    const active = data.workers.filter(w => !w.archived);
+    const s = { total: active.length, working:0, absent:0, sick:0, vacation:0 };
+    active.forEach(w => { const k = w.status || 'working'; if (s[k] !== undefined) s[k]++; });
+    const workingWorkers = workersEnriched.filter(w => !w.archived && (w.status || 'working') === 'working');
     const avgLoad = workingWorkers.length > 0 ? Math.round(workingWorkers.reduce((sum,w) => sum + w.opsActive, 0) / workingWorkers.length * 100) || 0 : 0;
     return { ...s, avgLoad };
   }, [data.workers, workersEnriched]);
@@ -2738,7 +2812,11 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
     h('div', { style: { display:'flex', gap:8, marginBottom:16, alignItems:'center', flexWrap:'wrap' } },
       h('input', { style: { ...S.inp, flex:1, minWidth:180 }, placeholder:'Поиск по имени...', value: search, onChange: e => setSearch(e.target.value) }),
       h('div', { style: { display:'flex', gap:4, flexWrap:'wrap' } }, [['all','Все'],['working','На смене'],['absent','Отсутствуют'],['sick','Больничный'],['vacation','Отпуск']].map(([id,label]) => h('button', { key: id, style: statusFilter === id ? abtn({ fontSize:11, padding:'5px 10px' }) : gbtn({ fontSize:11, padding:'5px 10px' }), onClick: () => setStatusFilter(id) }, label))),
-      h('button', { style: abtn({ marginLeft:'auto' }), onClick: () => { resetForm(); setShowAddForm(true); } }, '+ Добавить')
+      h('label', { style: { display:'flex', alignItems:'center', gap:4, fontSize:12, cursor:'pointer', whiteSpace:'nowrap' } },
+        h('input', { type:'checkbox', checked: showArchivedWorkers, onChange: e => setShowArchivedWorkers(e.target.checked) }),
+        `Архив (${data.workers.filter(w => w.archived).length})`
+      ),
+      !showArchivedWorkers && h('button', { style: abtn({ marginLeft:'auto' }), onClick: () => { resetForm(); setShowAddForm(true); } }, '+ Добавить')
     ),
     h('div', { style: { display:'flex', gap:8, marginBottom:16 } },
       h('button', { style: viewMode === 'list' ? abtn() : gbtn(), onClick: () => setViewMode('list') }, 'Список'),
@@ -2790,9 +2868,11 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
                   ),
                   h('div', { style: { display:'flex', gap:6, alignItems:'center', flexWrap:'wrap' } },
                     h('button', { style: gbtn({ fontSize:11, padding:'4px 10px' }), onClick: () => setCardWorker(w) }, '📊 Подробнее'),
-                    h('button', { style: gbtn({ fontSize:11, padding:'4px 10px' }), onClick: () => edit(w) }, '✎ Редактировать'),
-                    h('select', { style: { ...S.inp, fontSize:11, padding:'4px 6px' }, 'aria-label': 'Статус сотрудника', value: w.status || 'working', onChange: e => updateStatus(w.id, e.target.value) }, Object.entries(WORKER_STATUS).map(([k,v]) => h('option', { key: k, value: k }, v.label))),
-                    h('button', { style: rbtn({ fontSize:11, padding:'4px 8px', marginLeft:'auto' }), 'aria-label': `Удалить ${w.name}`, onClick: () => del(w.id) }, '✕')
+                    !w.archived && h('button', { style: gbtn({ fontSize:11, padding:'4px 10px' }), onClick: () => edit(w) }, '✎ Редактировать'),
+                    !w.archived && h('select', { style: { ...S.inp, fontSize:11, padding:'4px 6px' }, 'aria-label': 'Статус сотрудника', value: w.status || 'working', onChange: e => updateStatus(w.id, e.target.value) }, Object.entries(WORKER_STATUS).map(([k,v]) => h('option', { key: k, value: k }, v.label))),
+                    !w.archived
+                      ? h('button', { style: rbtn({ fontSize:11, padding:'4px 8px', marginLeft:'auto' }), 'aria-label': `Архивировать ${w.name}`, onClick: () => del(w.id) }, '📦 Архив')
+                      : h('button', { style: { ...gbtn({ fontSize:11, padding:'4px 8px' }), color: GN2, borderColor: GN }, onClick: () => restoreWorker(w.id) }, '↩ Восстановить')
                   )
                 )
               )
@@ -3018,6 +3098,43 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
               )
             ))
           ))
+    ),
+    // Настройка смен
+    h(ShiftSettings, { data, onUpdate, addToast })
+  );
+});
+
+// ==================== ShiftSettings ====================
+const ShiftSettings = memo(({ data, onUpdate, addToast }) => {
+  const shifts = data.settings?.shifts || [{ id: 1, name: 'Смена 1', start: 8, end: 17 }];
+  const [form, setForm] = useState({ name: '', start: '', end: '' });
+
+  const addShift = useCallback(async () => {
+    if (!form.name.trim() || form.start === '' || form.end === '') { addToast('Заполните все поля смены', 'error'); return; }
+    const newShift = { id: Date.now(), name: form.name.trim(), start: Number(form.start), end: Number(form.end) };
+    const d = { ...data, settings: { ...data.settings, shifts: [...shifts, newShift] } };
+    await DB.save(d); onUpdate(d); setForm({ name: '', start: '', end: '' }); addToast('Смена добавлена', 'success');
+  }, [data, shifts, form, onUpdate, addToast]);
+
+  const removeShift = useCallback(async (id) => {
+    const d = { ...data, settings: { ...data.settings, shifts: shifts.filter(s => s.id !== id) } };
+    await DB.save(d); onUpdate(d); addToast('Смена удалена', 'info');
+  }, [data, shifts, onUpdate, addToast]);
+
+  return h('div', { style: { ...S.card, marginTop: 16 } },
+    h('div', { style: S.sec }, 'Настройка смен'),
+    h('div', { style: { fontSize: 11, color: '#888', marginBottom: 10 } }, 'Смены используются для разбивки журнала событий и отчётов. Часы: 0–23.'),
+    shifts.length > 0 && h('div', { style: { marginBottom: 12 } },
+      shifts.map(s => h('div', { key: s.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)' } },
+        h('span', { style: { flex: 1, fontSize: 13 } }, `${s.name} (${s.start}:00 — ${s.end}:00)`),
+        h('button', { style: rbtn({ fontSize: 11, padding: '3px 8px' }), onClick: () => removeShift(s.id) }, '✕')
+      ))
+    ),
+    h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+      h('input', { style: { ...S.inp, flex: 2, minWidth: 120 }, placeholder: 'Название смены', value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })) }),
+      h('input', { type: 'number', min: 0, max: 23, style: { ...S.inp, width: 70 }, placeholder: 'С (ч)', value: form.start, onChange: e => setForm(p => ({ ...p, start: e.target.value })) }),
+      h('input', { type: 'number', min: 0, max: 24, style: { ...S.inp, width: 70 }, placeholder: 'До (ч)', value: form.end, onChange: e => setForm(p => ({ ...p, end: e.target.value })) }),
+      h('button', { style: abtn(), onClick: addShift }, '+ Добавить')
     )
   );
 });
@@ -3711,33 +3828,109 @@ const AnalyticsDashboard = memo(({ data }) => {
   );
 });
 
-// ==================== ReportsBuilder (базовый) ====================
+// ==================== ReportsBuilder (расширенный) ====================
 const ReportsBuilder = memo(({ data, onUpdate, addToast }) => {
   const [reportType, setReportType] = useState('defects');
   const [period, setPeriod] = useState(30);
   const periodStart = useMemo(() => now() - period * 86400000, [period]);
+
   const reportData = useMemo(() => {
     if (reportType === 'defects') {
-      return data.ops.filter(op => op.status === 'defect' && op.finishedAt >= periodStart).map(op => { const order = data.orders.find(o => o.id === op.orderId); const reason = data.defectReasons?.find(r => r.id === op.defectReasonId); return { op: op.name, order: order?.number || '—', reason: reason?.name || op.defectNote || '—', date: op.finishedAt ? new Date(op.finishedAt).toLocaleString() : '—' }; });
+      return data.ops.filter(op => op.status === 'defect' && op.finishedAt >= periodStart).map(op => {
+        const order = data.orders.find(o => o.id === op.orderId);
+        const reason = data.defectReasons?.find(r => r.id === op.defectReasonId);
+        const workerNames = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name).filter(Boolean).join(', ');
+        return { op: op.name, order: order?.number || '—', reason: reason?.name || op.defectNote || '—', source: op.defectSource === 'current' ? 'Текущий этап' : op.defectSource === 'previous_stage' ? 'Пред. участок' : '—', worker: workerNames || '—', date: op.finishedAt ? new Date(op.finishedAt).toLocaleString() : '—' };
+      });
     }
     if (reportType === 'downtimes') {
-      return data.events.filter(e => e.type === 'downtime' && e.ts >= periodStart).map(e => { const worker = data.workers.find(w => w.id === e.workerId); const reason = data.downtimeTypes?.find(d => d.id === e.downtimeTypeId); return { worker: worker?.name || '—', reason: reason?.name || '—', duration: fmtDur(e.duration || 0), date: new Date(e.ts).toLocaleString() }; });
+      return data.events.filter(e => e.type === 'downtime' && e.ts >= periodStart).map(e => {
+        const worker = data.workers.find(w => w.id === e.workerId);
+        const reason = data.downtimeTypes?.find(d => d.id === e.downtimeTypeId);
+        const eq = e.equipmentId ? data.equipment?.find(eq => eq.id === e.equipmentId) : null;
+        return { worker: worker?.name || '—', reason: reason?.name || '—', duration: fmtDur(e.duration || 0), equipment: eq?.name || '—', shift: e.shift || '—', date: new Date(e.ts).toLocaleString() };
+      });
+    }
+    if (reportType === 'orders') {
+      return data.orders.filter(o => !o.archived && o.createdAt >= periodStart).map(order => {
+        const ops = data.ops.filter(op => op.orderId === order.id);
+        const done = ops.filter(op => op.status === 'done').length;
+        const defect = ops.filter(op => op.status === 'defect').length;
+        const startedAt = ops.filter(op => op.startedAt).reduce((min, op) => (!min || op.startedAt < min) ? op.startedAt : min, null);
+        const finishedAt = ops.every(op => op.status === 'done' || op.status === 'defect') && ops.some(op => op.finishedAt) ? ops.reduce((max, op) => op.finishedAt > max ? op.finishedAt : max, 0) : null;
+        const pct = ops.length > 0 ? Math.round(done / ops.length * 100) : 0;
+        return { number: order.number, product: order.product, qty: order.qty, priority: PRIORITY[order.priority]?.label || '—', progress: `${done}/${ops.length} (${pct}%)`, defects: defect, deadline: order.deadline || '—', leadTime: startedAt && finishedAt ? fmtDur(finishedAt - startedAt) : '—' };
+      });
+    }
+    if (reportType === 'workers') {
+      return data.workers.filter(w => !w.archived).map(w => {
+        const ops = data.ops.filter(op => op.workerIds?.includes(w.id) && op.finishedAt >= periodStart);
+        const done = ops.filter(op => op.status === 'done');
+        const defect = ops.filter(op => op.status === 'defect');
+        const totalTime = done.reduce((s, op) => s + (op.finishedAt && op.startedAt ? op.finishedAt - op.startedAt : 0), 0);
+        const avgTime = done.length > 0 ? totalTime / done.length : 0;
+        const total = done.length + defect.length;
+        const defectRate = total > 0 ? (defect.length / total * 100).toFixed(1) : '0.0';
+        const downtimes = data.events.filter(e => e.workerId === w.id && e.type === 'downtime' && e.ts >= periodStart).length;
+        return { name: w.name, position: w.position || '—', section: data.sections.find(s => s.id === w.sectionId)?.name || '—', done: done.length, defects: defect.length, defectRate: `${defectRate}%`, avgTime: avgTime ? fmtDur(avgTime) : '—', downtimes };
+      }).sort((a, b) => b.done - a.done);
+    }
+    if (reportType === 'materials') {
+      return (data.materialConsumptions || []).filter(mc => mc.ts >= periodStart).map(mc => {
+        const mat = data.materials.find(m => m.id === mc.materialId);
+        const op = data.ops.find(o => o.id === mc.opId);
+        const order = op ? data.orders.find(o => o.id === op.orderId) : null;
+        return { material: mat?.name || '—', unit: mat?.unit || '—', qty: mc.qty, cost: mat?.unitCost ? `${(mc.qty * mat.unitCost).toLocaleString()}₽` : '—', order: order?.number || '—', operation: op?.name || '—', date: new Date(mc.ts).toLocaleString() };
+      });
+    }
+    if (reportType === 'shifts') {
+      const shifts = data.settings?.shifts || [{ id: 1, name: 'Смена 1' }, { id: 2, name: 'Смена 2' }];
+      const shiftMap = {};
+      data.events.filter(e => (e.type === 'done' || e.type === 'defect' || e.type === 'downtime') && e.ts >= periodStart).forEach(e => {
+        const key = e.shift || 'unknown';
+        if (!shiftMap[key]) shiftMap[key] = { shift: key, done: 0, defects: 0, downtimes: 0, workers: new Set() };
+        if (e.type === 'done') shiftMap[key].done++;
+        if (e.type === 'defect') shiftMap[key].defects++;
+        if (e.type === 'downtime') shiftMap[key].downtimes++;
+        if (e.workerId) shiftMap[key].workers.add(e.workerId);
+      });
+      return Object.values(shiftMap).map(s => ({ shift: s.shift, done: s.done, defects: s.defects, defectRate: s.done + s.defects > 0 ? `${(s.defects / (s.done + s.defects) * 100).toFixed(1)}%` : '0%', downtimes: s.downtimes, workers: s.workers.size })).sort((a, b) => b.done - a.done);
     }
     return [];
   }, [reportType, periodStart, data]);
-  const headers = reportType === 'defects' ? ['Операция','Заказ','Причина','Дата'] : ['Сотрудник','Причина','Длительность','Дата'];
-  const rowKeys = reportType === 'defects' ? ['op','order','reason','date'] : ['worker','reason','duration','date'];
+
+  const reportConfig = {
+    defects:   { label: 'Брак',                headers: ['Операция','Заказ','Причина','Источник','Исполнитель','Дата'],      keys: ['op','order','reason','source','worker','date'] },
+    downtimes: { label: 'Простои',             headers: ['Сотрудник','Причина','Длительность','Оборудование','Смена','Дата'], keys: ['worker','reason','duration','equipment','shift','date'] },
+    orders:    { label: 'Выполнение заказов',  headers: ['Заказ','Изделие','Кол-во','Приоритет','Прогресс','Брак','Дедлайн','Lead Time'], keys: ['number','product','qty','priority','progress','defects','deadline','leadTime'] },
+    workers:   { label: 'Эффективность',       headers: ['Сотрудник','Должность','Участок','Выполнено','Брак','Брак %','Ср. время','Простои'], keys: ['name','position','section','done','defects','defectRate','avgTime','downtimes'] },
+    materials: { label: 'Расход материалов',   headers: ['Материал','Ед.','Кол-во','Стоимость','Заказ','Операция','Дата'],   keys: ['material','unit','qty','cost','order','operation','date'] },
+    shifts:    { label: 'Отчёт по сменам',     headers: ['Смена','Выполнено','Брак','Брак %','Простои','Рабочих'],           keys: ['shift','done','defects','defectRate','downtimes','workers'] },
+  };
+  const cfg = reportConfig[reportType];
+
+  const exportXlsx = () => {
+    if (reportData.length === 0) return;
+    const ws = XLSX.utils.json_to_sheet(reportData.map(row => { const out = {}; cfg.headers.forEach((h, i) => { out[h] = row[cfg.keys[i]]; }); return out; }));
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, cfg.label);
+    XLSX.writeFile(wb, `report_${reportType}_${new Date().toISOString().slice(0,10)}.xlsx`);
+  };
+
   return h('div', { style: S.card },
     h('div', { style: S.sec }, 'Конструктор отчётов'),
-    h('div', { style: { display:'flex', gap:8, marginBottom:16, flexWrap:'wrap' } },
-      h('select', { style: { ...S.inp, minWidth:180 }, value: reportType, onChange: e => setReportType(e.target.value) }, h('option', { value:'defects' }, 'Брак'), h('option', { value:'downtimes' }, 'Простои')),
-      [7,14,30,90].map(d => h('button', { key: d, style: period === d ? abtn({ fontSize:11 }) : gbtn({ fontSize:11 }), onClick: () => setPeriod(d) }, `${d} дней`))
+    h('div', { style: { display:'flex', gap:8, marginBottom:12, flexWrap:'wrap', alignItems:'center' } },
+      h('select', { style: { ...S.inp, minWidth:200 }, value: reportType, onChange: e => setReportType(e.target.value) },
+        Object.entries(reportConfig).map(([k, v]) => h('option', { key: k, value: k }, v.label))
+      ),
+      [7,14,30,90].map(d => h('button', { key: d, style: period === d ? abtn({ fontSize:11 }) : gbtn({ fontSize:11 }), onClick: () => setPeriod(d) }, `${d} дней`)),
+      reportData.length > 0 && h('button', { style: gbtn({ fontSize:11, marginLeft:'auto' }), onClick: exportXlsx }, '📥 Excel')
     ),
+    h('div', { style: { fontSize:11, color:'#888', marginBottom:12 } }, `Записей: ${reportData.length}`),
     reportData.length === 0
-      ? h('div', { style: { padding:16, textAlign:'center', color:'#888' } }, 'Нет данных за период')
+      ? h('div', { style: { padding:16, textAlign:'center', color:'#888' } }, 'Нет данных за выбранный период')
       : h('div', { className: 'table-responsive' }, h('table', { style: { width:'100%', borderCollapse:'collapse' } },
-          h('thead', null, h('tr', null, headers.map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
-          h('tbody', null, reportData.map((row, i) => h('tr', { key: i }, rowKeys.map(k => h('td', { key: k, style: S.td }, row[k])))))
+          h('thead', null, h('tr', null, cfg.headers.map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
+          h('tbody', null, reportData.map((row, i) => h('tr', { key: i }, cfg.keys.map(k => h('td', { key: k, style: S.td }, row[k])))))
         ))
   );
 });
@@ -3825,6 +4018,7 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
   const [defNote, setDefNote] = useState('');
   const [defectReasonId, setDefectReasonId] = useState('');
   const [showDefForm, setShowDefForm] = useState(false);
+  const [defectFromPrev, setDefectFromPrev] = useState(true);
   const [showDowntimeModal, setShowDowntimeModal] = useState(false);
   const [selectedDowntimeType, setSelectedDowntimeType] = useState('');
   const [, setTick] = useState(0);
@@ -3851,25 +4045,16 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
     const workerId = op.workerIds?.[0];
     const worker = data.workers.find(w => w.id === workerId);
     if (worker && worker.competences && worker.competences.length > 0 && !worker.competences.includes(op.name)) { addToast('У сотрудника нет компетенции', 'error'); return; }
-    const startedAt = now(); const shift = getCurrentShift();
-    const updated = { ...data, ops: data.ops.map(o => o.id === op.id ? { ...o, status:'in_progress', startedAt } : o), events: [...data.events, { id: uid(), type:'start', opId: op.id, workerId: op.workerIds?.[0], workerIds: op.workerIds || [], ts: startedAt, shift }] };
+    const result = buildStartUpdate(data, op, workerId);
+    const updated = { ...data, ops: result.ops, events: result.events };
     await DB.save(updated); onUpdate(updated); addToast('Операция начата', 'success');
   }, [data, op, onUpdate, addToast]);
 
-  const handleFinish = useCallback(async (isDefect=false, isRework=false) => {
+  const handleFinish = useCallback(async (isDefect=false, isRework=false, source='current') => {
     if (op.status !== 'in_progress') return;
-    const finishedAt = now();
-    let status = isDefect ? 'defect' : isRework ? 'rework' : 'done';
-    let updatedOp = { ...op, status, finishedAt, defectNote: defNote || undefined };
-    if (isDefect) { updatedOp.defectSource = 'previous_stage'; updatedOp.defectReasonId = defectReasonId; }
-    if (isRework) updatedOp.defectSource = 'previous_stage';
-    if (op.requiresQC && status === 'done') { status = 'on_check'; updatedOp.status = 'on_check'; }
-    if (op.name.includes('свар') && weldParams.seamNumber && weldParams.electrode) {
-      updatedOp.weldParams = { seamNumber: weldParams.seamNumber, electrode: weldParams.electrode, result: weldParams.result };
-      if (weldParams.result === 'fail') { status = 'defect'; updatedOp.status = 'defect'; updatedOp.defectNote = 'Сварка забракована'; }
-    }
-    const shift = getCurrentShift();
-    const updated = { ...data, ops: data.ops.map(o => o.id === op.id ? updatedOp : o), events: [...data.events, { id: uid(), type: status, opId: op.id, workerId: op.workerIds?.[0], workerIds: op.workerIds || [], ts: finishedAt, note: defNote || undefined, shift, defectSource: (isDefect || isRework) ? 'previous_stage' : undefined, defectReasonId: isDefect ? defectReasonId : undefined }] };
+    const workerId = op.workerIds?.[0];
+    const result = buildFinishUpdate(data, op, { workerId, isDefect, isRework, defectSource: source, defectNote: defNote, defectReasonId, weldParams });
+    const updated = { ...data, ops: result.ops, events: result.events, reclamations: result.reclamations };
     // Достижения — один save
     const allAchUpdated = (op.workerIds || []).reduce((acc, wid) => { const r = checkAchievements(wid, acc); return r; }, updated);
     const final = allAchUpdated !== updated ? allAchUpdated : updated;
@@ -3880,7 +4065,7 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
 
   const recordDowntime = useCallback(async () => {
     if (!selectedDowntimeType) return addToast('Выберите причину', 'error');
-    const shift = getCurrentShift(); const duration = downtimeStartedAt ? now() - downtimeStartedAt : 0;
+    const shift = getCurrentShift(data.settings?.shifts); const duration = downtimeStartedAt ? now() - downtimeStartedAt : 0;
     const newEvent = { id: uid(), type:'downtime', workerId: op.workerIds?.[0], opId: op.id, ts: now(), downtimeTypeId: selectedDowntimeType, shift, startedAt: downtimeStartedAt || now(), duration, equipmentId: downtimeEquipmentId || undefined };
     const updated = { ...data, events: [...data.events, newEvent] };
     await DB.save(updated); onUpdate(updated); setShowDowntimeModal(false); setSelectedDowntimeType(''); setDowntimeStartedAt(null); setDowntimeEquipmentId(''); addToast('Простой зафиксирован', 'success');
@@ -3888,9 +4073,18 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
 
   const renderQRActions = () => {
     if (showDefForm) return h('div', null,
+      h('div', { style: { fontSize: 11, color: RD, fontWeight: 500, marginBottom: 6, textTransform: 'uppercase' } }, 'Фиксация брака'),
+      h('div', { style: { display: 'flex', gap: 6, marginBottom: 8 } },
+        h('button', { type: 'button', style: defectFromPrev ? rbtn({ flex:1, fontSize:11 }) : gbtn({ flex:1, fontSize:11 }), onClick: () => setDefectFromPrev(true) }, 'С пред. участка'),
+        h('button', { type: 'button', style: !defectFromPrev ? rbtn({ flex:1, fontSize:11 }) : gbtn({ flex:1, fontSize:11 }), onClick: () => setDefectFromPrev(false) }, 'Текущий этап')
+      ),
       h('select', { style: { ...S.inp, width:'100%', marginBottom:8 }, value: defectReasonId, onChange: e => setDefectReasonId(e.target.value) }, h('option', { value:'' }, '— выберите причину —'), (data.defectReasons || []).map(r => h('option', { key: r.id, value: r.id }, r.name))),
-      h('textarea', { style: { ...S.inp, width:'100%', marginBottom:8 }, rows:2, placeholder:'Причина...', value: defNote, onChange: e => setDefNote(e.target.value) }),
-      h('div', { style: { display:'flex', gap:6 } }, h('button', { style: rbtn({ flex:1 }), onClick: () => handleFinish(true,false) }, 'Брак'), h('button', { style: { ...gbtn({ flex:1 }), color:AM2, borderColor:AM4 }, onClick: () => handleFinish(false,true) }, 'Переделка'), h('button', { style: gbtn({ flex:1 }), onClick: () => setShowDefForm(false) }, 'Отмена'))
+      h('textarea', { style: { ...S.inp, width:'100%', marginBottom:8 }, rows:2, placeholder:'Опишите дефект...', value: defNote, onChange: e => setDefNote(e.target.value) }),
+      h('div', { style: { display:'flex', gap:6 } },
+        h('button', { style: rbtn({ flex:1 }), onClick: () => handleFinish(true, false, defectFromPrev ? 'previous_stage' : 'current') }, 'Зафиксировать брак'),
+        h('button', { style: { ...gbtn({ flex:1 }), color:AM2, borderColor:AM4 }, onClick: () => handleFinish(false, true, defectFromPrev ? 'previous_stage' : 'current') }, 'Переделка'),
+        h('button', { style: gbtn({ flex:1 }), onClick: () => { setShowDefForm(false); setDefectFromPrev(true); } }, 'Отмена')
+      )
     );
     if (op.name.includes('свар')) return h('div', null,
       h('div', { style: { display:'flex', gap:8, marginBottom:8 } }, h('input', { style: { ...S.inp, flex:1 }, placeholder:'Номер шва', value: weldParams.seamNumber, onChange: e => setWeldParams(p => ({ ...p, seamNumber: e.target.value })) }), h('input', { style: { ...S.inp, flex:1 }, placeholder:'Тип электрода', value: weldParams.electrode, onChange: e => setWeldParams(p => ({ ...p, electrode: e.target.value })) })),
@@ -3898,17 +4092,19 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
         h('label', { style: { display:'flex', alignItems:'center', gap:4 } }, h('input', { type:'radio', name:`weldResult_qr_${op.id}`, value:'ok', checked: weldParams.result === 'ok', onChange: e => setWeldParams(p => ({ ...p, result: e.target.value })) }), 'Принято'),
         h('label', { style: { display:'flex', alignItems:'center', gap:4 } }, h('input', { type:'radio', name:`weldResult_qr_${op.id}`, value:'fail', checked: weldParams.result === 'fail', onChange: e => setWeldParams(p => ({ ...p, result: e.target.value })) }), 'Брак')
       ),
-      h('div', { className: 'action-btns', style: { display:'flex', gap:8 } },
+      h('div', { className: 'action-btns', style: { display:'flex', gap:8, flexWrap:'wrap' } },
         op.status === 'pending' && workerNames && h('button', { style: abtn({ flex:1, padding:'12px' }), onClick: handleStart }, '▶ Старт'),
         op.status === 'in_progress' && h('button', { style: { ...abtn({ flex:1 }), background:GN, color:GN2 }, onClick: () => handleFinish() }, '✓ Завершить'),
-        op.status === 'in_progress' && h('button', { style: rbtn({ flex:1 }), onClick: () => setShowDefForm(true) }, '⚠ Брак с пред. уч.'),
+        op.status === 'in_progress' && h('button', { style: rbtn({ flex:1 }), onClick: () => { setShowDefForm(true); setDefectFromPrev(true); } }, '⚠ Брак с пред.'),
+        op.status === 'in_progress' && h('button', { style: { ...rbtn({ flex:1 }), background:'#FFF0F0', borderColor:'#F09595' }, onClick: () => { setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
         (op.status === 'pending' || op.status === 'in_progress') && h('button', { style: gbtn({ flex:1 }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
       )
     );
-    return h('div', { className: 'action-btns', style: { display:'flex', gap:8 } },
+    return h('div', { className: 'action-btns', style: { display:'flex', gap:8, flexWrap:'wrap' } },
       op.status === 'pending' && workerNames && h('button', { style: abtn({ flex:1, padding:'12px' }), onClick: handleStart }, '▶ Старт'),
       op.status === 'in_progress' && h('button', { style: { ...abtn({ flex:1 }), background:GN, color:GN2 }, onClick: () => handleFinish() }, '✓ Завершить'),
-      op.status === 'in_progress' && h('button', { style: rbtn({ flex:1 }), onClick: () => setShowDefForm(true) }, '⚠ Брак с пред. уч.'),
+      op.status === 'in_progress' && h('button', { style: rbtn({ flex:1 }), onClick: () => { setShowDefForm(true); setDefectFromPrev(true); } }, '⚠ Брак с пред.'),
+      op.status === 'in_progress' && h('button', { style: { ...rbtn({ flex:1 }), background:'#FFF0F0', borderColor:'#F09595' }, onClick: () => { setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
       (op.status === 'pending' || op.status === 'in_progress') && h('button', { style: gbtn({ flex:1 }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
     );
   };
@@ -4243,17 +4439,21 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
       // Таблица
       data.materials.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888' } }, 'Нет материалов') :
         h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null, ['Материал', 'Остаток', 'Мин.', 'Цена', 'Стоимость'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
+          h('thead', null, h('tr', null, ['Материал', 'Остаток', 'Зарезерв.', 'Свободно', 'Мин.', 'Цена', 'Стоимость'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
           h('tbody', null, data.materials.sort((a, b) => {
             const aCrit = a.minStock && a.quantity <= a.minStock;
             const bCrit = b.minStock && b.quantity <= b.minStock;
             if (aCrit && !bCrit) return -1; if (!aCrit && bCrit) return 1;
             return a.name.localeCompare(b.name);
           }).map(m => {
-            const crit = m.minStock && m.quantity <= m.minStock;
+            const reserved = (data.materialReservations || []).filter(r => r.materialId === m.id).reduce((s, r) => s + r.qty, 0);
+            const free = Math.max(0, m.quantity - reserved);
+            const crit = m.minStock && free <= m.minStock;
             return h('tr', { key: m.id, style: { background: crit ? RD3 : 'transparent' } },
               h('td', { style: { ...S.td, fontWeight: crit ? 500 : 400 } }, `${m.name} (${m.unit})`),
-              h('td', { style: { ...S.td, color: crit ? RD : 'inherit', fontWeight: crit ? 500 : 400, textAlign: 'center' } }, m.quantity),
+              h('td', { style: { ...S.td, textAlign: 'center' } }, m.quantity),
+              h('td', { style: { ...S.td, textAlign: 'center', color: reserved > 0 ? AM2 : '#888' } }, reserved > 0 ? reserved : '—'),
+              h('td', { style: { ...S.td, color: crit ? RD : free > 0 ? GN : '#888', fontWeight: 500, textAlign: 'center' } }, free),
               h('td', { style: { ...S.td, textAlign: 'center', color: '#888' } }, m.minStock || '—'),
               h('td', { style: { ...S.td, textAlign: 'center' } }, m.unitCost ? `${m.unitCost}₽` : '—'),
               h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'right' } }, m.unitCost ? `${(m.quantity * m.unitCost).toLocaleString()}₽` : '—')
@@ -4657,11 +4857,6 @@ function App() {
   );
 }
 
-// Регистрация Service Worker для PWA
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
-}
-
 ReactDOM.createRoot(document.getElementById('root')).render(
   React.createElement(ErrorBoundary, null, React.createElement(App))
 );
@@ -4669,7 +4864,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 // PWA: Service Worker registration
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').then(reg => {
+    navigator.serviceWorker.register('/sw.js').then(reg => {
       console.log('SW registered:', reg.scope);
     }).catch(err => console.log('SW registration failed:', err));
   });
