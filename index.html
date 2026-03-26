@@ -379,7 +379,7 @@ const DB = {
           return op;
         });
         localStorage.setItem('prod_app_v14_cache', JSON.stringify(parsed));
-        return { ...EMPTY_DATA, ...parsed };
+        return migrateData({ ...EMPTY_DATA, ...parsed });
       }
     } catch(e) { console.warn(e); }
     try {
@@ -414,10 +414,18 @@ const DB = {
           if (op.workerId !== undefined && !op.workerIds) { op.workerIds = op.workerId ? [op.workerId] : []; delete op.workerId; }
           return op;
         });
-        callback({ ...EMPTY_DATA, ...parsed });
+        callback(migrateData({ ...EMPTY_DATA, ...parsed }));
       }
     });
   }
+};
+
+// Миграция данных: заполняет productionStages из OPERATION_STAGES если пусто
+const migrateData = (d) => {
+  if (!d.productionStages || d.productionStages.length === 0) {
+    d = { ...d, productionStages: OPERATION_STAGES.map(name => ({ id: uid(), name })) };
+  }
+  return d;
 };
 
 // ==================== Стили и кнопки ====================
@@ -1294,21 +1302,43 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     const myDefect30 = data.ops.filter(op => op.workerIds?.includes(workerId) && op.status === 'defect' && op.finishedAt >= period30);
     const total30 = myDone30.length + myDefect30.length;
     const quality = total30 > 0 ? Math.round(myDone30.length / total30 * 100) : 100;
-    const avgTime = myDone30.length > 0 ? myDone30.filter(op => op.startedAt && op.finishedAt).reduce((s, op) => s + (op.finishedAt - op.startedAt), 0) / myDone30.length : 0;
-    // Рабочее время сегодня (сумма всех операций)
     const todayOps = myDone.filter(op => op.finishedAt >= todayStart && op.startedAt && op.finishedAt);
     const workedToday = todayOps.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0);
-    // Активная операция добавляет текущее время
     const activeTime = active?.startedAt ? now() - active.startedAt : 0;
-    // Производительность: план vs факт
     const withPlan = myDone30.filter(op => op.plannedHours && op.startedAt && op.finishedAt);
     const productivity = withPlan.length > 0 ? Math.round(withPlan.reduce((s, op) => s + op.plannedHours * 3600000, 0) / withPlan.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0) * 100) : null;
-    // Простои за 30 дней
     const downtimeHrs = Math.round(data.events.filter(e => e.workerId === workerId && e.type === 'downtime' && e.ts >= period30).reduce((s, e) => s + (e.duration || 0), 0) / 3600000 * 10) / 10;
-    return { quality, avgTime, workedToday: workedToday + activeTime, doneToday: doneToday.length, done30: myDone30.length, productivity, downtimeHrs };
+    // Благодарности
+    const allThanks = data.events.filter(e => e.type === 'thanks' && e.toWorkerId === workerId);
+    const thanksCount = allThanks.length;
+    const recentThanks = allThanks.sort((a, b) => b.ts - a.ts).slice(0, 5).map(t => {
+      const from = t.fromWorkerId === 'master' ? 'Мастер' : data.workers.find(w => w.id === t.fromWorkerId)?.name || 'Коллега';
+      return { from, note: t.note || '', ts: t.ts };
+    });
+    // Новые благодарности (после последнего просмотра)
+    const lastSeenKey = `thanks_seen_${workerId}`;
+    const lastSeen = Number(localStorage.getItem(lastSeenKey)) || 0;
+    const newThanks = allThanks.filter(t => t.ts > lastSeen);
+    return { quality, workedToday: workedToday + activeTime, doneToday: doneToday.length, done30: myDone30.length, productivity, downtimeHrs, thanksCount, recentThanks, newThanks, lastSeenKey };
   }, [data.ops, data.events, workerId, doneToday, active]);
 
+  // Отметить благодарности как просмотренные
+  useEffect(() => {
+    if (myStats.newThanks.length > 0) {
+      localStorage.setItem(myStats.lastSeenKey, String(now()));
+    }
+  }, [myStats.newThanks.length, myStats.lastSeenKey]);
+
+  const [showThanksHistory, setShowThanksHistory] = useState(false);
+
   return h('div', { style: { maxWidth: 420, margin: '0 auto', padding: '16px 12px' } },
+    // Уведомление о новых благодарностях
+    myStats.newThanks.length > 0 && h('div', { style: { ...S.card, background: '#FFF8E1', border: '0.5px solid #FFC107', marginBottom: 12, padding: 12 } },
+      h('div', { style: { fontSize: 13, fontWeight: 500, color: '#F57F17', marginBottom: 4 } }, `🤝 Вы получили ${myStats.newThanks.length} ${myStats.newThanks.length === 1 ? 'благодарность' : 'благодарностей'}!`),
+      myStats.newThanks.map((t, i) => h('div', { key: i, style: { fontSize: 12, color: '#666' } },
+        `${t.from}${t.note ? ` — ${t.note}` : ''}`
+      ))
+    ),
     // Шапка сотрудника
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 } },
       h('div', { style: { width: 48, height: 48, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 500, color: AM2, position: 'relative' } },
@@ -1327,8 +1357,8 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
         )
       )
     ),
-    // Пункт 4: Личная панель метрик
-    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 12 } },
+    // Личная панель метрик — 4 колонки
+    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, marginBottom: 8 } },
       h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } },
         h('div', { style: { fontSize: 18, fontWeight: 500, color: AM } }, fmtDur(myStats.workedToday)),
         h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Отработано')
@@ -1340,6 +1370,10 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } },
         h('div', { style: { fontSize: 18, fontWeight: 500, color: myStats.productivity ? (myStats.productivity >= 100 ? GN : AM) : '#888' } }, myStats.productivity ? `${myStats.productivity}%` : '—'),
         h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Производит.')
+      ),
+      h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0, cursor: 'pointer' }, onClick: () => setShowThanksHistory(v => !v) },
+        h('div', { style: { fontSize: 18, fontWeight: 500, color: myStats.thanksCount > 0 ? '#F57F17' : '#888' } }, `🤝 ${myStats.thanksCount}`),
+        h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Спасибо')
       )
     ),
     h('div', { style: { display: 'flex', gap: 8, fontSize: 11, color: '#888', marginBottom: 12, justifyContent: 'center' } },
@@ -1347,6 +1381,17 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       h('span', null, `·`),
       h('span', null, `30д: ${myStats.done30} оп.`),
       myStats.downtimeHrs > 0 && h('span', { style: { color: RD } }, `· Простои: ${myStats.downtimeHrs}ч`)
+    ),
+    // История благодарностей (раскрывается по клику на метрику)
+    showThanksHistory && myStats.recentThanks.length > 0 && h('div', { style: { ...S.card, marginBottom: 12, padding: 10 } },
+      h('div', { style: S.sec }, `Последние благодарности (${myStats.thanksCount})`),
+      myStats.recentThanks.map((t, i) => h('div', { key: i, style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', fontSize: 12 } },
+        h('div', null,
+          h('span', { style: { fontWeight: 500 } }, `🤝 ${t.from}`),
+          t.note && h('span', { style: { color: '#888', marginLeft: 6 } }, t.note)
+        ),
+        h('div', { style: { fontSize: 10, color: '#888' } }, new Date(t.ts).toLocaleDateString())
+      ))
     ),
     // Активная операция (П.2: ElapsedTimer, П.11: первый экран)
     active && h('div', { style: { ...S.card, border: `1px solid ${AM}`, background: AM3, marginBottom: 16 } },
@@ -2248,10 +2293,7 @@ const MasterDefectReasons = memo(({ data, onUpdate, addToast }) => {
 
 // ==================== MasterOps ====================
 const MasterOps = memo(({ data, onUpdate, onShowQR, addToast }) => {
-  const stagesList = useMemo(() => {
-    if (data.productionStages && data.productionStages.length > 0) return data.productionStages.map(s => s.name);
-    return OPERATION_STAGES;
-  }, [data.productionStages]);
+  const stagesList = useMemo(() => (data.productionStages || []).map(s => s.name), [data.productionStages]);
   const [form, setForm] = useState({ orderId: '', name: '', workerIds: [], plannedHours: '', sectionId: '', equipmentId: '', plannedStartDate: '', drawingUrl: '' });
   const [filt, setFilt] = useState('all');
   const [editingId, setEditingId] = useState(null);
@@ -2554,7 +2596,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast }) => {
   };
 
   const createDefaultOps = useCallback((orderId) => {
-    const stages = data.productionStages && data.productionStages.length > 0 ? data.productionStages : OPERATION_STAGES.map(name => ({ id: uid(), name }));
+    const stages = data.productionStages || [];
     return stages.map(stage => ({ id: uid(), orderId, name: stage.name, workerIds: [], status: 'pending', createdAt: now(), plannedHours: undefined, archived: false, sectionId: null, equipmentId: null, plannedStartDate: undefined, requiresQC: stage.name.includes('свар') || stage.name.includes('Опресовка') }));
   }, [data.productionStages]);
 
@@ -2795,7 +2837,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
   }, [data.workers, workersEnriched]);
 
   const toggleCompetence = (comp) => { setForm(p => ({ ...p, competences: p.competences.includes(comp) ? p.competences.filter(c => c !== comp) : [...p.competences, comp] })); };
-  const stagesForMatrix = useMemo(() => { if (data.productionStages && data.productionStages.length > 0) return data.productionStages; return OPERATION_STAGES.map(name => ({ id: name, name })); }, [data.productionStages]);
+  const stagesForMatrix = useMemo(() => data.productionStages || [], [data.productionStages]);
 
   const renderWorkerForm = (isInline = false) => h('div', { style: isInline ? {} : { ...S.card, border: `1px solid ${AM}`, marginBottom: 16 } },
     !isInline && h('div', { style: S.sec }, editingWorker ? 'Редактировать сотрудника' : 'Новый сотрудник'),
@@ -3271,7 +3313,7 @@ const ResourceCalendar = memo(({ data, onUpdate, addToast }) => {
 
 // ==================== MasterKanban (с WIP-лимитами) ====================
 const MasterKanban = memo(({ data, onUpdate, addToast }) => {
-  const stagesList = useMemo(() => { if (data.productionStages && data.productionStages.length > 0) return data.productionStages.map(s => s.name); return OPERATION_STAGES; }, [data.productionStages]);
+  const stagesList = useMemo(() => (data.productionStages || []).map(s => s.name), [data.productionStages]);
   const wipLimits = data.settings?.wipLimits || {};
   const [editingWip, setEditingWip] = useState(null);
   const [wipValue, setWipValue] = useState('');
@@ -3753,7 +3795,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
       ),
       h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
         h('div', { style: { flex: 2, minWidth: 160 } }, h('label', { style: S.lbl }, 'Заказ'), h('select', { style: { ...S.inp, width: '100%' }, value: form.orderId, onChange: e => setForm(p => ({ ...p, orderId: e.target.value })) }, h('option', { value: '' }, '— заказ —'), data.orders.filter(o => !o.archived).map(o => h('option', { key: o.id, value: o.id }, `${o.number} — ${o.product}`)))),
-        h('div', { style: { flex: 1, minWidth: 140 } }, h('label', { style: S.lbl }, 'Этап'), h('select', { style: { ...S.inp, width: '100%' }, value: form.operationName, onChange: e => setForm(p => ({ ...p, operationName: e.target.value })) }, h('option', { value: '' }, '— этап —'), (data.productionStages?.length ? data.productionStages.map(s => s.name) : OPERATION_STAGES).map(s => h('option', { key: s, value: s }, s)))),
+        h('div', { style: { flex: 1, minWidth: 140 } }, h('label', { style: S.lbl }, 'Этап'), h('select', { style: { ...S.inp, width: '100%' }, value: form.operationName, onChange: e => setForm(p => ({ ...p, operationName: e.target.value })) }, h('option', { value: '' }, '— этап —'), (data.productionStages || []).map(s => h('option', { key: s.id || s.name, value: s.name }, s.name)))),
         h('div', { style: { flex: 1, minWidth: 120 } }, h('label', { style: S.lbl }, 'Серьёзность'), h('select', { style: { ...S.inp, width: '100%' }, value: form.severity, onChange: e => setForm(p => ({ ...p, severity: e.target.value })) }, h('option', { value: 'minor' }, 'Незначительная'), h('option', { value: 'major' }, 'Серьёзная'), h('option', { value: 'critical' }, 'Критическая'))),
         h('div', { style: { flex: 1, minWidth: 120 } }, h('label', { style: S.lbl }, 'Дата'), h('input', { type: 'date', style: { ...S.inp, width: '100%' }, value: form.detectedDate, onChange: e => setForm(p => ({ ...p, detectedDate: e.target.value })) }))
       ),
