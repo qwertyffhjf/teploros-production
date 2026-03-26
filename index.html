@@ -287,6 +287,7 @@ const scoreWorkerForOp = (worker, opName, data) => {
 
 const autoAssignWorker = (data, opName) => {
   const candidates = data.workers.filter(w =>
+    !w.archived &&
     (w.status || 'working') === 'working' &&
     (!w.competences?.length || w.competences.includes(opName)) &&
     !data.ops.some(op => op.status === 'in_progress' && op.workerIds?.includes(w.id))
@@ -302,6 +303,7 @@ const getAssignmentRecommendations = (data) => {
   return pendingOps.map(op => {
     const order = data.orders.find(o => o.id === op.orderId);
     const candidates = data.workers.filter(w =>
+      !w.archived &&
       (w.status || 'working') === 'working' &&
       (!w.competences?.length || w.competences.includes(op.name))
     );
@@ -2516,6 +2518,11 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast }) => {
 
   const addOrUpdate = useCallback(async () => {
     if (!validate()) return;
+    // Проверка компетенций назначенных рабочих
+    if (form.workerIds.length > 0 && form.name) {
+      const invalid = data.workers.filter(w => form.workerIds.includes(w.id) && w.competences && w.competences.length > 0 && !w.competences.includes(form.name));
+      if (invalid.length > 0) { addToast(`У ${invalid.map(w => w.name).join(', ')} нет допуска к «${form.name}»`, 'error'); return; }
+    }
     if (editingId) {
       const updatedOps = data.ops.map(o => o.id === editingId ? { ...o, orderId: form.orderId, name: form.name.trim(), workerIds: form.workerIds, plannedHours: form.plannedHours ? Number(form.plannedHours) : undefined, sectionId: form.sectionId || null, equipmentId: form.equipmentId || null, plannedStartDate: form.plannedStartDate ? new Date(form.plannedStartDate).getTime() : undefined, drawingUrl: form.drawingUrl.trim() || undefined } : o);
       const d = { ...data, ops: updatedOps };
@@ -2574,7 +2581,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast }) => {
         h('div', { style: { flex: 1, minWidth: 160 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })) }, h('option', { value: '' }, '— операция —'), stagesList.map(stage => h('option', { key: stage, value: stage }, stage))), fieldErrors.name && h('div', { className: 'error-message' }, fieldErrors.name)),
         h('div', { style: { minWidth: 200 } },
           h('div', { style: { fontSize: 10, color: '#888', marginBottom: 4 } }, 'Исполнители'),
-          h('div', { className: 'checkbox-group' }, data.workers.filter(w => !w.competences || w.competences.length === 0 || (form.name && w.competences.includes(form.name))).map(w =>
+          h('div', { className: 'checkbox-group' }, data.workers.filter(w => !w.archived && (w.status || 'working') === 'working' && (!w.competences || w.competences.length === 0 || (form.name && w.competences.includes(form.name)))).map(w =>
             h('label', { key: w.id }, h('input', { type: 'checkbox', checked: form.workerIds.includes(w.id), onChange: e => { if (e.target.checked) setForm(p => ({ ...p, workerIds: [...p.workerIds, w.id] })); else setForm(p => ({ ...p, workerIds: p.workerIds.filter(id => id !== w.id) })); } }), ' ', w.name)
           )),
           h('button', { style: gbtn({ marginTop: 4, fontSize: 11, padding: '4px 8px' }), onClick: autoAssign }, '🤖 Подобрать')
@@ -2617,7 +2624,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast }) => {
                 !op.archived && h('details', { style: { fontSize: 10 } },
                   h('summary', { style: { cursor: 'pointer', color: AM, userSelect: 'none', padding: '2px 0' } }, '+ назначить'),
                   h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, padding: '4px 0', maxHeight: 120, overflowY: 'auto' } },
-                    data.workers.filter(w => (w.status || 'working') === 'working' && (!w.competences || w.competences.length === 0 || w.competences.includes(op.name)) && !(op.workerIds || []).includes(w.id))
+                    data.workers.filter(w => !w.archived && (w.status || 'working') === 'working' && (!w.competences || w.competences.length === 0 || w.competences.includes(op.name)) && !(op.workerIds || []).includes(w.id))
                       .map(w => h('label', { key: w.id, style: { display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '3px 4px', borderRadius: 4, fontSize: 11 }, onClick: () => assignWorkers(op.id, [...(op.workerIds || []), w.id]) },
                         h('span', { style: { color: GN } }, '+'), w.name
                       ))
