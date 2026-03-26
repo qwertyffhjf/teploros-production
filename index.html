@@ -499,7 +499,7 @@ const buildFinishUpdate = (data, op, workerId, params = {}) => {
   // Если брак — создать запись рекламации
   let reclamations = data.reclamations || [];
   if (isDefect) {
-    reclamations = [...reclamations, { id: uid(), opId: op.id, orderId: op.orderId, workerIds: op.workerIds || [workerId], defectReasonId, defectNote: defNote, defectSource: source, createdAt: finishedAt, status: 'open' }];
+    reclamations = [...reclamations, { id: uid(), opId: op.id, orderId: op.orderId, workerIds: op.workerIds || [workerId], defectReasonId, defectNote: defNote, defectSource: source, createdAt: finishedAt, status: 'open', d8: { team: ['master', ...(op.workerIds || [workerId])], containment: '', whys: ['', '', '', '', ''], rootCause: '', corrective: '', correctiveOwner: '', correctiveDeadline: '', validation: '', validationDate: '', preventive: '', preventiveDocs: '', closedNote: '', currentStep: 0 } }];
   }
   return {
     ops: data.ops.map(o => o.id === op.id ? updatedOp : o),
@@ -3516,12 +3516,16 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
 
   const addReclamation = useCallback(async () => {
     if (!form.orderId || !form.description.trim()) { addToast('Укажите заказ и описание', 'error'); return; }
-    const rec = { id: uid(), orderId: form.orderId, description: form.description.trim(), severity: form.severity, detectedDate: form.detectedDate || new Date().toISOString().slice(0, 10), operationName: form.operationName, status: 'open', createdAt: now(), defectSource: form.defectSource, d8: { team: [], containment: '', whys: ['', '', '', '', ''], rootCause: '', corrective: '', correctiveOwner: '', correctiveDeadline: '', validation: '', validationDate: '', preventive: '', preventiveDocs: '', closedNote: '', currentStep: 0 } };
+    // Автоматически формируем команду: мастер + исполнители связанной операции
+    const relatedOps = data.ops.filter(op => op.orderId === form.orderId && op.name === form.operationName && !op.archived);
+    const teamWorkers = relatedOps.flatMap(op => op.workerIds || []);
+    const autoTeam = ['master', ...new Set(teamWorkers)];
+    const rec = { id: uid(), orderId: form.orderId, description: form.description.trim(), severity: form.severity, detectedDate: form.detectedDate || new Date().toISOString().slice(0, 10), operationName: form.operationName, status: 'open', createdAt: now(), defectSource: form.defectSource, d8: { team: autoTeam, containment: '', whys: ['', '', '', '', ''], rootCause: '', corrective: '', correctiveOwner: '', correctiveDeadline: '', validation: '', validationDate: '', preventive: '', preventiveDocs: '', closedNote: '', currentStep: 0 } };
     let d = { ...data, reclamations: [...(data.reclamations || []), rec] };
     d = logAction(d, 'reclamation_add', { orderId: form.orderId, type: form.defectSource });
     await DB.save(d); onUpdate(d);
     setForm({ orderId: '', description: '', severity: 'minor', detectedDate: '', operationName: '', defectSource: 'external' }); setShowForm(false);
-    addToast('Рекламация зарегистрирована', 'success');
+    addToast(`Рекламация зарегистрирована. Команда: ${autoTeam.length} чел.`, 'success');
   }, [data, form, onUpdate, addToast]);
 
   // Сохранить поле D8
@@ -3545,13 +3549,19 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
   const closeD8 = useCallback(async (recId) => {
     const rec = (data.reclamations || []).find(r => r.id === recId);
     if (!rec) return;
-    const d = { ...data, reclamations: data.reclamations.map(r => r.id === recId ? { ...r, status: 'closed', resolvedAt: now(), d8: { ...(r.d8 || {}), currentStep: 8 } } : r) };
-    // Благодарность команде
-    const team = rec.d8?.team || [];
-    const thankEvents = team.filter(wid => wid !== 'master').map(wid => ({ id: uid(), type: 'thanks', toWorkerId: wid, fromWorkerId: 'master', ts: now(), note: '8D расследование' }));
+    const d8 = rec.d8 || {};
+    const team = d8.team || [];
+    if (team.length === 0) { addToast('Сначала добавьте команду расследования (D1)', 'error'); return; }
+    if (!d8.rootCause && !d8.corrective) { addToast('Заполните хотя бы D4 (причина) и D5 (действия) перед закрытием', 'error'); return; }
+    const d = { ...data, reclamations: data.reclamations.map(r => r.id === recId ? { ...r, status: 'closed', resolvedAt: now(), resolution: d8.closedNote || d8.corrective || '', d8: { ...d8, currentStep: 8 } } : r) };
+    // Благодарность всем рабочим из команды (исключаем только 'master' строку, не реальных рабочих)
+    const realWorkerIds = team.filter(wid => wid !== 'master').filter(wid => data.workers.some(w => w.id === wid));
+    const thankEvents = realWorkerIds.map(wid => ({ id: uid(), type: 'thanks', toWorkerId: wid, fromWorkerId: 'master', ts: now(), note: '8D расследование' }));
     if (thankEvents.length) d.events = [...d.events, ...thankEvents];
-    await DB.save(d); onUpdate(d);
-    addToast(`Рекламация закрыта. Благодарность отправлена ${thankEvents.length} участникам.`, 'success');
+    let final = d;
+    realWorkerIds.forEach(wid => { const checked = checkAchievements(wid, final); if (checked !== final) final = checked; });
+    await DB.save(final); onUpdate(final);
+    addToast(`Рекламация закрыта. Благодарность отправлена: ${realWorkerIds.length} сотр.${realWorkerIds.length === 0 ? ' (в команде только мастер)' : ''}`, 'success');
   }, [data, onUpdate, addToast]);
 
   const delRec = useCallback(async (id) => {
@@ -3584,25 +3594,57 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
     const inp = { style: { ...S.inp, width: '100%', fontSize: 12 } };
     const lbl = (t) => h('div', { style: { ...S.lbl, marginTop: 8 } }, t);
 
-    if (stepIdx === 0) return h('div', null,
-      lbl('Команда расследования'),
-      h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 } },
-        (d8.team || []).map(wid => {
-          const w = wid === 'master' ? { name: 'Мастер' } : data.workers.find(w => w.id === wid);
-          return h('span', { key: wid, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: AM3, borderRadius: 6, fontSize: 11, color: AM2 } },
-            w?.name || wid,
-            h('span', { style: { cursor: 'pointer', fontWeight: 500, marginLeft: 2 }, onClick: () => saveD8(rec.id, 'team', (d8.team || []).filter(id => id !== wid)) }, '×')
-          );
-        })
-      ),
-      !(d8.team || []).includes('master') && h('button', { style: gbtn({ fontSize: 11, marginBottom: 4, marginRight: 4 }), onClick: () => saveD8(rec.id, 'team', [...(d8.team || []), 'master']) }, '+ Мастер'),
-      h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
-        data.workers.filter(w => (w.status || 'working') === 'working' && !(d8.team || []).includes(w.id)).map(w =>
-          h('button', { key: w.id, style: gbtn({ fontSize: 10, padding: '3px 8px' }), onClick: () => saveD8(rec.id, 'team', [...(d8.team || []), w.id]) }, `+ ${w.name}`)
-        )
-      ),
-      workerNames.length > 0 && !(d8.team || []).length && h('button', { style: abtn({ fontSize: 11, marginTop: 8 }), onClick: () => saveD8(rec.id, 'team', ['master', ...(linkedOp?.workerIds || [])]) }, '⚡ Добавить исполнителей операции + мастера')
-    );
+    if (stepIdx === 0) {
+      const opName = linkedOp?.name || rec.operationName || '';
+      const linkedWorkerIds = linkedOp?.workerIds || [];
+      const notInTeam = data.workers.filter(w => (w.status || 'working') === 'working' && !(d8.team || []).includes(w.id));
+      // Группа 1: непосредственные исполнители операции
+      const executors = notInTeam.filter(w => linkedWorkerIds.includes(w.id));
+      // Группа 2: имеют допуск к этому типу операции
+      const competent = opName ? notInTeam.filter(w => !linkedWorkerIds.includes(w.id) && w.competences?.length && w.competences.includes(opName)) : [];
+      // Группа 3: остальные — только в раскрывающемся списке
+      const others = notInTeam.filter(w => !executors.includes(w) && !competent.includes(w));
+      return h('div', null,
+        lbl('Команда расследования'),
+        (d8.team || []).length > 0 && h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 } },
+          (d8.team || []).map(wid => {
+            const w = wid === 'master' ? { name: 'Мастер' } : data.workers.find(w => w.id === wid);
+            return h('span', { key: wid, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: AM3, borderRadius: 6, fontSize: 11, color: AM2 } },
+              w?.name || wid,
+              h('span', { style: { cursor: 'pointer', fontWeight: 500, marginLeft: 2 }, onClick: () => saveD8(rec.id, 'team', (d8.team || []).filter(id => id !== wid)) }, '×')
+            );
+          })
+        ),
+        // Быстрые кнопки
+        h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 } },
+          !(d8.team || []).includes('master') && h('button', { style: gbtn({ fontSize: 11 }), onClick: () => saveD8(rec.id, 'team', [...(d8.team || []), 'master']) }, '+ Мастер'),
+          linkedWorkerIds.length > 0 && !(d8.team || []).some(id => linkedWorkerIds.includes(id)) && h('button', { style: abtn({ fontSize: 11 }), onClick: () => saveD8(rec.id, 'team', [...new Set([...(d8.team || []), 'master', ...linkedWorkerIds])]) }, '⚡ Мастер + исполнители'),
+          opName && competent.length > 0 && !(d8.team || []).length && h('button', { style: gbtn({ fontSize: 11 }), onClick: () => saveD8(rec.id, 'team', ['master', ...competent.slice(0, 3).map(w => w.id)]) }, `⚡ Мастер + допущенные к «${opName.length > 12 ? opName.slice(0, 12) + '…' : opName}»`)
+        ),
+        // Группа 1: исполнители операции
+        executors.length > 0 && h('div', { style: { marginTop: 4 } },
+          h('div', { style: { fontSize: 10, color: RD, marginBottom: 4, fontWeight: 500 } }, 'Исполнители операции:'),
+          h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
+            executors.map(w => h('button', { key: w.id, style: { ...gbtn({ fontSize: 11, padding: '4px 10px' }), borderColor: RD, color: RD2 }, onClick: () => saveD8(rec.id, 'team', [...(d8.team || []), w.id]) }, `+ ${w.name}`))
+          )
+        ),
+        // Группа 2: с допуском к этой операции
+        competent.length > 0 && h('div', { style: { marginTop: 6 } },
+          h('div', { style: { fontSize: 10, color: AM, marginBottom: 4 } }, `Допущены к «${opName}»:`),
+          h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
+            competent.map(w => h('button', { key: w.id, style: gbtn({ fontSize: 10, padding: '3px 8px' }), onClick: () => saveD8(rec.id, 'team', [...(d8.team || []), w.id]) }, `+ ${w.name}`))
+          )
+        ),
+        // Группа 3: остальные — скрыты в раскрывающемся списке
+        others.length > 0 && h('details', { style: { marginTop: 6, fontSize: 11 } },
+          h('summary', { style: { cursor: 'pointer', color: '#888' } }, `Другие сотрудники (${others.length})`),
+          h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 } },
+            others.map(w => h('button', { key: w.id, style: gbtn({ fontSize: 10, padding: '3px 8px' }), onClick: () => saveD8(rec.id, 'team', [...(d8.team || []), w.id]) }, `+ ${w.name}`))
+          )
+        ),
+        !opName && executors.length === 0 && competent.length === 0 && h('div', { style: { fontSize: 11, color: '#888', marginTop: 4 } }, 'Не указан этап операции — все сотрудники в разделе «Другие»')
+      );
+    }
 
     if (stepIdx === 1) return h('div', null,
       lbl('Описание проблемы'),
@@ -3733,7 +3775,16 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
 
           return h('div', { key: rec.id, style: { ...S.card, padding: 0, marginBottom: 10, borderLeft: `4px solid ${sev.border}`, overflow: 'hidden' } },
             // Шапка
-            h('div', { style: { padding: '12px 14px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }, onClick: () => setExpandedId(isExpanded ? null : rec.id) },
+            h('div', { style: { padding: '12px 14px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }, onClick: () => {
+              setExpandedId(isExpanded ? null : rec.id);
+              // Инициализировать d8 для старых рекламаций
+              if (!isExpanded && !rec.d8) {
+                const linkedW = rec.opId ? (data.ops.find(o => o.id === rec.opId)?.workerIds || []) : [];
+                const initD8 = { team: linkedW.length ? ['master', ...linkedW] : [], containment: '', whys: ['', '', '', '', ''], rootCause: '', corrective: '', correctiveOwner: '', correctiveDeadline: '', validation: '', validationDate: '', preventive: '', preventiveDocs: '', closedNote: '', currentStep: 0 };
+                const d = { ...data, reclamations: data.reclamations.map(r => r.id === rec.id ? { ...r, d8: initD8 } : r) };
+                DB.save(d); onUpdate(d);
+              }
+            } },
               h('div', { style: { flex: 1 } },
                 h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 4 } },
                   h('span', { style: { fontSize: 13, fontWeight: 500 } }, order ? `${order.number} — ${order.product}` : '—'),
