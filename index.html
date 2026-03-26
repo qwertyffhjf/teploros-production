@@ -236,11 +236,21 @@ const checkAchievements = (workerId, data) => {
   const stats = calcWorkerStats(workerId, data, nowTime);
   const current = worker.achievements || [];
   const newAch = [...current];
-  let changed = false;
+  const justEarned = [];
   for (const [id, ach] of Object.entries(ACHIEVEMENTS)) {
-    if (!newAch.includes(id) && ach.condition(stats)) { newAch.push(id); changed = true; }
+    if (!newAch.includes(id) && ach.condition(stats)) { newAch.push(id); justEarned.push(id); }
   }
-  if (changed) return { ...data, workers: data.workers.map(w => w.id === workerId ? { ...w, achievements: newAch } : w) };
+  if (justEarned.length > 0) {
+    let d = { ...data, workers: data.workers.map(w => w.id === workerId ? { ...w, achievements: newAch } : w) };
+    // Публикация в чат
+    const achMessages = justEarned.map(aid => ({
+      id: uid(), senderId: 'system', senderName: 'Система', senderRole: 'system',
+      text: `${ACHIEVEMENTS[aid].icon} ${worker.name} получил награду «${ACHIEVEMENTS[aid].title}»! ${ACHIEVEMENTS[aid].desc}`,
+      type: 'achievement', timestamp: nowTime
+    }));
+    d.messages = [...(d.messages || []), ...achMessages].slice(-200);
+    return d;
+  }
   return data;
 };
 
@@ -356,7 +366,7 @@ const DOC_REF = firestore.collection('app').doc('production_v14');
 const EMPTY_DATA = {
   orders: [], ops: [], workers: [], downtimeTypes: [], events: [], materials: [], sections: [], equipment: [],
   bomTemplates: [], materialConsumptions: [], productionStages: [], defectReasons: [], workerAvailabilities: [],
-  messages: [], reclamations: [],
+  messages: [], reclamations: [], duels: [],
   settings: {
     // Единый PIN-вход: мастер и контролёр тоже входят по PIN
     masterPin: '0000',
@@ -396,6 +406,16 @@ const DB = {
       if (toSave.materialConsumptions?.length > 2000) toSave.materialConsumptions = toSave.materialConsumptions.slice(-2000);
       if (toSave.reclamations?.length > 500) toSave.reclamations = toSave.reclamations.slice(-500);
       if (toSave.messages?.length > 200) toSave.messages = toSave.messages.slice(-200);
+      if (toSave.duels?.length > 100) toSave.duels = toSave.duels.slice(-100);
+      // Автоочистка: удалять архивные заказы и их операции старше 90 дней
+      const cleanupThreshold = Date.now() - 90 * 86400000;
+      const oldArchived = (toSave.orders || []).filter(o => o.archived && o.autoArchived && (o.archivedAt || o.createdAt || 0) < cleanupThreshold);
+      if (oldArchived.length > 0) {
+        const oldIds = new Set(oldArchived.map(o => o.id));
+        toSave.orders = toSave.orders.filter(o => !oldIds.has(o.id));
+        toSave.ops = (toSave.ops || []).filter(o => !oldIds.has(o.orderId));
+        console.log(`Автоочистка: удалено ${oldArchived.length} архивных заказов старше 90 дней`);
+      }
       localStorage.setItem('prod_app_v14_cache', JSON.stringify(toSave));
       if (DB._saveTimer) clearTimeout(DB._saveTimer);
       DB._saveTimer = setTimeout(() => {
@@ -479,8 +499,11 @@ const buildStartUpdate = (data, op, workerId) => {
   const todayStart = new Date().setHours(0, 0, 0, 0);
   const hasCheckinToday = data.events.some(e => e.workerId === workerId && e.type === 'checkin_auto' && e.ts >= todayStart);
   if (!hasCheckinToday) newEvents.push({ id: uid(), type: 'checkin_auto', workerId, ts: startedAt, shift });
+  // Копировать чек-лист из шаблона этапа если ещё нет
+  const stage = (data.productionStages || []).find(s => s.name === op.name);
+  const needsChecklist = stage?.checklist?.length > 0 && !op.checklist;
   return {
-    ops: data.ops.map(o => o.id === op.id ? { ...o, status: 'in_progress', startedAt, workerIds: o.workerIds?.includes(workerId) ? o.workerIds : [...(o.workerIds || []), workerId] } : o),
+    ops: data.ops.map(o => o.id === op.id ? { ...o, status: 'in_progress', startedAt, workerIds: o.workerIds?.includes(workerId) ? o.workerIds : [...(o.workerIds || []), workerId], ...(needsChecklist ? { checklist: stage.checklist.map(text => ({ text, checked: false })) } : {}) } : o),
     events: [...data.events, ...newEvents],
     _startedAt: startedAt,
     _hasCheckin: hasCheckinToday
@@ -779,6 +802,46 @@ const QRModal = memo(({ ops, order, worker, onClose }) => {
 // Логика: все роли входят по PIN.
 // Мастер-ключ (masterKey) сбрасывает PIN любого сотрудника прямо с экрана входа.
 // Приоритет проверки PIN: мастер → контролёр → сотрудники → мастер-ключ (только для сброса)
+// ==================== Таблица лидеров ====================
+const Leaderboard = memo(({ data }) => {
+  const workers = useMemo(() => data.workers.filter(w => !w.archived && (w.status || 'working') === 'working'), [data.workers]);
+  const boards = useMemo(() => {
+    const stats = workers.map(w => {
+      const s = calcWorkerStats(w.id, data, Date.now());
+      const doneCount = s.doneCount;
+      const quality = s.doneCount + s.defectCount > 0 ? Math.round(s.doneCount / (s.doneCount + s.defectCount) * 100) : 100;
+      const thanks = s.thanksReceived;
+      const lvl = getWorkerLevel(doneCount);
+      return { id: w.id, name: w.name, doneCount, quality, thanks, lvl, achCount: (w.achievements || []).length };
+    });
+    return {
+      xp: [...stats].sort((a, b) => b.doneCount - a.doneCount).slice(0, 5),
+      quality: [...stats].filter(s => s.doneCount >= 5).sort((a, b) => b.quality - a.quality || b.doneCount - a.doneCount).slice(0, 5),
+      thanks: [...stats].filter(s => s.thanks > 0).sort((a, b) => b.thanks - a.thanks).slice(0, 5),
+    };
+  }, [workers, data]);
+
+  const medals = ['🥇', '🥈', '🥉', '4.', '5.'];
+  const renderBoard = (title, list, valueKey, valueSuffix) => {
+    if (list.length === 0) return null;
+    return h('div', { style: { flex: 1, minWidth: 150 } },
+      h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, fontWeight: 500 } }, title),
+      list.map((s, i) => h('div', { key: s.id, style: { display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: 12 } },
+        h('span', { style: { fontSize: i < 3 ? 14 : 11, width: 22 } }, medals[i]),
+        h('span', { style: { flex: 1, fontWeight: i === 0 ? 500 : 400 } }, s.name.split(' ')[0]),
+        h('span', { style: { fontWeight: 500, color: AM } }, `${s[valueKey]}${valueSuffix}`)
+      ))
+    );
+  };
+
+  if (workers.length < 2) return null;
+  return h('div', { style: { display: 'flex', gap: 16, flexWrap: 'wrap', padding: '12px 0' } },
+    renderBoard('Опыт', boards.xp, 'doneCount', ' оп.'),
+    renderBoard('Качество', boards.quality, 'quality', '%'),
+    boards.thanks.length > 0 && renderBoard('Благодарности', boards.thanks, 'thanks', '')
+  );
+});
+
 const LoginScreen = ({ data, onLogin, onResetPin }) => {
   const [role, setRole] = useState('worker');
   const [pin, setPin] = useState('');
@@ -920,7 +983,11 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
     loginError && h('div', { role: 'alert', style: { color: RD, fontSize: 12, fontWeight: 500 } }, loginError),
     h('button', { style: abtn({ marginTop: 8, padding: '10px 40px', fontSize: 14 }), onClick: handleLogin }, 'Войти'),
     // Ссылка на сброс PIN мастер-ключом
-    h('button', { style: { background: 'none', border: 'none', fontSize: 11, color: '#aaa', cursor: 'pointer', marginTop: 12, padding: 0, textDecoration: 'underline' }, onClick: () => setResetMode(true) }, 'Сбросить PIN мастер-ключом')
+    h('button', { style: { background: 'none', border: 'none', fontSize: 11, color: '#aaa', cursor: 'pointer', marginTop: 12, padding: 0, textDecoration: 'underline' }, onClick: () => setResetMode(true) }, 'Сбросить PIN мастер-ключом'),
+    // Таблица лидеров
+    h('div', { style: { width: '100%', maxWidth: 500, marginTop: 24, borderTop: '0.5px solid rgba(0,0,0,0.08)', paddingTop: 16 } },
+      h(Leaderboard, { data })
+    )
   );
 };
 
@@ -1136,6 +1203,16 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     await DB.save(d); onUpdate(d); setOpComment(''); addToast('Комментарий добавлен', 'success');
   }, [data, opComment, worker, onUpdate, addToast]);
 
+  // Чек-лист: переключение пункта
+  const toggleCheckItem = useCallback(async (opId, idx) => {
+    const d = { ...data, ops: data.ops.map(o => {
+      if (o.id !== opId || !o.checklist) return o;
+      const cl = o.checklist.map((item, i) => i === idx ? { ...item, checked: !item.checked, checkedAt: !item.checked ? now() : undefined } : item);
+      return { ...o, checklist: cl };
+    })};
+    await DB.save(d); onUpdate(d);
+  }, [data, onUpdate]);
+
   // Таймер только когда есть активная операция
   useEffect(() => {
     if (!activeOp) return;
@@ -1290,8 +1367,45 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
 
   const lvl = getWorkerLevel(allDone);
   const prog = getLevelProgress(allDone);
+  const [levelUpMsg, setLevelUpMsg] = useState(null);
+  // Обнаружение повышения уровня
+  useEffect(() => {
+    const key = `worker_level_${workerId}`;
+    const prev = Number(localStorage.getItem(key)) || 0;
+    if (lvl > prev && prev > 0) {
+      setLevelUpMsg(`Поздравляем! Вы достигли уровня ${lvl} — ${getLevelTitle(lvl)}!`);
+      setTimeout(() => setLevelUpMsg(null), 8000);
+    }
+    localStorage.setItem(key, String(lvl));
+  }, [lvl, workerId]);
+  // Подсказка о ближайшем достижении
+  const achHint = useMemo(() => {
+    const s = calcWorkerStats(workerId, data, Date.now());
+    const remaining = [];
+    if (!worker?.achievements?.includes('ops_10') && s.doneCount >= 7) remaining.push(`${10 - s.doneCount} оп. до «Десятка»`);
+    if (!worker?.achievements?.includes('ops_50') && s.doneCount >= 40) remaining.push(`${50 - s.doneCount} оп. до «Профессионал»`);
+    if (!worker?.achievements?.includes('streak_5') && s.currentStreak >= 3) remaining.push(`${5 - s.currentStreak} до «Серия 5»`);
+    if (!worker?.achievements?.includes('thanks_5') && s.thanksReceived >= 3) remaining.push(`${5 - s.thanksReceived} до «Спасибо, коллега!»`);
+    return remaining[0] || null;
+  }, [data, workerId, worker]);
   const ach = useMemo(() => worker?.achievements || [], [worker]);
   const nextAch = useMemo(() => Object.entries(ACHIEVEMENTS).find(([id]) => !ach.includes(id)), [ach]);
+  const workerStats = useMemo(() => calcWorkerStats(workerId, data, Date.now()), [data, workerId]);
+  // Прогресс для каждого достижения
+  const achProgress = useMemo(() => {
+    const s = workerStats;
+    return {
+      first_op: { cur: s.doneCount, target: 1 }, ops_10: { cur: s.doneCount, target: 10 }, ops_50: { cur: s.doneCount, target: 50 },
+      ops_100: { cur: s.doneCount, target: 100 }, ops_500: { cur: s.doneCount, target: 500 },
+      quality_star: { cur: s.doneCount, target: 50, extra: `брак ${s.defectRate.toFixed(1)}%` },
+      weld_master: { cur: s.weldCount, target: 50 }, speed_demon: { cur: s.doneWithPlan, target: 10, extra: `${Math.round((1 - s.avgRatio) * 100)}% быстрее` },
+      no_downtime: { cur: s.downtimes30d === 0 ? 1 : 0, target: 1 }, streak_5: { cur: s.currentStreak, target: 5 }, streak_20: { cur: s.currentStreak, target: 20 },
+      multi_skill: { cur: s.uniqueOpTypes, target: 5 }, detective_10: { cur: s.detectedDefects, target: 10 }, thanks_5: { cur: s.thanksReceived, target: 5 },
+      golden_hands_100: { cur: s.defectCount === 0 ? s.doneCount : 0, target: 100 }, universal_2_3: { cur: s.uniqueSections, target: 3 },
+      weekend_5: { cur: s.weekendOps, target: 5 }, virtuoso_10: { cur: s.fastOps, target: 10 },
+      no_downtime_7: { cur: s.downtimes7d === 0 ? 1 : 0, target: 1 }, speed_streak_5: { cur: s.bestSpeedStreak, target: 5 }
+    };
+  }, [workerStats]);
 
   // Пункт 4: Личные метрики рабочего
   const myStats = useMemo(() => {
@@ -1339,6 +1453,13 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
         `${t.from}${t.note ? ` — ${t.note}` : ''}`
       ))
     ),
+    // Уведомление о повышении уровня
+    levelUpMsg && h('div', { style: { ...S.card, background: '#E8F5E9', border: '0.5px solid #4CAF50', marginBottom: 12, padding: 12, textAlign: 'center' } },
+      h('div', { style: { fontSize: 24, marginBottom: 4 } }, '🎉'),
+      h('div', { style: { fontSize: 14, fontWeight: 500, color: '#2E7D32' } }, levelUpMsg)
+    ),
+    // Подсказка о ближайшем достижении
+    achHint && !levelUpMsg && h('div', { style: { fontSize: 11, color: AM, textAlign: 'center', padding: '6px 0', marginBottom: 4 } }, `⭐ Осталось ${achHint}`),
     // Шапка сотрудника
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 } },
       h('div', { style: { width: 48, height: 48, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 500, color: AM2, position: 'relative' } },
@@ -1406,7 +1527,23 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
         h('input', { style: { ...S.inp, flex: 1, fontSize: 12, padding: '6px 10px' }, placeholder: 'Комментарий к операции...', value: opComment, onChange: e => setOpComment(e.target.value), onKeyDown: e => e.key === 'Enter' && saveComment(active.id) }),
         opComment.trim() && h('button', { style: abtn({ padding: '6px 10px', fontSize: 11 }), onClick: () => saveComment(active.id) }, '💬')
       ),
-      renderActionButtons(active)
+      // Чек-лист операции
+      active.checklist?.length > 0 && h('div', { style: { background: 'rgba(255,255,255,0.7)', borderRadius: 8, padding: '10px 12px', marginBottom: 10 } },
+        h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, fontWeight: 500 } },
+          `Чек-лист (${active.checklist.filter(c => c.checked).length}/${active.checklist.length})`
+        ),
+        active.checklist.map((item, idx) =>
+          h('label', { key: idx, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', cursor: 'pointer', fontSize: 13 } },
+            h('input', { type: 'checkbox', checked: item.checked || false, onChange: () => toggleCheckItem(active.id, idx), style: { width: 18, height: 18, accentColor: GN } }),
+            h('span', { style: { textDecoration: item.checked ? 'line-through' : 'none', color: item.checked ? '#888' : '#333' } }, item.text)
+          )
+        ),
+        active.checklist.some(c => !c.checked) && h('div', { style: { fontSize: 10, color: AM, marginTop: 6 } }, '⚠ Завершение операции заблокировано до выполнения всех пунктов')
+      ),
+      // Блокировка завершения если чек-лист не выполнен
+      (active.checklist?.length > 0 && active.checklist.some(c => !c.checked))
+        ? h('div', { style: { textAlign: 'center', padding: 8, color: '#888', fontSize: 12 } }, 'Выполните все пункты чек-листа для завершения')
+        : renderActionButtons(active)
     ),
     // QR-операция
     !active && canStartQr && h('div', { style: { ...S.card, border: `1px solid ${AM}`, background: AM3, marginBottom: 16 } },
@@ -1565,16 +1702,42 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
         h('button', { type: 'button', style: { background: 'none', border: 'none', fontSize: 11, color: AM, cursor: 'pointer', padding: 0 }, onClick: () => setShowAchievements(prev => !prev) }, showAchievements ? 'Свернуть' : 'Достижения ▸')
       ),
       showAchievements && h('div', { style: { marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 } },
-        nextAch && h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: '#f8f8f5', borderRadius: 8, marginBottom: 4 } },
-          h('span', { style: { fontSize: 16, opacity: 0.4 } }, ACHIEVEMENTS[nextAch[0]].icon),
-          h('div', null, h('div', { style: { fontSize: 11, fontWeight: 500, color: '#888' } }, `Следующее: ${ACHIEVEMENTS[nextAch[0]].title}`), h('div', { style: { fontSize: 10, color: '#aaa' } }, ACHIEVEMENTS[nextAch[0]].desc))
-        ),
+        // Ближайшее достижение с прогрессом
+        nextAch && (() => {
+          const pr = achProgress[nextAch[0]];
+          const pct = pr ? Math.min(100, Math.round(pr.cur / pr.target * 100)) : 0;
+          return h('div', { style: { padding: '8px 10px', background: AM3, borderRadius: 8, marginBottom: 4 } },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 } },
+              h('span', { style: { fontSize: 16 } }, ACHIEVEMENTS[nextAch[0]].icon),
+              h('div', { style: { flex: 1 } },
+                h('div', { style: { fontSize: 12, fontWeight: 500, color: AM2 } }, `Следующее: ${ACHIEVEMENTS[nextAch[0]].title}`),
+                h('div', { style: { fontSize: 10, color: AM } }, ACHIEVEMENTS[nextAch[0]].desc)
+              ),
+              h('span', { style: { fontSize: 12, fontWeight: 500, color: AM2 } }, `${pct}%`)
+            ),
+            h('div', { style: { height: 6, background: 'rgba(0,0,0,0.08)', borderRadius: 3, overflow: 'hidden' } },
+              h('div', { style: { height: 6, background: AM, borderRadius: 3, width: `${pct}%`, transition: 'width 0.3s' } })
+            ),
+            pr && h('div', { style: { fontSize: 10, color: '#888', marginTop: 4 } }, `${pr.cur} / ${pr.target}${pr.extra ? ` · ${pr.extra}` : ''}`)
+          );
+        })(),
+        // Все достижения с прогресс-барами
         Object.entries(ACHIEVEMENTS).map(([id, a]) => {
           const earned = ach.includes(id);
-          return h('div', { key: id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', borderRadius: 8, background: earned ? AM3 : '#f8f8f5', opacity: earned ? 1 : 0.4 } },
-            h('span', { style: { fontSize: 14 } }, a.icon),
-            h('div', { style: { flex: 1 } }, h('div', { style: { fontSize: 11, fontWeight: 500, color: earned ? AM2 : '#888' } }, a.title)),
-            earned && h('span', { style: { fontSize: 10, color: GN } }, '✓')
+          const pr = achProgress[id];
+          const pct = pr ? Math.min(100, Math.round(pr.cur / pr.target * 100)) : 0;
+          return h('div', { key: id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8, background: earned ? AM3 : '#f8f8f5' } },
+            h('span', { style: { fontSize: 16, opacity: earned ? 1 : 0.3 } }, a.icon),
+            h('div', { style: { flex: 1 } },
+              h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                h('span', { style: { fontSize: 11, fontWeight: 500, color: earned ? AM2 : '#888' } }, a.title),
+                earned ? h('span', { style: { fontSize: 10, color: GN } }, '✓')
+                  : pr && h('span', { style: { fontSize: 10, color: '#888' } }, `${pr.cur}/${pr.target}`)
+              ),
+              !earned && pr && h('div', { style: { height: 4, background: 'rgba(0,0,0,0.06)', borderRadius: 2, marginTop: 3, overflow: 'hidden' } },
+                h('div', { style: { height: 4, background: pct >= 80 ? GN : AM, borderRadius: 2, width: `${pct}%` } })
+              )
+            )
           );
         })
       )
@@ -2204,9 +2367,11 @@ const MasterNotifications = memo(({ data }) => {
 // ==================== MasterProductionStages ====================
 const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
   const [newName, setNewName] = useState('');
+  const [editingChecklist, setEditingChecklist] = useState(null);
+  const [newCheckItem, setNewCheckItem] = useState('');
   const addStage = async () => {
     if (!newName.trim()) return;
-    const newStage = { id: uid(), name: newName.trim() };
+    const newStage = { id: uid(), name: newName.trim(), checklist: [] };
     const d = { ...data, productionStages: [...(data.productionStages || []), newStage] };
     await DB.save(d); onUpdate(d); setNewName(''); addToast('Этап добавлен', 'success');
   };
@@ -2217,18 +2382,24 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
   };
   const moveUp = (index) => {
     if (index === 0) return;
-    const newStages = [...(data.productionStages || [])];
-    [newStages[index-1], newStages[index]] = [newStages[index], newStages[index-1]];
-    const d = { ...data, productionStages: newStages };
-    DB.save(d).then(() => onUpdate(d));
+    const n = [...(data.productionStages || [])];
+    [n[index-1], n[index]] = [n[index], n[index-1]];
+    const d = { ...data, productionStages: n }; DB.save(d).then(() => onUpdate(d));
   };
   const moveDown = (index) => {
     const stages = data.productionStages || [];
     if (index === stages.length-1) return;
-    const newStages = [...stages];
-    [newStages[index], newStages[index+1]] = [newStages[index+1], newStages[index]];
-    const d = { ...data, productionStages: newStages };
-    DB.save(d).then(() => onUpdate(d));
+    const n = [...stages]; [n[index], n[index+1]] = [n[index+1], n[index]];
+    const d = { ...data, productionStages: n }; DB.save(d).then(() => onUpdate(d));
+  };
+  const addCheckItem = async (stageId) => {
+    if (!newCheckItem.trim()) return;
+    const d = { ...data, productionStages: (data.productionStages || []).map(s => s.id === stageId ? { ...s, checklist: [...(s.checklist || []), newCheckItem.trim()] } : s) };
+    await DB.save(d); onUpdate(d); setNewCheckItem('');
+  };
+  const removeCheckItem = async (stageId, idx) => {
+    const d = { ...data, productionStages: (data.productionStages || []).map(s => s.id === stageId ? { ...s, checklist: (s.checklist || []).filter((_, i) => i !== idx) } : s) };
+    await DB.save(d); onUpdate(d);
   };
   return h('div', null,
     h('div', { style: S.card },
@@ -2241,14 +2412,36 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Список этапов'),
       (data.productionStages || []).length === 0
-        ? h('div', { style: { padding: 16, textAlign: 'center' } }, 'Нет этапов. Добавьте первый этап.')
+        ? h('div', { style: { padding: 16, textAlign: 'center' } }, 'Нет этапов.')
         : (data.productionStages || []).map((stage, index) =>
-            h('div', { key: stage.id, style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '0.5px solid #eee' } },
-              h('span', { style: { fontSize: 13 } }, stage.name),
-              h('div', { style: { display: 'flex', gap: 4 } },
-                h('button', { style: gbtn({ fontSize: 11, padding: '4px 6px' }), 'aria-label': 'Переместить вверх', onClick: () => moveUp(index), disabled: index === 0 }, '↑'),
-                h('button', { style: gbtn({ fontSize: 11, padding: '4px 6px' }), 'aria-label': 'Переместить вниз', onClick: () => moveDown(index), disabled: index === (data.productionStages || []).length-1 }, '↓'),
-                h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': `Удалить этап ${stage.name}`, onClick: () => deleteStage(stage.id) }, 'Удалить')
+            h('div', { key: stage.id, style: { padding: '8px 0', borderBottom: '0.5px solid #eee' } },
+              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                  h('span', { style: { fontSize: 13, fontWeight: 500 } }, stage.name),
+                  (stage.checklist?.length > 0) && h('span', { style: { fontSize: 10, color: AM, background: AM3, padding: '1px 6px', borderRadius: 6 } }, `${stage.checklist.length} пунктов`)
+                ),
+                h('div', { style: { display: 'flex', gap: 4 } },
+                  h('button', { style: gbtn({ fontSize: 10, padding: '4px 6px' }), onClick: () => setEditingChecklist(editingChecklist === stage.id ? null : stage.id) }, editingChecklist === stage.id ? '▾ Чек-лист' : '▸ Чек-лист'),
+                  h('button', { style: gbtn({ fontSize: 11, padding: '4px 6px' }), onClick: () => moveUp(index), disabled: index === 0 }, '↑'),
+                  h('button', { style: gbtn({ fontSize: 11, padding: '4px 6px' }), onClick: () => moveDown(index), disabled: index === (data.productionStages || []).length-1 }, '↓'),
+                  h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => deleteStage(stage.id) }, '✕')
+                )
+              ),
+              // Редактор чек-листа
+              editingChecklist === stage.id && h('div', { style: { marginTop: 8, padding: '10px 12px', background: '#f8f8f5', borderRadius: 8 } },
+                h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 } }, 'Чек-лист (при запуске операции копируется рабочему)'),
+                (stage.checklist || []).map((item, idx) =>
+                  h('div', { key: idx, style: { display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: 12 } },
+                    h('span', { style: { color: '#888', fontSize: 10, width: 16 } }, `${idx + 1}.`),
+                    h('span', { style: { flex: 1 } }, item),
+                    h('span', { style: { cursor: 'pointer', color: RD, fontSize: 14 }, onClick: () => removeCheckItem(stage.id, idx) }, '×')
+                  )
+                ),
+                h('div', { style: { display: 'flex', gap: 6, marginTop: 6 } },
+                  h('input', { style: { ...S.inp, flex: 1, fontSize: 12 }, placeholder: 'Новый пункт проверки...', value: newCheckItem, onChange: e => setNewCheckItem(e.target.value), onKeyDown: e => e.key === 'Enter' && addCheckItem(stage.id) }),
+                  h('button', { style: abtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => addCheckItem(stage.id) }, '+')
+                ),
+                (stage.checklist || []).length === 0 && h('div', { style: { fontSize: 11, color: '#888', padding: 4 } }, 'Нет пунктов. Добавьте пункты проверки для этого этапа.')
               )
             )
           )
@@ -2373,28 +2566,22 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast }) => {
   useEffect(() => { setPage(1); }, [filt, showArchived]);
 
   return h('div', null,
-    h('div', { style: S.card },
-      h('div', { style: S.sec }, editingId ? 'Редактировать' : 'Создать операцию'),
+    // Форма создания — только для новых операций
+    !editingId && h('div', { style: S.card },
+      h('div', { style: S.sec }, 'Создать операцию'),
       h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
         h('div', { style: { minWidth: 150 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.orderId, onChange: e => setForm(p => ({ ...p, orderId: e.target.value })) }, h('option', { value: '' }, '— заказ —'), data.orders.map(o => h('option', { key: o.id, value: o.id }, o.number))), fieldErrors.orderId && h('div', { className: 'error-message' }, fieldErrors.orderId)),
-        h('div', { style: { flex: 1, minWidth: 160 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })) }, h('option', { value: '' }, '— выберите операцию —'), stagesList.map(stage => h('option', { key: stage, value: stage }, stage))), fieldErrors.name && h('div', { className: 'error-message' }, fieldErrors.name)),
+        h('div', { style: { flex: 1, minWidth: 160 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })) }, h('option', { value: '' }, '— операция —'), stagesList.map(stage => h('option', { key: stage, value: stage }, stage))), fieldErrors.name && h('div', { className: 'error-message' }, fieldErrors.name)),
         h('div', { style: { minWidth: 200 } },
           h('div', { style: { fontSize: 10, color: '#888', marginBottom: 4 } }, 'Исполнители'),
           h('div', { className: 'checkbox-group' }, data.workers.filter(w => !w.competences || w.competences.length === 0 || (form.name && w.competences.includes(form.name))).map(w =>
-            h('label', { key: w.id },
-              h('input', { type: 'checkbox', checked: form.workerIds.includes(w.id), onChange: e => { if (e.target.checked) setForm(p => ({ ...p, workerIds: [...p.workerIds, w.id] })); else setForm(p => ({ ...p, workerIds: p.workerIds.filter(id => id !== w.id) })); } }),
-              ' ', w.name
-            )
+            h('label', { key: w.id }, h('input', { type: 'checkbox', checked: form.workerIds.includes(w.id), onChange: e => { if (e.target.checked) setForm(p => ({ ...p, workerIds: [...p.workerIds, w.id] })); else setForm(p => ({ ...p, workerIds: p.workerIds.filter(id => id !== w.id) })); } }), ' ', w.name)
           )),
-          h('button', { style: gbtn({ marginTop: 4, fontSize: 11, padding: '4px 8px' }), onClick: autoAssign }, '🤖 Подобрать исполнителя')
+          h('button', { style: gbtn({ marginTop: 4, fontSize: 11, padding: '4px 8px' }), onClick: autoAssign }, '🤖 Подобрать')
         ),
-        h('div', { style: { minWidth: 120 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.sectionId, onChange: e => setForm(p => ({ ...p, sectionId: e.target.value })) }, h('option', { value: '' }, '— участок —'), data.sections.map(s => h('option', { key: s.id, value: s.id }, s.name)))),
-        h('div', { style: { minWidth: 120 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.equipmentId, onChange: e => setForm(p => ({ ...p, equipmentId: e.target.value })) }, h('option', { value: '' }, '— оборудование —'), data.equipment.map(eq => h('option', { key: eq.id, value: eq.id }, eq.name)))),
-        h('div', { style: { minWidth: 100 } }, h('input', { type: 'number', step: '0.1', style: { ...S.inp, width: '100%' }, placeholder: 'План, ч', value: form.plannedHours, onChange: e => setForm(p => ({ ...p, plannedHours: e.target.value })) }), fieldErrors.plannedHours && h('div', { className: 'error-message' }, fieldErrors.plannedHours)),
-        h('div', { style: { minWidth: 140 } }, h('input', { type: 'datetime-local', style: { ...S.inp, width: '100%' }, value: form.plannedStartDate, onChange: e => setForm(p => ({ ...p, plannedStartDate: e.target.value })) })),
+        h('div', { style: { minWidth: 100 } }, h('input', { type: 'number', step: '0.1', style: { ...S.inp, width: '100%' }, placeholder: 'План, ч', value: form.plannedHours, onChange: e => setForm(p => ({ ...p, plannedHours: e.target.value })) })),
         h('div', { style: { minWidth: 140 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Ссылка на чертёж', value: form.drawingUrl, onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value })) })),
-        h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, editingId ? '✓' : '+'),
-        editingId && h('button', { type: 'button', style: gbtn(), onClick: resetForm }, 'Отмена')
+        h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, '+')
       )
     ),
     h('div', { style: { display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' } },
@@ -2413,12 +2600,11 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast }) => {
             const section = data.sections.find(s => s.id === op.sectionId);
             const eq = data.equipment.find(e => e.id === op.equipmentId);
             const dur = op.startedAt && op.finishedAt ? fmtDur(op.finishedAt - op.startedAt) : op.startedAt ? fmtDur(now() - op.startedAt) + ' ↻' : '—';
-            return h('tr', { key: op.id, style: { background: op.archived ? '#eee' : (op.status === 'defect' ? RD3 : op.status === 'rework' ? AM3 : op.status === 'on_check' ? '#E1F5FE' : 'transparent') } },
+            return [h('tr', { key: op.id, style: { background: op.archived ? '#eee' : (op.status === 'defect' ? RD3 : op.status === 'rework' ? AM3 : op.status === 'on_check' ? '#E1F5FE' : editingId === op.id ? AM3 : 'transparent') } },
               h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 10 } }, op.id),
               h('td', { style: { ...S.td, fontWeight: 500 } }, op.name, op.defectNote && h('div', { style: { fontSize: 10, color: RD } }, op.defectNote)),
               h('td', { style: { ...S.td, fontSize: 11, color: AM } }, ord?.number || '—'),
               h('td', { style: { ...S.td, minWidth: 120 } },
-                // Назначенные — чипсы с удалением
                 (op.workerIds || []).length > 0 && h('div', { style: { display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 4 } },
                   (op.workerIds || []).map(wid => {
                     const w = data.workers.find(w => w.id === wid);
@@ -2428,14 +2614,12 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast }) => {
                     ) : null;
                   })
                 ),
-                // Добавить — компактный список чекбоксов
                 !op.archived && h('details', { style: { fontSize: 10 } },
                   h('summary', { style: { cursor: 'pointer', color: AM, userSelect: 'none', padding: '2px 0' } }, '+ назначить'),
                   h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, padding: '4px 0', maxHeight: 120, overflowY: 'auto' } },
                     data.workers.filter(w => (w.status || 'working') === 'working' && (!w.competences || w.competences.length === 0 || w.competences.includes(op.name)) && !(op.workerIds || []).includes(w.id))
                       .map(w => h('label', { key: w.id, style: { display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '3px 4px', borderRadius: 4, fontSize: 11 }, onClick: () => assignWorkers(op.id, [...(op.workerIds || []), w.id]) },
-                        h('span', { style: { color: GN } }, '+'),
-                        w.name
+                        h('span', { style: { color: GN } }, '+'), w.name
                       ))
                   )
                 )
@@ -2444,18 +2628,34 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast }) => {
               h('td', { style: { ...S.td, fontSize: 11 } }, eq?.name || '—'),
               h('td', { style: { ...S.td, textAlign: 'center' } }, op.plannedHours || '—'),
               h('td', { style: { ...S.td, fontSize: 11 } }, op.plannedStartDate ? new Date(op.plannedStartDate).toLocaleString() : '—'),
-              h('td', { style: { ...S.td, fontSize: 11 } }, op.drawingUrl ? h('a', { href: op.drawingUrl, target: '_blank', rel: 'noopener', style: { color: BL, textDecoration: 'none' } }, '📐 Чертёж') : '—'),
+              h('td', { style: { ...S.td, fontSize: 11 } }, op.drawingUrl ? h('a', { href: op.drawingUrl, target: '_blank', rel: 'noopener', style: { color: BL, textDecoration: 'none' } }, '📐') : '—'),
               h('td', { style: S.td }, h(Badge, { st: op.status })),
               h('td', { style: { ...S.td, fontFamily: 'monospace' } }, dur),
               h('td', { style: S.td },
                 h('div', { style: { display: 'flex', gap: 4 } },
                   !op.archived ? [
-                    h('button', { key: 'qr', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'QR-код', onClick: () => onShowQR(op, data.workers.find(w => w.id === op.workerIds?.[0])) }, 'QR'),
-                    h('button', { key: 'edit', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Редактировать', onClick: () => edit(op) }, '✎'),
-                    h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'В архив', onClick: () => del(op.id) }, '✕')
-                  ] : h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Восстановить', onClick: () => restore(op.id) }, '↩ Восстановить')
+                    h('button', { key: 'qr', style: gbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => onShowQR(op, data.workers.find(w => w.id === op.workerIds?.[0])) }, 'QR'),
+                    h('button', { key: 'edit', style: (editingId === op.id ? abtn : gbtn)({ fontSize: 11, padding: '4px 8px' }), onClick: () => editingId === op.id ? resetForm() : edit(op) }, editingId === op.id ? '✕' : '✎'),
+                    editingId !== op.id && h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => del(op.id) }, '✕')
+                  ] : h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => restore(op.id) }, '↩')
                 )
               )
+            ),
+            // Inline-редактирование — карточка под строкой
+            editingId === op.id && h('tr', { key: op.id + '_edit' },
+              h('td', { colSpan: 12, style: { padding: '10px', background: AM3, borderBottom: `2px solid ${AM}` } },
+                h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' } },
+                  h('div', { style: { minWidth: 140 } }, h('div', { style: S.lbl }, 'Операция'), h('select', { style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })) }, stagesList.map(s => h('option', { key: s, value: s }, s)))),
+                  h('div', { style: { minWidth: 100 } }, h('div', { style: S.lbl }, 'Участок'), h('select', { style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.sectionId, onChange: e => setForm(p => ({ ...p, sectionId: e.target.value })) }, h('option', { value: '' }, '—'), data.sections.map(s => h('option', { key: s.id, value: s.id }, s.name)))),
+                  h('div', { style: { minWidth: 100 } }, h('div', { style: S.lbl }, 'Оборудов.'), h('select', { style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.equipmentId, onChange: e => setForm(p => ({ ...p, equipmentId: e.target.value })) }, h('option', { value: '' }, '—'), data.equipment.map(eq => h('option', { key: eq.id, value: eq.id }, eq.name)))),
+                  h('div', { style: { minWidth: 80 } }, h('div', { style: S.lbl }, 'План, ч'), h('input', { type: 'number', step: '0.1', style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.plannedHours, onChange: e => setForm(p => ({ ...p, plannedHours: e.target.value })) })),
+                  h('div', { style: { minWidth: 130 } }, h('div', { style: S.lbl }, 'План. старт'), h('input', { type: 'datetime-local', style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.plannedStartDate, onChange: e => setForm(p => ({ ...p, plannedStartDate: e.target.value })) })),
+                  h('div', { style: { minWidth: 130 } }, h('div', { style: S.lbl }, 'Чертёж'), h('input', { style: { ...S.inp, width: '100%', fontSize: 11 }, placeholder: 'URL', value: form.drawingUrl, onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value })) })),
+                  h('button', { style: abtn({ padding: '7px 16px' }), onClick: addOrUpdate }, '✓ Сохранить'),
+                  h('button', { style: gbtn({ padding: '7px 12px' }), onClick: resetForm }, 'Отмена')
+                )
+              )
+            )];
             );
           }))
         ))),
@@ -2775,14 +2975,24 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
   const del = useCallback(async id => {
     if (!confirm('Архивировать сотрудника? Его история операций сохранится.')) return;
     const name = data.workers.find(w => w.id === id)?.name;
-    // Мягкое удаление: архивируем, не удаляем — сохраняется история и аналитика
     let d = { ...data,
       workers: data.workers.map(w => w.id === id ? { ...w, archived: true, status: 'absent' } : w),
-      // Снять с незапущенных операций
       ops: data.ops.map(o => (o.status === 'pending' && o.workerIds?.includes(id)) ? { ...o, workerIds: o.workerIds.filter(wid => wid !== id) } : o)
     };
     d = logAction(d, 'worker_archive', { workerId: id, workerName: name });
     await DB.save(d); onUpdate(d); addToast('Сотрудник архивирован (история сохранена)', 'info');
+  }, [data, onUpdate, addToast]);
+
+  const permanentDelete = useCallback(async id => {
+    const w = data.workers.find(w => w.id === id);
+    const hasOps = data.ops.some(op => op.workerIds?.includes(id) && (op.status === 'done' || op.status === 'in_progress'));
+    if (hasOps) { addToast('Нельзя удалить: у сотрудника есть выполненные операции. Используйте архивирование.', 'error'); return; }
+    if (!confirm(`Полностью удалить ${w?.name || ''}? Это действие необратимо.`)) return;
+    const d = { ...data,
+      workers: data.workers.filter(w => w.id !== id),
+      ops: data.ops.map(o => o.workerIds?.includes(id) ? { ...o, workerIds: o.workerIds.filter(wid => wid !== id) } : o)
+    };
+    await DB.save(d); onUpdate(d); addToast('Сотрудник удалён', 'info');
   }, [data, onUpdate, addToast]);
 
   const edit = useCallback(w => { setForm({ name: w.name, position: w.position || '', grade: w.grade || '', tabNumber: w.tabNumber || '', pin: w.pin || '', sectionId: w.sectionId || '', competences: w.competences || [], status: w.status || 'working' }); setEditingWorker(w.id); setShowAddForm(false); }, []);
@@ -2942,8 +3152,14 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
                     !w.archived && h('button', { style: gbtn({ fontSize:11, padding:'4px 10px' }), onClick: () => edit(w) }, '✎ Редактировать'),
                     !w.archived && h('select', { style: { ...S.inp, fontSize:11, padding:'4px 6px' }, 'aria-label': 'Статус сотрудника', value: w.status || 'working', onChange: e => updateStatus(w.id, e.target.value) }, Object.entries(WORKER_STATUS).map(([k,v]) => h('option', { key: k, value: k }, v.label))),
                     !w.archived
-                      ? h('button', { style: rbtn({ fontSize:11, padding:'4px 8px', marginLeft:'auto' }), 'aria-label': `Архивировать ${w.name}`, onClick: () => del(w.id) }, '📦 Архив')
-                      : h('button', { style: { ...gbtn({ fontSize:11, padding:'4px 8px' }), color: GN2, borderColor: GN }, onClick: () => restoreWorker(w.id) }, '↩ Восстановить')
+                      ? h('div', { style: { display: 'flex', gap: 4, marginLeft: 'auto' } },
+                          h('button', { style: rbtn({ fontSize:11, padding:'4px 8px' }), onClick: () => del(w.id) }, '📦 Архив'),
+                          h('button', { style: { ...rbtn({ fontSize:11, padding:'4px 8px' }), background: '#fff', color: RD, borderColor: RD }, onClick: () => permanentDelete(w.id) }, '🗑')
+                        )
+                      : h('div', { style: { display: 'flex', gap: 4, marginLeft: 'auto' } },
+                          h('button', { style: { ...gbtn({ fontSize:11, padding:'4px 8px' }), color: GN2, borderColor: GN }, onClick: () => restoreWorker(w.id) }, '↩ Восстановить'),
+                          h('button', { style: { ...rbtn({ fontSize:11, padding:'4px 8px' }), background: '#fff', color: RD, borderColor: RD }, onClick: () => permanentDelete(w.id) }, '🗑 Удалить')
+                        )
                   )
                 )
               )
@@ -4413,8 +4629,13 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
   const [newMessage, setNewMessage] = useState('');
   const [showQuickActions, setShowQuickActions] = useState(false);
   const [showThanks, setShowThanks] = useState(false);
+  const [showDuelCreate, setShowDuelCreate] = useState(false);
+  const [duelTarget, setDuelTarget] = useState('');
+  const [duelOps, setDuelOps] = useState(3);
   const [contextOp, setContextOp] = useState('');
   const [isAnnouncement, setIsAnnouncement] = useState(false);
+  const [viewProfileId, setViewProfileId] = useState(null);
+  const [showPeople, setShowPeople] = useState(false);
   const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); };
@@ -4482,13 +4703,27 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
     const message = { id: uid(), senderId: 'system', senderName: 'Система', senderRole: 'system', text, type: 'thanks', timestamp: now(), toWorkerId, fromWorkerId: myId };
     const updatedMessages = [...(data.messages || []), message].slice(-200);
     const updated = { ...data, messages: updatedMessages, events: [...data.events, thankEvent] };
-    // Проверить достижение "Спасибо, коллега!"
     const withAch = checkAchievements(toWorkerId, updated);
     await DB.save(withAch !== updated ? withAch : updated);
     onUpdate(withAch !== updated ? withAch : updated);
     setShowThanks(false);
     addToast(`Благодарность отправлена ${toWorker.name}`, 'success');
   }, [data, myId, currentUser, onUpdate, addToast]);
+
+  // Дуэли
+  const createDuel = useCallback(async () => {
+    if (!duelTarget || duelTarget === myId) { addToast('Выберите соперника', 'error'); return; }
+    const opponent = data.workers.find(w => w.id === duelTarget);
+    const duel = { id: uid(), challengerId: myId, challengerName: currentUser.name, opponentId: duelTarget, opponentName: opponent?.name || '?', targetOps: duelOps, status: 'active', createdAt: now(), challengerOps: 0, opponentOps: 0 };
+    const msg = { id: uid(), senderId: 'system', senderName: 'Система', senderRole: 'system', text: `⚔ ${currentUser.name} вызывает ${opponent?.name} на дуэль! Кто первым выполнит ${duelOps} операций?`, type: 'achievement', timestamp: now() };
+    const d = { ...data, duels: [...(data.duels || []), duel], messages: [...(data.messages || []), msg].slice(-200) };
+    await DB.save(d); onUpdate(d);
+    setShowDuelCreate(false); setDuelTarget(''); setDuelOps(3);
+    addToast(`Дуэль начата! Цель: ${duelOps} операций`, 'success');
+  }, [data, myId, currentUser, duelTarget, duelOps, onUpdate, addToast]);
+
+  const activeDuels = useMemo(() => (data.duels || []).filter(d => d.status === 'active'), [data.duels]);
+  const myDuels = useMemo(() => activeDuels.filter(d => d.challengerId === myId || d.opponentId === myId), [activeDuels, myId]);
 
   const messages = (data.messages || []).sort((a, b) => a.timestamp - b.timestamp);
   const pinnedMessages = messages.filter(m => m.pinned);
@@ -4502,7 +4737,8 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
     need_help: { bg: '#FCE4EC', border: '#E91E63', icon: '🆘' },
     task_done: { bg: GN3, border: GN, icon: '✅' },
     waiting: { bg: AM3, border: AM, icon: '⏸' },
-    thanks: { bg: '#FFF8E1', border: '#FFC107', icon: '🤝' }
+    thanks: { bg: '#FFF8E1', border: '#FFC107', icon: '🤝' },
+    achievement: { bg: '#E8F5E9', border: '#4CAF50', icon: '🏆' }
   };
 
   return h('div', { style: { ...S.card, height: '100%', minHeight: 500, display: 'flex', flexDirection: 'column', padding: 12 } },
@@ -4530,7 +4766,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
         const isMe = m.senderId === myId;
         return h('div', { key: m.id, style: { marginBottom: 10, display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start' } },
           h('div', { style: { fontSize: 10, color: '#888', marginBottom: 2, display: 'flex', gap: 6, alignItems: 'center' } },
-            h('span', { style: { fontWeight: 500 } }, m.senderName),
+            h('span', { style: { fontWeight: 500, cursor: m.senderId !== 'system' ? 'pointer' : 'default', color: m.senderId !== 'system' ? AM : '#888' }, onClick: () => { const w = data.workers.find(w => w.id === m.senderId); if (w) setViewProfileId(w.id); } }, m.senderName),
             m.senderRole === 'master' && h('span', { style: { fontSize: 9, padding: '1px 4px', background: AM3, color: AM2, borderRadius: 4 } }, 'мастер'),
             m.orderNumber && h('span', { style: { fontSize: 9, color: AM } }, `📋 ${m.orderNumber}`),
             m.opName && h('span', { style: { fontSize: 9, color: '#666' } }, `→ ${m.opName}`)
@@ -4568,6 +4804,57 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
       )
     ),
 
+    // Создание дуэли
+    showDuelCreate && h('div', { style: { ...S.card, marginBottom: 8, padding: 10 } },
+      h('div', { style: { fontSize: 11, fontWeight: 500, marginBottom: 6 } }, '⚔ Вызвать на дуэль'),
+      h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' } },
+        h('div', { style: { flex: 2, minWidth: 140 } },
+          h('div', { style: S.lbl }, 'Соперник'),
+          h('select', { style: { ...S.inp, width: '100%', fontSize: 12 }, value: duelTarget, onChange: e => setDuelTarget(e.target.value) },
+            h('option', { value: '' }, '— выберите —'),
+            data.workers.filter(w => w.id !== myId && !w.archived && (w.status || 'working') === 'working').map(w => h('option', { key: w.id, value: w.id }, w.name))
+          )
+        ),
+        h('div', { style: { minWidth: 80 } },
+          h('div', { style: S.lbl }, 'Цель (операций)'),
+          h('select', { style: { ...S.inp, width: '100%', fontSize: 12 }, value: duelOps, onChange: e => setDuelOps(Number(e.target.value)) },
+            [3, 5, 7, 10].map(n => h('option', { key: n, value: n }, n))
+          )
+        ),
+        h('button', { style: abtn({ padding: '7px 14px' }), onClick: createDuel }, '⚔ Вызвать!'),
+        h('button', { style: gbtn({ padding: '7px 10px' }), onClick: () => setShowDuelCreate(false) }, '✕')
+      )
+    ),
+
+    // Активные дуэли
+    myDuels.length > 0 && h('div', { style: { marginBottom: 8 } },
+      myDuels.map(d => {
+        const isChallenger = d.challengerId === myId;
+        const myOpsCount = data.ops.filter(op => op.workerIds?.includes(myId) && op.status === 'done' && op.finishedAt >= d.createdAt).length;
+        const oppId = isChallenger ? d.opponentId : d.challengerId;
+        const oppOpsCount = data.ops.filter(op => op.workerIds?.includes(oppId) && op.status === 'done' && op.finishedAt >= d.createdAt).length;
+        const myPct = Math.min(100, Math.round(myOpsCount / d.targetOps * 100));
+        const oppPct = Math.min(100, Math.round(oppOpsCount / d.targetOps * 100));
+        const oppName = isChallenger ? d.opponentName : d.challengerName;
+        return h('div', { key: d.id, style: { ...S.card, padding: 10, marginBottom: 4, border: `0.5px solid ${AM}`, background: AM3 } },
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 } },
+            h('span', { style: { fontSize: 12, fontWeight: 500, color: AM2 } }, `⚔ Дуэль: ${d.targetOps} операций`),
+            h('span', { style: { fontSize: 10, color: '#888' } }, fmtDur(now() - d.createdAt))
+          ),
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 } },
+            h('div', null,
+              h('div', { style: { fontSize: 11, fontWeight: 500, color: myPct >= 100 ? GN : AM2 } }, `Я: ${myOpsCount}/${d.targetOps}`),
+              h('div', { style: { height: 6, background: 'rgba(0,0,0,0.08)', borderRadius: 3, overflow: 'hidden', marginTop: 3 } }, h('div', { style: { height: 6, background: myPct >= 100 ? GN : AM, borderRadius: 3, width: `${myPct}%` } }))
+            ),
+            h('div', null,
+              h('div', { style: { fontSize: 11, fontWeight: 500, color: oppPct >= 100 ? GN : '#888' } }, `${oppName}: ${oppOpsCount}/${d.targetOps}`),
+              h('div', { style: { height: 6, background: 'rgba(0,0,0,0.08)', borderRadius: 3, overflow: 'hidden', marginTop: 3 } }, h('div', { style: { height: 6, background: oppPct >= 100 ? GN : '#ccc', borderRadius: 3, width: `${oppPct}%` } }))
+            )
+          )
+        );
+      })
+    ),
+
     // Привязка к операции
     contextOp && (() => {
       const op = data.ops.find(o => o.id === contextOp);
@@ -4583,16 +4870,87 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
       // Кнопки инструментов
       h('div', { style: { display: 'flex', gap: 4 } },
         h('button', { type: 'button', title: 'Быстрые действия', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: showQuickActions ? AM3 : 'transparent' }, onClick: () => { setShowQuickActions(v => !v); setShowThanks(false); } }, '⚡'),
-        h('button', { type: 'button', title: 'Спасибо коллеге', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: showThanks ? AM3 : 'transparent' }, onClick: () => { setShowThanks(v => !v); setShowQuickActions(false); } }, '🤝'),
-        // Привязать к операции
+        h('button', { type: 'button', title: 'Спасибо коллеге', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: showThanks ? AM3 : 'transparent' }, onClick: () => { setShowThanks(v => !v); setShowQuickActions(false); setShowDuelCreate(false); } }, '🤝'),
+        h('button', { type: 'button', title: 'Дуэль', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: showDuelCreate ? AM3 : 'transparent' }, onClick: () => { setShowDuelCreate(v => !v); setShowQuickActions(false); setShowThanks(false); } }, '⚔'),
+        h('button', { type: 'button', title: 'Сотрудники', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: showPeople ? AM3 : 'transparent' }, onClick: () => setShowPeople(v => !v) }, '👥'),
         activeOp && h('button', { type: 'button', title: 'Привязать к текущей операции', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: contextOp ? AM3 : 'transparent' }, onClick: () => setContextOp(contextOp ? '' : activeOp.id) }, '📋'),
-        // Объявление (только мастер)
         isMaster && h('button', { type: 'button', title: 'Закрепить как объявление', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: isAnnouncement ? AM3 : 'transparent' }, onClick: () => setIsAnnouncement(v => !v) }, '📌')
       ),
-      // Поле ввода
       h('input', { style: { ...S.inp, flex: 1, minWidth: 120 }, placeholder: isAnnouncement ? 'Объявление для всех...' : 'Сообщение...', value: newMessage, onChange: e => setNewMessage(e.target.value), onKeyDown: e => e.key === 'Enter' && !e.shiftKey && sendMessage(newMessage) }),
       h('button', { style: abtn({ padding: '10px 16px' }), onClick: () => sendMessage(newMessage) }, '→')
-    )
+    ),
+
+    // Каталог сотрудников
+    showPeople && h('div', { style: { ...S.card, marginTop: 8, padding: 10, maxHeight: 300, overflowY: 'auto' } },
+      h('div', { style: S.sec }, 'Сотрудники производства'),
+      data.workers.filter(w => !w.archived).map(w => {
+        const s = calcWorkerStats(w.id, data, Date.now());
+        const lvl = getWorkerLevel(s.doneCount);
+        return h('div', { key: w.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', cursor: 'pointer' }, onClick: () => { setViewProfileId(w.id); setShowPeople(false); } },
+          h('div', { style: { width: 32, height: 32, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 500, color: AM2, position: 'relative' } },
+            w.name?.charAt(0) || '?',
+            h('div', { style: { position: 'absolute', bottom: -2, right: -2, background: AM, color: '#fff', fontSize: 8, fontWeight: 500, borderRadius: '50%', width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, lvl)
+          ),
+          h('div', { style: { flex: 1 } },
+            h('div', { style: { fontSize: 12, fontWeight: 500 } }, w.name),
+            h('div', { style: { fontSize: 10, color: '#888' } }, `${getLevelTitle(lvl)} · ${s.doneCount} оп. · 🤝${s.thanksReceived}`)
+          ),
+          (w.achievements || []).length > 0 && h('div', { style: { display: 'flex', gap: 2 } },
+            (w.achievements || []).slice(0, 4).map(aid => h('span', { key: aid, style: { fontSize: 12 }, title: ACHIEVEMENTS[aid]?.title }, ACHIEVEMENTS[aid]?.icon || ''))
+          ),
+          w.id !== myId && h('button', { style: gbtn({ fontSize: 10, padding: '3px 8px' }), onClick: (e) => { e.stopPropagation(); sendThanks(w.id); setShowPeople(false); } }, '🤝')
+        );
+      })
+    ),
+
+    // Просмотр профиля сотрудника
+    viewProfileId && (() => {
+      const w = data.workers.find(w => w.id === viewProfileId);
+      if (!w) return null;
+      const s = calcWorkerStats(w.id, data, Date.now());
+      const lvl = getWorkerLevel(s.doneCount);
+      const quality = s.doneCount + s.defectCount > 0 ? Math.round(s.doneCount / (s.doneCount + s.defectCount) * 100) : 100;
+      const earned = w.achievements || [];
+      return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 80 }, onClick: () => setViewProfileId(null) },
+        h('div', { style: { background: '#fff', borderRadius: 12, padding: 20, width: 'min(380px, calc(100vw - 32px))', maxHeight: '85vh', overflowY: 'auto' }, onClick: e => e.stopPropagation() },
+          // Шапка
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 } },
+            h('div', { style: { width: 52, height: 52, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 500, color: AM2, position: 'relative' } },
+              w.name?.charAt(0) || '?',
+              h('div', { style: { position: 'absolute', bottom: -3, right: -3, background: AM, color: '#fff', fontSize: 11, fontWeight: 500, borderRadius: '50%', width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, lvl)
+            ),
+            h('div', { style: { flex: 1 } },
+              h('div', { style: { fontSize: 16, fontWeight: 500 } }, w.name),
+              h('div', { style: { fontSize: 12, color: AM } }, `${getLevelTitle(lvl)} · Уровень ${lvl}`),
+              w.position && h('div', { style: { fontSize: 11, color: '#888' } }, w.position)
+            ),
+            h('button', { style: { background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }, onClick: () => setViewProfileId(null) }, '×')
+          ),
+          // Метрики
+          h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, marginBottom: 12 } },
+            h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500, color: AM } }, s.doneCount), h('div', { style: { fontSize: 8, color: '#888', textTransform: 'uppercase' } }, 'Операций')),
+            h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500, color: quality >= 95 ? GN : AM } }, `${quality}%`), h('div', { style: { fontSize: 8, color: '#888', textTransform: 'uppercase' } }, 'Качество')),
+            h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500, color: '#F57F17' } }, s.thanksReceived), h('div', { style: { fontSize: 8, color: '#888', textTransform: 'uppercase' } }, 'Спасибо')),
+            h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500 } }, earned.length), h('div', { style: { fontSize: 8, color: '#888', textTransform: 'uppercase' } }, 'Наград'))
+          ),
+          // Достижения
+          earned.length > 0 && h('div', null,
+            h('div', { style: S.sec }, `Награды (${earned.length}/${Object.keys(ACHIEVEMENTS).length})`),
+            h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 } },
+              earned.map(aid => {
+                const a = ACHIEVEMENTS[aid];
+                return a ? h('div', { key: aid, style: { display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', background: AM3, borderRadius: 6, fontSize: 11 }, title: a.desc },
+                  h('span', { style: { fontSize: 14 } }, a.icon),
+                  h('span', { style: { color: AM2, fontWeight: 500 } }, a.title)
+                ) : null;
+              })
+            )
+          ),
+          // Кнопка благодарности
+          w.id !== myId && h('button', { style: abtn({ width: '100%', padding: 12 }), onClick: () => { sendThanks(w.id); setViewProfileId(null); } }, `🤝 Сказать спасибо ${w.name.split(' ')[0]}`)
+        )
+      );
+    })()
   );
 });
 
@@ -4788,142 +5146,191 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
   );
 });
 
-// ==================== Dashboard ====================
+// ==================== Dashboard (Цеховое табло) ====================
 const Dashboard = memo(({ data, addToast }) => {
-  const [period, setPeriod] = useState(() => { const end = new Date(); const start = new Date(); start.setDate(start.getDate() - 7); return { start: start.getTime(), end: end.getTime(), label: '7 дней' }; });
-  const [customStart, setCustomStart] = useState('');
-  const [customEnd, setCustomEnd] = useState('');
-  const setPeriodDays = (days) => { const end = new Date(); const start = new Date(); start.setDate(start.getDate() - days); setPeriod({ start: start.getTime(), end: end.getTime(), label: `${days} дней` }); setCustomStart(''); setCustomEnd(''); };
-  const setCustomPeriod = () => { if (customStart && customEnd) setPeriod({ start: new Date(customStart).getTime(), end: new Date(customEnd).getTime() + 86400000 - 1, label: 'произвольный' }); };
+  const [, setTick] = useState(0);
+  useEffect(() => { const t = setInterval(() => setTick(n => n + 1), 15000); return () => clearInterval(t); }, []);
 
-  const doneOpsInPeriod = useMemo(() => data.ops.filter(o => o.status === 'done' && o.finishedAt && o.finishedAt >= period.start && o.finishedAt <= period.end), [data.ops, period]);
-  const defectsInPeriod = useMemo(() => data.ops.filter(o => o.status === 'defect' && o.finishedAt && o.finishedAt >= period.start && o.finishedAt <= period.end), [data.ops, period]);
-  const inProgress = useMemo(() => data.ops.filter(o => o.status === 'in_progress' && !o.archived), [data.ops]);
-  const pending = useMemo(() => data.ops.filter(o => o.status === 'pending' && !o.archived), [data.ops]);
-  const pendingLong = useMemo(() => pending.filter(o => o.createdAt && now() - o.createdAt > 3600000), [pending]);
-  const nearDeadlineOrders = useMemo(() => data.orders.filter(o => isShipmentNear(o.deadline) && !o.archived && data.ops.some(op => op.orderId === o.id && op.status !== 'done')), [data.orders, data.ops]);
-  const workersByStatus = useMemo(() => { const stats = { working:0, absent:0, sick:0, vacation:0 }; data.workers.forEach(w => { const k = w.status || 'working'; if(stats[k]!==undefined) stats[k]++; }); return stats; }, [data.workers]);
+  // Реальные данные
+  const activeOps = useMemo(() => data.ops.filter(o => o.status === 'in_progress' && !o.archived), [data.ops]);
+  const pendingOps = useMemo(() => data.ops.filter(o => o.status === 'pending' && !o.archived), [data.ops]);
+  const onCheckOps = useMemo(() => data.ops.filter(o => o.status === 'on_check' && !o.archived), [data.ops]);
+  const defectOps = useMemo(() => data.ops.filter(o => (o.status === 'defect' || o.status === 'rework') && !o.archived), [data.ops]);
+  const doneToday = useMemo(() => { const t = new Date().setHours(0,0,0,0); return data.ops.filter(o => o.status === 'done' && o.finishedAt >= t); }, [data.ops]);
+  const defectsToday = useMemo(() => { const t = new Date().setHours(0,0,0,0); return data.ops.filter(o => o.status === 'defect' && o.finishedAt >= t); }, [data.ops]);
+  const downtimesToday = useMemo(() => { const t = new Date().setHours(0,0,0,0); return data.events.filter(e => e.type === 'downtime' && e.ts >= t); }, [data.events]);
+  const totalDowntimeMin = useMemo(() => Math.round(downtimesToday.reduce((s, e) => s + (e.duration || 0), 0) / 60000), [downtimesToday]);
+  const activeWorkers = useMemo(() => data.workers.filter(w => !w.archived && (w.status || 'working') === 'working'), [data.workers]);
+  const busyWorkers = useMemo(() => new Set(activeOps.flatMap(op => op.workerIds || [])), [activeOps]);
+  const freeWorkers = useMemo(() => activeWorkers.filter(w => !busyWorkers.has(w.id)), [activeWorkers, busyWorkers]);
+  const criticalMaterials = useMemo(() => data.materials.filter(m => m.minStock && m.quantity <= m.minStock), [data.materials]);
+  const activeOrders = useMemo(() => data.orders.filter(o => !o.archived), [data.orders]);
+  const activeDuels = useMemo(() => (data.duels || []).filter(d => d.status === 'active'), [data.duels]);
 
-  const workerPerformance = useMemo(() => data.workers.map(w => {
-    const workerOps = doneOpsInPeriod.filter(op => op.workerIds?.includes(w.id) && op.plannedHours && op.startedAt && op.finishedAt);
-    if (workerOps.length === 0) return null;
-    const totalPlanned = workerOps.reduce((sum,op) => sum + (op.plannedHours||0),0)*3600000;
-    const totalActual = workerOps.reduce((sum,op) => sum + (op.finishedAt - op.startedAt),0);
-    const performance = totalPlanned > 0 ? (totalActual / totalPlanned)*100 : 0;
-    const defectCount = defectsInPeriod.filter(op => op.workerIds?.includes(w.id)).length;
-    const downtimeCount = data.events.filter(e => e.type === 'downtime' && e.workerId === w.id && e.ts >= period.start && e.ts <= period.end).length;
-    return { workerId: w.id, workerName: w.name, opsCount: workerOps.length, totalPlanned, totalActual, performance, defectCount, downtimeCount };
-  }).filter(Boolean).sort((a,b) => a.performance - b.performance), [data.workers, doneOpsInPeriod, defectsInPeriod, data.events, period]);
+  // Заказы с прогрессом
+  const ordersProgress = useMemo(() => activeOrders.map(order => {
+    const ops = data.ops.filter(op => op.orderId === order.id && !op.archived);
+    const done = ops.filter(op => op.status === 'done').length;
+    const total = ops.length;
+    const pct = total > 0 ? Math.round(done / total * 100) : 0;
+    const hasDefect = ops.some(op => op.status === 'defect' || op.status === 'rework');
+    const daysLeft = order.deadline ? Math.ceil((new Date(order.deadline).getTime() - Date.now()) / 86400000) : null;
+    return { ...order, ops, done, total, pct, hasDefect, daysLeft };
+  }).sort((a, b) => (a.daysLeft ?? 999) - (b.daysLeft ?? 999)), [activeOrders, data.ops]);
 
-  const bottlenecks = useMemo(() => {
-    const opStats = {};
-    doneOpsInPeriod.forEach(op => {
-      if (!op.plannedHours || !op.startedAt || !op.finishedAt) return;
-      const actual = op.finishedAt - op.startedAt;
-      if (!opStats[op.name]) opStats[op.name] = { totalActual:0, count:0, totalPlanned:0 };
-      opStats[op.name].totalActual += actual; opStats[op.name].count += 1; opStats[op.name].totalPlanned += op.plannedHours*3600000;
+  // Лидеры дня
+  const todayLeaders = useMemo(() => {
+    const t = new Date().setHours(0,0,0,0);
+    const counts = {};
+    data.ops.filter(op => op.status === 'done' && op.finishedAt >= t).forEach(op => {
+      (op.workerIds || []).forEach(wid => { counts[wid] = (counts[wid] || 0) + 1; });
     });
-    return Object.entries(opStats).map(([name,stat]) => { const avgActual = stat.totalActual/stat.count; const avgPlanned = stat.totalPlanned/stat.count; const ratio = avgActual/avgPlanned; return { name, count: stat.count, avgActual: fmtDur(avgActual), avgPlanned: fmtDur(avgPlanned), ratio, isBottleneck: ratio > 1.2 }; }).filter(b => b.isBottleneck);
-  }, [doneOpsInPeriod]);
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([wid, count]) => ({
+      name: data.workers.find(w => w.id === wid)?.name || '?', count
+    }));
+  }, [data.ops, data.workers]);
+
+  const qualityToday = doneToday.length + defectsToday.length > 0 ? Math.round(doneToday.length / (doneToday.length + defectsToday.length) * 100) : 100;
+  const mc = (color) => ({ ...S.card, textAlign: 'center', padding: '12px 8px', marginBottom: 0 });
 
   const exportToExcel = useCallback(() => {
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.orders.map(o => ({ Номер: o.number, Изделие: o.product, Количество: o.qty, 'Дата отгрузки': o.deadline, Приоритет: PRIORITY[o.priority]?.label }))), 'Заказы');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.ops.map(op => ({ ID: op.id, Заказ: data.orders.find(o => o.id === op.orderId)?.number, Операция: op.name, Статус: op.status, 'План, ч': op.plannedHours, Длительность: op.finishedAt && op.startedAt ? Math.round((op.finishedAt - op.startedAt)/60000) + ' мин' : '' }))), 'Операции');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.workers.map(w => ({ Имя: w.name, Должность: w.position||'', Разряд: w.grade||'', 'Таб. №': w.tabNumber||'', Участок: data.sections.find(s => s.id === w.sectionId)?.name||'', Статус: (WORKER_STATUS[w.status]||WORKER_STATUS.working).label, Компетенции: w.competences?.join(', ')||'' }))), 'Сотрудники');
-    const downtimeEvents = data.events.filter(e => e.type === 'downtime').map(e => ({ Время: new Date(e.ts).toLocaleString(), Сотрудник: data.workers.find(w => w.id === e.workerId)?.name, Причина: data.downtimeTypes.find(dt => dt.id === e.downtimeTypeId)?.name, 'Длительность (мин)': e.duration ? Math.round(e.duration/60000) : '', Смена: e.shift }));
-    if (downtimeEvents.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(downtimeEvents), 'Простои');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.orders.map(o => ({ Номер: o.number, Изделие: o.product, Количество: o.qty, Дедлайн: o.deadline, Приоритет: PRIORITY[o.priority]?.label }))), 'Заказы');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.ops.map(op => ({ Заказ: data.orders.find(o => o.id === op.orderId)?.number, Операция: op.name, Статус: op.status, 'План,ч': op.plannedHours, Исполнители: (op.workerIds||[]).map(wid => data.workers.find(w => w.id === wid)?.name).join(', ') }))), 'Операции');
     XLSX.writeFile(wb, `production_${new Date().toISOString().slice(0,10)}.xlsx`);
     addToast('Экспорт завершён', 'success');
   }, [data, addToast]);
 
-  const wipOrders = useMemo(() => data.orders.filter(o => !o.archived && data.ops.some(op => op.orderId === o.id && (op.status === 'in_progress' || op.status === 'on_check'))), [data.orders, data.ops]);
-  const metrics = [[doneOpsInPeriod.length,'Выполнено',GN],[inProgress.length,'В работе',AM],[defectsInPeriod.length,'Брак',RD],[pending.length,'Ожидают',BL],[wipOrders.length,'НЗП',AM4]];
-  return h('div', { style: { padding:'0 0 24px' } },
-    h('div', { style: { ...S.card, display:'flex', gap:8, flexWrap:'wrap', alignItems:'center', marginBottom:16 } },
-      h('span', { style: { fontSize:12, fontWeight:500 } }, 'Период:'),
-      h('button', { style: period.label === '7 дней' ? abtn() : gbtn(), onClick: () => setPeriodDays(7) }, '7 дней'),
-      h('button', { style: period.label === '14 дней' ? abtn() : gbtn(), onClick: () => setPeriodDays(14) }, '14 дней'),
-      h('button', { style: period.label === '30 дней' ? abtn() : gbtn(), onClick: () => setPeriodDays(30) }, '30 дней'),
-      h('input', { type:'date', style: { ...S.inp, width:130 }, value: customStart, onChange: e => setCustomStart(e.target.value) }),
-      h('input', { type:'date', style: { ...S.inp, width:130 }, value: customEnd, onChange: e => setCustomEnd(e.target.value) }),
-      h('button', { style: gbtn(), onClick: setCustomPeriod }, 'Применить')
-    ),
-    h('div', { className: 'metrics-grid', style: { display:'grid', gap:10, marginBottom:16 } },
-      h('div', { style: S.card }, h('div', { style: { fontSize:12, color:'#888' } }, 'На смене'), h('div', { style: { fontSize:24, fontWeight:500, color:GN } }, workersByStatus.working)),
-      h('div', { style: S.card }, h('div', { style: { fontSize:12, color:'#888' } }, 'Отсутствует'), h('div', { style: { fontSize:24, fontWeight:500, color:RD } }, workersByStatus.absent)),
-      h('div', { style: S.card }, h('div', { style: { fontSize:12, color:'#888' } }, 'Больничный'), h('div', { style: { fontSize:24, fontWeight:500, color:RD } }, workersByStatus.sick)),
-      h('div', { style: S.card }, h('div', { style: { fontSize:12, color:'#888' } }, 'Отпуск'), h('div', { style: { fontSize:24, fontWeight:500, color:BL } }, workersByStatus.vacation))
-    ),
-    h('div', { className: 'metrics-grid', style: { display:'grid', gap:10, marginBottom:16 } },
-      metrics.map(([v,l,c]) => h('div', { key: l, style: { ...S.card, textAlign:'center' } }, h('div', { style: { fontSize:32, fontWeight:500, color:c } }, v), h('div', { style: { fontSize:9, color:'#888', textTransform:'uppercase' } }, l)))
-    ),
-    nearDeadlineOrders.length > 0 && h('div', { role:'alert', style: { ...S.card, background:RD3, border:`0.5px solid ${RD}`, marginBottom:12 } }, h('div', { style: { fontSize:10, color:RD, textTransform:'uppercase', marginBottom:8, fontWeight:500 } }, '⚠ Заказы с близкой датой отгрузки'), nearDeadlineOrders.map(ord => h('div', { key: ord.id, style: { fontSize:12, color:RD2 } }, `${ord.number} · отгрузка: ${ord.deadline}`))),
-    // Критические остатки на дашборде
-    (() => { const critical = data.materials.filter(m => m.minStock && m.quantity <= m.minStock); return critical.length > 0 && h('div', { role:'alert', style: { ...S.card, background:RD3, border:`0.5px solid ${RD}`, marginBottom:12 } }, h('div', { style: { fontSize:10, color:RD, textTransform:'uppercase', marginBottom:8, fontWeight:500 } }, `⚠ Критические остатки материалов (${critical.length})`), critical.map(m => h('div', { key: m.id, style: { fontSize:12, color:RD2 } }, `${m.name}: ${m.quantity} ${m.unit} (мин: ${m.minStock})`))); })(),
-    pendingLong.length > 0 && h('div', { style: { ...S.card, background:RD3, border:`0.5px solid ${RD}`, marginBottom:12 } }, h('div', { style: { fontSize:10, color:RD, textTransform:'uppercase', marginBottom:8, fontWeight:500 } }, '⚠ Операции, ожидающие >1 часа'), pendingLong.map(op => h('div', { key: op.id, style: { fontSize:12, color:RD2 } }, `${op.name} · ${fmtDur(now() - op.createdAt)}`))),
-    bottlenecks.length > 0 && h('div', { style: { ...S.card, marginBottom:12 } },
-      h('div', { style: { ...S.sec, marginBottom:6 } }, '⚠ Узкие места (факт > план на 20%)'),
-      h('div', { className: 'table-responsive' }, h('table', { style: { width:'100%', borderCollapse:'collapse' } },
-        h('thead', null, h('tr', null, ['Операция','Кол-во','Ср. план','Ср. факт','Отклонение'].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
-        h('tbody', null, bottlenecks.map(b => h('tr', { key: b.name }, h('td', { style: S.td }, b.name), h('td', { style: S.td }, b.count), h('td', { style: S.td }, b.avgPlanned), h('td', { style: S.td }, b.avgActual), h('td', { style: { ...S.td, color:RD } }, `${Math.round((b.ratio-1)*100)}%`))))
-      ))
-    ),
-    workerPerformance.length > 0 && h('div', { style: { ...S.card, marginBottom:12 } },
-      h('div', { style: S.sec }, 'KPI сотрудников'),
-      h('div', { className: 'table-responsive' }, h('table', { style: { width:'100%', borderCollapse:'collapse' } },
-        h('thead', null, h('tr', null, ['Сотрудник','Операций','План (ч)','Факт (ч)','Выполн.','Брак','Простои'].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
-        h('tbody', null, workerPerformance.map(w => h('tr', { key: w.workerId }, h('td', { style: S.td }, w.workerName), h('td', { style: S.td }, w.opsCount), h('td', { style: S.td }, (w.totalPlanned/3600000).toFixed(1)), h('td', { style: S.td }, (w.totalActual/3600000).toFixed(1)), h('td', { style: { ...S.td, color: w.performance <= 100 ? GN : RD } }, `${w.performance.toFixed(1)}%`), h('td', { style: S.td }, w.defectCount), h('td', { style: S.td }, w.downtimeCount))))
-      ))
+  return h('div', { style: { padding: '0 0 24px' } },
+    // Заголовок с часами
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } },
+      h('div', null,
+        h('div', { style: { fontSize: 18, fontWeight: 500 } }, 'Цеховое табло'),
+        h('div', { style: { fontSize: 11, color: '#888' } }, new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' }))
+      ),
+      h('div', { style: { textAlign: 'right' } },
+        h('div', { style: { fontSize: 28, fontWeight: 500, fontFamily: 'monospace', color: AM } }, new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+        h('button', { style: gbtn({ fontSize: 10, padding: '3px 8px' }), onClick: exportToExcel }, '📥 Excel')
+      )
     ),
 
-    // OEE — Overall Equipment Effectiveness
-    (() => {
-      const eqData = data.equipment.map(eq => {
-        const opsOnEq = data.ops.filter(op => op.equipmentId === eq.id && op.finishedAt >= period.start && op.finishedAt <= period.end);
-        const doneOnEq = opsOnEq.filter(op => op.status === 'done' && op.startedAt && op.finishedAt);
-        const defOnEq = opsOnEq.filter(op => op.status === 'defect');
-        if (doneOnEq.length === 0 && defOnEq.length === 0) return null;
-        const busyMs = doneOnEq.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0);
-        const downtimeMs = data.events.filter(e => e.type === 'downtime' && e.equipmentId === eq.id && e.ts >= period.start && e.ts <= period.end).reduce((s, e) => s + (e.duration || 0), 0);
-        const availability = busyMs > 0 ? Math.min(((busyMs - downtimeMs) / busyMs) * 100, 100) : 0;
-        const withPlan = doneOnEq.filter(op => op.plannedHours);
-        const totalPlanned = withPlan.reduce((s, op) => s + op.plannedHours * 3600000, 0);
-        const totalActual = withPlan.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0);
-        const performance = totalActual > 0 ? Math.min((totalPlanned / totalActual) * 100, 100) : 0;
-        const quality = (doneOnEq.length + defOnEq.length) > 0 ? (doneOnEq.length / (doneOnEq.length + defOnEq.length)) * 100 : 100;
-        const oee = (availability / 100) * (performance / 100) * (quality / 100) * 100;
-        return { ...eq, availability, performance, quality, oee, opsCount: doneOnEq.length + defOnEq.length };
-      }).filter(Boolean);
-      const opsWithoutEquip = doneOpsInPeriod.filter(op => !op.equipmentId).length;
-      if (eqData.length === 0 && opsWithoutEquip === 0) return null;
-      const avgOee = eqData.length > 0 ? eqData.reduce((s, e) => s + e.oee, 0) / eqData.length : 0;
-      const oeeColor = (v) => v >= 85 ? GN : v >= 60 ? AM : RD;
-      return h('div', { style: { ...S.card, marginBottom: 12 } },
-        h('div', { style: S.sec }, 'OEE — эффективность оборудования'),
-        eqData.length > 0 ? h('div', null,
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 } },
-            h('div', { style: { fontSize: 32, fontWeight: 500, color: oeeColor(avgOee) } }, `${avgOee.toFixed(0)}%`),
-            h('div', null, h('div', { style: { fontSize: 13, fontWeight: 500 } }, 'Средний OEE'), h('div', { style: { fontSize: 11, color: '#888' } }, avgOee >= 85 ? 'Мировой класс' : avgOee >= 60 ? 'Есть потенциал' : 'Требует внимания'))
+    // Блок 1: Ключевые метрики дня
+    h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 8, marginBottom: 12 } },
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: GN } }, doneToday.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Выполнено')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: AM } }, activeOps.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'В работе')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: defectsToday.length > 0 ? RD : GN } }, defectsToday.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Брак')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: qualityToday >= 95 ? GN : qualityToday >= 80 ? AM : RD } }, `${qualityToday}%`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Качество')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: totalDowntimeMin > 60 ? RD : AM } }, `${totalDowntimeMin}м`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Простои')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: freeWorkers.length > 0 ? GN : AM } }, `${busyWorkers.size}/${activeWorkers.length}`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Загрузка'))
+    ),
+
+    // Блок 2: Алерты (критические)
+    (criticalMaterials.length > 0 || defectOps.length > 0 || ordersProgress.some(o => o.daysLeft !== null && o.daysLeft <= 2 && o.pct < 100)) && h('div', { style: { ...S.card, background: RD3, border: `0.5px solid ${RD}`, marginBottom: 12, padding: 10 } },
+      h('div', { style: { fontSize: 10, color: RD, textTransform: 'uppercase', fontWeight: 500, marginBottom: 6 } }, '⚠ Требует внимания'),
+      defectOps.length > 0 && h('div', { style: { fontSize: 12, color: RD2, marginBottom: 4 } }, `${defectOps.length} операций с браком/на переделке`),
+      criticalMaterials.map(m => h('div', { key: m.id, style: { fontSize: 12, color: RD2, marginBottom: 2 } }, `Материал: ${m.name} — ${m.quantity} ${m.unit} (мин: ${m.minStock})`)),
+      ordersProgress.filter(o => o.daysLeft !== null && o.daysLeft <= 2 && o.pct < 100).map(o => h('div', { key: o.id, style: { fontSize: 12, color: RD2, marginBottom: 2 } }, `Срок: ${o.number} — ${o.daysLeft <= 0 ? 'ПРОСРОЧЕН' : `${o.daysLeft} дн.`} (${o.pct}%)`))
+    ),
+
+    // Блок 3: Кто что делает (живая лента)
+    h('div', { style: { ...S.card, marginBottom: 12, padding: 10 } },
+      h('div', { style: S.sec }, `Сейчас в работе (${activeOps.length})`),
+      activeOps.length === 0
+        ? h('div', { style: { fontSize: 12, color: '#888', textAlign: 'center', padding: 8 } }, 'Нет активных операций')
+        : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+            activeOps.map(op => {
+              const order = data.orders.find(o => o.id === op.orderId);
+              const workers = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name?.split(' ')[0]).filter(Boolean);
+              const elapsed = op.startedAt ? fmtDur(now() - op.startedAt) : '—';
+              const isLong = op.plannedHours && op.startedAt && (now() - op.startedAt) > op.plannedHours * 3600000;
+              return h('div', { key: op.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8, background: isLong ? RD3 : '#f8f8f5', fontSize: 12 } },
+                h('div', { style: { width: 8, height: 8, borderRadius: '50%', background: isLong ? RD : GN, flexShrink: 0 } }),
+                h('span', { style: { fontWeight: 500, minWidth: 100 } }, workers.join(', ') || '—'),
+                h('span', { style: { color: AM, flex: 1 } }, op.name),
+                h('span', { style: { fontSize: 10, color: '#888' } }, order?.number),
+                h('span', { style: { fontFamily: 'monospace', fontSize: 11, color: isLong ? RD : '#888' } }, elapsed)
+              );
+            })
           ),
-          h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-            h('thead', null, h('tr', null, ['Оборудование', 'Опер.', 'Доступн.', 'Произв.', 'Качество', 'OEE'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
-            h('tbody', null, eqData.map(eq => h('tr', { key: eq.id },
-              h('td', { style: S.td }, eq.name),
-              h('td', { style: { ...S.td, textAlign: 'center' } }, eq.opsCount),
-              h('td', { style: { ...S.td, textAlign: 'center', color: oeeColor(eq.availability) } }, `${eq.availability.toFixed(0)}%`),
-              h('td', { style: { ...S.td, textAlign: 'center', color: oeeColor(eq.performance) } }, `${eq.performance.toFixed(0)}%`),
-              h('td', { style: { ...S.td, textAlign: 'center', color: oeeColor(eq.quality) } }, `${eq.quality.toFixed(0)}%`),
-              h('td', { style: { ...S.td, textAlign: 'center', fontWeight: 500, color: oeeColor(eq.oee) } }, `${eq.oee.toFixed(0)}%`)
-            )))
-          ))
-        ) : null,
-        opsWithoutEquip > 0 && h('div', { style: { fontSize: 11, color: AM, marginTop: 8, padding: '6px 10px', background: AM3, borderRadius: 6 } }, `⚠ ${opsWithoutEquip} операций за период не привязаны к оборудованию — они не участвуют в расчёте OEE. Привяжите оборудование при создании операции.`),
-        h('div', { style: { fontSize: 10, color: '#888', marginTop: 6 } }, 'OEE = Доступность × Производительность × Качество. Мировой стандарт: ≥85%')
-      );
-    })(),
+      // Свободные рабочие
+      freeWorkers.length > 0 && h('div', { style: { marginTop: 8, paddingTop: 8, borderTop: '0.5px solid rgba(0,0,0,0.06)' } },
+        h('div', { style: { fontSize: 10, color: GN, marginBottom: 4 } }, `Свободны (${freeWorkers.length}):`),
+        h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
+          freeWorkers.map(w => h('span', { key: w.id, style: { padding: '2px 8px', background: GN3, color: GN2, borderRadius: 6, fontSize: 11 } }, w.name.split(' ')[0]))
+        )
+      )
+    ),
 
-    h('div', { style: { marginTop:16, textAlign:'right' } }, h('button', { style: abtn({ padding:'10px 20px' }), onClick: exportToExcel }, '📥 Экспорт в Excel'))
+    // Блок 4: Прогресс заказов
+    h('div', { style: { ...S.card, marginBottom: 12, padding: 10 } },
+      h('div', { style: S.sec }, `Заказы (${activeOrders.length})`),
+      ordersProgress.length === 0
+        ? h('div', { style: { fontSize: 12, color: '#888', textAlign: 'center', padding: 8 } }, 'Нет активных заказов')
+        : ordersProgress.map(o => h('div', { key: o.id, style: { marginBottom: 8 } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 } },
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 } },
+                h('span', { style: { fontWeight: 500 } }, o.number),
+                h('span', { style: { color: '#888' } }, o.product),
+                o.hasDefect && h('span', { style: { fontSize: 10, color: RD, fontWeight: 500 } }, '⚠'),
+                o.daysLeft !== null && h('span', { style: { fontSize: 10, padding: '1px 6px', borderRadius: 4, background: o.daysLeft <= 0 ? RD3 : o.daysLeft <= 3 ? AM3 : GN3, color: o.daysLeft <= 0 ? RD : o.daysLeft <= 3 ? AM2 : GN2 } }, o.daysLeft <= 0 ? 'просрочен' : `${o.daysLeft}д`)
+              ),
+              h('span', { style: { fontSize: 11, fontWeight: 500, color: o.pct === 100 ? GN : AM } }, `${o.done}/${o.total}`)
+            ),
+            h('div', { style: { height: 6, background: '#eee', borderRadius: 3, overflow: 'hidden' } },
+              h('div', { style: { height: 6, background: o.pct === 100 ? GN : o.hasDefect ? RD : AM, borderRadius: 3, width: `${o.pct}%`, transition: 'width 0.3s' } })
+            )
+          ))
+    ),
+
+    // Блок 5: Лидеры дня + активные дуэли
+    (todayLeaders.length > 0 || activeDuels.length > 0) && h('div', { style: { display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap' } },
+      todayLeaders.length > 0 && h('div', { style: { ...S.card, flex: 1, minWidth: 160, padding: 10, marginBottom: 0 } },
+        h('div', { style: S.sec }, 'Лидеры дня'),
+        todayLeaders.map((l, i) => h('div', { key: i, style: { display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: 12 } },
+          h('span', { style: { fontSize: i < 3 ? 14 : 11, width: 22 } }, ['🥇','🥈','🥉'][i] || `${i+1}.`),
+          h('span', { style: { flex: 1, fontWeight: i === 0 ? 500 : 400 } }, l.name),
+          h('span', { style: { fontWeight: 500, color: AM } }, `${l.count} оп.`)
+        ))
+      ),
+      activeDuels.length > 0 && h('div', { style: { ...S.card, flex: 1, minWidth: 160, padding: 10, marginBottom: 0 } },
+        h('div', { style: S.sec }, `⚔ Дуэли (${activeDuels.length})`),
+        activeDuels.map(d => {
+          const ch = data.ops.filter(op => op.workerIds?.includes(d.challengerId) && op.status === 'done' && op.finishedAt >= d.createdAt).length;
+          const op = data.ops.filter(op => op.workerIds?.includes(d.opponentId) && op.status === 'done' && op.finishedAt >= d.createdAt).length;
+          return h('div', { key: d.id, style: { fontSize: 11, padding: '4px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)' } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between' } },
+              h('span', null, `${d.challengerName.split(' ')[0]} vs ${d.opponentName.split(' ')[0]}`),
+              h('span', { style: { color: AM, fontWeight: 500 } }, `${ch}:${op} / ${d.targetOps}`)
+            )
+          );
+        })
+      )
+    ),
+
+    // Блок 6: Очередь на контроле
+    onCheckOps.length > 0 && h('div', { style: { ...S.card, marginBottom: 12, padding: 10 } },
+      h('div', { style: S.sec }, `На контроле качества (${onCheckOps.length})`),
+      onCheckOps.map(op => {
+        const order = data.orders.find(o => o.id === op.orderId);
+        const workers = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name?.split(' ')[0]).filter(Boolean);
+        return h('div', { key: op.id, style: { display: 'flex', gap: 8, padding: '4px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', fontSize: 12 } },
+          h('span', { style: { fontWeight: 500 } }, op.name),
+          h('span', { style: { color: '#888' } }, order?.number),
+          h('span', { style: { color: AM } }, workers.join(', '))
+        );
+      })
+    ),
+
+    // Блок 7: Ожидающие операции (если много)
+    pendingOps.length > 5 && h('div', { style: { ...S.card, marginBottom: 12, padding: 10 } },
+      h('div', { style: S.sec }, `Ожидают запуска (${pendingOps.length})`),
+      h('div', { style: { fontSize: 12, color: '#888' } },
+        (data.productionStages || []).map(s => {
+          const count = pendingOps.filter(op => op.name === s.name).length;
+          return count > 0 ? h('span', { key: s.id, style: { display: 'inline-block', padding: '3px 8px', background: '#f8f8f5', borderRadius: 6, margin: '2px 3px', fontSize: 11 } }, `${s.name}: ${count}`) : null;
+        })
+      )
+    )
   );
 });
 
