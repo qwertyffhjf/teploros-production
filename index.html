@@ -380,8 +380,26 @@ const EMPTY_DATA = {
   }
 };
 
+const CACHE_KEY = 'prod_app_v14_cache';
+const CACHE_TTL = 12 * 3600000; // 12 часов
+
+// Очистка мусорных ключей localStorage (chat_lastRead_, worker_level_ старше 30 дней)
+const cleanStaleLocalStorageKeys = () => {
+  try {
+    const staleThreshold = Date.now() - 30 * 86400000;
+    const prefixes = ['chat_lastRead_', 'worker_level_'];
+    Object.keys(localStorage).forEach(k => {
+      if (prefixes.some(p => k.startsWith(p))) {
+        const val = Number(localStorage.getItem(k));
+        if (val && val < staleThreshold) localStorage.removeItem(k);
+      }
+    });
+  } catch(e) {}
+};
+
 const DB = {
   async load() {
+    cleanStaleLocalStorageKeys();
     try {
       const snap = await DOC_REF.get();
       if (snap.exists) {
@@ -390,13 +408,33 @@ const DB = {
           if (op.workerId !== undefined && !op.workerIds) { op.workerIds = op.workerId ? [op.workerId] : []; delete op.workerId; }
           return op;
         });
-        localStorage.setItem('prod_app_v14_cache', JSON.stringify(parsed));
+        // Сохраняем кэш с меткой времени
+        try {
+          localStorage.setItem(CACHE_KEY, JSON.stringify({ data: parsed, savedAt: Date.now() }));
+        } catch(e) {
+          // localStorage переполнен — чистим и пробуем ещё раз
+          localStorage.removeItem(CACHE_KEY);
+          try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data: parsed, savedAt: Date.now() })); } catch(e2) {}
+        }
         return migrateData({ ...EMPTY_DATA, ...parsed });
       }
     } catch(e) { console.warn(e); }
+    // Firebase недоступен — пробуем кэш
     try {
-      const cached = localStorage.getItem('prod_app_v14_cache');
-      if (cached) return { ...EMPTY_DATA, ...JSON.parse(cached) };
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (raw) {
+        const cached = JSON.parse(raw);
+        // Поддержка старого формата (без обёртки)
+        const cacheData = cached.data || cached;
+        const savedAt = cached.savedAt || 0;
+        const age = Date.now() - savedAt;
+        if (age > CACHE_TTL) {
+          // Кэш протух — удаляем, но данные всё равно используем (лучше устаревшие, чем ничего)
+          console.warn(`Cache TTL expired (${Math.round(age/3600000)}h old), refreshing on next load`);
+          localStorage.removeItem(CACHE_KEY);
+        }
+        return { ...EMPTY_DATA, ...cacheData };
+      }
     } catch(e) {}
     return EMPTY_DATA;
   },
@@ -432,7 +470,7 @@ const DB = {
       } else {
         DB._sizeWarning = null;
       }
-      localStorage.setItem('prod_app_v14_cache', payload);
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ data: toSave, savedAt: Date.now() }));
       if (DB._saveTimer) clearTimeout(DB._saveTimer);
       DB._saveTimer = setTimeout(() => {
         DOC_REF.set({ payload: JSON.stringify(toSave), updatedAt: firebase.firestore.FieldValue.serverTimestamp() })
@@ -1962,6 +2000,185 @@ const MasterJournal = memo(({ data }) => {
   );
 });
 
+// ==================== PasteImportWidget ====================
+// Универсальный виджет вставки из Excel через Ctrl+V
+// Использование: h(PasteImportWidget, { columns, onImport, addToast })
+// columns = [{ key, label, required?, default? }]
+// onImport(rows) вызывается с массивом объектов после подтверждения
+
+const PasteImportWidget = memo(({ columns, onImport, addToast, hint }) => {
+  const [open, setOpen]       = useState(false);
+  const [preview, setPreview] = useState(null); // { headers, rows, colMap }
+  const [colMap, setColMap]   = useState({});
+  const [step, setStep]       = useState('paste'); // paste | map | confirm
+
+  const reset = useCallback(() => {
+    setOpen(false); setPreview(null); setColMap({}); setStep('paste');
+  }, []);
+
+  // Парсинг TSV из буфера обмена
+  const handlePaste = useCallback((e) => {
+    e.preventDefault();
+    const text = e.clipboardData?.getData('text') || '';
+    if (!text.trim()) { addToast('Буфер обмена пуст', 'error'); return; }
+    const rows = text.trim().split('\n').map(line =>
+      line.split('\t').map(c => c.trim().replace(/^"|"$/g, ''))
+    ).filter(r => r.some(c => c));
+    if (rows.length < 1) { addToast('Нет данных', 'error'); return; }
+
+    const headers = rows[0];
+    const dataRows = rows.length > 1 && rows[0].some(c => isNaN(Number(c.replace(',','.')))) ? rows.slice(1) : rows;
+    const hdrs = rows.length > 1 && rows[0].some(c => isNaN(Number(c.replace(',','.')))) ? headers : headers.map((_, i) => `Столбец ${i+1}`);
+
+    // Автодетект колонок по synonyms
+    const synonyms = {
+      name:         ['наим','назв','name','имя','фио','должн','матер','участок','оборуд','номенкл','этап','причин','тип'],
+      number:       ['номер','number','№','заказ','артикул','инвент'],
+      product:      ['изделие','product','продукт'],
+      qty:          ['кол','qty','количес','кол-во','остат'],
+      unit:         ['ед','unit','мера'],
+      price:        ['цен','price','стоим','руб'],
+      position:     ['должн','position','роль','специал'],
+      grade:        ['разряд','grade','квалиф'],
+      pin:          ['pin','пин','пароль'],
+      plannedHours: ['час','hour','план','норм'],
+      type:         ['тип','type','вид','категор'],
+      inventoryNo:  ['инвент','inv','табел','номер инв'],
+      deadline:     ['срок','deadline','дата','до'],
+    };
+
+    const autoMap = {};
+    columns.forEach(col => {
+      const patterns = synonyms[col.key] || [col.key.toLowerCase()];
+      for (const h of hdrs) {
+        const hn = h.toLowerCase().replace(/\s+/g,' ').trim();
+        if (patterns.some(p => hn.includes(p))) { autoMap[col.key] = h; break; }
+      }
+    });
+
+    setPreview({ headers: hdrs, rows: dataRows });
+    setColMap(autoMap);
+    // Если 1 колонка — пропускаем маппинг
+    if (hdrs.length === 1 || columns.length === 1) {
+      autoMap[columns[0].key] = hdrs[0];
+      setColMap(autoMap);
+      setStep('confirm');
+    } else {
+      setStep('map');
+    }
+  }, [columns, addToast]);
+
+  // Финальные строки после маппинга
+  const mappedRows = useMemo(() => {
+    if (!preview) return [];
+    return preview.rows.map(row => {
+      const obj = {};
+      columns.forEach(col => {
+        const h = colMap[col.key];
+        const val = h !== undefined ? (row[preview.headers.indexOf(h)] ?? '') : (col.default ?? '');
+        obj[col.key] = val.toString().trim();
+      });
+      return obj;
+    }).filter(r => columns.filter(c => c.required).every(c => r[c.key]));
+  }, [preview, colMap, columns]);
+
+  if (!open) return h('button', {
+    style: { ...gbtn({ fontSize: 12 }), display: 'flex', alignItems: 'center', gap: 6 },
+    onClick: () => setOpen(true),
+    title: hint || 'Вставить данные из Excel (Ctrl+V)'
+  }, '📋 Вставить из Excel');
+
+  return h('div', { style: { border: `1.5px solid ${AM}`, borderRadius: 10, padding: '12px 14px', marginBottom: 14, background: AM3 } },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 } },
+      h('div', { style: { fontSize: 13, fontWeight: 500, color: AM2 } },
+        step === 'paste'   ? '📋 Вставить из Excel — скопируйте ячейки и нажмите Ctrl+V' :
+        step === 'map'     ? '📋 Настройте колонки' :
+                             `📋 Превью — ${mappedRows.length} строк`
+      ),
+      h('button', { style: { background: 'none', border: 'none', color: '#999', cursor: 'pointer', fontSize: 18 }, onClick: reset }, '×')
+    ),
+
+    // Шаг 1: зона вставки
+    step === 'paste' && h('div', {
+      onPaste: handlePaste,
+      tabIndex: 0,
+      style: { border: `2px dashed ${AM}`, borderRadius: 8, padding: '20px', textAlign: 'center', cursor: 'text', background: '#fff', outline: 'none', fontSize: 13, color: '#888' },
+    },
+      h('div', { style: { fontSize: 24, marginBottom: 6 } }, '📋'),
+      h('div', { style: { fontWeight: 500, color: '#555', marginBottom: 4 } }, 'Кликните сюда и нажмите Ctrl+V'),
+      h('div', { style: { fontSize: 11 } }, 'Скопируйте ячейки из Excel или Google Sheets, заголовки — необязательны')
+    ),
+
+    // Шаг 2: маппинг колонок
+    step === 'map' && h('div', null,
+      h('div', { style: { fontSize: 11, color: '#666', marginBottom: 8 } },
+        `Найдено ${preview.rows.length} строк, ${preview.headers.length} столбцов. Сопоставьте колонки:`
+      ),
+      h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 } },
+        columns.map(col => h('div', { key: col.key },
+          h('label', { style: S.lbl }, `${col.required ? '* ' : ''}${col.label}`),
+          h('select', {
+            style: { ...S.inp, borderColor: col.required && !colMap[col.key] ? AM : undefined },
+            value: colMap[col.key] || '',
+            onChange: e => setColMap(p => ({ ...p, [col.key]: e.target.value }))
+          },
+            h('option', { value: '' }, col.required ? '— выберите —' : '— не использовать —'),
+            preview.headers.map(h2 => h('option', { key: h2, value: h2 }, `${h2} (пример: ${preview.rows[0]?.[preview.headers.indexOf(h2)] || '—'})` ))
+          )
+        ))
+      ),
+      // Превью первых строк
+      h('div', { className: 'table-responsive', style: { marginBottom: 10 } },
+        h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 11 } },
+          h('thead', null, h('tr', null, preview.headers.slice(0, 5).map(hd =>
+            h('th', { key: hd, style: { ...S.th, background: Object.values(colMap).includes(hd) ? AM3 : '#f8f8f5' } }, hd)
+          ))),
+          h('tbody', null, preview.rows.slice(0, 3).map((row, i) =>
+            h('tr', { key: i }, preview.headers.slice(0, 5).map((hd, j) =>
+              h('td', { key: j, style: { ...S.td, background: Object.values(colMap).includes(hd) ? '#fffbf0' : 'transparent' } }, row[j] || '')
+            ))
+          ))
+        )
+      ),
+      h('div', { style: { display: 'flex', gap: 8 } },
+        h('button', { style: gbtn({ flex: 1 }), onClick: () => setStep('paste') }, '← Назад'),
+        h('button', { style: abtn({ flex: 2 }), onClick: () => {
+          if (columns.filter(c => c.required).some(c => !colMap[c.key])) {
+            addToast('Укажите обязательные колонки', 'error'); return;
+          }
+          setStep('confirm');
+        }}, `Далее: проверить (${preview.rows.length}) →`)
+      )
+    ),
+
+    // Шаг 3: превью строк
+    step === 'confirm' && h('div', null,
+      h('div', { style: { fontSize: 11, color: GN2, marginBottom: 8 } }, `✓ Готово к добавлению: ${mappedRows.length} строк`),
+      h('div', { className: 'table-responsive', style: { maxHeight: 180, overflowY: 'auto', border: '0.5px solid rgba(0,0,0,0.1)', borderRadius: 6, marginBottom: 10 } },
+        h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 } },
+          h('thead', null, h('tr', null, columns.filter(c => colMap[c.key] || c.required).map(c =>
+            h('th', { key: c.key, style: { ...S.th, position: 'sticky', top: 0, background: '#f8f8f5' } }, c.label)
+          ))),
+          h('tbody', null, mappedRows.slice(0, 10).map((row, i) =>
+            h('tr', { key: i, style: { background: i % 2 ? '#fafafa' : 'transparent' } },
+              columns.filter(c => colMap[c.key] || c.required).map(c =>
+                h('td', { key: c.key, style: S.td }, row[c.key] || '—')
+              )
+            )
+          )),
+          mappedRows.length > 10 && h('tr', null, h('td', { colSpan: columns.length, style: { ...S.td, color: '#888', textAlign: 'center' } }, `... ещё ${mappedRows.length - 10} строк`))
+        )
+      ),
+      h('div', { style: { display: 'flex', gap: 8 } },
+        h('button', { style: gbtn({ flex: 1 }), onClick: () => setStep(preview.headers.length > 1 ? 'map' : 'paste') }, '← Назад'),
+        h('button', { style: { ...abtn({ flex: 2 }), background: GN, color: '#fff' }, onClick: () => { onImport(mappedRows); reset(); } },
+          `✓ Добавить ${mappedRows.length} записей`
+        )
+      )
+    )
+  );
+});
+
 // ==================== MasterSections ====================
 const MasterSections = memo(({ data, onUpdate, addToast }) => {
   const [newName, setNewName] = useState('');
@@ -1977,8 +2194,18 @@ const MasterSections = memo(({ data, onUpdate, addToast }) => {
     const d = { ...data, sections: data.sections.filter(s => s.id !== id), workers: data.workers.map(w => w.sectionId === id ? { ...w, sectionId: null } : w), ops: data.ops.map(o => o.sectionId === id ? { ...o, sectionId: null } : o) };
     await DB.save(d); onUpdate(d); addToast('Участок удалён', 'info');
   }, [data, askConfirm, onUpdate, addToast]);
+  const importSections = useCallback(async (rows) => {
+    const existing = new Set(data.sections.map(s => s.name.toLowerCase()));
+    const items = rows.filter(r => r.name && !existing.has(r.name.toLowerCase())).map(r => ({ id: uid(), name: r.name }));
+    if (!items.length) { addToast('Все участки уже существуют', 'info'); return; }
+    const d = { ...data, sections: [...data.sections, ...items] };
+    await DB.save(d); onUpdate(d); addToast(`Добавлено: ${items.length}`, 'success');
+  }, [data, onUpdate, addToast]);
   return h('div', null,
     confirmEl,
+    h(PasteImportWidget, { addToast, hint: 'Вставить список участков из Excel',
+      columns: [{ key: 'name', label: 'Название участка', required: true }],
+      onImport: importSections }),
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Добавить участок'),
       h('div', { style: { display: 'flex', gap: 8 } },
@@ -2029,6 +2256,20 @@ const MasterEquipment = memo(({ data, onUpdate, addToast }) => {
 
   return h('div', null,
     confirmEl,
+    h(PasteImportWidget, { addToast, hint: 'Вставить оборудование из Excel',
+      columns: [
+        { key: 'name',        label: 'Название',      required: true },
+        { key: 'type',        label: 'Тип/категория', required: false, default: 'станок' },
+        { key: 'inventoryNo', label: 'Инв. номер',    required: false, default: '' },
+      ],
+      onImport: async (rows) => {
+        const existing = new Set(data.equipment.map(e => e.name.toLowerCase()));
+        const items = rows.filter(r => r.name && !existing.has(r.name.toLowerCase()))
+          .map(r => ({ id: uid(), name: r.name, type: r.type || 'станок', inventoryNo: r.inventoryNo || '', status: 'active', totalHours: 0 }));
+        if (!items.length) { addToast('Всё оборудование уже существует', 'info'); return; }
+        const d = { ...data, equipment: [...data.equipment, ...items] };
+        await DB.save(d); onUpdate(d); addToast(`Добавлено: ${items.length}`, 'success');
+      }}),
     h('div', { style: S.card },
       h('div', { style: S.sec }, editingId ? 'Редактировать' : 'Добавить оборудование'),
       h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
@@ -2146,6 +2387,24 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
 
   return h('div', null,
     confirmEl,
+    h(PasteImportWidget, { addToast, hint: 'Вставить материалы из Excel',
+      columns: [
+        { key: 'name',     label: 'Название',        required: true },
+        { key: 'unit',     label: 'Ед. изм.',         required: false, default: 'шт' },
+        { key: 'quantity', label: 'Количество',       required: false, default: '0' },
+        { key: 'unitCost', label: 'Цена за ед. (₽)',  required: false, default: '' },
+        { key: 'minStock', label: 'Мин. остаток',     required: false, default: '' },
+      ],
+      onImport: async (rows) => {
+        const existing = new Set(data.materials.map(m => m.name.toLowerCase()));
+        const items = rows.filter(r => r.name && !existing.has(r.name.toLowerCase()))
+          .map(r => ({ id: uid(), name: r.name, unit: r.unit || 'шт',
+            quantity: Number(r.quantity) || 0, unitCost: Number(r.unitCost) || 0,
+            minStock: Number(r.minStock) || 0, batch: '' }));
+        if (!items.length) { addToast('Все материалы уже существуют', 'info'); return; }
+        const d = { ...data, materials: [...data.materials, ...items] };
+        await DB.save(d); onUpdate(d); addToast(`Добавлено: ${items.length}`, 'success');
+      }}),
     // Предупреждение о критических остатках
     lowStock.length > 0 && h('div', { role: 'alert', style: { ...S.card, background: RD3, border: `0.5px solid ${RD}`, marginBottom: 12 } },
       h('div', { style: { fontSize: 10, color: RD, textTransform: 'uppercase', fontWeight: 500, marginBottom: 6 } }, `⚠ Критические остатки (${lowStock.length})`),
@@ -2503,6 +2762,15 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
   };
   return h('div', null,
     confirmEl,
+    h(PasteImportWidget, { addToast, hint: 'Вставить этапы из Excel',
+      columns: [{ key: 'name', label: 'Название этапа', required: true }],
+      onImport: async (rows) => {
+        const existing = new Set((data.productionStages||[]).map(s=>s.name.toLowerCase()));
+        const items = rows.filter(r=>r.name&&!existing.has(r.name.toLowerCase())).map(r=>({id:uid(),name:r.name,checklist:[]}));
+        if(!items.length){addToast('Все этапы уже существуют','info');return;}
+        const d={...data,productionStages:[...(data.productionStages||[]),...items]};
+        await DB.save(d);onUpdate(d);addToast(`Добавлено: ${items.length}`,'success');
+      }}),
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Добавить этап производства'),
       h('div', { style: { display: 'flex', gap: 8 } },
@@ -2570,6 +2838,15 @@ const MasterDefectReasons = memo(({ data, onUpdate, addToast }) => {
     confirmEl,
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Добавить причину брака'),
+      h(PasteImportWidget, { addToast, hint: 'Вставить причины брака из Excel',
+        columns: [{ key: 'name', label: 'Причина брака', required: true }],
+        onImport: async (rows) => {
+          const existing = new Set((data.defectReasons||[]).map(s=>s.name.toLowerCase()));
+          const items = rows.filter(r=>r.name&&!existing.has(r.name.toLowerCase())).map(r=>({id:uid(),name:r.name}));
+          if(!items.length){addToast('Все причины уже существуют','info');return;}
+          const d={...data,defectReasons:[...(data.defectReasons||[]),...items]};
+          await DB.save(d);onUpdate(d);addToast(`Добавлено: ${items.length}`,'success');
+        }}),
       h('div', { style: { display: 'flex', gap: 8 } },
         h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Нарушение технологии, дефект материала...', value: newName, onChange: e => setNewName(e.target.value), onKeyDown: e => e.key === 'Enter' && add() }),
         h('button', { style: abtn(), onClick: add }, '+ Добавить')
@@ -2676,6 +2953,29 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
 
   return h('div', null,
     confirmEl,
+    !editingId && h(PasteImportWidget, { addToast, hint: 'Вставить операции из Excel',
+      columns: [
+        { key: 'orderNumber',  label: 'Номер заказа', required: true },
+        { key: 'name',         label: 'Операция',     required: true },
+        { key: 'plannedHours', label: 'План, ч',       required: false, default: '' },
+      ],
+      onImport: async (rows) => {
+        const orderMap = {};
+        data.orders.forEach(o => { orderMap[o.number.toLowerCase()] = o.id; });
+        let added = 0;
+        let newOps = [...data.ops];
+        rows.forEach(r => {
+          const orderId = orderMap[r.orderNumber?.toLowerCase()];
+          if (!orderId || !r.name) return;
+          newOps.push({ id: uid(), orderId, name: r.name, status: 'pending',
+            workerIds: [], plannedHours: Number(r.plannedHours) || undefined,
+            sectionId: '', equipmentId: '', drawingUrl: '', createdAt: now() });
+          added++;
+        });
+        if (!added) { addToast('Не найдено подходящих операций (проверьте номера заказов)', 'error'); return; }
+        const d = { ...data, ops: newOps };
+        await DB.save(d); onUpdate(d); addToast(`Добавлено операций: ${added}`, 'success');
+      }}),
     // Форма создания — только для новых операций
     !editingId && h('div', { style: S.card },
       h('div', { style: S.sec }, 'Создать операцию'),
@@ -2972,6 +3272,26 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 
   return h('div', null,
     confirmEl,
+    h(PasteImportWidget, { addToast, hint: 'Вставить заказы из Excel',
+      columns: [
+        { key: 'number',   label: 'Номер заказа', required: true },
+        { key: 'product',  label: 'Изделие',       required: true },
+        { key: 'qty',      label: 'Количество',    required: false, default: '1' },
+        { key: 'deadline', label: 'Срок (дата)',   required: false, default: '' },
+        { key: 'priority', label: 'Приоритет',     required: false, default: 'medium' },
+      ],
+      onImport: async (rows) => {
+        const existing = new Set(data.orders.map(o => o.number.toLowerCase()));
+        const items = rows.filter(r => r.number && r.product && !existing.has(r.number.toLowerCase()))
+          .map(r => ({ id: uid(), number: r.number, product: r.product,
+            qty: Number(r.qty) || 1, deadline: r.deadline || '',
+            priority: ['critical','high','medium','low'].includes(r.priority) ? r.priority : 'medium',
+            status: 'active', createdAt: now() }));
+        if (!items.length) { addToast('Все номера заказов уже существуют', 'info'); return; }
+        let d = { ...data, orders: [...data.orders, ...items] };
+        d = logAction(d, 'orders_batch_import', { count: items.length });
+        await DB.save(d); onUpdate(d); addToast(`Добавлено заказов: ${items.length}`, 'success');
+      }}),
     depEditorOrderId && h(DependencyEditor, { data, orderId: depEditorOrderId, onUpdate, addToast, onClose: () => setDepEditorOrderId(null) }),
     h('div', { style: S.card },
       h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
@@ -3226,6 +3546,23 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
       h('button', { style: viewMode === 'list' ? abtn() : gbtn(), onClick: () => setViewMode('list') }, 'Список'),
       h('button', { style: viewMode === 'matrix' ? abtn() : gbtn(), onClick: () => setViewMode('matrix') }, 'Матрица компетенций')
     ),
+    h(PasteImportWidget, { addToast, hint: 'Вставить сотрудников из Excel',
+      columns: [
+        { key: 'name',     label: 'ФИО',           required: true },
+        { key: 'position', label: 'Должность',      required: false, default: '' },
+        { key: 'grade',    label: 'Разряд',         required: false, default: '' },
+        { key: 'pin',      label: 'PIN (4-6 цифр)', required: false, default: '' },
+      ],
+      onImport: async (rows) => {
+        const existing = new Set(data.workers.map(w => w.name.toLowerCase()));
+        const items = rows.filter(r => r.name && !existing.has(r.name.toLowerCase()))
+          .map(r => ({ id: uid(), name: r.name, position: r.position || '',
+            grade: r.grade || '', pin: r.pin || '', tabNumber: '',
+            sectionId: '', competences: [], status: 'working', achievements: [] }));
+        if (!items.length) { addToast('Все сотрудники уже существуют', 'info'); return; }
+        const d = { ...data, workers: [...data.workers, ...items] };
+        await DB.save(d); onUpdate(d); addToast(`Добавлено: ${items.length}`, 'success');
+      }}),
     viewMode === 'list' ? h('div', null,
       showAddForm && renderWorkerForm(),
       filtered.length === 0
@@ -3363,6 +3700,15 @@ const MasterDowntimes = memo(({ data, onUpdate, addToast }) => {
     confirmEl,
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Добавить причину простоя'),
+      h(PasteImportWidget, { addToast, hint: 'Вставить причины простоя из Excel',
+        columns: [{ key: 'name', label: 'Причина простоя', required: true }],
+        onImport: async (rows) => {
+          const existing = new Set(data.downtimeTypes.map(s=>s.name.toLowerCase()));
+          const items = rows.filter(r=>r.name&&!existing.has(r.name.toLowerCase())).map(r=>({id:uid(),name:r.name}));
+          if(!items.length){addToast('Все причины уже существуют','info');return;}
+          const d={...data,downtimeTypes:[...data.downtimeTypes,...items]};
+          await DB.save(d);onUpdate(d);addToast(`Добавлено: ${items.length}`,'success');
+        }}),
       h('div', { style: { display:'flex', gap:8 } },
         h('input', { style: { ...S.inp, flex:1 }, placeholder: 'Нет материала, поломка...', value: newName, onChange: e => setNewName(e.target.value), onKeyDown: e => e.key === 'Enter' && add() }),
         h('button', { type:'button', style: abtn(), onClick: add }, '+ Добавить')
