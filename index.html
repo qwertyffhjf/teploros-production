@@ -176,7 +176,7 @@ const ACHIEVEMENTS = {
   universal_2_3: { icon: '🔄', title: 'Универсал 2.0', desc: 'Работал на 3+ разных участках', condition: (s) => s.uniqueSections >= 3 },
   weekend_5: { icon: '🌙', title: 'Трудоголик', desc: '5 операций в выходные дни', condition: (s) => s.weekendOps >= 5 },
   virtuoso_10: { icon: '🎻', title: 'Виртуоз', desc: '10 операций быстрее 50% плана', condition: (s) => s.fastOps >= 10 },
-  no_downtime_7: { icon: '🛡️', title: 'Антипростой', desc: '7 дней без простоев', condition: (s) => s.downtimes7d === 0 },
+  no_downtime_7: { icon: '🛡️', title: 'Антипростой', desc: '7 дней без простоев', condition: (s) => s.downtimes7d === 0 && s.doneCount >= 5 },
   speed_streak_5: { icon: '🚀', title: 'Скоростной рывок', desc: '5 операций подряд быстрее плана на 20%', condition: (s) => s.bestSpeedStreak >= 5 }
 };
 
