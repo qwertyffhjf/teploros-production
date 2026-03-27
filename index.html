@@ -176,7 +176,7 @@ const ACHIEVEMENTS = {
   universal_2_3: { icon: '🔄', title: 'Универсал 2.0', desc: 'Работал на 3+ разных участках', condition: (s) => s.uniqueSections >= 3 },
   weekend_5: { icon: '🌙', title: 'Трудоголик', desc: '5 операций в выходные дни', condition: (s) => s.weekendOps >= 5 },
   virtuoso_10: { icon: '🎻', title: 'Виртуоз', desc: '10 операций быстрее 50% плана', condition: (s) => s.fastOps >= 10 },
-  no_downtime_7: { icon: '🛡️', title: 'Антипростой', desc: '7 дней без простоев', condition: (s) => s.downtimes7d === 0 && s.doneCount >= 5 },
+  no_downtime_7: { icon: '🛡️', title: 'Антипростой', desc: '7 дней без простоев', condition: (s) => s.downtimes7d === 0 },
   speed_streak_5: { icon: '🚀', title: 'Скоростной рывок', desc: '5 операций подряд быстрее плана на 20%', condition: (s) => s.bestSpeedStreak >= 5 }
 };
 
@@ -5379,6 +5379,91 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+// ==================== InstallPromptBanner ====================
+const InstallPromptBanner = memo(() => {
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [show, setShow] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
+  const [installed, setInstalled] = useState(false);
+
+  useEffect(() => {
+    // Уже установлено как PWA — не показываем
+    if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
+      setInstalled(true); return;
+    }
+    // Ранее отклонил — не показываем 7 дней
+    const dismissed = localStorage.getItem('pwa_install_dismissed');
+    if (dismissed && Date.now() - Number(dismissed) < 7 * 86400000) return;
+
+    // iOS Safari — нет события, показываем инструкцию вручную
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+    if (ios) { setIsIOS(true); setShow(true); return; }
+
+    // Chrome / Edge / Android — ловим beforeinstallprompt
+    const handler = (e) => { e.preventDefault(); setDeferredPrompt(e); setShow(true); };
+    window.addEventListener('beforeinstallprompt', handler);
+    window.addEventListener('appinstalled', () => { setShow(false); setInstalled(true); });
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstall = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') setShow(false);
+    setDeferredPrompt(null);
+  };
+
+  const handleDismiss = () => {
+    setShow(false);
+    localStorage.setItem('pwa_install_dismissed', String(Date.now()));
+  };
+
+  if (!show || installed) return null;
+
+  return h('div', {
+    role: 'banner',
+    style: {
+      position: 'fixed', bottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
+      left: 16, right: 16, zIndex: 500,
+      background: '#1a1a18', color: '#fff',
+      borderRadius: 14, padding: '14px 16px',
+      boxShadow: '0 4px 24px rgba(0,0,0,0.35)',
+      display: 'flex', alignItems: 'flex-start', gap: 12,
+      maxWidth: 480, margin: '0 auto'
+    }
+  },
+    h('div', { style: { fontSize: 28, lineHeight: 1 } }, '📲'),
+    h('div', { style: { flex: 1 } },
+      h('div', { style: { fontWeight: 600, fontSize: 14, marginBottom: 4 } }, 'Установить teploros'),
+      isIOS
+        ? h('div', { style: { fontSize: 12, color: '#bbb', lineHeight: 1.5 } },
+            'Нажмите ',
+            h('span', { style: { color: AM, fontWeight: 500 } }, '«Поделиться»'),
+            ' → ',
+            h('span', { style: { color: AM, fontWeight: 500 } }, '«На экран «Домой»»'),
+            ' — и приложение всегда под рукой'
+          )
+        : h('div', { style: { fontSize: 12, color: '#bbb', lineHeight: 1.5 } },
+            'Работает офлайн, открывается без браузера, занимает < 1 МБ'
+          ),
+      !isIOS && h('button', {
+        style: { ...abtn({ fontSize: 13, padding: '8px 20px', marginTop: 10 }), display: 'inline-block' },
+        onClick: handleInstall
+      }, 'Установить')
+    ),
+    h('button', {
+      onClick: handleDismiss,
+      'aria-label': 'Закрыть',
+      style: {
+        background: 'none', border: 'none', color: '#888',
+        cursor: 'pointer', fontSize: 22, padding: '0 0 0 4px',
+        lineHeight: 1, flexShrink: 0, marginTop: -2
+      }
+    }, '×')
+  );
+});
+
 // ==================== App ====================
 function App() {
   const [data, setData] = useState(EMPTY_DATA);
@@ -5554,7 +5639,8 @@ function App() {
           effectiveRole === 'warehouse' && h(WarehouseScreen, { data, onUpdate: save, addToast }),
           effectiveRole === 'dashboard' && h(Dashboard, { data, addToast })
         ),
-    h('div', { 'aria-live': 'polite' }, toasts.map(t => h(Toast, { key: t.id, message: t.message, onClose: () => removeToast(t.id) })))
+    h('div', { 'aria-live': 'polite' }, toasts.map(t => h(Toast, { key: t.id, message: t.message, onClose: () => removeToast(t.id) }))),
+    h(InstallPromptBanner)
   );
 }
 
