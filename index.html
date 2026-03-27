@@ -368,7 +368,7 @@ const DOC_REF = firestore.collection('app').doc('production_v14');
 const EMPTY_DATA = {
   orders: [], ops: [], workers: [], downtimeTypes: [], events: [], materials: [], sections: [], equipment: [],
   bomTemplates: [], materialConsumptions: [], productionStages: [], defectReasons: [], workerAvailabilities: [],
-  messages: [], reclamations: [], duels: [],
+  messages: [], reclamations: [], duels: [], materialReservations: [],
   settings: {
     // Единый PIN-вход: мастер и контролёр тоже входят по PIN
     masterPin: '0000',
@@ -1759,7 +1759,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
 });
 
 // ==================== ControllerScreen ====================
-const ControllerScreen = memo(({ data, onUpdate, addToast }) => {
+const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const pendingQC = useMemo(() => data.ops.filter(o => o.status === 'on_check' && !o.archived), [data.ops]);
   const acceptOp = useCallback(async (op) => {
     const updated = { ...data, ops: data.ops.map(o => o.id === op.id ? { ...o, status: 'done' } : o), events: [...data.events, { id: uid(), type: 'qc_pass', opId: op.id, ts: now() }] };
@@ -1784,7 +1784,11 @@ const ControllerScreen = memo(({ data, onUpdate, addToast }) => {
               const order = data.orders.find(o => o.id === op.orderId);
               const workerNames = op.workerIds?.map(id => data.workers.find(w => w.id === id)?.name).filter(Boolean).join(', ') || '—';
               return h('tr', { key: op.id },
-                h('td', { style: S.td }, order?.number || '—'),
+                h('td', { style: S.td },
+                  onOrderClick && order
+                    ? h('span', { style: { color: AM, fontWeight: 500, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => onOrderClick(order.id), title: 'Открыть карточку' }, order.number)
+                    : order?.number || '—'
+                ),
                 h('td', { style: S.td }, op.name),
                 h('td', { style: S.td }, workerNames),
                 h('td', { style: S.td }, op.weldParams ? `Шов: ${op.weldParams.seamNumber}, Электрод: ${op.weldParams.electrode}` : '—'),
@@ -2487,7 +2491,7 @@ const MasterDefectReasons = memo(({ data, onUpdate, addToast }) => {
 });
 
 // ==================== MasterOps ====================
-const MasterOps = memo(({ data, onUpdate, onShowQR, addToast }) => {
+const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) => {
   const stagesList = useMemo(() => (data.productionStages || []).map(s => s.name), [data.productionStages]);
   const [form, setForm] = useState({ orderId: '', name: '', workerIds: [], plannedHours: '', sectionId: '', equipmentId: '', plannedStartDate: '', drawingUrl: '' });
   const [filt, setFilt] = useState('all');
@@ -2610,7 +2614,11 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast }) => {
             return [h('tr', { key: op.id, style: { background: op.archived ? '#eee' : (op.status === 'defect' ? RD3 : op.status === 'rework' ? AM3 : op.status === 'on_check' ? '#E1F5FE' : editingId === op.id ? AM3 : 'transparent') } },
               h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 10 } }, op.id),
               h('td', { style: { ...S.td, fontWeight: 500 } }, op.name, op.defectNote && h('div', { style: { fontSize: 10, color: RD } }, op.defectNote)),
-              h('td', { style: { ...S.td, fontSize: 11, color: AM } }, ord?.number || '—'),
+              h('td', { style: { ...S.td, fontSize: 11 } },
+                onOrderClick && ord
+                  ? h('span', { style: { color: AM, fontWeight: 500, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => onOrderClick(ord.id), title: 'Открыть карточку заказа' }, ord.number)
+                  : h('span', { style: { color: AM } }, ord?.number || '—')
+              ),
               h('td', { style: { ...S.td, minWidth: 120 } },
                 (op.workerIds || []).length > 0 && h('div', { style: { display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 4 } },
                   (op.workerIds || []).map(wid => {
@@ -2780,7 +2788,7 @@ const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) =
   );
 });
 
-const MasterOrders = memo(({ data, onUpdate, addToast }) => {
+const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [form, setForm] = useState({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '' });
   const [editingId, setEditingId] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -2857,12 +2865,6 @@ const MasterOrders = memo(({ data, onUpdate, addToast }) => {
 
   const edit = useCallback(ord => { setForm({ number: ord.number, product: ord.product, qty: String(ord.qty), deadline: ord.deadline || '', priority: ord.priority || 'medium', bomId: '' }); setEditingId(ord.id); }, []);
 
-  const generateRouteSheet = useCallback((order) => {
-    const orderOps = data.ops.filter(op => op.orderId === order.id && !op.archived);
-    const docDefinition = { content: [ { text: 'Маршрутный лист', style: 'header' }, { text: `Заказ №: ${order.number}`, style: 'subheader' }, { text: `Изделие: ${order.product}`, margin: [0,0,0,10] }, { text: `Количество: ${order.qty}`, margin: [0,0,0,20] }, { table: { headerRows: 1, widths: ['auto','auto','auto','auto'], body: [ ['Операция','Исполнитель','План. время','Отметка'], ...orderOps.map(op => [ op.name, op.workerIds?.map(id => data.workers.find(w => w.id === id)?.name).filter(Boolean).join(', ') || '—', op.plannedHours ? `${op.plannedHours} ч` : '—', { text: '' } ]) ] } } ], styles: { header: { fontSize: 18, bold: true, margin: [0,0,0,10] }, subheader: { fontSize: 14, bold: true, margin: [0,10,0,5] } } };
-    pdfMake.createPdf(docDefinition).download(`route_${order.number}.pdf`);
-  }, [data.workers, data.ops]);
-
   const ordersToShow = useMemo(() => data.orders.filter(o => showArchived ? true : !o.archived).sort((a,b) => { const priorityOrder = { critical:0, high:1, medium:2, low:3 }; return (priorityOrder[a.priority]||4) - (priorityOrder[b.priority]||4) || (b.createdAt||0) - (a.createdAt||0); }), [data.orders, showArchived]);
   const paginated = useMemo(() => { const start = (page-1)*pageSize; return ordersToShow.slice(start, start+pageSize); }, [ordersToShow, page]);
   useEffect(() => { setPage(1); }, [showArchived]);
@@ -2916,7 +2918,12 @@ const MasterOrders = memo(({ data, onUpdate, addToast }) => {
             const matConsumption = (data.materialConsumptions || []).filter(mc => ops.some(op => op.id === mc.opId));
             const matCost = matConsumption.reduce((s, mc) => { const mat = data.materials.find(m => m.id === mc.materialId); return s + mc.qty * (mat?.unitCost || 0); }, 0);
             return h('tr', { key: ord.id, style: { background: ord.archived ? '#eee' : 'transparent' } },
-              h('td', { style: { ...S.td, color: AM, fontWeight: 500 } }, ord.number, nearDeadline && h('span', { style: { marginLeft: 6, color: RD } }, '⏳')),
+              h('td', { style: { ...S.td, fontWeight: 500 } },
+                onOrderClick
+                  ? h('span', { style: { color: AM, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => onOrderClick(ord.id), title: 'Открыть карточку' }, ord.number)
+                  : h('span', { style: { color: AM } }, ord.number),
+                nearDeadline && h('span', { style: { marginLeft: 6, color: RD } }, '⏳')
+              ),
               h('td', { style: S.td }, ord.product),
               h('td', { style: S.td }, ord.qty),
               h('td', { style: { ...S.td, color: nearDeadline ? RD : '#888' } }, ord.deadline || '—'),
@@ -2929,12 +2936,8 @@ const MasterOrders = memo(({ data, onUpdate, addToast }) => {
                   h('button', { key: 'edit', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Редактировать', onClick: () => edit(ord) }, '✎'),
                   h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'В архив', onClick: () => del(ord.id) }, '✕'),
                   h('button', { key: 'passport', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Паспорт PDF', onClick: () => generateFullPassport(ord, data) }, '📄'),
-                  h('button', { key: 'route', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Маршрутный лист PDF', onClick: () => generateRouteSheet(ord) }, '📋'),
+                  h('button', { key: 'route', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Маршрутный лист PDF', onClick: () => generateRouteSheet(ord, data) }, '📋'),
                   h('button', { key: 'deps', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Зависимости операций', onClick: () => setDepEditorOrderId(ord.id) }, '🔗'),
-                  h('button', { key: 'cost', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Себестоимость', onClick: () => {
-                    const c = calcOrderCost(ord, data);
-                    alert(`Себестоимость заказа ${ord.number}:\n\nТрудозатраты: ${c.laborHours}ч = ${c.laborCost.toLocaleString()}₽\nМатериалы: ${c.materialCost.toLocaleString()}₽\nИТОГО: ${c.totalCost.toLocaleString()}₽\n\nОперации: ${c.opsDone}/${c.opsTotal} завершено`);
-                  }}, '💰')
                 ] : h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Восстановить', onClick: () => restore(ord.id) }, '↩ Восстановить')
               ))
             );
@@ -4046,7 +4049,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
                 const linkedW = rec.opId ? (data.ops.find(o => o.id === rec.opId)?.workerIds || []) : [];
                 const initD8 = { team: linkedW.length ? ['master', ...linkedW] : [], containment: '', whys: ['', '', '', '', ''], rootCause: '', corrective: '', correctiveOwner: '', correctiveDeadline: '', validation: '', validationDate: '', preventive: '', preventiveDocs: '', closedNote: '', currentStep: 0 };
                 const d = { ...data, reclamations: data.reclamations.map(r => r.id === rec.id ? { ...r, d8: initD8 } : r) };
-                DB.save(d); onUpdate(d);
+                DB.save(d).then(() => onUpdate(d));
               }
             } },
               h('div', { style: { flex: 1 } },
@@ -4435,7 +4438,7 @@ const ReportsBuilder = memo(({ data, onUpdate, addToast }) => {
 });
 
 // ==================== MasterScreen ====================
-const MasterScreen = memo(({ data, onUpdate, addToast, sectionId }) => {
+const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick }) => {
   const [tab, setTab] = useState('ops');
   const [qrOpData, setQrOpData] = useState(null);
   const [activeGroup, setActiveGroup] = useState('production');
@@ -4482,13 +4485,13 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId }) => {
         );
       })(),
       h(LoadForecastWidget, { data }),
-      h(MasterOps, { data: filteredData, onUpdate, onShowQR: (op, worker) => setQrOpData({ op, worker }), addToast })
+      h(MasterOps, { data: filteredData, onUpdate, onShowQR: (op, worker) => setQrOpData({ op, worker }), addToast, onOrderClick })
     ),
     tab === 'recommend' && h(AssignmentRecommendations, { data, onUpdate, addToast }),
     tab === 'kanban' && h(MasterKanban, { data, onUpdate, addToast }),
     tab === 'gantt' && h(GanttChart, { data }),
     tab === 'calendar' && h(ResourceCalendar, { data, onUpdate, addToast }),
-    tab === 'orders' && h(MasterOrders, { data, onUpdate, addToast }),
+    tab === 'orders' && h(MasterOrders, { data, onUpdate, addToast, onOrderClick }),
     tab === 'workers' && h(MasterWorkers, { data, onUpdate, addToast }),
     tab === 'stages' && h(MasterProductionStages, { data, onUpdate, addToast }),
     tab === 'defectReasons' && h(MasterDefectReasons, { data, onUpdate, addToast }),
@@ -4552,7 +4555,7 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
   const handleFinish = useCallback(async (isDefect=false, isRework=false, source='current') => {
     if (op.status !== 'in_progress') return;
     const workerId = op.workerIds?.[0];
-    const result = buildFinishUpdate(data, op, { workerId, isDefect, isRework, defectSource: source, defectNote: defNote, defectReasonId, weldParams });
+    const result = buildFinishUpdate(data, op, workerId, { isDefect, isRework, source, defNote, defectReasonId, weldParams });
     const updated = { ...data, ops: result.ops, events: result.events, reclamations: result.reclamations };
     // Достижения — один save
     const allAchUpdated = (op.workerIds || []).reduce((acc, wid) => { const r = checkAchievements(wid, acc); return r; }, updated);
@@ -5153,7 +5156,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
 });
 
 // ==================== Dashboard (Цеховое табло) ====================
-const Dashboard = memo(({ data, addToast }) => {
+const Dashboard = memo(({ data, addToast, onOrderClick }) => {
   const [, setTick] = useState(0);
   useEffect(() => { const t = setInterval(() => setTick(n => n + 1), 15000); return () => clearInterval(t); }, []);
 
@@ -5275,7 +5278,9 @@ const Dashboard = memo(({ data, addToast }) => {
         : ordersProgress.map(o => h('div', { key: o.id, style: { marginBottom: 8 } },
             h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 } },
               h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 } },
-                h('span', { style: { fontWeight: 500 } }, o.number),
+                onOrderClick
+                  ? h('span', { style: { fontWeight: 500, color: AM, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => onOrderClick(o.id), title: 'Открыть карточку' }, o.number)
+                  : h('span', { style: { fontWeight: 500 } }, o.number),
                 h('span', { style: { color: '#888' } }, o.product),
                 o.hasDefect && h('span', { style: { fontSize: 10, color: RD, fontWeight: 500 } }, '⚠'),
                 o.daysLeft !== null && h('span', { style: { fontSize: 10, padding: '1px 6px', borderRadius: 4, background: o.daysLeft <= 0 ? RD3 : o.daysLeft <= 3 ? AM3 : GN3, color: o.daysLeft <= 0 ? RD : o.daysLeft <= 3 ? AM2 : GN2 } }, o.daysLeft <= 0 ? 'просрочен' : `${o.daysLeft}д`)
@@ -5379,90 +5384,209 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-// ==================== InstallPromptBanner ====================
-const InstallPromptBanner = memo(() => {
-  const [deferredPrompt, setDeferredPrompt] = useState(null);
-  const [show, setShow] = useState(false);
-  const [isIOS, setIsIOS] = useState(false);
-  const [installed, setInstalled] = useState(false);
+// ==================== OrderDetailModal ====================
+const OrderDetailModal = memo(({ orderId, data, onClose }) => {
+  // ── Все хуки ПЕРЕД любым условным return ──
+  const ops = useMemo(() => {
+    // O(n) сортировка через Map индексов этапов
+    const stageIndex = new Map((data.productionStages || []).map((s, i) => [s.name, i]));
+    return data.ops
+      .filter(o => o.orderId === orderId && !o.archived)
+      .sort((a, b) => (stageIndex.get(a.name) ?? 99) - (stageIndex.get(b.name) ?? 99));
+  }, [data.ops, data.productionStages, orderId]);
 
-  useEffect(() => {
-    // Уже установлено как PWA — не показываем
-    if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
-      setInstalled(true); return;
-    }
-    // Ранее отклонил — не показываем 7 дней
-    const dismissed = localStorage.getItem('pwa_install_dismissed');
-    if (dismissed && Date.now() - Number(dismissed) < 7 * 86400000) return;
+const OrderDetailModal = memo(({ orderId, data, onClose }) => {
+  // ── Все хуки ПЕРЕД любым условным return (Rules of Hooks) ──
 
-    // iOS Safari — нет события, показываем инструкцию вручную
-    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
-    if (ios) { setIsIOS(true); setShow(true); return; }
+  // O(n) сортировка через Map индексов этапов
+  const ops = useMemo(() => {
+    const stageIndex = new Map((data.productionStages || []).map((s, i) => [s.name, i]));
+    return data.ops
+      .filter(o => o.orderId === orderId && !o.archived)
+      .sort((a, b) => (stageIndex.get(a.name) ?? 99) - (stageIndex.get(b.name) ?? 99));
+  }, [data.ops, data.productionStages, orderId]);
 
-    // Chrome / Edge / Android — ловим beforeinstallprompt
-    const handler = (e) => { e.preventDefault(); setDeferredPrompt(e); setShow(true); };
-    window.addEventListener('beforeinstallprompt', handler);
-    window.addEventListener('appinstalled', () => { setShow(false); setInstalled(true); });
-    return () => window.removeEventListener('beforeinstallprompt', handler);
-  }, []);
+  // Себестоимость — зависит только от нужных массивов, не от объекта order
+  const cost = useMemo(
+    () => calcOrderCost({ id: orderId }, data),
+    [orderId, data.ops, data.materialConsumptions, data.materials]
+  );
 
-  const handleInstall = async () => {
-    if (!deferredPrompt) return;
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === 'accepted') setShow(false);
-    setDeferredPrompt(null);
-  };
+  const reclamations = useMemo(
+    () => (data.reclamations || []).filter(r => r.orderId === orderId),
+    [data.reclamations, orderId]
+  );
 
-  const handleDismiss = () => {
-    setShow(false);
-    localStorage.setItem('pwa_install_dismissed', String(Date.now()));
-  };
+  // Ранний return — только после всех хуков
+  const order = data.orders.find(o => o.id === orderId);
+  if (!order) return null;
 
-  if (!show || installed) return null;
+  const doneOps   = ops.filter(o => o.status === 'done');
+  const activeOps = ops.filter(o => o.status === 'in_progress');
+  const defectOps = ops.filter(o => o.status === 'defect' || o.status === 'rework');
+  const checkOps  = ops.filter(o => o.status === 'on_check');
+  const pct = ops.length > 0 ? Math.round(doneOps.length / ops.length * 100) : 0;
+
+  const priority = PRIORITY[order.priority] || PRIORITY.medium;
+  const daysLeft = order.deadline
+    ? Math.ceil((new Date(order.deadline).getTime() - Date.now()) / 86400000)
+    : null;
+  const deadlineColor = daysLeft === null ? '#888' : daysLeft < 0 ? RD : daysLeft <= 2 ? AM : GN;
+
+  // Lead time
+  const finishedDates = doneOps.filter(o => o.finishedAt).map(o => o.finishedAt);
+  const startedDates  = ops.filter(o => o.startedAt).map(o => o.startedAt);
+  const leadTime = finishedDates.length && startedDates.length
+    ? fmtDur(Math.max(...finishedDates) - Math.min(...startedDates)) : '—';
 
   return h('div', {
-    role: 'banner',
-    style: {
-      position: 'fixed', bottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
-      left: 16, right: 16, zIndex: 500,
-      background: '#1a1a18', color: '#fff',
-      borderRadius: 14, padding: '14px 16px',
-      boxShadow: '0 4px 24px rgba(0,0,0,0.35)',
-      display: 'flex', alignItems: 'flex-start', gap: 12,
-      maxWidth: 480, margin: '0 auto'
-    }
+    role: 'dialog', 'aria-modal': 'true', 'aria-label': `Заказ ${order.number}`,
+    style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 300, overflowY: 'auto', padding: '16px 8px' },
+    onClick: e => { if (e.target === e.currentTarget) onClose(); }
   },
-    h('div', { style: { fontSize: 28, lineHeight: 1 } }, '📲'),
-    h('div', { style: { flex: 1 } },
-      h('div', { style: { fontWeight: 600, fontSize: 14, marginBottom: 4 } }, 'Установить teploros'),
-      isIOS
-        ? h('div', { style: { fontSize: 12, color: '#bbb', lineHeight: 1.5 } },
-            'Нажмите ',
-            h('span', { style: { color: AM, fontWeight: 500 } }, '«Поделиться»'),
-            ' → ',
-            h('span', { style: { color: AM, fontWeight: 500 } }, '«На экран «Домой»»'),
-            ' — и приложение всегда под рукой'
+    h('div', { style: { background: '#fff', borderRadius: 14, width: 'min(700px, 100%)', maxHeight: 'none', boxShadow: '0 8px 40px rgba(0,0,0,0.22)' } },
+
+      // ── Шапка ──
+      h('div', { style: { padding: '18px 20px 14px', borderBottom: '0.5px solid rgba(0,0,0,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' } },
+        h('div', null,
+          h('div', { style: { fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 } }, 'Заказ'),
+          h('div', { style: { fontSize: 22, fontWeight: 600, color: AM2, lineHeight: 1.1 } }, order.number),
+          h('div', { style: { fontSize: 14, color: '#444', marginTop: 4 } }, order.product),
+          h('div', { style: { display: 'flex', gap: 10, marginTop: 8, flexWrap: 'wrap' } },
+            h('span', { style: { padding: '3px 10px', borderRadius: 8, background: AM3, color: AM2, fontSize: 11, fontWeight: 500 } }, `Кол-во: ${order.qty}`),
+            h('span', { style: { padding: '3px 10px', borderRadius: 8, fontSize: 11, fontWeight: 500, color: priority.color, background: '#f5f5f2', border: `0.5px solid ${priority.color}` } }, priority.label),
+            order.deadline && h('span', { style: { padding: '3px 10px', borderRadius: 8, fontSize: 11, fontWeight: 500, color: deadlineColor, background: '#f5f5f2' } },
+              `📅 ${order.deadline}${daysLeft !== null ? ` (${daysLeft < 0 ? `просрочен ${Math.abs(daysLeft)}д` : daysLeft === 0 ? 'сегодня' : `${daysLeft}д`})` : ''}`
+            ),
+            h('span', { style: { padding: '3px 10px', borderRadius: 8, fontSize: 11, color: '#888', background: '#f5f5f2' } }, `Lead time: ${leadTime}`)
           )
-        : h('div', { style: { fontSize: 12, color: '#bbb', lineHeight: 1.5 } },
-            'Работает офлайн, открывается без браузера, занимает < 1 МБ'
+        ),
+        h('button', { onClick: onClose, 'aria-label': 'Закрыть', style: { background: 'none', border: 'none', fontSize: 24, color: '#aaa', cursor: 'pointer', lineHeight: 1, padding: 4 } }, '×')
+      ),
+
+      // ── Прогресс ──
+      h('div', { style: { padding: '14px 20px', borderBottom: '0.5px solid rgba(0,0,0,0.06)' } },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 } },
+          h('div', { style: { fontSize: 12, fontWeight: 500 } }, `Выполнено операций: ${doneOps.length} / ${ops.length}`),
+          h('div', { style: { fontSize: 14, fontWeight: 600, color: pct === 100 ? GN : AM } }, `${pct}%`)
+        ),
+        h('div', { style: { height: 10, background: '#f0ede8', borderRadius: 6, overflow: 'hidden' } },
+          h('div', { style: { height: '100%', width: `${pct}%`, background: pct === 100 ? GN : AM, borderRadius: 6, transition: 'width .3s' } })
+        ),
+        h('div', { style: { display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap' } },
+          activeOps.length > 0 && h('span', { style: { fontSize: 11, color: AM2 } }, `▶ В работе: ${activeOps.length}`),
+          checkOps.length > 0  && h('span', { style: { fontSize: 11, color: '#0277BD' } }, `🔍 Контроль: ${checkOps.length}`),
+          defectOps.length > 0 && h('span', { style: { fontSize: 11, color: RD } }, `⚠ Проблемы: ${defectOps.length}`),
+          ops.filter(o => o.status === 'pending').length > 0 && h('span', { style: { fontSize: 11, color: '#888' } }, `⏳ Ожидают: ${ops.filter(o => o.status === 'pending').length}`)
+        )
+      ),
+
+      // ── Операции ──
+      h('div', { style: { padding: '14px 20px', borderBottom: '0.5px solid rgba(0,0,0,0.06)' } },
+        h('div', { style: S.sec }, 'Операции'),
+        ops.length === 0
+          ? h('div', { style: { fontSize: 12, color: '#888' } }, 'Нет операций')
+          : h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+              h('thead', null, h('tr', null,
+                ['Операция', 'Исполнитель', 'Статус', 'Длительность', 'vs план'].map((t, i) =>
+                  h('th', { key: i, style: S.th }, t))
+              )),
+              h('tbody', null, ops.map(op => {
+                const workers = (op.workerIds || []).map(id => data.workers.find(w => w.id === id)?.name).filter(Boolean);
+                const dur = op.startedAt && op.finishedAt ? op.finishedAt - op.startedAt
+                  : op.startedAt ? Date.now() - op.startedAt : null;
+                const vsplan = dur && op.plannedHours
+                  ? Math.round(dur / (op.plannedHours * 3600000) * 100)
+                  : null;
+                const vsColor = vsplan === null ? '#888' : vsplan <= 100 ? GN : vsplan <= 130 ? AM : RD;
+                return h('tr', { key: op.id, style: { background: op.status === 'defect' ? RD3 : op.status === 'in_progress' ? AM3 : 'transparent' } },
+                  h('td', { style: { ...S.td, fontWeight: 500 } },
+                    op.name,
+                    op.defectNote && h('div', { style: { fontSize: 10, color: RD, marginTop: 2 } }, op.defectNote)
+                  ),
+                  h('td', { style: { ...S.td, fontSize: 11 } }, workers.join(', ') || h('span', { style: { color: '#ccc' } }, '—')),
+                  h('td', { style: S.td }, h(Badge, { st: op.status })),
+                  h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 11 } },
+                    dur ? fmtDur(dur) + (op.status === 'in_progress' ? ' ↻' : '') : '—'
+                  ),
+                  h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 11, color: vsColor, fontWeight: vsplan ? 500 : 400 } },
+                    vsplan !== null ? `${vsplan}%` : op.plannedHours ? `план ${op.plannedHours}ч` : '—'
+                  )
+                );
+              }))
+            ))
+      ),
+
+      // ── Себестоимость ──
+      h('div', { style: { padding: '14px 20px', borderBottom: '0.5px solid rgba(0,0,0,0.06)' } },
+        h('div', { style: S.sec }, 'Себестоимость'),
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 } },
+          h('div', { style: { textAlign: 'center', padding: '10px 8px', background: '#f8f8f5', borderRadius: 8 } },
+            h('div', { style: { fontSize: 18, fontWeight: 600, color: AM2 } }, `${cost.laborHours}ч`),
+            h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'Трудозатраты')
           ),
-      !isIOS && h('button', {
-        style: { ...abtn({ fontSize: 13, padding: '8px 20px', marginTop: 10 }), display: 'inline-block' },
-        onClick: handleInstall
-      }, 'Установить')
-    ),
-    h('button', {
-      onClick: handleDismiss,
-      'aria-label': 'Закрыть',
-      style: {
-        background: 'none', border: 'none', color: '#888',
-        cursor: 'pointer', fontSize: 22, padding: '0 0 0 4px',
-        lineHeight: 1, flexShrink: 0, marginTop: -2
-      }
-    }, '×')
+          h('div', { style: { textAlign: 'center', padding: '10px 8px', background: '#f8f8f5', borderRadius: 8 } },
+            h('div', { style: { fontSize: 18, fontWeight: 600, color: AM2 } }, `${cost.materialCost.toLocaleString()}₽`),
+            h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'Материалы')
+          ),
+          h('div', { style: { textAlign: 'center', padding: '10px 8px', background: AM3, borderRadius: 8 } },
+            h('div', { style: { fontSize: 18, fontWeight: 600, color: AM2 } }, `${cost.totalCost.toLocaleString()}₽`),
+            h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase' } }, 'Итого')
+          )
+        )
+      ),
+
+      // ── Дефекты / рекламации ──
+      (defectOps.length > 0 || reclamations.length > 0) && h('div', { style: { padding: '14px 20px', borderBottom: '0.5px solid rgba(0,0,0,0.06)' } },
+        h('div', { style: S.sec }, 'Дефекты и рекламации'),
+        defectOps.length > 0 && h('div', { style: { marginBottom: 8 } },
+          defectOps.map(op => {
+            const reason = (data.defectReasons || []).find(r => r.id === op.defectReasonId);
+            return h('div', { key: op.id, style: { padding: '6px 10px', background: RD3, borderRadius: 6, marginBottom: 4, fontSize: 12 } },
+              h('span', { style: { fontWeight: 500, color: RD2 } }, op.name),
+              reason && h('span', { style: { color: '#666', marginLeft: 8 } }, `· ${reason.name}`),
+              op.defectNote && h('span', { style: { color: '#888', marginLeft: 8 } }, op.defectNote)
+            );
+          })
+        ),
+        reclamations.length > 0 && h('div', { style: { fontSize: 12, color: '#666' } },
+          `Рекламаций: ${reclamations.length} (${reclamations.filter(r => r.status === 'open').length} открытых)`
+        )
+      ),
+
+      // ── Кнопки PDF ──
+      h('div', { style: { padding: '14px 20px', display: 'flex', gap: 8, flexWrap: 'wrap' } },
+        h('button', { style: gbtn({ fontSize: 12 }), onClick: () => generateRouteSheet(order, data) }, '📋 Маршрутный лист'),
+        h('button', { style: gbtn({ fontSize: 12 }), onClick: () => generateFullPassport(order, data) }, '📄 Паспорт изделия'),
+        h('button', { style: gbtn({ fontSize: 12 }), onClick: onClose }, 'Закрыть')
+      )
+    )
   );
 });
+
+// Вспомогательная функция маршрутного листа (вынесена наружу для переиспользования)
+function generateRouteSheet(order, data) {
+  const orderOps = (data?.ops || []).filter(op => op.orderId === order.id && !op.archived);
+  const docDefinition = {
+    content: [
+      { text: 'Маршрутный лист', style: 'header' },
+      { text: `Заказ №: ${order.number}`, style: 'subheader' },
+      { text: `Изделие: ${order.product}`, margin: [0,0,0,10] },
+      { text: `Количество: ${order.qty}`, margin: [0,0,0,20] },
+      { table: { headerRows: 1, widths: ['auto','auto','auto','auto'], body: [
+        ['Операция','Исполнитель','План. время','Отметка'],
+        ...orderOps.map(op => [
+          op.name,
+          (op.workerIds||[]).map(id => (data?.workers||[]).find(w=>w.id===id)?.name).filter(Boolean).join(', ') || '—',
+          op.plannedHours ? `${op.plannedHours} ч` : '—',
+          { text: '' }
+        ])
+      ]}}
+    ],
+    styles: { header: { fontSize: 18, bold: true, margin:[0,0,0,10] }, subheader: { fontSize: 14, bold: true, margin:[0,10,0,5] } }
+  };
+  pdfMake.createPdf(docDefinition).download(`route_${order.number}.pdf`);
+}
 
 // ==================== App ====================
 function App() {
@@ -5476,6 +5600,7 @@ function App() {
   const [initialOpId, setInitialOpId] = useState(null);
   const [showChat, setShowChat] = useState(false);
   const [toasts, setToasts] = useState([]);
+  const [selectedOrderId, setSelectedOrderId] = useState(null);
   const savingRef = useRef(false);
 
   useEffect(() => {
@@ -5524,8 +5649,13 @@ function App() {
   const save = useCallback((d) => {
     savingRef.current = true;
     setData(d);
+    setIsSaving(true);
     DB.save(d);
-    setTimeout(() => { savingRef.current = false; }, 1500);
+    // Debounce Firebase 1000ms + запас на запись ~500ms
+    setTimeout(() => {
+      savingRef.current = false;
+      setIsSaving(false);
+    }, 1800);
   }, []);
 
   // Мониторинг ошибок сохранения
@@ -5633,14 +5763,14 @@ function App() {
     showChat
       ? h(ChatScreen, { data, onUpdate: save, addToast, currentUser, onBack: () => setShowChat(false) })
       : h('div', null,
-          effectiveRole === 'master' && h(MasterScreen, { data, onUpdate: save, addToast, sectionId }),
-          effectiveRole === 'controller' && h(ControllerScreen, { data, onUpdate: save, addToast }),
+          effectiveRole === 'master' && h(MasterScreen, { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId }),
+          effectiveRole === 'controller' && h(ControllerScreen, { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId }),
           effectiveRole === 'worker' && workerId && h(WorkerScreen, { data, workerId, sectionId, onUpdate: save, initialOpId: null, addToast }),
           effectiveRole === 'warehouse' && h(WarehouseScreen, { data, onUpdate: save, addToast }),
-          effectiveRole === 'dashboard' && h(Dashboard, { data, addToast })
+          effectiveRole === 'dashboard' && h(Dashboard, { data, addToast, onOrderClick: setSelectedOrderId })
         ),
-    h('div', { 'aria-live': 'polite' }, toasts.map(t => h(Toast, { key: t.id, message: t.message, onClose: () => removeToast(t.id) }))),
-    h(InstallPromptBanner)
+    selectedOrderId && h(OrderDetailModal, { orderId: selectedOrderId, data, onClose: () => setSelectedOrderId(null) }),
+    h('div', { 'aria-live': 'polite' }, toasts.map(t => h(Toast, { key: t.id, message: t.message, onClose: () => removeToast(t.id) })))
   );
 }
 
