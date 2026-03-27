@@ -418,7 +418,21 @@ const DB = {
         toSave.ops = (toSave.ops || []).filter(o => !oldIds.has(o.orderId));
         console.log(`Автоочистка: удалено ${oldArchived.length} архивных заказов старше 90 дней`);
       }
-      localStorage.setItem('prod_app_v14_cache', JSON.stringify(toSave));
+      // Проверка размера payload (лимит Firestore = 1 МБ на документ)
+      const payload = JSON.stringify(toSave);
+      const sizeKb = Math.round(payload.length / 1024);
+      if (sizeKb > 900) {
+        // Агрессивная очистка: уменьшаем лимиты вдвое
+        toSave.events = (toSave.events || []).slice(-1000);
+        toSave.materialConsumptions = (toSave.materialConsumptions || []).slice(-1000);
+        DB._lastError = `⚠ Размер данных ${sizeKb} КБ — приближается к лимиту 1 МБ. Архивируйте старые заказы.`;
+        console.warn(`Payload size: ${sizeKb} KB — near Firestore 1MB limit`);
+      } else if (sizeKb > 700) {
+        DB._sizeWarning = sizeKb;
+      } else {
+        DB._sizeWarning = null;
+      }
+      localStorage.setItem('prod_app_v14_cache', payload);
       if (DB._saveTimer) clearTimeout(DB._saveTimer);
       DB._saveTimer = setTimeout(() => {
         DOC_REF.set({ payload: JSON.stringify(toSave), updatedAt: firebase.firestore.FieldValue.serverTimestamp() })
@@ -428,6 +442,7 @@ const DB = {
   },
   _saveTimer: null,
   _lastError: null,
+  _sizeWarning: null,
   onSnapshot(callback) {
     return DOC_REF.onSnapshot(snap => {
       if (snap.exists) {
@@ -462,6 +477,29 @@ const S = {
 const abtn = (e) => ({ padding: '8px 14px', background: AM, color: AM2, border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 500, ...e });
 const gbtn = (e) => ({ padding: '8px 14px', background: 'transparent', color: '#666', border: '0.5px solid rgba(0,0,0,0.2)', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 500, ...e });
 const rbtn = (e) => ({ padding: '8px 14px', background: RD3, color: RD2, border: `0.5px solid ${RD}`, borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 500, ...e });
+
+// ==================== useConfirm (заменяет все confirm()) ====================
+const useConfirm = () => {
+  const [cfg, setCfg] = useState(null);
+  const ask = useCallback((opts) => new Promise(resolve =>
+    setCfg({ msg: opts.message || 'Вы уверены?', detail: opts.detail || '', danger: opts.danger ?? true, resolve })
+  ), []);
+  const answer = useCallback((yes) => { if (cfg) { cfg.resolve(yes); setCfg(null); } }, [cfg]);
+  const confirmEl = cfg ? h('div', {
+    role: 'dialog', 'aria-modal': 'true',
+    style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 400, padding: 16 }
+  },
+    h('div', { style: { background: '#fff', borderRadius: 12, padding: 24, width: 'min(360px,100%)', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' } },
+      h('div', { style: { fontSize: 15, fontWeight: 500, marginBottom: cfg.detail ? 6 : 20, lineHeight: 1.4 } }, cfg.msg),
+      cfg.detail && h('div', { style: { fontSize: 12, color: '#888', marginBottom: 20, lineHeight: 1.5 } }, cfg.detail),
+      h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
+        h('button', { style: gbtn({ minWidth: 80 }), onClick: () => answer(false) }, 'Отмена'),
+        h('button', { style: cfg.danger ? rbtn({ minWidth: 80 }) : abtn({ minWidth: 80 }), onClick: () => answer(true) }, 'Подтвердить')
+      )
+    )
+  ) : null;
+  return { ask, confirmEl };
+};
 
 const Badge = memo(({ st }) => {
   const s = STATUS[st] || STATUS.pending;
@@ -1635,7 +1673,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
           // П.13: Кнопка начала (с приёмкой)
           op.status === 'pending' && depsComplete && h('div', null,
             h('button', { type: 'button', style: abtn({ width: '100%', padding: '10px' }), onClick: () => {
-              if (confirm('Визуальный осмотр изделия проведён. Принять в работу?')) doStart(op);
+              (async () => { if (await askConfirm({ message: 'Принять изделие в работу?', detail: 'Подтвердите что визуальный осмотр проведён', danger: false })) doStart(op); })();
             }}, '✓ Принять и начать'),
           ),
           op.status === 'pending' && !depsComplete && h('div', { style: { fontSize: 11, color: '#888', textAlign: 'center', padding: 4 } }, 'Ожидание завершения предыдущих этапов')
@@ -1789,17 +1827,36 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
 // ==================== ControllerScreen ====================
 const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const pendingQC = useMemo(() => data.ops.filter(o => o.status === 'on_check' && !o.archived), [data.ops]);
+  const [rejectModal, setRejectModal] = useState(null); // { op } | null
+  const [rejectNote, setRejectNote] = useState('');
+
   const acceptOp = useCallback(async (op) => {
     const updated = { ...data, ops: data.ops.map(o => o.id === op.id ? { ...o, status: 'done' } : o), events: [...data.events, { id: uid(), type: 'qc_pass', opId: op.id, ts: now() }] };
     await DB.save(updated); onUpdate(updated); addToast('Операция принята', 'success');
   }, [data, onUpdate, addToast]);
-  const rejectOp = useCallback(async (op) => {
-    const note = prompt('Причина брака');
-    if (note === null) return;
-    const updated = { ...data, ops: data.ops.map(o => o.id === op.id ? { ...o, status: 'defect', defectNote: note } : o), events: [...data.events, { id: uid(), type: 'qc_reject', opId: op.id, ts: now(), note }] };
-    await DB.save(updated); onUpdate(updated); addToast('Операция забракована', 'info');
-  }, [data, onUpdate, addToast]);
+
+  const confirmReject = useCallback(async () => {
+    if (!rejectModal) return;
+    const note = rejectNote.trim();
+    const updated = { ...data, ops: data.ops.map(o => o.id === rejectModal.op.id ? { ...o, status: 'defect', defectNote: note || 'Не прошло контроль качества' } : o), events: [...data.events, { id: uid(), type: 'qc_reject', opId: rejectModal.op.id, ts: now(), note }] };
+    await DB.save(updated); onUpdate(updated);
+    addToast('Операция забракована', 'info');
+    setRejectModal(null); setRejectNote('');
+  }, [data, onUpdate, addToast, rejectModal, rejectNote]);
+
   return h('div', null,
+    // Модалка отклонения — вместо prompt()
+    rejectModal && h('div', { role: 'dialog', 'aria-modal': 'true', style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 } },
+      h('div', { style: { background: '#fff', borderRadius: 12, padding: 20, width: 'min(380px,100%)' } },
+        h('div', { style: { fontSize: 14, fontWeight: 500, marginBottom: 4 } }, '⚠ Брак: ' + rejectModal.op.name),
+        h('div', { style: { fontSize: 11, color: '#888', marginBottom: 12 } }, 'Укажите причину — это поможет при анализе'),
+        h('textarea', { style: { ...S.inp, width: '100%', marginBottom: 12 }, rows: 3, placeholder: 'Опишите дефект или причину отклонения...', value: rejectNote, onChange: e => setRejectNote(e.target.value), autoFocus: true }),
+        h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
+          h('button', { style: gbtn(), onClick: () => { setRejectModal(null); setRejectNote(''); } }, 'Отмена'),
+          h('button', { style: rbtn({ padding: '8px 20px' }), onClick: confirmReject }, 'Забраковать')
+        )
+      )
+    ),
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Операции, ожидающие контроля'),
       pendingQC.length === 0
@@ -1822,7 +1879,7 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
                 h('td', { style: S.td }, op.weldParams ? `Шов: ${op.weldParams.seamNumber}, Электрод: ${op.weldParams.electrode}` : '—'),
                 h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
                   h('button', { style: abtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Принять операцию', onClick: () => acceptOp(op) }, 'Принять'),
-                  h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Забраковать операцию', onClick: () => rejectOp(op) }, 'Брак')
+                  h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Забраковать операцию', onClick: () => { setRejectModal({ op }); setRejectNote(''); } }, 'Брак')
                 ))
               );
             }))
@@ -1908,6 +1965,7 @@ const MasterJournal = memo(({ data }) => {
 // ==================== MasterSections ====================
 const MasterSections = memo(({ data, onUpdate, addToast }) => {
   const [newName, setNewName] = useState('');
+  const { ask: askConfirm, confirmEl } = useConfirm();
   const add = useCallback(async () => {
     if (!newName.trim()) return;
     const newSection = { id: uid(), name: newName.trim() };
@@ -1915,11 +1973,12 @@ const MasterSections = memo(({ data, onUpdate, addToast }) => {
     await DB.save(d); onUpdate(d); setNewName(''); addToast('Участок добавлен', 'success');
   }, [data, newName, onUpdate, addToast]);
   const del = useCallback(async (id) => {
-    if (!confirm('Удалить участок?')) return;
+    if (!(await askConfirm({ message: 'Удалить участок?' }))) return;
     const d = { ...data, sections: data.sections.filter(s => s.id !== id), workers: data.workers.map(w => w.sectionId === id ? { ...w, sectionId: null } : w), ops: data.ops.map(o => o.sectionId === id ? { ...o, sectionId: null } : o) };
     await DB.save(d); onUpdate(d); addToast('Участок удалён', 'info');
-  }, [data, onUpdate, addToast]);
+  }, [data, askConfirm, onUpdate, addToast]);
   return h('div', null,
+    confirmEl,
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Добавить участок'),
       h('div', { style: { display: 'flex', gap: 8 } },
@@ -1942,6 +2001,7 @@ const MasterSections = memo(({ data, onUpdate, addToast }) => {
 const MasterEquipment = memo(({ data, onUpdate, addToast }) => {
   const EQ_STATUS = { active: { label: 'Работает', bg: GN3, cl: GN2 }, maintenance: { label: 'На ТО', bg: AM3, cl: AM2 }, repair: { label: 'Ремонт', bg: RD3, cl: RD2 }, decommissioned: { label: 'Списано', bg: '#f0f0f0', cl: '#888' } };
   const [form, setForm] = useState({ name: '', type: '', inventoryNo: '', status: 'active' });
+  const { ask: askConfirm, confirmEl } = useConfirm();
   const [editingId, setEditingId] = useState(null);
   const add = useCallback(async () => {
     if (!form.name.trim()) return;
@@ -1955,7 +2015,7 @@ const MasterEquipment = memo(({ data, onUpdate, addToast }) => {
     }
     setForm({ name: '', type: '', inventoryNo: '', status: 'active' });
   }, [data, form, editingId, onUpdate, addToast]);
-  const del = useCallback(async (id) => { if (!confirm('Удалить?')) return; const d = { ...data, equipment: data.equipment.filter(e => e.id !== id) }; await DB.save(d); onUpdate(d); addToast('Удалено', 'info'); }, [data, onUpdate, addToast]);
+  const del = useCallback(async (id) => { if (!(await askConfirm({ message: 'Удалить?' }))) return; const d = { ...data, equipment: data.equipment.filter(e => e.id !== id) }; await DB.save(d); onUpdate(d); addToast('Удалено', 'info'); }, [data, onUpdate, addToast]);
   const edit = useCallback((eq) => { setForm({ name: eq.name, type: eq.type || '', inventoryNo: eq.inventoryNo || '', status: eq.status || 'active' }); setEditingId(eq.id); }, []);
 
   // Подсчёт наработки
@@ -1968,6 +2028,7 @@ const MasterEquipment = memo(({ data, onUpdate, addToast }) => {
   }, [data.ops]);
 
   return h('div', null,
+    confirmEl,
     h('div', { style: S.card },
       h('div', { style: S.sec }, editingId ? 'Редактировать' : 'Добавить оборудование'),
       h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
@@ -2010,6 +2071,7 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
   const [editingId, setEditingId] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
   const [search, setSearch] = useState('');
+  const { ask: askConfirm, confirmEl } = useConfirm();
 
   const validate = () => {
     const errors = {};
@@ -2032,7 +2094,7 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
       await DB.save(d); onUpdate(d); resetForm(); addToast('Материал добавлен', 'success');
     }
   }, [form, editingId, data, onUpdate, addToast]);
-  const del = useCallback(async (id) => { if (!confirm('Удалить материал?')) return; const d = { ...data, materials: data.materials.filter(m => m.id !== id) }; await DB.save(d); onUpdate(d); addToast('Удалён', 'info'); }, [data, onUpdate, addToast]);
+  const del = useCallback(async (id) => { if (!(await askConfirm({ message: 'Удалить материал?' }))) return; const d = { ...data, materials: data.materials.filter(m => m.id !== id) }; await DB.save(d); onUpdate(d); addToast('Удалён', 'info'); }, [data, onUpdate, addToast]);
   const edit = useCallback((m) => { setForm({ name: m.name, unit: m.unit, quantity: String(m.quantity), batch: m.batch || '', unitCost: m.unitCost ? String(m.unitCost) : '', minStock: m.minStock ? String(m.minStock) : '' }); setEditingId(m.id); }, []);
 
   // Импорт из Excel
@@ -2083,6 +2145,7 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
   const totalValue = data.materials.reduce((s, m) => s + m.quantity * (m.unitCost || 0), 0);
 
   return h('div', null,
+    confirmEl,
     // Предупреждение о критических остатках
     lowStock.length > 0 && h('div', { role: 'alert', style: { ...S.card, background: RD3, border: `0.5px solid ${RD}`, marginBottom: 12 } },
       h('div', { style: { fontSize: 10, color: RD, textTransform: 'uppercase', fontWeight: 500, marginBottom: 6 } }, `⚠ Критические остатки (${lowStock.length})`),
@@ -2143,6 +2206,7 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
 // ==================== MasterBOM ====================
 const MasterBOM = memo(({ data, onUpdate, addToast }) => {
   const [form, setForm] = useState({ productName: '' });
+  const { ask: askConfirm, confirmEl } = useConfirm();
   const [editingId, setEditingId] = useState(null);
   const [matForm, setMatForm] = useState({ bomId: '', materialId: '', qty: '' });
 
@@ -2154,7 +2218,7 @@ const MasterBOM = memo(({ data, onUpdate, addToast }) => {
   }, [data, form, onUpdate, addToast]);
 
   const del = useCallback(async (id) => {
-    if (!confirm('Удалить спецификацию?')) return;
+    if (!(await askConfirm({ message: 'Удалить спецификацию?' }))) return;
     const d = { ...data, bomTemplates: data.bomTemplates.filter(b => b.id !== id) };
     await DB.save(d); onUpdate(d); addToast('Удалена', 'info');
   }, [data, onUpdate, addToast]);
@@ -2219,6 +2283,7 @@ const MasterBOM = memo(({ data, onUpdate, addToast }) => {
   }, [data.materials]);
 
   return h('div', null,
+    confirmEl,
     // Импорт
     h('div', { style: { display: 'flex', gap: 8, marginBottom: 12 } },
       h('button', { style: abtn(), onClick: () => document.getElementById('bom-import-xlsx').click() }, '📤 Импорт BOM из Excel'),
@@ -2403,6 +2468,7 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
   const [newName, setNewName] = useState('');
   const [editingChecklist, setEditingChecklist] = useState(null);
   const [newCheckItem, setNewCheckItem] = useState('');
+  const { ask: askConfirm, confirmEl } = useConfirm();
   const addStage = async () => {
     if (!newName.trim()) return;
     const newStage = { id: uid(), name: newName.trim(), checklist: [] };
@@ -2410,7 +2476,7 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
     await DB.save(d); onUpdate(d); setNewName(''); addToast('Этап добавлен', 'success');
   };
   const deleteStage = async (id) => {
-    if (!confirm('Удалить этап?')) return;
+    if (!(await askConfirm({ message: 'Удалить этап?' }))) return;
     const d = { ...data, productionStages: (data.productionStages || []).filter(s => s.id !== id) };
     await DB.save(d); onUpdate(d); addToast('Этап удалён', 'info');
   };
@@ -2436,6 +2502,7 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
     await DB.save(d); onUpdate(d);
   };
   return h('div', null,
+    confirmEl,
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Добавить этап производства'),
       h('div', { style: { display: 'flex', gap: 8 } },
@@ -2494,12 +2561,13 @@ const MasterDefectReasons = memo(({ data, onUpdate, addToast }) => {
     await DB.save(d); onUpdate(d); setNewName(''); addToast('Причина брака добавлена', 'success');
   }, [data, newName, onUpdate, addToast]);
   const del = useCallback(async (id) => {
-    if (!confirm('Удалить причину брака?')) return;
+    if (!(await askConfirm({ message: 'Удалить причину брака?' }))) return;
     if (data.ops.some(op => op.defectReasonId === id)) { addToast('Нельзя удалить причину, уже использованную', 'error'); return; }
     const d = { ...data, defectReasons: (data.defectReasons || []).filter(r => r.id !== id) };
     await DB.save(d); onUpdate(d); addToast('Причина удалена', 'info');
   }, [data, onUpdate, addToast]);
   return h('div', null,
+    confirmEl,
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Добавить причину брака'),
       h('div', { style: { display: 'flex', gap: 8 } },
@@ -2520,7 +2588,9 @@ const MasterDefectReasons = memo(({ data, onUpdate, addToast }) => {
 
 // ==================== MasterOps ====================
 const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) => {
-  const stagesList = useMemo(() => (data.productionStages || []).map(s => s.name), [data.productionStages]);
+  const stagesList = useMemo(() => (data.productionStages || []).map(s => s.name)
+, [data.productionStages]);
+  const { ask: askConfirm, confirmEl } = useConfirm();
   const [form, setForm] = useState({ orderId: '', name: '', workerIds: [], plannedHours: '', sectionId: '', equipmentId: '', plannedStartDate: '', drawingUrl: '' });
   const [filt, setFilt] = useState('all');
   const [editingId, setEditingId] = useState(null);
@@ -2567,7 +2637,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
   }, [form, editingId, data, onUpdate, addToast]);
 
   const del = useCallback(async (id) => {
-    if (!confirm('Переместить операцию в архив?')) return;
+    if (!(await askConfirm({ message: 'Переместить операцию в архив?', danger: false }))) return;
     let d = { ...data, ops: data.ops.map(o => o.id === id ? { ...o, archived: true } : o) };
     d = logAction(d, 'op_archive', { opId: id, opName: data.ops.find(o => o.id === id)?.name });
     await DB.save(d); onUpdate(d); addToast('Операция архивирована', 'info');
@@ -2605,6 +2675,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
   useEffect(() => { setPage(1); }, [filt, showArchived]);
 
   return h('div', null,
+    confirmEl,
     // Форма создания — только для новых операций
     !editingId && h('div', { style: S.card },
       h('div', { style: S.sec }, 'Создать операцию'),
@@ -2817,7 +2888,9 @@ const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) =
 });
 
 const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
-  const [form, setForm] = useState({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '' });
+  const [form, setForm] = useState({ number: '', product: '',
+ qty: '', deadline: '', priority: 'medium', bomId: '' });
+  const { ask: askConfirm, confirmEl } = useConfirm();
   const [editingId, setEditingId] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
   const [page, setPage] = useState(1);
@@ -2879,7 +2952,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   }, [form, editingId, data, createDefaultOps, onUpdate, addToast]);
 
   const del = useCallback(async id => {
-    if (!confirm('Переместить заказ в архив?')) return;
+    if (!(await askConfirm({ message: 'Переместить заказ в архив?', danger: false }))) return;
     let d = { ...data, orders: data.orders.map(o => o.id === id ? { ...o, archived: true } : o) };
     d = logAction(d, 'order_archive', { orderId: id, orderNumber: data.orders.find(o => o.id === id)?.number });
     await DB.save(d); onUpdate(d); addToast('Заказ архивирован', 'info');
@@ -2898,6 +2971,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   useEffect(() => { setPage(1); }, [showArchived]);
 
   return h('div', null,
+    confirmEl,
     depEditorOrderId && h(DependencyEditor, { data, orderId: depEditorOrderId, onUpdate, addToast, onClose: () => setDepEditorOrderId(null) }),
     h('div', { style: S.card },
       h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
@@ -2988,6 +3062,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
   const [editingWorker, setEditingWorker] = useState(null);
   const [cardWorker, setCardWorker] = useState(null);
   const [thanksModal, setThanksModal] = useState(null);
+  const { ask: askConfirm, confirmEl } = useConfirm();
   const [thanksNote, setThanksNote] = useState('');
   const [form, setForm] = useState({ name: '', position: '', grade: '', tabNumber: '', pin: '', sectionId: '', competences: [], status: 'working' });
 
@@ -3010,7 +3085,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
   }, [form, editingWorker, data, onUpdate, addToast]);
 
   const del = useCallback(async id => {
-    if (!confirm('Архивировать сотрудника? Его история операций сохранится.')) return;
+    if (!(await askConfirm({ message: 'Архивировать сотрудника?', detail: 'История операций сохранится.' }))) return;
     const name = data.workers.find(w => w.id === id)?.name;
     let d = { ...data,
       workers: data.workers.map(w => w.id === id ? { ...w, archived: true, status: 'absent' } : w),
@@ -3024,7 +3099,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
     const w = data.workers.find(w => w.id === id);
     const hasOps = data.ops.some(op => op.workerIds?.includes(id) && (op.status === 'done' || op.status === 'in_progress'));
     if (hasOps) { addToast('Нельзя удалить: у сотрудника есть выполненные операции. Используйте архивирование.', 'error'); return; }
-    if (!confirm(`Полностью удалить ${w?.name || ''}? Это действие необратимо.`)) return;
+    if (!(await askConfirm({ message: `Удалить ${w?.name || ''}?`, detail: 'Это действие необратимо.' }))) return;
     const d = { ...data,
       workers: data.workers.filter(w => w.id !== id),
       ops: data.ops.map(o => o.workerIds?.includes(id) ? { ...o, workerIds: o.workerIds.filter(wid => wid !== id) } : o)
@@ -3085,6 +3160,16 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
 
   const toggleCompetence = (comp) => { setForm(p => ({ ...p, competences: p.competences.includes(comp) ? p.competences.filter(c => c !== comp) : [...p.competences, comp] })); };
   const stagesForMatrix = useMemo(() => data.productionStages || [], [data.productionStages]);
+  const archivedCount = useMemo(() => data.workers.filter(w => w.archived).length, [data.workers]);
+  // Покрытие навыков: Map<stageName, count> — мемоизируем чтобы не пересчитывать в render
+  const competenceCoverage = useMemo(() => {
+    const map = {};
+    const active = data.workers.filter(w => !w.archived && (w.status || 'working') === 'working');
+    (data.productionStages || []).forEach(s => {
+      map[s.name] = active.filter(w => (w.competences || []).includes(s.name)).length;
+    });
+    return map;
+  }, [data.workers, data.productionStages]);
 
   const renderWorkerForm = (isInline = false) => h('div', { style: isInline ? {} : { ...S.card, border: `1px solid ${AM}`, marginBottom: 16 } },
     !isInline && h('div', { style: S.sec }, editingWorker ? 'Редактировать сотрудника' : 'Новый сотрудник'),
@@ -3110,6 +3195,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
   );
 
   return h('div', null,
+    confirmEl,
     cardWorker && h(WorkerCardModal, { worker: cardWorker, data, onClose: () => setCardWorker(null) }),
     thanksModal && h('div', { role:'dialog','aria-modal':'true','aria-label':'Отправить благодарность', style: { position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:200 } },
       h('div', { style: { background:'#fff',borderRadius:12,padding:24,width:'min(320px, calc(100vw - 32px))' } },
@@ -3132,7 +3218,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
       h('div', { style: { display:'flex', gap:4, flexWrap:'wrap' } }, [['all','Все'],['working','На смене'],['absent','Отсутствуют'],['sick','Больничный'],['vacation','Отпуск']].map(([id,label]) => h('button', { key: id, style: statusFilter === id ? abtn({ fontSize:11, padding:'5px 10px' }) : gbtn({ fontSize:11, padding:'5px 10px' }), onClick: () => setStatusFilter(id) }, label))),
       h('label', { style: { display:'flex', alignItems:'center', gap:4, fontSize:12, cursor:'pointer', whiteSpace:'nowrap' } },
         h('input', { type:'checkbox', checked: showArchivedWorkers, onChange: e => setShowArchivedWorkers(e.target.checked) }),
-        `Архив (${data.workers.filter(w => w.archived).length})`
+        `Архив (${archivedCount})`
       ),
       !showArchivedWorkers && h('button', { style: abtn({ marginLeft:'auto' }), onClick: () => { resetForm(); setShowAddForm(true); } }, '+ Добавить')
     ),
@@ -3208,7 +3294,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
         h('div', { style: { ...S.sec, marginBottom: 6 } }, 'Покрытие навыков'),
         h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
           stagesForMatrix.map(s => {
-            const count = data.workers.filter(w => (w.competences || []).includes(s.name) && (w.status || 'working') === 'working').length;
+            const count = competenceCoverage[s.name] ?? 0;
             const color = count === 0 ? RD : count <= 2 ? AM : GN;
             const bg = count === 0 ? RD3 : count <= 2 ? AM3 : GN3;
             return h('div', { key: s.id, style: { padding: '6px 10px', borderRadius: 8, background: bg, border: `0.5px solid ${color}`, fontSize: 11, textAlign: 'center', minWidth: 80 } },
@@ -3226,7 +3312,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
         h('thead', null, h('tr', null,
           h('th', { style: S.th, scope: 'col' }, 'Сотрудник'),
           stagesForMatrix.map(s => {
-            const count = data.workers.filter(w => (w.competences || []).includes(s.name) && (w.status || 'working') === 'working').length;
+            const count = competenceCoverage[s.name] ?? 0;
             const color = count === 0 ? RD : count <= 2 ? AM : GN;
             return h('th', { key: s.id, style: { ...S.th, borderBottom: `3px solid ${color}` } }, s.name);
           })
@@ -3259,6 +3345,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
 // ==================== MasterDowntimes ====================
 const MasterDowntimes = memo(({ data, onUpdate, addToast }) => {
   const [newName, setNewName] = useState('');
+  const { ask: askConfirm, confirmEl } = useConfirm();
   const add = useCallback(async () => {
     if (!newName.trim()) return;
     if (data.downtimeTypes.some(d => d.name.toLowerCase() === newName.trim().toLowerCase())) { addToast('Такая причина уже существует', 'error'); return; }
@@ -3267,12 +3354,13 @@ const MasterDowntimes = memo(({ data, onUpdate, addToast }) => {
     await DB.save(d); onUpdate(d); setNewName(''); addToast('Причина простоя добавлена', 'success');
   }, [data, newName, onUpdate, addToast]);
   const del = useCallback(async (id) => {
-    if (!confirm('Удалить причину простоя?')) return;
+    if (!(await askConfirm({ message: 'Удалить причину простоя?' }))) return;
     if (data.events.some(e => e.downtimeTypeId === id)) { addToast('Нельзя удалить причину, уже использованную', 'error'); return; }
     const d = { ...data, downtimeTypes: data.downtimeTypes.filter(dt => dt.id !== id) };
     await DB.save(d); onUpdate(d); addToast('Причина удалена', 'info');
   }, [data, onUpdate, addToast]);
   return h('div', null,
+    confirmEl,
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Добавить причину простоя'),
       h('div', { style: { display:'flex', gap:8 } },
@@ -3733,7 +3821,9 @@ const KPIReport = memo(({ data }) => {
 
 // ==================== Рекомендации по назначениям ====================
 const AssignmentRecommendations = memo(({ data, onUpdate, addToast }) => {
-  const recommendations = useMemo(() => getAssignmentRecommendations(data), [data]);
+  const recommendations = useMemo(() => getAssignmentRecommendations(data)
+, [data]);
+  const { ask: askConfirm, confirmEl } = useConfirm();
 
   const assignWorker = useCallback(async (opId, workerId) => {
     const op = data.ops.find(o => o.id === opId);
@@ -3745,7 +3835,7 @@ const AssignmentRecommendations = memo(({ data, onUpdate, addToast }) => {
   }, [data, onUpdate, addToast]);
 
   const assignAll = useCallback(async () => {
-    if (!confirm(`Назначить лучших кандидатов на ${recommendations.length} операций?`)) return;
+    if (!(await askConfirm({ message: `Назначить кандидатов на ${recommendations.length} операций?`, danger: false }))) return;
     let updated = { ...data };
     let count = 0;
     recommendations.forEach(rec => {
@@ -3762,6 +3852,7 @@ const AssignmentRecommendations = memo(({ data, onUpdate, addToast }) => {
   }, [data, recommendations, onUpdate, addToast]);
 
   return h('div', null,
+    confirmEl,
     h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } },
       h('div', { style: S.sec }, `Рекомендации по назначениям (${recommendations.length} без исполнителя)`),
       recommendations.length > 0 && h('button', { style: abtn(), onClick: assignAll }, `🤖 Назначить всех (${recommendations.length})`)
@@ -3801,7 +3892,8 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
   const [expandedId, setExpandedId] = useState(null);
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterType, setFilterType] = useState('all');
-  const [d8Steps, setD8Steps] = useState({}); // { recId: stepIndex }
+  const [d8Steps, setD8Steps] = useState({});
+  const { ask: askConfirm, confirmEl } = useConfirm();
 
   const severityStyle = { critical: { bg: RD3, cl: RD2, label: 'Критическая', border: RD }, major: { bg: '#FFF3E0', cl: '#E65100', label: 'Серьёзная', border: '#FF9800' }, minor: { bg: '#FFF8E1', cl: '#F57F17', label: 'Незначительная', border: '#FFC107' } };
   const statusStyle = { open: { bg: RD3, cl: RD, label: 'Открыта' }, in_work: { bg: AM3, cl: AM2, label: 'В работе' }, closed: { bg: GN3, cl: GN2, label: 'Закрыта' } };
@@ -3860,12 +3952,13 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
   }, [data, onUpdate, addToast]);
 
   const delRec = useCallback(async (id) => {
-    if (!confirm('Удалить рекламацию?')) return;
+    if (!(await askConfirm({ message: 'Удалить рекламацию?' }))) return;
     const d = { ...data, reclamations: (data.reclamations || []).filter(r => r.id !== id) };
     await DB.save(d); onUpdate(d); addToast('Удалена', 'info');
   }, [data, onUpdate, addToast]);
 
-  const allRecs = useMemo(() => (data.reclamations || []).sort((a, b) => b.createdAt - a.createdAt), [data.reclamations]);
+  const allRecs = useMemo(() => (data.reclamations || [])
+.sort((a, b) => b.createdAt - a.createdAt), [data.reclamations]);
   const isExternal = (r) => r.defectSource === 'external';
   const isInternal = (r) => r.defectSource !== 'external';
   const filtered = useMemo(() => {
@@ -4017,6 +4110,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
   };
 
   return h('div', null,
+    confirmEl,
     // Сводка
     h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 10, marginBottom: 12 } },
       h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: allRecs.length > 0 ? AM : GN } }, allRecs.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Всего')),
@@ -4482,6 +4576,17 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick }
     if (!sectionId) return data;
     return { ...data, ops: data.ops.filter(o => o.sectionId === sectionId || !o.sectionId), workers: data.workers.filter(w => w.sectionId === sectionId || !w.sectionId) };
   }, [data, sectionId]);
+
+  // Сводка мастера — мемоизируем чтобы не пересчитывать на каждый рендер
+  const masterSummary = useMemo(() => {
+    const activeOps   = data.ops.filter(o => o.status === 'in_progress' && !o.archived);
+    const pendingOps  = data.ops.filter(o => o.status === 'pending' && !o.archived);
+    const defectOps   = data.ops.filter(o => (o.status === 'defect' || o.status === 'rework') && !o.archived);
+    const onCheckOps  = data.ops.filter(o => o.status === 'on_check' && !o.archived);
+    const wipOrders   = data.orders.filter(o => !o.archived && data.ops.some(op => op.orderId === o.id && op.status === 'in_progress'));
+    const freeWorkers = data.workers.filter(w => (w.status || 'working') === 'working' && !data.ops.some(op => op.status === 'in_progress' && op.workerIds?.includes(w.id)));
+    return { activeOps, pendingOps, defectOps, onCheckOps, wipOrders, freeWorkers };
+  }, [data.ops, data.orders, data.workers]);
   return h('div', { style: { padding:'0 0 24px' } },
     qrOpData && h(QRModal, { ops:[qrOpData.op], order: data.orders.find(o => o.id === qrOpData.op.orderId), worker: qrOpData.worker, onClose: () => setQrOpData(null) }),
     // Группы вкладок
@@ -4495,14 +4600,9 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick }
       )
     ),
     tab === 'ops' && h('div', null,
-      // П.14: Сводка мастера
+      // Сводка мастера
       (() => {
-        const activeOps = data.ops.filter(o => o.status === 'in_progress' && !o.archived);
-        const pendingOps = data.ops.filter(o => o.status === 'pending' && !o.archived);
-        const defectOps = data.ops.filter(o => (o.status === 'defect' || o.status === 'rework') && !o.archived);
-        const onCheckOps = data.ops.filter(o => o.status === 'on_check' && !o.archived);
-        const wipOrders = data.orders.filter(o => !o.archived && data.ops.some(op => op.orderId === o.id && op.status === 'in_progress'));
-        const freeWorkers = data.workers.filter(w => (w.status || 'working') === 'working' && !data.ops.some(op => op.status === 'in_progress' && op.workerIds?.includes(w.id)));
+        const { activeOps, pendingOps, defectOps, onCheckOps, wipOrders, freeWorkers } = masterSummary;
         return h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 8, marginBottom: 16 } },
           h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500, color: AM } }, activeOps.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'В работе')),
           h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500, color: BL } }, pendingOps.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Ожидают')),
@@ -4562,16 +4662,9 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
     return () => clearInterval(t);
   }, [op?.status]);
 
-  if (!op || op.archived) return h('div', { style: { ...S.card, textAlign:'center', padding: 24 } },
-    h('div', { style: { fontSize: 16, marginBottom: 8 } }, '⏳ Поиск операции...'),
-    h('div', { style: { fontSize: 12, color: '#888', marginBottom: 16 } }, `ID: ${opId}`),
-    h('div', { style: { fontSize: 12, color: '#888' } }, 'Если операция не появится — данные ещё не синхронизированы. Обновите страницу.'),
-    h('button', { style: abtn({ marginTop: 12 }), onClick: () => window.location.reload() }, '🔄 Обновить')
-  );
-  const elapsed = op.startedAt && !op.finishedAt ? now() - op.startedAt : 0;
-
+  // ── Все useCallback ДО раннего return (Rules of Hooks) ──
   const handleStart = useCallback(async () => {
-    if (op.status !== 'pending') return;
+    if (!op || op.status !== 'pending') return;
     const workerId = op.workerIds?.[0];
     const worker = data.workers.find(w => w.id === workerId);
     if (worker && worker.competences && worker.competences.length > 0 && !worker.competences.includes(op.name)) { addToast('У сотрудника нет компетенции', 'error'); return; }
@@ -4581,11 +4674,10 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
   }, [data, op, onUpdate, addToast]);
 
   const handleFinish = useCallback(async (isDefect=false, isRework=false, source='current') => {
-    if (op.status !== 'in_progress') return;
+    if (!op || op.status !== 'in_progress') return;
     const workerId = op.workerIds?.[0];
     const result = buildFinishUpdate(data, op, workerId, { isDefect, isRework, source, defNote, defectReasonId, weldParams });
     const updated = { ...data, ops: result.ops, events: result.events, reclamations: result.reclamations };
-    // Достижения — один save
     const allAchUpdated = (op.workerIds || []).reduce((acc, wid) => { const r = checkAchievements(wid, acc); return r; }, updated);
     const final = allAchUpdated !== updated ? allAchUpdated : updated;
     await DB.save(final); onUpdate(final);
@@ -4594,12 +4686,24 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
   }, [data, op, onUpdate, defNote, defectReasonId, weldParams, addToast]);
 
   const recordDowntime = useCallback(async () => {
-    if (!selectedDowntimeType) return addToast('Выберите причину', 'error');
-    const shift = getCurrentShift(data.settings?.shifts); const duration = downtimeStartedAt ? now() - downtimeStartedAt : 0;
+    if (!op || !selectedDowntimeType) return addToast('Выберите причину', 'error');
+    const shift = getCurrentShift(data.settings?.shifts);
+    const duration = downtimeStartedAt ? now() - downtimeStartedAt : 0;
     const newEvent = { id: uid(), type:'downtime', workerId: op.workerIds?.[0], opId: op.id, ts: now(), downtimeTypeId: selectedDowntimeType, shift, startedAt: downtimeStartedAt || now(), duration, equipmentId: downtimeEquipmentId || undefined };
     const updated = { ...data, events: [...data.events, newEvent] };
-    await DB.save(updated); onUpdate(updated); setShowDowntimeModal(false); setSelectedDowntimeType(''); setDowntimeStartedAt(null); setDowntimeEquipmentId(''); addToast('Простой зафиксирован', 'success');
+    await DB.save(updated); onUpdate(updated);
+    setShowDowntimeModal(false); setSelectedDowntimeType(''); setDowntimeStartedAt(null); setDowntimeEquipmentId('');
+    addToast('Простой зафиксирован', 'success');
   }, [data, op, selectedDowntimeType, downtimeStartedAt, onUpdate, addToast]);
+
+  // ── Ранний return — только после всех хуков ──
+  if (!op || op.archived) return h('div', { style: { ...S.card, textAlign:'center', padding: 24 } },
+    h('div', { style: { fontSize: 16, marginBottom: 8 } }, '⏳ Поиск операции...'),
+    h('div', { style: { fontSize: 12, color: '#888', marginBottom: 16 } }, `ID: ${opId}`),
+    h('div', { style: { fontSize: 12, color: '#888' } }, 'Если операция не появится — данные ещё не синхронизированы. Обновите страницу.'),
+    h('button', { style: abtn({ marginTop: 12 }), onClick: () => window.location.reload() }, '🔄 Обновить')
+  );
+  const elapsed = op.startedAt && !op.finishedAt ? now() - op.startedAt : 0;
 
   const renderQRActions = () => {
     if (showDefForm) return h('div', null,
@@ -4762,9 +4866,9 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
   const activeDuels = useMemo(() => (data.duels || []).filter(d => d.status === 'active'), [data.duels]);
   const myDuels = useMemo(() => activeDuels.filter(d => d.challengerId === myId || d.opponentId === myId), [activeDuels, myId]);
 
-  const messages = (data.messages || []).sort((a, b) => a.timestamp - b.timestamp);
-  const pinnedMessages = messages.filter(m => m.pinned);
-  const regularMessages = messages.filter(m => !m.pinned);
+  const messages = useMemo(() => (data.messages || []).slice().sort((a, b) => a.timestamp - b.timestamp), [data.messages]);
+  const pinnedMessages = useMemo(() => messages.filter(m => m.pinned), [messages]);
+  const regularMessages = useMemo(() => messages.filter(m => !m.pinned), [messages]);
 
   // Стили сообщений по типу
   const typeStyles = {
@@ -5096,69 +5200,116 @@ const detect1C = (arr) => {
 };
 
 const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMode = 'receipt' }) => {
-  const [step, setStep] = useState('upload');
-  const [rawRows, setRawRows] = useState([]);
-  const [headers, setHeaders] = useState([]);
-  const [colMap, setColMap] = useState({ name: '', qty: '', unit: '', price: '' });
-  const [mode, setMode] = useState(defaultMode);
-  const [invoice, setInvoice] = useState({ number: '', date: new Date().toISOString().slice(0, 10), supplier: '' });
-  const [preview, setPreview] = useState([]);
+  const [step, setStep]         = useState('upload');
+  const [inputMethod, setInputMethod] = useState('file'); // file | paste | grid
+  const [rawRows, setRawRows]   = useState([]);
+  const [headers, setHeaders]   = useState([]);
+  const [colMap, setColMap]     = useState({ name: '', qty: '', unit: '', price: '' });
+  const [mode, setMode]         = useState(defaultMode);
+  const [invoice, setInvoice]   = useState({ number: '', date: new Date().toISOString().slice(0, 10), supplier: '' });
+  const [preview, setPreview]   = useState([]);
   const [invoiceError, setInvoiceError] = useState('');
-  const [is1C, setIs1C] = useState(false);
+  const [is1C, setIs1C]         = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  // Для grid-редактора
+  const [gridRows, setGridRows] = useState([
+    { name: '', qty: '', unit: 'шт', price: '' },
+    { name: '', qty: '', unit: 'шт', price: '' },
+    { name: '', qty: '', unit: 'шт', price: '' },
+  ]);
 
-  // ── Шаг 1: читаем файл ──
-  const handleFile = useCallback((e) => {
-    const file = e.target.files[0]; if (!file) return;
+  // ── Общий парсер массива строк (после получения данных любым методом) ──
+  const processArr = useCallback((arr) => {
+    if (arr.length < 1) { addToast('Нет данных', 'error'); return; }
+    const c1 = detect1C(arr);
+    if (c1) {
+      setHeaders(['Наименование', 'Количество', 'Единица', 'Цена', 'Код']);
+      setRawRows(c1.rows);
+      setColMap({ name: 'Наименование', qty: 'Количество', unit: 'Единица', price: 'Цена' });
+      setInvoice({ number: c1.invoiceNumber || '', date: c1.date || new Date().toISOString().slice(0, 10), supplier: c1.supplier || '' });
+      setIs1C(true); setStep('map'); return;
+    }
+    // Стандартный формат
+    const hdrs = arr[0].map(h => h.toString().trim()).filter(Boolean);
+    const rows = arr.slice(1).filter(r => r.some(c => c !== '')).map(r => {
+      const obj = {}; hdrs.forEach((h, i) => { obj[h] = r[i] ?? ''; }); return obj;
+    });
+    setHeaders(hdrs); setRawRows(rows);
+    setColMap({
+      name:  detectCol(hdrs, ['наим','назв','матер','name','товар','номенкл']),
+      qty:   detectCol(hdrs, ['кол','qty','количес','остат','приход']),
+      unit:  detectCol(hdrs, ['ед','unit','мера','измер']),
+      price: detectCol(hdrs, ['цен','price','стоим']),
+    });
+    setIs1C(false); setStep('map');
+  }, [addToast]);
+
+  // ── Метод 1: файл (+ drag & drop) ──
+  const processFile = useCallback((file) => {
+    if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
         const wb = XLSX.read(ev.target.result, { type: 'array' });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const arr = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-        if (arr.length < 2) { addToast('Файл пустой или нет данных', 'error'); return; }
-
-        // Пробуем 1С-детектор первым
-        const c1 = detect1C(arr);
-        if (c1) {
-          const hdrs = ['Наименование', 'Количество', 'Единица', 'Цена', 'Код'];
-          setHeaders(hdrs);
-          setRawRows(c1.rows);
-          setColMap({ name: 'Наименование', qty: 'Количество', unit: 'Единица', price: 'Цена' });
-          setInvoice({ number: c1.invoiceNumber || '', date: c1.date || new Date().toISOString().slice(0, 10), supplier: c1.supplier || '' });
-          setIs1C(true);
-          setStep('map');
-          return;
-        }
-
-        // Стандартный табличный формат
-        const hdrs = arr[0].map(h => h.toString().trim()).filter(Boolean);
-        const rows = arr.slice(1).filter(r => r.some(c => c !== '')).map(r => {
-          const obj = {};
-          hdrs.forEach((h, i) => { obj[h] = r[i] ?? ''; });
-          return obj;
-        });
-        setHeaders(hdrs);
-        setRawRows(rows);
-        setColMap({
-          name:  detectCol(hdrs, ['наим','назв','матер','name','товар','номенкл']),
-          qty:   detectCol(hdrs, ['кол','qty','количес','остат','приход']),
-          unit:  detectCol(hdrs, ['ед','unit','мера','измер']),
-          price: detectCol(hdrs, ['цен','price','стоим']),
-        });
-        setIs1C(false);
-        setStep('map');
+        processArr(XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }));
       } catch(ex) { addToast('Ошибка чтения: ' + ex.message, 'error'); }
     };
     reader.readAsArrayBuffer(file);
-    e.target.value = '';
-  }, [addToast]);
+  }, [processArr, addToast]);
 
-  // ── Шаг 2 → 3: строим превью ──
+  const handleFile = useCallback((e) => { processFile(e.target.files[0]); e.target.value = ''; }, [processFile]);
+
+  const handleDrop = useCallback((e) => {
+    e.preventDefault(); setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    if (!file.name.match(/\.(xlsx|xls|csv)$/i)) { addToast('Поддерживаются только .xlsx, .xls, .csv', 'error'); return; }
+    processFile(file);
+  }, [processFile, addToast]);
+
+  // ── Метод 2: вставка из буфера (Ctrl+V / Cmd+V) ──
+  // Excel копирует ячейки как TSV (tab-separated)
+  const handlePaste = useCallback((e) => {
+    e.preventDefault();
+    const text = e.clipboardData?.getData('text') || '';
+    if (!text.trim()) { addToast('Буфер обмена пуст', 'error'); return; }
+    const arr = text.trim().split('\n').map(line =>
+      line.split('\t').map(cell => cell.trim().replace(/^"|"$/g, ''))
+    ).filter(row => row.some(c => c));
+    if (arr.length < 1) { addToast('Не удалось распознать данные', 'error'); return; }
+    // Если первая строка похожа на заголовки (содержит нечисловые значения)
+    const firstRowHasText = arr[0].some(c => c && isNaN(Number(c.replace(',', '.'))));
+    if (!firstRowHasText && arr.length >= 1) {
+      // Нет заголовков — добавляем автоматические
+      arr.unshift(['Наименование', 'Количество', 'Единица', 'Цена']);
+    }
+    processArr(arr);
+  }, [processArr, addToast]);
+
+  // ── Метод 3: grid-редактор ──
+  const updateGridRow = useCallback((i, field, val) => {
+    setGridRows(prev => prev.map((r, idx) => idx === i ? { ...r, [field]: val } : r));
+  }, []);
+  const addGridRow = useCallback(() => {
+    setGridRows(prev => [...prev, { name: '', qty: '', unit: 'шт', price: '' }]);
+  }, []);
+  const removeGridRow = useCallback((i) => {
+    setGridRows(prev => prev.filter((_, idx) => idx !== i));
+  }, []);
+  const submitGrid = useCallback(() => {
+    const valid = gridRows.filter(r => r.name.trim() && r.qty);
+    if (valid.length === 0) { addToast('Заполните хотя бы одну строку', 'error'); return; }
+    const hdrs = ['Наименование', 'Количество', 'Единица', 'Цена'];
+    const arr = [hdrs, ...valid.map(r => [r.name.trim(), r.qty, r.unit || 'шт', r.price || ''])];
+    processArr(arr);
+  }, [gridRows, processArr, addToast]);
+
+  // ── buildPreview ──
   const buildPreview = useCallback(() => {
     if (!colMap.name) { addToast('Укажите колонку с названием', 'error'); return; }
     const rows = rawRows.map(r => {
-      const name = (r[colMap.name] || '').toString().trim();
-      if (!name) return null;
+      const name = (r[colMap.name] || '').toString().trim(); if (!name) return null;
       const qty   = parseFloat((r[colMap.qty]   || '').toString().replace(',', '.')) || 0;
       const unit  = colMap.unit  ? ((r[colMap.unit]  || '').toString().trim() || 'шт') : 'шт';
       const price = colMap.price ? (parseFloat((r[colMap.price] || '').toString().replace(',', '.')) || 0) : 0;
@@ -5171,47 +5322,37 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
       }
       return { name, qty, unit, price, match, matchType };
     }).filter(Boolean);
-    setPreview(rows);
-    setStep('preview');
+    setPreview(rows); setStep('preview');
   }, [rawRows, colMap, data.materials, addToast]);
 
-  // ── Шаг 3: сохраняем ──
+  // ── handleSave ──
   const handleSave = useCallback(async () => {
     if (mode === 'receipt' && !invoice.number.trim()) { setInvoiceError('Введите номер накладной'); return; }
     setInvoiceError('');
-    const ts = now();
-    const batchId = uid();
+    const ts = now(), batchId = uid();
     let materials = [...data.materials];
     const newEvents = [...data.events];
-
     preview.forEach(row => {
       const qty = row.qty;
       if (mode === 'receipt') {
         const existing = row.match && row.matchType !== 'new' ? row.match : null;
         if (existing) {
-          materials = materials.map(m => m.id === existing.id
-            ? { ...m, quantity: m.quantity + qty, ...(row.price ? { unitCost: row.price } : {}) } : m);
-          newEvents.push({ id: uid(), type: 'material_receive', materialId: existing.id, qty, ts,
-            invoiceNumber: invoice.number.trim(), invoiceDate: invoice.date,
-            supplier: invoice.supplier.trim(), batchId, unit: existing.unit });
+          materials = materials.map(m => m.id === existing.id ? { ...m, quantity: m.quantity + qty, ...(row.price ? { unitCost: row.price } : {}) } : m);
+          newEvents.push({ id: uid(), type: 'material_receive', materialId: existing.id, qty, ts, invoiceNumber: invoice.number.trim(), invoiceDate: invoice.date, supplier: invoice.supplier.trim(), batchId, unit: existing.unit });
         } else {
           const nm = { id: uid(), name: row.name, unit: row.unit, quantity: qty, unitCost: row.price || 0, minStock: 0, batch: '' };
           materials.push(nm);
-          newEvents.push({ id: uid(), type: 'material_receive', materialId: nm.id, qty, ts,
-            invoiceNumber: invoice.number.trim(), invoiceDate: invoice.date,
-            supplier: invoice.supplier.trim(), batchId, unit: row.unit });
+          newEvents.push({ id: uid(), type: 'material_receive', materialId: nm.id, qty, ts, invoiceNumber: invoice.number.trim(), invoiceDate: invoice.date, supplier: invoice.supplier.trim(), batchId, unit: row.unit });
         }
       } else {
         const existing = row.match && row.matchType !== 'new' ? row.match : null;
         if (existing) {
-          materials = materials.map(m => m.id === existing.id
-            ? { ...m, quantity: qty, ...(row.price ? { unitCost: row.price } : {}) } : m);
+          materials = materials.map(m => m.id === existing.id ? { ...m, quantity: qty, ...(row.price ? { unitCost: row.price } : {}) } : m);
         } else {
           materials.push({ id: uid(), name: row.name, unit: row.unit, quantity: qty, unitCost: row.price || 0, minStock: 0, batch: '' });
         }
       }
     });
-
     const d = { ...data, materials, events: newEvents };
     await DB.save(d); onUpdate(d);
     const nc = preview.filter(r => r.matchType === 'new').length;
@@ -5222,15 +5363,16 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
 
   const rowStyle = (t) => ({ exact: { bg: GN3, color: GN2, label: '✓ Точно' }, fuzzy: { bg: AM3, color: AM2, label: '~ Похоже' }, new: { bg: '#EEF2FF', color: '#3730A3', label: '+ Новое' } }[t] || {});
 
+  // ── Рендер ──
   return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 300, overflowY: 'auto', padding: '16px 8px' }, onClick: e => e.target === e.currentTarget && onClose() },
     h('div', { style: { background: '#fff', borderRadius: 14, width: 'min(700px,100%)', boxShadow: '0 8px 40px rgba(0,0,0,0.2)' } },
 
       // Шапка
       h('div', { style: { padding: '18px 20px 14px', borderBottom: '0.5px solid rgba(0,0,0,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
         h('div', null,
-          h('div', { style: { fontSize: 16, fontWeight: 600 } }, '📤 Импорт материалов из Excel'),
+          h('div', { style: { fontSize: 16, fontWeight: 600 } }, '📤 Импорт материалов'),
           h('div', { style: { fontSize: 11, color: '#888', marginTop: 2 } },
-            step === 'upload' ? 'Шаг 1 из 3 — Загрузите файл' :
+            step === 'upload' ? 'Шаг 1 из 3 — Выберите способ ввода' :
             step === 'map'    ? 'Шаг 2 из 3 — Настройте колонки' :
                                 'Шаг 3 из 3 — Проверьте данные и подтвердите'
           )
@@ -5240,24 +5382,99 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
 
       h('div', { style: { padding: '16px 20px 20px' } },
 
-        // ── Шаг 1: загрузка ──
+        // ── Шаг 1: выбор метода ──
         step === 'upload' && h('div', null,
-          h('label', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', border: `2px dashed ${AM}`, borderRadius: 12, padding: '40px 20px', cursor: 'pointer', background: AM3, gap: 12 } },
-            h('div', { style: { fontSize: 36 } }, '📂'),
-            h('div', { style: { fontSize: 14, fontWeight: 500, color: AM2 } }, 'Нажмите или перетащите файл'),
-            h('div', { style: { fontSize: 11, color: '#888' } }, 'Поддерживаются .xlsx, .xls, .csv · Накладные из 1С определяются автоматически'),
-            h('input', { type: 'file', accept: '.xlsx,.xls,.csv', style: { display: 'none' }, onChange: handleFile })
+
+          // Переключатель методов
+          h('div', { style: { display: 'flex', gap: 6, marginBottom: 16 } },
+            [
+              { id: 'file',  icon: '📂', label: 'Файл Excel / 1С' },
+              { id: 'paste', icon: '📋', label: 'Вставить Ctrl+V' },
+              { id: 'grid',  icon: '✏️', label: 'Ввести вручную' },
+            ].map(m => h('button', { key: m.id,
+              style: inputMethod === m.id
+                ? { ...abtn({ flex: 1, padding: '10px 8px', fontSize: 12 }), textAlign: 'center' }
+                : { ...gbtn({ flex: 1, padding: '10px 8px', fontSize: 12 }), textAlign: 'center' },
+              onClick: () => setInputMethod(m.id)
+            },
+              h('div', { style: { fontSize: 18, marginBottom: 3 } }, m.icon),
+              m.label
+            ))
           ),
-          h('div', { style: { marginTop: 16, padding: '12px 14px', background: '#f8f8f5', borderRadius: 8, fontSize: 12, color: '#666', lineHeight: 1.7 } },
-            h('div', { style: { fontWeight: 500, marginBottom: 4 } }, '💡 Жёсткого формата нет — система адаптируется к вашему файлу.'),
-            'Поддерживаются: накладные из 1С, произвольные Excel-таблицы, выгрузки из любых учётных систем. ',
-            'Минимум: два столбца — название и количество.'
+
+          // ── Метод: Файл ──
+          inputMethod === 'file' && h('div', null,
+            h('label', {
+              style: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', border: `2px dashed ${dragOver ? AM4 : AM}`, borderRadius: 12, padding: '36px 20px', cursor: 'pointer', background: dragOver ? AM3 : '#fffbf0', gap: 10, transition: 'all .15s' },
+              onDragOver: e => { e.preventDefault(); setDragOver(true); },
+              onDragLeave: () => setDragOver(false),
+              onDrop: handleDrop
+            },
+              h('div', { style: { fontSize: 32 } }, dragOver ? '⬇️' : '📂'),
+              h('div', { style: { fontSize: 14, fontWeight: 500, color: AM2 } }, dragOver ? 'Отпустите файл' : 'Нажмите или перетащите файл'),
+              h('div', { style: { fontSize: 11, color: '#888', textAlign: 'center' } }, '.xlsx, .xls, .csv · Накладные из 1С определяются автоматически'),
+              h('input', { type: 'file', accept: '.xlsx,.xls,.csv', style: { display: 'none' }, onChange: handleFile })
+            )
+          ),
+
+          // ── Метод: Вставка ──
+          inputMethod === 'paste' && h('div', null,
+            h('div', { style: { fontSize: 12, color: '#666', marginBottom: 10, padding: '10px 12px', background: '#f0f9ff', borderRadius: 8, borderLeft: `3px solid ${BL}`, lineHeight: 1.6 } },
+              h('div', { style: { fontWeight: 500, marginBottom: 3 } }, '1. Выделите ячейки в Excel или Google Sheets'),
+              h('div', null, '2. Скопируйте (Ctrl+C / Cmd+C)'),
+              h('div', null, '3. Кликните в поле ниже и нажмите Ctrl+V')
+            ),
+            h('div', {
+              onPaste: handlePaste,
+              tabIndex: 0,
+              style: { border: `2px dashed ${BL}`, borderRadius: 10, padding: '28px 20px', textAlign: 'center', cursor: 'text', background: '#f8fbff', outline: 'none', fontSize: 14, color: '#888', lineHeight: 1.7 },
+            },
+              h('div', { style: { fontSize: 28, marginBottom: 8 } }, '📋'),
+              h('div', { style: { fontWeight: 500, color: '#555' } }, 'Кликните сюда и нажмите Ctrl+V'),
+              h('div', { style: { fontSize: 11, marginTop: 4 } }, 'Заголовки — необязательны. Достаточно двух столбцов: название и количество.')
+            )
+          ),
+
+          // ── Метод: Grid-редактор ──
+          inputMethod === 'grid' && h('div', null,
+            h('div', { style: { fontSize: 12, color: '#666', marginBottom: 10 } }, 'Введите данные вручную. Поля «Ед.» и «Цена» — необязательны.'),
+            h('div', { className: 'table-responsive' },
+              h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 13 } },
+                h('thead', null, h('tr', null,
+                  ['Наименование *', 'Кол-во *', 'Ед.', 'Цена ₽', ''].map((t, i) =>
+                    h('th', { key: i, style: { ...S.th, background: '#f8f8f5' } }, t)
+                  )
+                )),
+                h('tbody', null,
+                  gridRows.map((row, i) => h('tr', { key: i },
+                    h('td', { style: { padding: '4px 4px' } },
+                      h('input', { style: { ...S.inp, fontSize: 12 }, placeholder: 'Название материала', value: row.name, onChange: e => updateGridRow(i, 'name', e.target.value) })
+                    ),
+                    h('td', { style: { padding: '4px 4px', width: 80 } },
+                      h('input', { type: 'number', step: '0.001', style: { ...S.inp, fontSize: 12 }, placeholder: '0', value: row.qty, onChange: e => updateGridRow(i, 'qty', e.target.value) })
+                    ),
+                    h('td', { style: { padding: '4px 4px', width: 70 } },
+                      h('input', { style: { ...S.inp, fontSize: 12 }, placeholder: 'шт', value: row.unit, onChange: e => updateGridRow(i, 'unit', e.target.value) })
+                    ),
+                    h('td', { style: { padding: '4px 4px', width: 90 } },
+                      h('input', { type: 'number', style: { ...S.inp, fontSize: 12 }, placeholder: '0', value: row.price, onChange: e => updateGridRow(i, 'price', e.target.value) })
+                    ),
+                    h('td', { style: { padding: '4px 4px', width: 32, textAlign: 'center' } },
+                      gridRows.length > 1 && h('button', { style: { background: 'none', border: 'none', color: RD, cursor: 'pointer', fontSize: 16, padding: 0 }, onClick: () => removeGridRow(i) }, '×')
+                    )
+                  ))
+                )
+              )
+            ),
+            h('div', { style: { display: 'flex', gap: 8, marginTop: 8 } },
+              h('button', { style: gbtn({ fontSize: 11 }), onClick: addGridRow }, '+ Добавить строку'),
+              h('button', { style: abtn({ marginLeft: 'auto', fontSize: 12, padding: '8px 20px' }), onClick: submitGrid }, 'Далее →')
+            )
           )
         ),
 
         // ── Шаг 2: маппинг ──
         step === 'map' && h('div', null,
-          // Баннер 1С
           is1C && h('div', { style: { padding: '10px 14px', background: GN3, border: `1px solid ${GN}`, borderRadius: 8, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 } },
             h('span', { style: { fontSize: 18 } }, '✅'),
             h('div', null,
@@ -5282,7 +5499,6 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
               )
             ))
           ),
-          // Превью первых строк
           rawRows.length > 0 && h('div', null,
             h('div', { style: S.sec }, `Первые строки (${Math.min(rawRows.length, 4)} из ${rawRows.length})`),
             h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 11 } },
@@ -5301,7 +5517,6 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
 
         // ── Шаг 3: превью + режим ──
         step === 'preview' && h('div', null,
-          // Режим
           h('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } },
             h('button', { style: mode === 'receipt' ? { ...abtn({ flex: 1, padding: '10px' }), textAlign: 'left' } : { ...gbtn({ flex: 1, padding: '10px' }), textAlign: 'left' }, onClick: () => setMode('receipt') },
               h('div', { style: { fontWeight: 600, marginBottom: 2 } }, '📥 Приход по накладной'),
@@ -5312,13 +5527,9 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
               h('div', { style: { fontSize: 11, opacity: 0.75 } }, 'Остаток перезапишется')
             )
           ),
-
-          // Реквизиты накладной
           mode === 'receipt' && h('div', { style: { padding: '12px 14px', background: '#f0f9ff', borderRadius: 8, marginBottom: 14 } },
             h('div', { style: S.sec }, 'Реквизиты накладной'),
-            is1C && invoice.number && h('div', { style: { fontSize: 11, color: GN2, marginBottom: 8 } },
-              `✅ Автозаполнено из файла 1С: накладная №${invoice.number}`
-            ),
+            is1C && invoice.number && h('div', { style: { fontSize: 11, color: GN2, marginBottom: 8 } }, `✅ Автозаполнено из файла: накладная №${invoice.number}`),
             h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
               h('div', { style: { flex: 2, minWidth: 140 } },
                 h('label', { style: S.lbl }, '* Номер накладной'),
@@ -5335,8 +5546,6 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
               )
             )
           ),
-
-          // Статистика
           h('div', { style: { display: 'flex', gap: 8, marginBottom: 12 } },
             [
               { label: '✓ Найдено точно',    count: preview.filter(r => r.matchType === 'exact').length, bg: GN3,       cl: GN2 },
@@ -5347,9 +5556,7 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
               h('div', { style: { fontSize: 10, color: s.cl, opacity: 0.8 } }, s.label)
             ))
           ),
-
-          // Таблица превью
-          h('div', { className: 'table-responsive', style: { maxHeight: 280, overflowY: 'auto', border: '0.5px solid rgba(0,0,0,0.1)', borderRadius: 8 } },
+          h('div', { className: 'table-responsive', style: { maxHeight: 260, overflowY: 'auto', border: '0.5px solid rgba(0,0,0,0.1)', borderRadius: 8 } },
             h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 } },
               h('thead', null, h('tr', null,
                 ['Из файла', 'Сопоставлен с', 'Тип', mode === 'receipt' ? 'Приход' : 'Остаток станет', 'Цена'].map((t, i) =>
@@ -5359,21 +5566,12 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
               h('tbody', null, preview.map((row, i) => {
                 const rs = rowStyle(row.matchType);
                 return h('tr', { key: i, style: { background: i % 2 === 0 ? 'transparent' : '#fafafa' } },
-                  h('td', { style: S.td },
-                    row.name,
-                    row.matchType === 'fuzzy' && h('div', { style: { fontSize: 10, color: AM2, marginTop: 1 } }, '⚠ проверьте совпадение')
-                  ),
-                  h('td', { style: S.td },
-                    row.matchType === 'new'
-                      ? h('span', { style: { color: '#888', fontSize: 11 } }, '— создать новую —')
-                      : row.match.name
-                  ),
+                  h('td', { style: S.td }, row.name, row.matchType === 'fuzzy' && h('div', { style: { fontSize: 10, color: AM2, marginTop: 1 } }, '⚠ проверьте совпадение')),
+                  h('td', { style: S.td }, row.matchType === 'new' ? h('span', { style: { color: '#888', fontSize: 11 } }, '— создать новую —') : row.match.name),
                   h('td', { style: S.td }, h('span', { style: { padding: '2px 7px', borderRadius: 6, fontSize: 10, fontWeight: 500, background: rs.bg, color: rs.cl } }, rs.label)),
                   h('td', { style: { ...S.td, fontFamily: 'monospace', fontWeight: 500 } },
                     mode === 'receipt'
-                      ? (row.match && row.matchType !== 'new'
-                          ? `${row.match.quantity} + ${row.qty} = ${row.match.quantity + row.qty}`
-                          : `0 + ${row.qty} = ${row.qty}`)
+                      ? (row.match && row.matchType !== 'new' ? `${row.match.quantity} + ${row.qty} = ${row.match.quantity + row.qty}` : `0 + ${row.qty} = ${row.qty}`)
                       : row.qty
                   ),
                   h('td', { style: { ...S.td, color: '#888' } }, row.price ? `${row.price}₽` : '—')
@@ -5381,13 +5579,10 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
               }))
             )
           ),
-
           h('div', { style: { display: 'flex', gap: 8, marginTop: 16 } },
             h('button', { style: gbtn({ flex: 1 }), onClick: () => setStep('map') }, '← Назад'),
             h('button', { style: { ...abtn({ flex: 2, padding: '12px', fontSize: 14 }), background: GN, color: '#fff' }, onClick: handleSave },
-              mode === 'receipt'
-                ? `✓ Провести приход (${preview.length} позиций)`
-                : `✓ Обновить справочник (${preview.length} позиций)`
+              mode === 'receipt' ? `✓ Провести приход (${preview.length} позиций)` : `✓ Обновить справочник (${preview.length} позиций)`
             )
           )
         )
@@ -5462,7 +5657,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
     showImport && h(MaterialImportModal, { data, onClose: () => setShowImport(false), onUpdate, addToast, defaultMode: importMode }),
     // Вкладки
     h('div', { style: { display: 'flex', gap: 4, marginBottom: 16, borderBottom: '0.5px solid rgba(0,0,0,0.08)', paddingBottom: 8 } },
-      [['stock', '📦 Остатки'], ['requests', `🔔 Заявки (${materialRequests.length})`], ['receive', '📥 Приёмка'], ['history', '📋 Движение']].map(([id, label]) =>
+      [['stock', '📦 Остатки'], ['requests', `🔔 Заявки (${materialRequests.length})`], ['receive', '📥 Приёмка'], ['history', '📋 Движение'], ['materials', '🗂 Справочник'], ['bom', '📋 Спецификации']].map(([id, label]) =>
         h('button', { key: id, style: tab === id ? abtn({ fontSize: 12 }) : gbtn({ fontSize: 12 }), onClick: () => setTab(id) }, label)
       )
     ),
@@ -5498,7 +5693,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
       data.materials.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888' } }, 'Нет материалов') :
         h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
           h('thead', null, h('tr', null, ['Материал', 'Остаток', 'Зарезерв.', 'Свободно', 'Мин.', 'Цена', 'Стоимость'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
-          h('tbody', null, data.materials.sort((a, b) => {
+          h('tbody', null, [...data.materials].sort((a, b) => {
             const aCrit = a.minStock && a.quantity <= a.minStock;
             const bCrit = b.minStock && b.quantity <= b.minStock;
             if (aCrit && !bCrit) return -1; if (!aCrit && bCrit) return 1;
@@ -5576,7 +5771,9 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
             h('td', { style: { ...S.td, fontSize: 11, color: '#888' } }, m.context)
           )))
         )))
-    )
+    ),
+    tab === 'materials' && h(MasterMaterials, { data, onUpdate, addToast }),
+    tab === 'bom'       && h(MasterBOM,       { data, onUpdate, addToast })
   );
 });
 
@@ -6253,6 +6450,9 @@ function App() {
         h('div', { style: { display:'flex', alignItems:'center', gap:4, color: synced ? GN : '#888' } },
           h('span', { style: { width:6, height:6, borderRadius:'50%', background: synced ? GN : '#ccc', display:'inline-block' } }),
           synced ? 'Firebase' : 'Оффлайн'
+        ),
+        DB._sizeWarning && h('div', { style: { display:'flex', alignItems:'center', gap:3, color: AM4, fontSize: 9 } },
+          `💾 ${DB._sizeWarning} КБ`
         )
       )
     ),
