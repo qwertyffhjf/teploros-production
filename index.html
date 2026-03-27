@@ -549,10 +549,12 @@ const QRScannerModal = memo(({ onScan, onClose }) => {
   const [error, setError] = useState(null);
   const [ready, setReady] = useState(false);
   const scannerInstance = useRef(null);
+  // Стабилизируем onScan через ref — чтобы useEffect не перезапускался при каждом рендере
+  const onScanRef = useRef(onScan);
+  useEffect(() => { onScanRef.current = onScan; }, [onScan]);
 
   useEffect(() => {
     if (!window.Html5Qrcode) { setError('Библиотека QR не загружена'); return; }
-    // Задержка — ждём пока DOM отрисуется
     const timer = setTimeout(() => {
       const el = document.getElementById('qr-scanner-region');
       if (!el) { setError('Элемент не найден'); return; }
@@ -564,14 +566,22 @@ const QRScannerModal = memo(({ onScan, onClose }) => {
           { fps: 15, qrbox: { width: 220, height: 220 }, aspectRatio: 1.0 },
           (decodedText) => {
             scanner.stop().catch(() => {});
-            onScan(decodedText);
+            onScanRef.current(decodedText);
           },
-          () => {} // игнорируем кадры без QR
+          () => {}
         ).then(() => setReady(true)).catch(err => {
-          setError('Нет доступа к камере: ' + err.message);
+          // iOS Safari требует user gesture — пробуем без facingMode
+          scanner.start(
+            { facingMode: 'user' },
+            { fps: 10, qrbox: { width: 200, height: 200 } },
+            (decodedText) => { scanner.stop().catch(() => {}); onScanRef.current(decodedText); },
+            () => {}
+          ).then(() => setReady(true)).catch(err2 => {
+            setError('Нет доступа к камере. Разрешите доступ в настройках браузера.\n' + err2.message);
+          });
         });
-      } catch(e) { setError('Ошибка: ' + e.message); }
-    }, 500);
+      } catch(e) { setError('Ошибка запуска: ' + e.message); }
+    }, 300);
     return () => {
       clearTimeout(timer);
       if (scannerInstance.current) {
@@ -579,14 +589,18 @@ const QRScannerModal = memo(({ onScan, onClose }) => {
         scannerInstance.current = null;
       }
     };
-  }, [onScan]);
+  }, []); // пустой dep — запускается один раз
 
-  return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 } },
-    h('div', { style: { color: '#fff', fontSize: 16, marginBottom: 16, textAlign: 'center' } }, ready ? 'Наведите камеру на QR-код' : 'Запуск камеры...'),
-    error && h('div', { style: { color: RD, fontSize: 13, marginBottom: 12, textAlign: 'center', maxWidth: 300 } }, error),
-    h('div', { id: 'qr-scanner-region', style: { width: 280, height: 280, borderRadius: 16, overflow: 'hidden', background: '#111' } }),
-    h('div', { style: { color: '#888', fontSize: 11, marginTop: 12, textAlign: 'center' } }, 'QR-код должен содержать ссылку с ?opId='),
-    h('button', { style: { ...gbtn(), color: '#fff', borderColor: 'rgba(255,255,255,0.3)', marginTop: 16, padding: '14px 40px', fontSize: 15 }, onClick: onClose }, 'Закрыть')
+  return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.92)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 } },
+    h('div', { style: { color: '#fff', fontSize: 16, marginBottom: 16, textAlign: 'center', fontWeight: 500 } },
+      ready ? '📷 Наведите камеру на QR-код' : '⏳ Запуск камеры...'
+    ),
+    error && h('div', { style: { color: '#ff6b6b', fontSize: 13, marginBottom: 12, textAlign: 'center', maxWidth: 300, whiteSpace: 'pre-line', lineHeight: 1.5 } }, error),
+    h('div', { id: 'qr-scanner-region', style: { width: 280, height: 280, borderRadius: 16, overflow: 'hidden', background: '#111', border: ready ? '2px solid #EF9F27' : '2px solid #333' } }),
+    h('div', { style: { color: '#888', fontSize: 11, marginTop: 12, textAlign: 'center' } },
+      ready ? 'Держите QR-код в рамке' : 'Убедитесь что разрешили доступ к камере'
+    ),
+    h('button', { style: { ...gbtn(), color: '#fff', borderColor: 'rgba(255,255,255,0.3)', marginTop: 20, padding: '14px 40px', fontSize: 15 }, onClick: onClose }, 'Закрыть')
   );
 });
 
@@ -1747,13 +1761,27 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     // QR-сканер
     showQRScanner && h(QRScannerModal, { onScan: (text) => {
       setShowQRScanner(false);
-      try { const url = new URL(text); const opId = url.searchParams.get('opId'); if (opId) window.location.href = text; } catch(e) { addToast('Неверный QR-код', 'error'); }
+      try {
+        // Поддерживаем как полный URL так и просто opId
+        let opId = text.trim();
+        try { const url = new URL(text); opId = url.searchParams.get('opId') || opId; } catch(e) {}
+        if (!opId) { addToast('QR-код не содержит ID операции', 'error'); return; }
+        const op = data.ops.find(o => o.id === opId);
+        if (!op) { addToast('Операция не найдена: ' + opId, 'error'); return; }
+        if (op.status === 'done' || op.status === 'defect') { addToast('Операция уже завершена', 'info'); return; }
+        setActiveOp(op);
+        addToast('Операция найдена: ' + op.name, 'success');
+      } catch(e) { addToast('Неверный QR-код', 'error'); }
     }, onClose: () => setShowQRScanner(false) }),
     // Модал расхода материалов
     showMaterialModal && h(MaterialConsumptionModal, { data, opId: pendingFinishOp?.id, onSave: saveMaterialConsumption, onSkip: () => { setShowMaterialModal(false); setPendingFinishOp(null); } }),
-    // Кнопка сканера внизу
-    !active && h('div', { style: { position: 'fixed', bottom: 20, right: 20, zIndex: 40 } },
-      h('button', { style: { ...abtn({ padding: '14px 18px', fontSize: 16, borderRadius: '50%', width: 56, height: 56, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.2)' }) }, onClick: () => setShowQRScanner(true) }, '📷')
+    // Кнопка сканера — всегда видна
+    h('div', { style: { position: 'fixed', bottom: 'calc(20px + env(safe-area-inset-bottom, 0px))', right: 20, zIndex: 40 } },
+      h('button', {
+        style: { ...abtn({ padding: '14px 18px', fontSize: 18, borderRadius: '50%', width: 56, height: 56, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(0,0,0,0.25)' }) },
+        onClick: () => setShowQRScanner(true),
+        title: 'Сканировать QR-код операции'
+      }, '📷')
     )
   );
 });
@@ -4963,10 +4991,334 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
   );
 });
 
+// ==================== MaterialImportModal ====================
+// Нормализация строки для нечёткого поиска
+const normStr = (s) => s.toString().toLowerCase().trim()
+  .replace(/\s+/g, ' ').replace(/[-–—_]/g, ' ')
+  .replace(/ё/g, 'е').replace(/[().,;]/g, '');
+
+// Нечёткое совпадение: возвращает 0..1
+const fuzzyScore = (a, b) => {
+  const na = normStr(a), nb = normStr(b);
+  if (na === nb) return 1;
+  if (na.includes(nb) || nb.includes(na)) return 0.85;
+  const ta = na.split(' ').filter(Boolean);
+  const tb = nb.split(' ').filter(Boolean);
+  const common = ta.filter(t => tb.some(s => s.includes(t) || t.includes(s)));
+  return common.length / Math.max(ta.length, tb.length, 1);
+};
+
+// Попытка автоопределить колонку по заголовку
+const detectCol = (headers, patterns) => {
+  for (const h of headers) {
+    const hn = normStr(h.toString());
+    if (patterns.some(p => hn.includes(p))) return h;
+  }
+  return '';
+};
+
+const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast }) => {
+  const [step, setStep] = useState('upload');   // upload | map | preview | done
+  const [rawRows, setRawRows] = useState([]);
+  const [headers, setHeaders] = useState([]);
+  const [colMap, setColMap] = useState({ name: '', qty: '', unit: '', price: '' });
+  const [mode, setMode] = useState('receipt');  // receipt | update
+  const [invoice, setInvoice] = useState({ number: '', date: new Date().toISOString().slice(0, 10), supplier: '' });
+  const [preview, setPreview] = useState([]);
+  const [invoiceError, setInvoiceError] = useState('');
+
+  // ── Шаг 1: читаем файл ──
+  const handleFile = useCallback((e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const wb = XLSX.read(ev.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        // raw: сохраняем заголовки + строки
+        const arr = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        if (arr.length < 2) { addToast('Файл пустой или нет данных', 'error'); return; }
+        const hdrs = arr[0].map(h => h.toString().trim()).filter(Boolean);
+        const rows = arr.slice(1).filter(r => r.some(c => c !== ''));
+        setHeaders(hdrs);
+        setRawRows(rows.map(r => {
+          const obj = {};
+          hdrs.forEach((h, i) => { obj[h] = r[i] ?? ''; });
+          return obj;
+        }));
+        // Автодетект колонок
+        setColMap({
+          name:  detectCol(hdrs, ['наим','назв','матер','name','товар','опис']),
+          qty:   detectCol(hdrs, ['кол','qty','количес','остат','приход','кол-во']),
+          unit:  detectCol(hdrs, ['ед','unit','мера','измер']),
+          price: detectCol(hdrs, ['цен','price','стоим','руб']),
+        });
+        setStep('map');
+      } catch(ex) { addToast('Ошибка чтения: ' + ex.message, 'error'); }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
+  }, [addToast]);
+
+  // ── Шаг 2: строим превью ──
+  const buildPreview = useCallback(() => {
+    if (!colMap.name) { addToast('Укажите колонку с названием', 'error'); return; }
+    const rows = rawRows.map(r => {
+      const name = r[colMap.name]?.toString().trim() || '';
+      if (!name) return null;
+      const qty  = parseFloat(r[colMap.qty]?.toString().replace(',', '.')) || 0;
+      const unit = colMap.unit ? (r[colMap.unit]?.toString().trim() || 'шт') : 'шт';
+      const price = parseFloat(r[colMap.price]?.toString().replace(',', '.')) || 0;
+
+      // Ищем совпадение в справочнике
+      let match = data.materials.find(m => normStr(m.name) === normStr(name));
+      let matchType = 'exact';
+      if (!match) {
+        // Нечёткий поиск
+        let best = 0;
+        data.materials.forEach(m => {
+          const sc = fuzzyScore(name, m.name);
+          if (sc > best && sc >= 0.7) { best = sc; match = m; }
+        });
+        matchType = match ? 'fuzzy' : 'new';
+      }
+      return { name, qty, unit, price, match, matchType };
+    }).filter(Boolean);
+    setPreview(rows);
+    setStep('preview');
+  }, [rawRows, colMap, data.materials, addToast]);
+
+  // ── Шаг 3: сохраняем ──
+  const handleSave = useCallback(async () => {
+    if (mode === 'receipt' && !invoice.number.trim()) {
+      setInvoiceError('Введите номер накладной'); return;
+    }
+    setInvoiceError('');
+    const ts = now();
+    const batchId = uid(); // id партии для группировки
+    let materials = [...data.materials];
+    const newEvents = [...data.events];
+
+    preview.forEach(row => {
+      const qty = row.qty;
+      if (mode === 'receipt') {
+        // Приход: прибавляем к остатку
+        const existing = row.match && row.matchType !== 'new' ? row.match : null;
+        if (existing) {
+          materials = materials.map(m => m.id === existing.id
+            ? { ...m, quantity: m.quantity + qty, ...(row.price ? { unitCost: row.price } : {}) }
+            : m
+          );
+          newEvents.push({ id: uid(), type: 'material_receive', materialId: existing.id,
+            qty, ts, invoiceNumber: invoice.number.trim(),
+            invoiceDate: invoice.date, supplier: invoice.supplier.trim(),
+            batchId, unit: existing.unit });
+        } else {
+          // Новый материал
+          const newMat = { id: uid(), name: row.name, unit: row.unit, quantity: qty,
+            unitCost: row.price || 0, minStock: 0, batch: '' };
+          materials.push(newMat);
+          newEvents.push({ id: uid(), type: 'material_receive', materialId: newMat.id,
+            qty, ts, invoiceNumber: invoice.number.trim(),
+            invoiceDate: invoice.date, supplier: invoice.supplier.trim(),
+            batchId, unit: row.unit });
+        }
+      } else {
+        // Обновление справочника: перезаписываем остаток
+        const existing = row.match && row.matchType !== 'new' ? row.match : null;
+        if (existing) {
+          materials = materials.map(m => m.id === existing.id
+            ? { ...m, quantity: qty, ...(row.price ? { unitCost: row.price } : {}) }
+            : m
+          );
+        } else {
+          materials.push({ id: uid(), name: row.name, unit: row.unit, quantity: qty,
+            unitCost: row.price || 0, minStock: 0, batch: '' });
+        }
+      }
+    });
+
+    const d = { ...data, materials, events: newEvents };
+    await DB.save(d); onUpdate(d);
+    const newCount = preview.filter(r => r.matchType === 'new').length;
+    const updCount = preview.filter(r => r.matchType !== 'new').length;
+    addToast(`${mode === 'receipt' ? 'Приход' : 'Обновление'}: ${updCount} обновлено, ${newCount} новых`, 'success');
+    onClose();
+  }, [data, preview, mode, invoice, onUpdate, addToast, onClose]);
+
+  // ── Цвета и метки типов строк ──
+  const rowStyle = (t) => ({
+    exact: { bg: GN3, color: GN2, label: '✓ Найдено' },
+    fuzzy: { bg: AM3, color: AM2, label: '~ Похожее' },
+    new:   { bg: '#EEF2FF', color: '#3730A3', label: '+ Новое' },
+  }[t] || {});
+
+  // ─────────── Рендер ───────────
+  return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 300, overflowY: 'auto', padding: '16px 8px' }, onClick: e => e.target === e.currentTarget && onClose() },
+    h('div', { style: { background: '#fff', borderRadius: 14, width: 'min(680px,100%)', boxShadow: '0 8px 40px rgba(0,0,0,0.2)' } },
+
+      // Шапка
+      h('div', { style: { padding: '18px 20px 14px', borderBottom: '0.5px solid rgba(0,0,0,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+        h('div', null,
+          h('div', { style: { fontSize: 16, fontWeight: 600 } }, '📤 Импорт материалов из Excel'),
+          h('div', { style: { fontSize: 11, color: '#888', marginTop: 2 } },
+            step === 'upload' ? 'Шаг 1 из 3 — Загрузите файл' :
+            step === 'map'    ? 'Шаг 2 из 3 — Настройте колонки' :
+                                'Шаг 3 из 3 — Проверьте данные и подтвердите'
+          )
+        ),
+        h('button', { onClick: onClose, style: { background: 'none', border: 'none', fontSize: 22, color: '#aaa', cursor: 'pointer' } }, '×')
+      ),
+
+      h('div', { style: { padding: '16px 20px 20px' } },
+
+        // ── Шаг 1: загрузка ──
+        step === 'upload' && h('div', null,
+          h('label', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', border: `2px dashed ${AM}`, borderRadius: 12, padding: '40px 20px', cursor: 'pointer', background: AM3, gap: 12 } },
+            h('div', { style: { fontSize: 36 } }, '📂'),
+            h('div', { style: { fontSize: 14, fontWeight: 500, color: AM2 } }, 'Нажмите или перетащите файл'),
+            h('div', { style: { fontSize: 11, color: '#888' } }, 'Поддерживаются .xlsx, .xls, .csv — любой формат'),
+            h('input', { type: 'file', accept: '.xlsx,.xls,.csv', style: { display: 'none' }, onChange: handleFile })
+          ),
+          h('div', { style: { marginTop: 16, padding: '12px 14px', background: '#f8f8f5', borderRadius: 8, fontSize: 12, color: '#666', lineHeight: 1.7 } },
+            h('div', { style: { fontWeight: 500, marginBottom: 4 } }, '💡 Система автоматически определит колонки — жёсткого формата нет.'),
+            'Достаточно двух колонок: название материала и количество. ',
+            'Единица измерения, цена и другие поля — по желанию.'
+          )
+        ),
+
+        // ── Шаг 2: маппинг ──
+        step === 'map' && h('div', null,
+          h('div', { style: { fontSize: 12, color: '#666', marginBottom: 14, padding: '10px 12px', background: '#f0f9ff', borderRadius: 8, borderLeft: `3px solid ${BL}` } },
+            `Найдено ${rawRows.length} строк, ${headers.length} колонок. `,
+            'Проверьте автоопределение или исправьте вручную.'
+          ),
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 } },
+            [
+              { key: 'name',  label: '* Название материала', required: true },
+              { key: 'qty',   label: '* Количество',          required: true },
+              { key: 'unit',  label: 'Единица измерения',      required: false },
+              { key: 'price', label: 'Цена за единицу (₽)',    required: false },
+            ].map(f => h('div', { key: f.key },
+              h('label', { style: S.lbl }, f.label),
+              h('select', { style: S.inp, value: colMap[f.key], onChange: e => setColMap(p => ({ ...p, [f.key]: e.target.value })) },
+                h('option', { value: '' }, f.required ? '— выберите колонку —' : '— не использовать —'),
+                headers.map(h2 => h('option', { key: h2, value: h2 }, h2))
+              )
+            ))
+          ),
+          // Превью сырых данных
+          rawRows.length > 0 && h('div', null,
+            h('div', { style: S.sec }, `Первые строки файла (${Math.min(rawRows.length, 5)} из ${rawRows.length})`),
+            h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 11 } },
+              h('thead', null, h('tr', null, headers.slice(0, 6).map(h2 => h('th', { key: h2, style: { ...S.th, background: colMap.name === h2 ? AM3 : colMap.qty === h2 ? GN3 : '#f8f8f5' } }, h2)))),
+              h('tbody', null, rawRows.slice(0, 5).map((r, i) => h('tr', { key: i }, headers.slice(0, 6).map(h2 => h('td', { key: h2, style: { ...S.td, background: colMap.name === h2 ? '#fffbf0' : colMap.qty === h2 ? '#f0fff8' : 'transparent' } }, r[h2]?.toString() || '')))))
+            ))
+          ),
+          h('div', { style: { display: 'flex', gap: 8, marginTop: 16 } },
+            h('button', { style: gbtn({ flex: 1 }), onClick: () => setStep('upload') }, '← Назад'),
+            h('button', { style: abtn({ flex: 2 }), onClick: buildPreview }, 'Далее: проверить данные →')
+          )
+        ),
+
+        // ── Шаг 3: превью + режим ──
+        step === 'preview' && h('div', null,
+
+          // Режим
+          h('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } },
+            h('button', { style: mode === 'receipt' ? abtn({ flex: 1, padding: '12px' }) : gbtn({ flex: 1, padding: '12px' }), onClick: () => setMode('receipt') },
+              h('div', { style: { fontWeight: 600, marginBottom: 2 } }, '📥 Приход по накладной'),
+              h('div', { style: { fontSize: 11, opacity: 0.8 } }, 'Количество прибавится к остатку')
+            ),
+            h('button', { style: mode === 'update' ? abtn({ flex: 1, padding: '12px' }) : gbtn({ flex: 1, padding: '12px' }), onClick: () => setMode('update') },
+              h('div', { style: { fontWeight: 600, marginBottom: 2 } }, '🔄 Обновить справочник'),
+              h('div', { style: { fontSize: 11, opacity: 0.8 } }, 'Остаток перезапишется')
+            )
+          ),
+
+          // Реквизиты накладной
+          mode === 'receipt' && h('div', { style: { padding: '12px 14px', background: '#f0f9ff', borderRadius: 8, marginBottom: 14 } },
+            h('div', { style: S.sec }, 'Реквизиты накладной'),
+            h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+              h('div', { style: { flex: 2, minWidth: 140 } },
+                h('label', { style: S.lbl }, '* Номер накладной'),
+                h('input', { style: { ...S.inp, borderColor: invoiceError ? RD : undefined }, placeholder: 'ТН-2025-001', value: invoice.number, onChange: e => { setInvoice(p => ({ ...p, number: e.target.value })); setInvoiceError(''); } }),
+                invoiceError && h('div', { style: { fontSize: 11, color: RD, marginTop: 2 } }, invoiceError)
+              ),
+              h('div', { style: { flex: 1, minWidth: 120 } },
+                h('label', { style: S.lbl }, 'Дата'),
+                h('input', { type: 'date', style: S.inp, value: invoice.date, onChange: e => setInvoice(p => ({ ...p, date: e.target.value })) })
+              ),
+              h('div', { style: { flex: 2, minWidth: 140 } },
+                h('label', { style: S.lbl }, 'Поставщик'),
+                h('input', { style: S.inp, placeholder: 'Название поставщика', value: invoice.supplier, onChange: e => setInvoice(p => ({ ...p, supplier: e.target.value })) })
+              )
+            )
+          ),
+
+          // Статистика
+          h('div', { style: { display: 'flex', gap: 8, marginBottom: 12 } },
+            [
+              { label: '✓ Найдено точно', count: preview.filter(r => r.matchType === 'exact').length, bg: GN3, cl: GN2 },
+              { label: '~ Похожее название', count: preview.filter(r => r.matchType === 'fuzzy').length, bg: AM3, cl: AM2 },
+              { label: '+ Новые позиции', count: preview.filter(r => r.matchType === 'new').length, bg: '#EEF2FF', cl: '#3730A3' },
+            ].map(s => h('div', { key: s.label, style: { flex: 1, padding: '8px 10px', borderRadius: 8, background: s.bg, textAlign: 'center' } },
+              h('div', { style: { fontSize: 18, fontWeight: 600, color: s.cl } }, s.count),
+              h('div', { style: { fontSize: 10, color: s.cl, opacity: 0.8 } }, s.label)
+            ))
+          ),
+
+          // Таблица превью
+          h('div', { className: 'table-responsive', style: { maxHeight: 280, overflowY: 'auto', border: '0.5px solid rgba(0,0,0,0.1)', borderRadius: 8 } },
+            h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 } },
+              h('thead', null, h('tr', null,
+                ['Из файла', 'Сопоставлен с', 'Тип', mode === 'receipt' ? 'Приход' : 'Остаток станет', 'Цена'].map((t, i) =>
+                  h('th', { key: i, style: { ...S.th, position: 'sticky', top: 0, background: '#f8f8f5' } }, t)
+                )
+              )),
+              h('tbody', null, preview.map((row, i) => {
+                const rs = rowStyle(row.matchType);
+                return h('tr', { key: i, style: { background: i % 2 === 0 ? 'transparent' : '#fafafa' } },
+                  h('td', { style: S.td }, row.name),
+                  h('td', { style: S.td },
+                    row.matchType === 'new'
+                      ? h('span', { style: { color: '#888', fontSize: 11 } }, '— создать новую —')
+                      : h('div', null,
+                          h('div', null, row.match.name),
+                          row.matchType === 'fuzzy' && h('div', { style: { fontSize: 10, color: AM2 } }, '⚠ проверьте совпадение')
+                        )
+                  ),
+                  h('td', { style: S.td }, h('span', { style: { padding: '2px 7px', borderRadius: 6, fontSize: 10, fontWeight: 500, background: rs.bg, color: rs.cl } }, rs.label)),
+                  h('td', { style: { ...S.td, fontFamily: 'monospace', fontWeight: 500 } },
+                    mode === 'receipt'
+                      ? (row.match && row.matchType !== 'new' ? `${row.match.quantity} + ${row.qty} = ${row.match.quantity + row.qty}` : `0 + ${row.qty} = ${row.qty}`)
+                      : row.qty
+                  ),
+                  h('td', { style: { ...S.td, color: '#888' } }, row.price ? `${row.price}₽` : '—')
+                );
+              }))
+            )
+          ),
+
+          h('div', { style: { display: 'flex', gap: 8, marginTop: 16 } },
+            h('button', { style: gbtn({ flex: 1 }), onClick: () => setStep('map') }, '← Назад'),
+            h('button', { style: { ...abtn({ flex: 2, padding: '12px', fontSize: 14 }), background: GN, color: '#fff' }, onClick: handleSave },
+              mode === 'receipt'
+                ? `✓ Провести приход (${preview.length} позиций)`
+                : `✓ Обновить справочник (${preview.length} позиций)`
+            )
+          )
+        )
+      )
+    )
+  );
+});
+
 // ==================== WarehouseScreen (Склад) ====================
 const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
   const [tab, setTab] = useState('stock');
   const [receiveForm, setReceiveForm] = useState({ materialId: '', qty: '', batch: '' });
+  const [showImport, setShowImport] = useState(false);
 
   // Заявки на материалы (из чата)
   const materialRequests = useMemo(() => {
@@ -4990,7 +5342,8 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
     // Поступления
     data.events.filter(e => e.type === 'material_receive').forEach(e => {
       const mat = data.materials.find(m => m.id === e.materialId);
-      list.push({ ts: e.ts, type: 'in', materialName: mat?.name || '?', qty: e.qty, unit: mat?.unit || '', context: e.batch ? `Партия: ${e.batch}` : '—' });
+      const ctx = [e.invoiceNumber ? `Накл. ${e.invoiceNumber}` : null, e.supplier || null, e.invoiceDate || null, e.batch ? `Партия: ${e.batch}` : null].filter(Boolean).join(' · ') || '—';
+      list.push({ ts: e.ts, type: 'in', materialName: mat?.name || '?', qty: e.qty, unit: mat?.unit || e.unit || '', context: ctx });
     });
     return list.sort((a, b) => b.ts - a.ts).slice(0, 50);
   }, [data.materialConsumptions, data.events, data.materials, data.ops, data.orders]);
@@ -5014,37 +5367,10 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
     await DB.save(d); onUpdate(d); addToast('Заявка выполнена', 'success');
   }, [data, onUpdate, addToast]);
 
-  // Импорт остатков
-  const importStock = useCallback((event) => {
-    const file = event.target.files[0]; if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const wb = XLSX.read(e.target.result, { type: 'array' });
-        const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-        if (rows.length === 0) { addToast('Файл пустой', 'error'); return; }
-        let added = 0, updated = 0;
-        const newMats = [...data.materials];
-        rows.forEach(r => {
-          const name = (r['Название'] || r['Наименование'] || r['Name'] || '').toString().trim();
-          if (!name) return;
-          const unit = (r['Ед. изм.'] || r['Единица'] || 'шт').toString().trim();
-          const qty = Number(r['Количество'] || r['Кол-во'] || r['Остаток'] || 0);
-          const unitCost = Number(r['Цена'] || r['Цена/ед.'] || 0);
-          const minStock = Number(r['Мин. остаток'] || r['MinStock'] || 0);
-          const existing = newMats.find(m => m.name.toLowerCase() === name.toLowerCase());
-          if (existing) { existing.quantity = qty; if (unitCost) existing.unitCost = unitCost; if (minStock) existing.minStock = minStock; updated++; }
-          else { newMats.push({ id: uid(), name, unit, quantity: qty, unitCost, minStock, batch: '' }); added++; }
-        });
-        DB.save({ ...data, materials: newMats }).then(() => { onUpdate({ ...data, materials: newMats }); addToast(`+${added} новых, ${updated} обновлено`, 'success'); });
-      } catch(ex) { addToast('Ошибка: ' + ex.message, 'error'); }
-    };
-    reader.readAsArrayBuffer(file); event.target.value = '';
-  }, [data, onUpdate, addToast]);
-
   const totalValue = data.materials.reduce((s, m) => s + m.quantity * (m.unitCost || 0), 0);
 
   return h('div', { style: { maxWidth: 800, margin: '0 auto', padding: '0 0 24px' } },
+    showImport && h(MaterialImportModal, { data, onClose: () => setShowImport(false), onUpdate, addToast }),
     // Вкладки
     h('div', { style: { display: 'flex', gap: 4, marginBottom: 16, borderBottom: '0.5px solid rgba(0,0,0,0.08)', paddingBottom: 8 } },
       [['stock', '📦 Остатки'], ['requests', `🔔 Заявки (${materialRequests.length})`], ['receive', '📥 Приёмка'], ['history', '📋 Движение']].map(([id, label]) =>
@@ -5072,8 +5398,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
       ),
       // Импорт/Экспорт
       h('div', { style: { display: 'flex', gap: 8, marginBottom: 12 } },
-        h('button', { style: abtn({ fontSize: 12 }), onClick: () => document.getElementById('wh-import').click() }, '📤 Импорт Excel'),
-        h('input', { type: 'file', id: 'wh-import', style: { display: 'none' }, accept: '.xlsx,.xls,.csv', onChange: importStock }),
+        h('button', { style: abtn({ fontSize: 12 }), onClick: () => setShowImport(true) }, '📤 Импорт Excel'),
         h('button', { style: gbtn({ fontSize: 12 }), onClick: () => {
           const ws = XLSX.utils.json_to_sheet(data.materials.map(m => ({ 'Название': m.name, 'Ед.': m.unit, 'Остаток': m.quantity, 'Мин.': m.minStock || '', 'Цена': m.unitCost || '', 'Стоимость': m.quantity * (m.unitCost || 0) })));
           const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Остатки');
