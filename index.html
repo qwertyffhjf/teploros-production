@@ -6003,6 +6003,87 @@ function generateRouteSheet(order, data) {
   pdfMake.createPdf(docDefinition).download(`route_${order.number}.pdf`);
 }
 
+// ==================== InstallPromptBanner ====================
+const InstallPromptBanner = memo(() => {
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [show, setShow] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
+
+  useEffect(() => {
+    // Уже установлено как PWA — не показываем
+    if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) return;
+    // Отклонил менее 7 дней назад — не беспокоим
+    const dismissed = localStorage.getItem('pwa_install_dismissed');
+    if (dismissed && Date.now() - Number(dismissed) < 7 * 86400000) return;
+
+    // iOS Safari — нет события beforeinstallprompt, показываем инструкцию
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+    if (ios) { setIsIOS(true); setShow(true); return; }
+
+    // Chrome / Edge / Android
+    const handler = (e) => { e.preventDefault(); setDeferredPrompt(e); setShow(true); };
+    window.addEventListener('beforeinstallprompt', handler);
+    window.addEventListener('appinstalled', () => setShow(false));
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstall = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') setShow(false);
+    setDeferredPrompt(null);
+  };
+
+  const handleDismiss = () => {
+    setShow(false);
+    localStorage.setItem('pwa_install_dismissed', String(Date.now()));
+  };
+
+  if (!show) return null;
+
+  return h('div', {
+    role: 'banner',
+    style: {
+      position: 'fixed',
+      bottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
+      left: 16, right: 16, zIndex: 490,
+      background: '#1a1a18', color: '#fff',
+      borderRadius: 14, padding: '14px 16px',
+      boxShadow: '0 4px 24px rgba(0,0,0,0.35)',
+      display: 'flex', alignItems: 'flex-start', gap: 12,
+      maxWidth: 480, margin: '0 auto'
+    }
+  },
+    h('div', { style: { fontSize: 28, lineHeight: 1, flexShrink: 0 } }, '📲'),
+    h('div', { style: { flex: 1 } },
+      h('div', { style: { fontWeight: 600, fontSize: 14, marginBottom: 4 } }, 'Установить teploros'),
+      isIOS
+        ? h('div', { style: { fontSize: 12, color: '#bbb', lineHeight: 1.5 } },
+            'Нажмите ',
+            h('span', { style: { color: AM, fontWeight: 500 } }, '«Поделиться»'),
+            ' → ',
+            h('span', { style: { color: AM, fontWeight: 500 } }, '«На экран «Домой»»'),
+            ' — и приложение всегда под рукой'
+          )
+        : h('div', null,
+            h('div', { style: { fontSize: 12, color: '#bbb', marginBottom: 10, lineHeight: 1.5 } },
+              'Работает офлайн, открывается без браузера, занимает < 1 МБ'
+            ),
+            h('button', {
+              style: { ...abtn({ fontSize: 13, padding: '8px 20px' }) },
+              onClick: handleInstall
+            }, 'Установить')
+          )
+    ),
+    h('button', {
+      onClick: handleDismiss,
+      'aria-label': 'Закрыть',
+      style: { background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: 22, padding: '0 0 0 4px', lineHeight: 1, flexShrink: 0 }
+    }, '×')
+  );
+});
+
 // ==================== App ====================
 function App() {
   const [data, setData] = useState(EMPTY_DATA);
@@ -6185,7 +6266,8 @@ function App() {
           effectiveRole === 'dashboard' && h(Dashboard, { data, addToast, onOrderClick: setSelectedOrderId })
         ),
     selectedOrderId && h(OrderDetailModal, { orderId: selectedOrderId, data, onClose: () => setSelectedOrderId(null) }),
-    h('div', { 'aria-live': 'polite' }, toasts.map(t => h(Toast, { key: t.id, message: t.message, onClose: () => removeToast(t.id) })))
+    h('div', { 'aria-live': 'polite' }, toasts.map(t => h(Toast, { key: t.id, message: t.message, onClose: () => removeToast(t.id) }))),
+    h(InstallPromptBanner)
   );
 }
 
