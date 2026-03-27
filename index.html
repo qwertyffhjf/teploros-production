@@ -368,7 +368,7 @@ const DOC_REF = firestore.collection('app').doc('production_v14');
 const EMPTY_DATA = {
   orders: [], ops: [], workers: [], downtimeTypes: [], events: [], materials: [], sections: [], equipment: [],
   bomTemplates: [], materialConsumptions: [], productionStages: [], defectReasons: [], workerAvailabilities: [],
-  messages: [], reclamations: [], duels: [], nomenclature: [],
+  messages: [], reclamations: [], duels: [],
   settings: {
     // Единый PIN-вход: мастер и контролёр тоже входят по PIN
     masterPin: '0000',
@@ -2780,139 +2780,7 @@ const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) =
   );
 });
 
-// ==================== MasterNomenclature ====================
-const MasterNomenclature = memo(({ data, onUpdate, addToast }) => {
-  const [form, setForm] = useState({ name: '', code: '', description: '', bomId: '' });
-  const [editingId, setEditingId] = useState(null);
-  const [search, setSearch] = useState('');
-
-  const resetForm = () => { setForm({ name: '', code: '', description: '', bomId: '' }); setEditingId(null); };
-
-  const addOrUpdate = useCallback(async () => {
-    if (!form.name.trim()) { addToast('Введите наименование', 'error'); return; }
-    // Проверка дублей
-    const duplicate = (data.nomenclature || []).some(n =>
-      n.name.trim().toLowerCase() === form.name.trim().toLowerCase() && n.id !== editingId
-    );
-    if (duplicate) { addToast('Такое изделие уже есть в номенклатуре', 'error'); return; }
-
-    const item = { name: form.name.trim(), code: form.code.trim(), description: form.description.trim(), bomId: form.bomId || null };
-    let d;
-    if (editingId) {
-      d = { ...data, nomenclature: data.nomenclature.map(n => n.id === editingId ? { ...n, ...item } : n) };
-      addToast('Позиция обновлена', 'success');
-    } else {
-      d = { ...data, nomenclature: [...(data.nomenclature || []), { id: uid(), ...item }] };
-      addToast('Позиция добавлена', 'success');
-    }
-    await DB.save(d); onUpdate(d); resetForm();
-  }, [form, editingId, data, onUpdate, addToast]);
-
-  const del = useCallback(async (id) => {
-    const item = (data.nomenclature || []).find(n => n.id === id);
-    const usedInOrders = data.orders.some(o => o.product === item?.name);
-    if (usedInOrders && !confirm(`Изделие «${item?.name}» используется в заказах. Удалить из справочника?`)) return;
-    const d = { ...data, nomenclature: (data.nomenclature || []).filter(n => n.id !== id) };
-    await DB.save(d); onUpdate(d); addToast('Удалено', 'info');
-  }, [data, onUpdate, addToast]);
-
-  const startEdit = useCallback((n) => {
-    setForm({ name: n.name, code: n.code || '', description: n.description || '', bomId: n.bomId || '' });
-    setEditingId(n.id);
-  }, []);
-
-  const filtered = useMemo(() => {
-    const list = data.nomenclature || [];
-    if (!search.trim()) return list;
-    const q = search.toLowerCase();
-    return list.filter(n => n.name.toLowerCase().includes(q) || (n.code || '').toLowerCase().includes(q));
-  }, [data.nomenclature, search]);
-
-  // Сколько заказов по каждому изделию
-  const orderCounts = useMemo(() => {
-    const counts = {};
-    (data.orders || []).forEach(o => { counts[o.product] = (counts[o.product] || 0) + 1; });
-    return counts;
-  }, [data.orders]);
-
-  return h('div', null,
-    // Форма
-    h('div', { style: S.card },
-      h('div', { style: S.sec }, editingId ? 'Редактировать позицию' : 'Добавить позицию номенклатуры'),
-      h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
-        h('div', { style: { flex: 2, minWidth: 180 } },
-          h('label', { style: S.lbl }, 'Наименование *'),
-          h('input', { style: S.inp, placeholder: 'Котёл КВ-100, АОГВ-24...', value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })), onKeyDown: e => e.key === 'Enter' && addOrUpdate() })
-        ),
-        h('div', { style: { minWidth: 100 } },
-          h('label', { style: S.lbl }, 'Артикул / код'),
-          h('input', { style: S.inp, placeholder: 'КВ-100', value: form.code, onChange: e => setForm(p => ({ ...p, code: e.target.value })) })
-        ),
-        h('div', { style: { flex: 2, minWidth: 160 } },
-          h('label', { style: S.lbl }, 'Описание'),
-          h('input', { style: S.inp, placeholder: 'Краткое описание...', value: form.description, onChange: e => setForm(p => ({ ...p, description: e.target.value })) })
-        ),
-        h('div', { style: { minWidth: 160 } },
-          h('label', { style: S.lbl }, 'Спецификация (BOM)'),
-          h('select', { style: S.inp, value: form.bomId, onChange: e => setForm(p => ({ ...p, bomId: e.target.value })) },
-            h('option', { value: '' }, '— без BOM —'),
-            (data.bomTemplates || []).map(b => h('option', { key: b.id, value: b.id }, b.productName))
-          )
-        ),
-        h('div', { style: { display: 'flex', gap: 6, alignItems: 'flex-end', paddingBottom: 0 } },
-          h('button', { style: abtn(), onClick: addOrUpdate }, editingId ? '✓ Сохранить' : '+ Добавить'),
-          editingId && h('button', { style: gbtn(), onClick: resetForm }, 'Отмена')
-        )
-      )
-    ),
-    // Поиск + счётчик
-    h('div', { style: { display: 'flex', gap: 8, marginBottom: 10, alignItems: 'center' } },
-      h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Поиск по наименованию или артикулу...', value: search, onChange: e => setSearch(e.target.value) }),
-      h('div', { style: { fontSize: 11, color: '#888', whiteSpace: 'nowrap' } }, `${(data.nomenclature || []).length} позиций`)
-    ),
-    // Таблица
-    filtered.length === 0
-      ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888' } },
-          (data.nomenclature || []).length === 0
-            ? 'Номенклатура пуста. Добавьте изделия — они будут доступны при создании заказов.'
-            : 'Ничего не найдено'
-        )
-      : h('div', { style: { ...S.card, padding: 0 } },
-          h('div', { className: 'table-responsive' },
-            h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-              h('thead', null, h('tr', null,
-                ['Наименование', 'Артикул', 'Описание', 'BOM', 'Заказов', ''].map((t, i) =>
-                  h('th', { key: i, style: S.th }, t)
-                )
-              )),
-              h('tbody', null, filtered.map(n => {
-                const bom = (data.bomTemplates || []).find(b => b.id === n.bomId);
-                const cnt = orderCounts[n.name] || 0;
-                return h('tr', { key: n.id },
-                  h('td', { style: { ...S.td, fontWeight: 500 } }, n.name),
-                  h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 11, color: '#888' } }, n.code || '—'),
-                  h('td', { style: { ...S.td, color: '#666', fontSize: 12 } }, n.description || '—'),
-                  h('td', { style: S.td },
-                    bom
-                      ? h('span', { style: { padding: '2px 8px', fontSize: 10, borderRadius: 6, background: AM3, color: AM2 } }, bom.productName)
-                      : h('span', { style: { color: '#ccc', fontSize: 11 } }, '—')
-                  ),
-                  h('td', { style: { ...S.td, textAlign: 'center', color: cnt > 0 ? AM : '#ccc', fontWeight: cnt > 0 ? 500 : 400 } }, cnt || '—'),
-                  h('td', { style: S.td },
-                    h('div', { style: { display: 'flex', gap: 4 } },
-                      h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => startEdit(n) }, '✎'),
-                      h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => del(n.id) }, '✕')
-                    )
-                  )
-                );
-              }))
-            )
-          )
-        )
-  );
-});
-
-// ==================== MasterOrders ====================
+const MasterOrders = memo(({ data, onUpdate, addToast }) => {
   const [form, setForm] = useState({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '' });
   const [editingId, setEditingId] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -3004,26 +2872,7 @@ const MasterNomenclature = memo(({ data, onUpdate, addToast }) => {
     h('div', { style: S.card },
       h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
         h('div', { style: { minWidth: 120 } }, h('input', { style: S.inp, placeholder: 'Номер', value: form.number, onChange: e => setForm(p => ({ ...p, number: e.target.value })) }), fieldErrors.number && h('div', { className: 'error-message' }, fieldErrors.number)),
-        h('div', { style: { flex: 1, minWidth: 160 } },
-          h('input', {
-            style: { ...S.inp, width: '100%' },
-            placeholder: 'Изделие',
-            list: 'nomenclature-list',
-            value: form.product,
-            onChange: e => {
-              const val = e.target.value;
-              // Автоподстановка BOM при выборе из номенклатуры
-              const found = (data.nomenclature || []).find(n => n.name === val);
-              setForm(p => ({ ...p, product: val, bomId: found?.bomId ? found.bomId : p.bomId }));
-            }
-          }),
-          h('datalist', { id: 'nomenclature-list' },
-            (data.nomenclature || []).map(n =>
-              h('option', { key: n.id, value: n.name }, n.code ? `${n.code} — ${n.description || ''}` : n.description || '')
-            )
-          ),
-          fieldErrors.product && h('div', { className: 'error-message' }, fieldErrors.product)
-        ),
+        h('div', { style: { flex: 1, minWidth: 160 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Изделие', value: form.product, onChange: e => setForm(p => ({ ...p, product: e.target.value })) }), fieldErrors.product && h('div', { className: 'error-message' }, fieldErrors.product)),
         h('div', { style: { minWidth: 70 } }, h('input', { type: 'number', style: { ...S.inp, width: '100%' }, placeholder: 'Кол-во', value: form.qty, onChange: e => setForm(p => ({ ...p, qty: e.target.value })) }), fieldErrors.qty && h('div', { className: 'error-message' }, fieldErrors.qty)),
         h('div', { style: { minWidth: 140 } }, h('input', { type: 'date', style: { ...S.inp, width: '100%' }, value: form.deadline, onChange: e => setForm(p => ({ ...p, deadline: e.target.value })) }), fieldErrors.deadline && h('div', { className: 'error-message' }, fieldErrors.deadline)),
         h('div', { style: { minWidth: 120 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.priority, onChange: e => setForm(p => ({ ...p, priority: e.target.value })) }, h('option', { value: 'low' }, 'Низкий'), h('option', { value: 'medium' }, 'Средний'), h('option', { value: 'high' }, 'Высокий'), h('option', { value: 'critical' }, 'Критический'))),
@@ -4592,7 +4441,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId }) => {
   const [activeGroup, setActiveGroup] = useState('production');
   const tabGroups = {
     production: { label: '⚙ Производство', tabs: [['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['orders','Заказы'],['plan','План']] },
-    reference: { label: '📋 Справочники', tabs: [['nomenclature','Номенклатура'],['workers','Сотрудники'],['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],['materials','Материалы'],['equipment','Оборудование'],['bom','Спецификации'],['sections','Участки']] },
+    reference: { label: '📋 Справочники', tabs: [['workers','Сотрудники'],['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],['materials','Материалы'],['equipment','Оборудование'],['bom','Спецификации'],['sections','Участки']] },
     analytics: { label: '📊 Аналитика', tabs: [['reports','Отчёты'],['analytics','Аналитика'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['journal','Журнал'],['notifications','Уведомления']] },
     system: { label: '🔧 Система', tabs: [['time','Учёт времени'],['admin','Управление']] }
   };
@@ -4640,7 +4489,6 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId }) => {
     tab === 'gantt' && h(GanttChart, { data }),
     tab === 'calendar' && h(ResourceCalendar, { data, onUpdate, addToast }),
     tab === 'orders' && h(MasterOrders, { data, onUpdate, addToast }),
-    tab === 'nomenclature' && h(MasterNomenclature, { data, onUpdate, addToast }),
     tab === 'workers' && h(MasterWorkers, { data, onUpdate, addToast }),
     tab === 'stages' && h(MasterProductionStages, { data, onUpdate, addToast }),
     tab === 'defectReasons' && h(MasterDefectReasons, { data, onUpdate, addToast }),
@@ -5531,6 +5379,91 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+// ==================== InstallPromptBanner ====================
+const InstallPromptBanner = memo(() => {
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [show, setShow] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
+  const [installed, setInstalled] = useState(false);
+
+  useEffect(() => {
+    // Уже установлено как PWA — не показываем
+    if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
+      setInstalled(true); return;
+    }
+    // Ранее отклонил — не показываем 7 дней
+    const dismissed = localStorage.getItem('pwa_install_dismissed');
+    if (dismissed && Date.now() - Number(dismissed) < 7 * 86400000) return;
+
+    // iOS Safari — нет события, показываем инструкцию вручную
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+    if (ios) { setIsIOS(true); setShow(true); return; }
+
+    // Chrome / Edge / Android — ловим beforeinstallprompt
+    const handler = (e) => { e.preventDefault(); setDeferredPrompt(e); setShow(true); };
+    window.addEventListener('beforeinstallprompt', handler);
+    window.addEventListener('appinstalled', () => { setShow(false); setInstalled(true); });
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstall = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') setShow(false);
+    setDeferredPrompt(null);
+  };
+
+  const handleDismiss = () => {
+    setShow(false);
+    localStorage.setItem('pwa_install_dismissed', String(Date.now()));
+  };
+
+  if (!show || installed) return null;
+
+  return h('div', {
+    role: 'banner',
+    style: {
+      position: 'fixed', bottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
+      left: 16, right: 16, zIndex: 500,
+      background: '#1a1a18', color: '#fff',
+      borderRadius: 14, padding: '14px 16px',
+      boxShadow: '0 4px 24px rgba(0,0,0,0.35)',
+      display: 'flex', alignItems: 'flex-start', gap: 12,
+      maxWidth: 480, margin: '0 auto'
+    }
+  },
+    h('div', { style: { fontSize: 28, lineHeight: 1 } }, '📲'),
+    h('div', { style: { flex: 1 } },
+      h('div', { style: { fontWeight: 600, fontSize: 14, marginBottom: 4 } }, 'Установить teploros'),
+      isIOS
+        ? h('div', { style: { fontSize: 12, color: '#bbb', lineHeight: 1.5 } },
+            'Нажмите ',
+            h('span', { style: { color: AM, fontWeight: 500 } }, '«Поделиться»'),
+            ' → ',
+            h('span', { style: { color: AM, fontWeight: 500 } }, '«На экран «Домой»»'),
+            ' — и приложение всегда под рукой'
+          )
+        : h('div', { style: { fontSize: 12, color: '#bbb', lineHeight: 1.5 } },
+            'Работает офлайн, открывается без браузера, занимает < 1 МБ'
+          ),
+      !isIOS && h('button', {
+        style: { ...abtn({ fontSize: 13, padding: '8px 20px', marginTop: 10 }), display: 'inline-block' },
+        onClick: handleInstall
+      }, 'Установить')
+    ),
+    h('button', {
+      onClick: handleDismiss,
+      'aria-label': 'Закрыть',
+      style: {
+        background: 'none', border: 'none', color: '#888',
+        cursor: 'pointer', fontSize: 22, padding: '0 0 0 4px',
+        lineHeight: 1, flexShrink: 0, marginTop: -2
+      }
+    }, '×')
+  );
+});
+
 // ==================== App ====================
 function App() {
   const [data, setData] = useState(EMPTY_DATA);
@@ -5706,7 +5639,8 @@ function App() {
           effectiveRole === 'warehouse' && h(WarehouseScreen, { data, onUpdate: save, addToast }),
           effectiveRole === 'dashboard' && h(Dashboard, { data, addToast })
         ),
-    h('div', { 'aria-live': 'polite' }, toasts.map(t => h(Toast, { key: t.id, message: t.message, onClose: () => removeToast(t.id) })))
+    h('div', { 'aria-live': 'polite' }, toasts.map(t => h(Toast, { key: t.id, message: t.message, onClose: () => removeToast(t.id) }))),
+    h(InstallPromptBanner)
   );
 }
 
