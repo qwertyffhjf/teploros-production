@@ -9,6 +9,17 @@
   <title>Производственный учёт · НТ</title>
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23EF9F27' width='100' height='100' rx='20'/><text x='50' y='68' font-size='50' text-anchor='middle' fill='%23412402'>НТ</text></svg>">
+  <!-- Google Analytics 4 — G-DYPZ3BJ7FX -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-DYPZ3BJ7FX"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-DYPZ3BJ7FX', {
+      page_title: 'teploros · НТ',
+      send_page_view: true
+    });
+  </script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
@@ -374,6 +385,11 @@ const EMPTY_DATA = {
     masterPin: '0000',
     controllerPin: '1111',
     warehousePin: '2222',
+    pdoPin: '3333',       // ПДО — плановo-диспетчерский отдел
+    directorPin: '4444',  // Руководитель
+    hrPin: '5555',        // HR / Отдел кадров
+    shopMasterPin: '6666', // Мастер цеха (упрощённый)
+    adminPin: '7777',     // Администратор / Настройки
     masterKey: '9999',       // Мастер-ключ: сбрасывает любой PIN, виден только в этом файле
     welcomeTitle: 'teploros', welcomeSubtitle: 'надежная техника',
     welcomeLabel: 'Производственный учёт · НТ'
@@ -956,6 +972,11 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
     if (pinMatch(p, settings.masterPin || '0000')) return { role: 'master', workerId: null, sectionId: null, name: 'Мастер' };
     if (pinMatch(p, settings.controllerPin || '1111')) return { role: 'controller', workerId: null, sectionId: null, name: 'Контролёр' };
     if (pinMatch(p, settings.warehousePin || '2222')) return { role: 'warehouse', workerId: null, sectionId: null, name: 'Склад' };
+    if (pinMatch(p, settings.pdoPin || '3333')) return { role: 'pdo', workerId: null, sectionId: null, name: 'ПДО' };
+    if (pinMatch(p, settings.directorPin || '4444')) return { role: 'director', workerId: null, sectionId: null, name: 'Руководитель' };
+    if (pinMatch(p, settings.hrPin || '5555')) return { role: 'hr', workerId: null, sectionId: null, name: 'HR' };
+    if (pinMatch(p, settings.shopMasterPin || '6666')) return { role: 'shop_master', workerId: null, sectionId: null, name: 'Мастер цеха' };
+    if (pinMatch(p, settings.adminPin || '7777')) return { role: 'admin', workerId: null, sectionId: null, name: 'Администратор' };
     const worker = data.workers.find(w => pinMatch(p, w.pin));
     if (worker) return { role: 'worker', workerId: worker.id, sectionId: worker.sectionId || null, name: worker.name };
     return null;
@@ -1040,20 +1061,46 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
       h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.15em' } }, settings.welcomeLabel || 'Производственный учёт · НТ'),
       h('div', { style: { fontSize: 22, fontWeight: 500 } }, 'Вход в систему')
     ),
-    // Кнопки выбора роли (подсказка, какой PIN нужен)
-    h('div', { style: { display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', justifyContent: 'center' } },
-      [
-        ['worker', '👷 Сотрудник'],
-        ['master', '🔑 Мастер'],
-        ['controller', '🔍 Контролёр'],
-        ['warehouse', '📦 Склад'],
-        ['dashboard', '📊 Дашборд'],
-        ['chat', '💬 Чат'],
-      ].map(([r, label]) => h('button', {
-        key: r,
-        style: role === r ? abtn({ minWidth: 110, fontSize: 12 }) : gbtn({ minWidth: 110, fontSize: 12 }),
-        onClick: () => { setRole(r); setLoginError(''); setPin(''); }
-      }, label))
+    // Кнопки выбора роли
+    h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 } },
+      // Производственный персонал
+      h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' } },
+        [
+          ['worker',      '👷 Сотрудник'],
+          ['shop_master', '🔧 Мастер цеха'],
+          ['controller',  '🔍 Контролёр'],
+          ['warehouse',   '📦 Склад'],
+        ].map(([r, label]) => h('button', {
+          key: r,
+          style: role === r ? abtn({ minWidth: 110, fontSize: 12 }) : gbtn({ minWidth: 110, fontSize: 12 }),
+          onClick: () => { setRole(r); setLoginError(''); setPin(''); }
+        }, label))
+      ),
+      // Управленческий персонал
+      h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' } },
+        [
+          ['pdo',      '📋 ПДО'],
+          ['master',   '🔑 Мастер'],
+          ['director', '👔 Руководитель'],
+          ['hr',       '👥 HR'],
+          ['admin',    '⚙ Администратор'],
+        ].map(([r, label]) => h('button', {
+          key: r,
+          style: role === r ? abtn({ minWidth: 110, fontSize: 12 }) : gbtn({ minWidth: 110, fontSize: 12 }),
+          onClick: () => { setRole(r); setLoginError(''); setPin(''); }
+        }, label))
+      ),
+      // Просмотр
+      h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' } },
+        [
+          ['dashboard', '📊 Дашборд'],
+          ['chat',      '💬 Чат'],
+        ].map(([r, label]) => h('button', {
+          key: r,
+          style: role === r ? abtn({ minWidth: 110, fontSize: 12 }) : gbtn({ minWidth: 110, fontSize: 12 }),
+          onClick: () => { setRole(r); setLoginError(''); setPin(''); }
+        }, label))
+      )
     ),
     // PIN-поле — для всех кроме дашборда
     role !== 'dashboard'
@@ -1883,6 +1930,7 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   }, [data, onUpdate, addToast, rejectModal, rejectNote]);
 
   return h('div', null,
+    h(SectionAnalytics, { section: 'quality', data }),
     // Модалка отклонения — вместо prompt()
     rejectModal && h('div', { role: 'dialog', 'aria-modal': 'true', style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 } },
       h('div', { style: { background: '#fff', borderRadius: 12, padding: 20, width: 'min(380px,100%)' } },
@@ -1997,6 +2045,307 @@ const MasterJournal = memo(({ data }) => {
             );
           }))
         ))
+  );
+});
+
+// ==================== SectionAnalytics ====================
+// Универсальная аналитическая панель: мини-KPI сверху + кнопка «Полная аналитика»
+// Использование: h(SectionAnalytics, { section: 'warehouse'|'production'|'hr'|'quality'|'dashboard', data, period?, onPeriodChange? })
+
+const useChartRef = () => {
+  const canvasRef = useRef(null);
+  const chartRef  = useRef(null);
+  const draw = useCallback((config) => {
+    if (!canvasRef.current || !window.Chart) return;
+    if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; }
+    chartRef.current = new Chart(canvasRef.current, config);
+  }, []);
+  useEffect(() => () => { if (chartRef.current) chartRef.current.destroy(); }, []);
+  return { canvasRef, draw };
+};
+
+// Маленький спарклайн (только canvas)
+const MiniSparkline = memo(({ values, color, height = 36 }) => {
+  const { canvasRef, draw } = useChartRef();
+  useEffect(() => {
+    if (!values?.length) return;
+    draw({
+      type: 'line',
+      data: { labels: values.map((_, i) => i), datasets: [{ data: values, borderColor: color, borderWidth: 2, fill: true, backgroundColor: color + '22', tension: 0.4, pointRadius: 0 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { enabled: false } }, scales: { x: { display: false }, y: { display: false } }, animation: { duration: 400 } }
+    });
+  }, [values, color, draw]);
+  return h('canvas', { ref: canvasRef, style: { height, width: '100%', display: 'block' } });
+});
+
+// KPI карточка с искрой
+const KpiCard = memo(({ label, value, delta, deltaDir, color, spark }) => {
+  const deltaColor = deltaDir === 'up' ? GN2 : deltaDir === 'dn' ? RD2 : '#888';
+  const deltaIcon  = deltaDir === 'up' ? '▲' : deltaDir === 'dn' ? '▼' : '=';
+  return h('div', { style: { background: '#fff', border: '0.5px solid rgba(0,0,0,0.08)', borderRadius: 10, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 2 } },
+    h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' } }, label),
+    h('div', { style: { fontSize: 22, fontWeight: 500, color: color || 'inherit', lineHeight: 1.1 } }, value),
+    delta && h('div', { style: { fontSize: 10, color: deltaColor } }, `${deltaIcon} ${delta}`),
+    spark && h(MiniSparkline, { values: spark.values, color: spark.color, height: 28 })
+  );
+});
+
+// Полноэкранная аналитика (модалка)
+const FullAnalyticsModal = memo(({ section, data, onClose }) => {
+  const [period, setPeriod]       = useState(30);
+  const [chartType, setChartType] = useState('bar'); // bar | line
+  const periodStart = useMemo(() => now() - period * 86400000, [period]);
+  const c1 = useChartRef(), c2 = useChartRef(), c3 = useChartRef(), c4 = useChartRef();
+
+  // ── Данные по разделам ──
+  const computed = useMemo(() => {
+    if (section === 'production' || section === 'dashboard') {
+      const ops = data.ops.filter(o => !o.archived && (o.finishedAt >= periodStart || o.startedAt >= periodStart));
+      const done = ops.filter(o => o.status === 'done');
+      const defect = ops.filter(o => o.status === 'defect');
+      const inProg = ops.filter(o => o.status === 'in_progress');
+      // По дням
+      const days = 7;
+      const dayLabels = Array.from({ length: days }, (_, i) => {
+        const d = new Date(now() - (days - 1 - i) * 86400000);
+        return d.toLocaleDateString('ru-RU', { weekday: 'short' });
+      });
+      const doneByDay = Array.from({ length: days }, (_, i) => {
+        const start = now() - (days - i) * 86400000;
+        const end   = now() - (days - 1 - i) * 86400000;
+        return data.ops.filter(o => o.finishedAt >= start && o.finishedAt < end && o.status === 'done').length;
+      });
+      const defByDay = Array.from({ length: days }, (_, i) => {
+        const start = now() - (days - i) * 86400000;
+        const end   = now() - (days - 1 - i) * 86400000;
+        return data.ops.filter(o => o.finishedAt >= start && o.finishedAt < end && o.status === 'defect').length;
+      });
+      // По сотрудникам
+      const workerMap = {};
+      done.forEach(o => (o.workerIds || []).forEach(wid => { workerMap[wid] = (workerMap[wid] || 0) + 1; }));
+      const topWorkers = Object.entries(workerMap).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([id, cnt]) => ({ name: data.workers.find(w => w.id === id)?.name?.split(' ')[0] || '?', cnt }));
+      // Брак по причинам
+      const defReasons = {};
+      defect.forEach(o => { const k = data.defectReasons?.find(r => r.id === o.defectReasonId)?.name || 'Прочее'; defReasons[k] = (defReasons[k] || 0) + 1; });
+      const topDefects = Object.entries(defReasons).sort((a, b) => b[1] - a[1]).slice(0, 5);
+      return { done: done.length, defect: defect.length, inProg: inProg.length, quality: done.length + defect.length > 0 ? Math.round(done.length / (done.length + defect.length) * 100) : 100, dayLabels, doneByDay, defByDay, topWorkers, topDefects };
+    }
+    if (section === 'warehouse') {
+      const consumptions = (data.materialConsumptions || []).filter(mc => mc.ts >= periodStart);
+      const matMap = {};
+      consumptions.forEach(mc => { const m = data.materials.find(x => x.id === mc.materialId); if (m) matMap[m.name] = (matMap[m.name] || 0) + mc.qty; });
+      const topMats = Object.entries(matMap).sort((a, b) => b[1] - a[1]).slice(0, 5);
+      const critical = data.materials.filter(m => m.minStock && m.quantity <= m.minStock);
+      const totalValue = data.materials.reduce((s, m) => s + m.quantity * (m.unitCost || 0), 0);
+      const receives = data.events.filter(e => e.type === 'material_receive' && e.ts >= periodStart);
+      const days = 7;
+      const dayLabels = Array.from({ length: days }, (_, i) => { const d = new Date(now() - (days - 1 - i) * 86400000); return d.toLocaleDateString('ru-RU', { weekday: 'short' }); });
+      const rcvByDay = Array.from({ length: days }, (_, i) => { const s = now() - (days - i) * 86400000, e = now() - (days - 1 - i) * 86400000; return data.events.filter(ev => ev.type === 'material_receive' && ev.ts >= s && ev.ts < e).length; });
+      const outByDay = Array.from({ length: days }, (_, i) => { const s = now() - (days - i) * 86400000, e = now() - (days - 1 - i) * 86400000; return (data.materialConsumptions || []).filter(mc => mc.ts >= s && mc.ts < e).length; });
+      return { total: data.materials.length, critical: critical.length, totalValue: Math.round(totalValue), receives: receives.length, topMats, dayLabels, rcvByDay, outByDay };
+    }
+    if (section === 'hr') {
+      const activeW = data.workers.filter(w => !w.archived);
+      const working = activeW.filter(w => (w.status || 'working') === 'working').length;
+      const absent  = activeW.filter(w => w.status === 'absent').length;
+      const workerStats = activeW.map(w => {
+        const ops = data.ops.filter(o => (o.workerIds || []).includes(w.id) && o.finishedAt >= periodStart);
+        const done = ops.filter(o => o.status === 'done').length;
+        const def  = ops.filter(o => o.status === 'defect').length;
+        return { name: w.name?.split(' ')[0] || '?', done, def, rate: done + def > 0 ? Math.round(def / (done + def) * 100) : 0 };
+      }).sort((a, b) => b.done - a.done).slice(0, 7);
+      const statusCounts = { working: 0, absent: 0, sick: 0, vacation: 0 };
+      activeW.forEach(w => { const s = w.status || 'working'; if (statusCounts[s] !== undefined) statusCounts[s]++; });
+      return { total: activeW.length, working, absent, statusCounts, workerStats };
+    }
+    if (section === 'quality') {
+      const defectOps = data.ops.filter(o => o.status === 'defect' && o.finishedAt >= periodStart);
+      const doneOps   = data.ops.filter(o => o.status === 'done'   && o.finishedAt >= periodStart);
+      const quality   = doneOps.length + defectOps.length > 0 ? Math.round(doneOps.length / (doneOps.length + defectOps.length) * 100) : 100;
+      const byReason  = {};
+      defectOps.forEach(o => { const k = data.defectReasons?.find(r => r.id === o.defectReasonId)?.name || 'Прочее'; byReason[k] = (byReason[k] || 0) + 1; });
+      const topReasons = Object.entries(byReason).sort((a, b) => b[1] - a[1]).slice(0, 5);
+      const byWorker = {};
+      defectOps.forEach(o => (o.workerIds || []).forEach(wid => { const w = data.workers.find(x => x.id === wid)?.name?.split(' ')[0] || '?'; byWorker[w] = (byWorker[w] || 0) + 1; }));
+      const topWorkers = Object.entries(byWorker).sort((a, b) => b[1] - a[1]).slice(0, 5);
+      const days = 7;
+      const dayLabels = Array.from({ length: days }, (_, i) => { const d = new Date(now() - (days - 1 - i) * 86400000); return d.toLocaleDateString('ru-RU', { weekday: 'short' }); });
+      const qualByDay = Array.from({ length: days }, (_, i) => {
+        const s = now() - (days - i) * 86400000, e = now() - (days - 1 - i) * 86400000;
+        const dn = data.ops.filter(o => o.finishedAt >= s && o.finishedAt < e && o.status === 'done').length;
+        const df = data.ops.filter(o => o.finishedAt >= s && o.finishedAt < e && o.status === 'defect').length;
+        return dn + df > 0 ? Math.round(dn / (dn + df) * 100) : 100;
+      });
+      return { quality, defects: defectOps.length, reclamations: (data.reclamations || []).length, topReasons, topWorkers, dayLabels, qualByDay };
+    }
+    return {};
+  }, [section, data, periodStart]);
+
+  // ── Рисуем графики ──
+  useEffect(() => {
+    const co = { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, animation: { duration: 300 } };
+    if (section === 'production' || section === 'dashboard') {
+      if (computed.dayLabels) {
+        c1.draw({ type: 'bar', data: { labels: computed.dayLabels, datasets: [{ label: 'Выполнено', data: computed.doneByDay, backgroundColor: GN, borderRadius: 4 }, { label: 'Брак', data: computed.defByDay, backgroundColor: RD, borderRadius: 4 }] }, options: { ...co, scales: { x: { stacked: false }, y: { beginAtZero: true } }, plugins: { legend: { display: true, position: 'bottom', labels: { font: { size: 10 } } } } } });
+      }
+      if (computed.topWorkers?.length) {
+        c2.draw({ type: 'bar', data: { labels: computed.topWorkers.map(w => w.name), datasets: [{ data: computed.topWorkers.map(w => w.cnt), backgroundColor: '#378ADD', borderRadius: 4 }] }, options: { ...co, indexAxis: 'y', scales: { x: { beginAtZero: true }, y: {} } } });
+      }
+      if (computed.topDefects?.length) {
+        c3.draw({ type: 'bar', data: { labels: computed.topDefects.map(d => d[0].length > 14 ? d[0].slice(0, 14) + '…' : d[0]), datasets: [{ data: computed.topDefects.map(d => d[1]), backgroundColor: RD, borderRadius: 4 }] }, options: { ...co, indexAxis: 'y', scales: { x: { beginAtZero: true }, y: {} } } });
+      }
+    } else if (section === 'warehouse') {
+      if (computed.dayLabels) {
+        c1.draw({ type: 'bar', data: { labels: computed.dayLabels, datasets: [{ label: 'Приходы', data: computed.rcvByDay, backgroundColor: GN, borderRadius: 4 }, { label: 'Расходы', data: computed.outByDay, backgroundColor: AM, borderRadius: 4 }] }, options: { ...co, scales: { x: {}, y: { beginAtZero: true } }, plugins: { legend: { display: true, position: 'bottom', labels: { font: { size: 10 } } } } } });
+      }
+      if (computed.topMats?.length) {
+        c2.draw({ type: 'bar', data: { labels: computed.topMats.map(m => m[0].length > 14 ? m[0].slice(0, 14) + '…' : m[0]), datasets: [{ data: computed.topMats.map(m => m[1]), backgroundColor: '#7F77DD', borderRadius: 4 }] }, options: { ...co, indexAxis: 'y', scales: { x: { beginAtZero: true }, y: {} } } });
+      }
+    } else if (section === 'hr') {
+      if (computed.workerStats?.length) {
+        c1.draw({ type: 'bar', data: { labels: computed.workerStats.map(w => w.name), datasets: [{ label: 'Выполнено', data: computed.workerStats.map(w => w.done), backgroundColor: GN, borderRadius: 4 }, { label: 'Брак', data: computed.workerStats.map(w => w.def), backgroundColor: RD, borderRadius: 4 }] }, options: { ...co, scales: { x: { stacked: false }, y: { beginAtZero: true } }, plugins: { legend: { display: true, position: 'bottom', labels: { font: { size: 10 } } } } } });
+      }
+      if (computed.statusCounts) {
+        const sc = computed.statusCounts;
+        c2.draw({ type: 'doughnut', data: { labels: ['На смене', 'Отсутствует', 'Больничный', 'Отпуск'], datasets: [{ data: [sc.working, sc.absent, sc.sick, sc.vacation], backgroundColor: [GN, RD, AM, '#7F77DD'], borderWidth: 0 }] }, options: { ...co, plugins: { legend: { display: true, position: 'right', labels: { font: { size: 10 }, boxWidth: 10 } } } } });
+      }
+    } else if (section === 'quality') {
+      if (computed.dayLabels) {
+        c1.draw({ type: 'line', data: { labels: computed.dayLabels, datasets: [{ label: 'Качество %', data: computed.qualByDay, borderColor: GN, backgroundColor: GN + '22', fill: true, tension: 0.4, pointRadius: 3, pointBackgroundColor: GN }] }, options: { ...co, scales: { y: { min: 70, max: 100, beginAtZero: false } }, plugins: { legend: { display: false } } } });
+      }
+      if (computed.topReasons?.length) {
+        c2.draw({ type: 'bar', data: { labels: computed.topReasons.map(r => r[0].length > 14 ? r[0].slice(0, 14) + '…' : r[0]), datasets: [{ data: computed.topReasons.map(r => r[1]), backgroundColor: RD, borderRadius: 4 }] }, options: { ...co, indexAxis: 'y', scales: { x: { beginAtZero: true }, y: {} } } });
+      }
+      if (computed.topWorkers?.length) {
+        c3.draw({ type: 'bar', data: { labels: computed.topWorkers.map(w => w[0]), datasets: [{ data: computed.topWorkers.map(w => w[1]), backgroundColor: AM, borderRadius: 4 }] }, options: { ...co, indexAxis: 'y', scales: { x: { beginAtZero: true }, y: {} } } });
+      }
+    }
+  }, [computed, section, c1, c2, c3, c4]);
+
+  const TITLES = { production: '⚙ Производство — полная аналитика', dashboard: '📊 Цех — полная аналитика', warehouse: '📦 Склад — полная аналитика', hr: '👥 Сотрудники — полная аналитика', quality: '🔍 Качество — полная аналитика' };
+
+  return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 300, overflowY: 'auto', padding: '16px 8px' }, onClick: e => e.target === e.currentTarget && onClose() },
+    h('div', { style: { background: '#f5f5f2', borderRadius: 14, width: 'min(900px,100%)', margin: '0 auto', boxShadow: '0 8px 40px rgba(0,0,0,0.2)' } },
+      // Шапка
+      h('div', { style: { background: '#fff', borderRadius: '14px 14px 0 0', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '0.5px solid rgba(0,0,0,0.08)' } },
+        h('div', { style: { fontSize: 15, fontWeight: 500 } }, TITLES[section] || 'Аналитика'),
+        h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+          // Период
+          h('div', { style: { display: 'flex', gap: 4 } },
+            [7, 14, 30, 90].map(d => h('button', { key: d, style: period === d ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setPeriod(d) }, `${d}д`))
+          ),
+          h('button', { style: gbtn({ fontSize: 11 }), onClick: () => {
+            const wb = XLSX.utils.book_new();
+            if (section === 'warehouse' && computed.topMats) {
+              XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(computed.topMats.map(([m, q]) => ({ Материал: m, Расход: q }))), 'Расход');
+            }
+            XLSX.writeFile(wb, `analytics_${section}_${new Date().toISOString().slice(0,10)}.xlsx`);
+          } }, '📥 Excel'),
+          h('button', { onClick: onClose, style: { background: 'none', border: 'none', fontSize: 22, color: '#aaa', cursor: 'pointer' } }, '×')
+        )
+      ),
+      h('div', { style: { padding: 16 } },
+        // Графики
+        h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 } },
+          h('div', { style: { background: '#fff', borderRadius: 10, padding: '12px 14px', border: '0.5px solid rgba(0,0,0,0.08)' } },
+            h('div', { style: { fontSize: 11, fontWeight: 500, color: '#555', marginBottom: 8 } },
+              section === 'warehouse' ? 'Движение по дням' :
+              section === 'hr' ? 'Выработка сотрудников' :
+              section === 'quality' ? 'Качество по дням (%)' : 'Выполнение по дням'
+            ),
+            h('div', { style: { height: 200 } }, h('canvas', { ref: c1.canvasRef }))
+          ),
+          h('div', { style: { background: '#fff', borderRadius: 10, padding: '12px 14px', border: '0.5px solid rgba(0,0,0,0.08)' } },
+            h('div', { style: { fontSize: 11, fontWeight: 500, color: '#555', marginBottom: 8 } },
+              section === 'warehouse' ? 'Топ расхода материалов' :
+              section === 'hr' ? 'Статус сотрудников' :
+              section === 'quality' ? 'Брак по причинам' : 'Выработка по сотрудникам'
+            ),
+            h('div', { style: { height: 200 } }, h('canvas', { ref: c2.canvasRef }))
+          ),
+          (section === 'production' || section === 'dashboard' || section === 'quality') && h('div', { style: { background: '#fff', borderRadius: 10, padding: '12px 14px', border: '0.5px solid rgba(0,0,0,0.08)', gridColumn: '1 / -1' } },
+            h('div', { style: { fontSize: 11, fontWeight: 500, color: '#555', marginBottom: 8 } },
+              section === 'quality' ? 'Брак по исполнителям' : 'Брак по причинам'
+            ),
+            h('div', { style: { height: 160 } }, h('canvas', { ref: c3.canvasRef }))
+          )
+        )
+      )
+    )
+  );
+});
+
+// Мини-аналитика (встроена в шапку раздела)
+const SectionAnalytics = memo(({ section, data }) => {
+  const [expanded, setExpanded] = useState(false);
+  const [period] = useState(30);
+  const periodStart = useMemo(() => now() - period * 86400000, [period]);
+
+  const kpis = useMemo(() => {
+    if (section === 'production' || section === 'dashboard') {
+      const done    = data.ops.filter(o => o.status === 'done'   && o.finishedAt >= periodStart).length;
+      const defect  = data.ops.filter(o => o.status === 'defect' && o.finishedAt >= periodStart).length;
+      const inProg  = data.ops.filter(o => o.status === 'in_progress' && !o.archived).length;
+      const quality = done + defect > 0 ? Math.round(done / (done + defect) * 100) : 100;
+      const spark7  = Array.from({ length: 7 }, (_, i) => { const s = now() - (7 - i) * 86400000, e = now() - (6 - i) * 86400000; return data.ops.filter(o => o.finishedAt >= s && o.finishedAt < e && o.status === 'done').length; });
+      return [
+        { label: 'Выполнено', value: done, delta: 'за 30 дней', deltaDir: 'up', color: GN2, spark: { values: spark7, color: GN } },
+        { label: 'В работе',  value: inProg, delta: 'сейчас', deltaDir: 'neu', color: AM2 },
+        { label: 'Качество',  value: `${quality}%`, delta: quality >= 95 ? 'отлично' : quality >= 85 ? 'норма' : 'требует внимания', deltaDir: quality >= 95 ? 'up' : quality >= 85 ? 'neu' : 'dn', color: quality >= 95 ? GN2 : quality >= 85 ? AM2 : RD2 },
+        { label: 'Брак',      value: defect, delta: 'за 30 дней', deltaDir: defect > 5 ? 'dn' : 'neu', color: defect > 0 ? RD2 : '#888' },
+      ];
+    }
+    if (section === 'warehouse') {
+      const critical = data.materials.filter(m => m.minStock && m.quantity <= m.minStock).length;
+      const totalVal = Math.round(data.materials.reduce((s, m) => s + m.quantity * (m.unitCost || 0), 0) / 1000);
+      const receives = data.events.filter(e => e.type === 'material_receive' && e.ts >= periodStart).length;
+      const requests = data.events.filter(e => e.type === 'chat_alert' && e.alertType === 'need_material' && !e.fulfilled).length;
+      return [
+        { label: 'Позиций',       value: data.materials.length, delta: 'в справочнике', deltaDir: 'neu' },
+        { label: 'Критичных',     value: critical, delta: 'ниже минимума', deltaDir: critical > 0 ? 'dn' : 'up', color: critical > 0 ? RD2 : GN2 },
+        { label: 'Стоимость',     value: `${totalVal}к₽`, delta: 'на складе', deltaDir: 'neu', color: AM2 },
+        { label: 'Заявок ожид.', value: requests, delta: 'от рабочих', deltaDir: requests > 0 ? 'dn' : 'neu', color: requests > 0 ? AM2 : '#888' },
+      ];
+    }
+    if (section === 'hr') {
+      const active  = data.workers.filter(w => !w.archived);
+      const working = active.filter(w => (w.status || 'working') === 'working').length;
+      const absent  = active.filter(w => w.status !== 'working').length;
+      const avgDone = active.length > 0 ? Math.round(data.ops.filter(o => o.status === 'done' && o.finishedAt >= periodStart).length / Math.max(working, 1)) : 0;
+      return [
+        { label: 'Сотрудников', value: active.length, delta: 'в системе', deltaDir: 'neu' },
+        { label: 'На смене',    value: working, delta: `${Math.round(working / Math.max(active.length, 1) * 100)}% явка`, deltaDir: 'up', color: GN2 },
+        { label: 'Отсутствуют', value: absent, delta: 'б/л, отпуск', deltaDir: absent > 3 ? 'dn' : 'neu', color: absent > 3 ? RD2 : '#888' },
+        { label: 'Ср. выработка', value: `${avgDone}оп`, delta: 'на чел/месяц', deltaDir: 'neu', color: AM2 },
+      ];
+    }
+    if (section === 'quality') {
+      const doneOps   = data.ops.filter(o => o.status === 'done'   && o.finishedAt >= periodStart);
+      const defectOps = data.ops.filter(o => o.status === 'defect' && o.finishedAt >= periodStart);
+      const onCheck   = data.ops.filter(o => o.status === 'on_check' && !o.archived);
+      const quality   = doneOps.length + defectOps.length > 0 ? Math.round(doneOps.length / (doneOps.length + defectOps.length) * 100) : 100;
+      return [
+        { label: 'Качество',      value: `${quality}%`, delta: 'принято с 1 раза', deltaDir: quality >= 95 ? 'up' : quality >= 85 ? 'neu' : 'dn', color: quality >= 95 ? GN2 : AM2 },
+        { label: 'Брак',          value: defectOps.length, delta: 'за 30 дней', deltaDir: defectOps.length > 5 ? 'dn' : 'neu', color: defectOps.length > 0 ? RD2 : GN2 },
+        { label: 'На проверке',   value: onCheck.length, delta: 'ожидают контроля', deltaDir: onCheck.length > 3 ? 'dn' : 'neu', color: onCheck.length > 0 ? AM2 : '#888' },
+        { label: 'Рекламации',    value: (data.reclamations || []).length, delta: 'всего открытых', deltaDir: (data.reclamations || []).length > 0 ? 'dn' : 'up', color: (data.reclamations || []).length > 0 ? RD2 : GN2 },
+      ];
+    }
+    return [];
+  }, [section, data, periodStart]);
+
+  return h('div', { style: { marginBottom: 16 } },
+    // KPI полоска
+    h('div', { style: { display: 'grid', gridTemplateColumns: `repeat(${kpis.length}, 1fr)`, gap: 8, marginBottom: 8 } },
+      kpis.map((kpi, i) => h(KpiCard, { key: i, ...kpi }))
+    ),
+    // Кнопка полной аналитики
+    h('button', {
+      style: { ...gbtn({ fontSize: 11, width: '100%', padding: '7px' }), display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 },
+      onClick: () => setExpanded(true)
+    }, '📊 Полная аналитика — графики, фильтры, экспорт'),
+    // Модалка
+    expanded && h(FullAnalyticsModal, { section, data, onClose: () => setExpanded(false) })
   );
 });
 
@@ -3515,6 +3864,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
   );
 
   return h('div', null,
+    h(SectionAnalytics, { section: 'hr', data }),
     confirmEl,
     cardWorker && h(WorkerCardModal, { worker: cardWorker, data, onClose: () => setCardWorker(null) }),
     thanksModal && h('div', { role:'dialog','aria-modal':'true','aria-label':'Отправить благодарность', style: { position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:200 } },
@@ -3731,6 +4081,11 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
   const [masterPin, setMasterPin] = useState(settings.masterPin || '0000');
   const [controllerPin, setControllerPin] = useState(settings.controllerPin || '1111');
   const [warehousePin, setWarehousePin] = useState(settings.warehousePin || '2222');
+  const [pdoPin, setPdoPin] = useState(settings.pdoPin || '3333');
+  const [directorPin, setDirectorPin] = useState(settings.directorPin || '4444');
+  const [hrPin, setHrPin] = useState(settings.hrPin || '5555');
+  const [shopMasterPin, setShopMasterPin] = useState(settings.shopMasterPin || '6666');
+  const [adminPin, setAdminPin] = useState(settings.adminPin || '7777');
   const [masterKey, setMasterKey] = useState(settings.masterKey || '9999');
   const [showMasterKey, setShowMasterKey] = useState(false);
   const [welcomeTitle, setWelcomeTitle] = useState(settings.welcomeTitle || 'teploros');
@@ -3747,7 +4102,13 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
     const conflictC = data.workers.find(w => pinMatch(controllerPin.trim(), w.pin));
     if (conflictC) { addToast(`PIN контролёра совпадает с PIN сотрудника ${conflictC.name}`, 'error'); return; }
     if (masterPin.trim() === controllerPin.trim()) { addToast('PIN мастера и контролёра должны отличаться', 'error'); return; }
-    const d = { ...data, settings: { ...settings, masterPin: hashPin(masterPin.trim()), controllerPin: hashPin(controllerPin.trim()), warehousePin: hashPin(warehousePin.trim()), masterKey: masterKey.trim() } };
+    const d = { ...data, settings: { ...settings,
+      masterPin: hashPin(masterPin.trim()), controllerPin: hashPin(controllerPin.trim()),
+      warehousePin: hashPin(warehousePin.trim()), masterKey: masterKey.trim(),
+      pdoPin: hashPin(pdoPin.trim()), directorPin: hashPin(directorPin.trim()),
+      hrPin: hashPin(hrPin.trim()), shopMasterPin: hashPin(shopMasterPin.trim()),
+      adminPin: hashPin(adminPin.trim()),
+    } };
     await DB.save(d); onUpdate(d); addToast('PIN-коды обновлены', 'success');
   }, [data, settings, masterPin, controllerPin, warehousePin, masterKey, onUpdate, addToast]);
 
@@ -3784,7 +4145,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
       ),
       h('div', { style: { display:'flex', gap:12, flexWrap:'wrap', marginBottom:12 } },
         h('div', { style: { flex:1, minWidth:150 } },
-          h('label', { style: S.lbl, htmlFor: 'adminMasterPin' }, 'PIN мастера'),
+          h('label', { style: S.lbl, htmlFor: 'adminMasterPin' }, 'PIN мастера (полный доступ)'),
           h('input', { id:'adminMasterPin', type:'text', inputMode:'numeric', style: { ...S.inp, width:'100%', fontFamily:'monospace', letterSpacing:'0.2em' }, value: masterPin, maxLength: 8, onChange: e => setMasterPin(e.target.value) })
         ),
         h('div', { style: { flex:1, minWidth:150 } },
@@ -3794,6 +4155,26 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         h('div', { style: { flex:1, minWidth:150 } },
           h('label', { style: S.lbl }, 'PIN склада'),
           h('input', { type:'text', inputMode:'numeric', style: { ...S.inp, width:'100%', fontFamily:'monospace', letterSpacing:'0.2em' }, value: warehousePin, maxLength: 8, onChange: e => setWarehousePin(e.target.value) })
+        ),
+        h('div', { style: { flex:1, minWidth:150 } },
+          h('label', { style: S.lbl }, 'PIN ПДО'),
+          h('input', { type:'text', inputMode:'numeric', style: { ...S.inp, width:'100%', fontFamily:'monospace', letterSpacing:'0.2em' }, value: pdoPin, maxLength: 8, onChange: e => setPdoPin(e.target.value) })
+        ),
+        h('div', { style: { flex:1, minWidth:150 } },
+          h('label', { style: S.lbl }, 'PIN руководителя'),
+          h('input', { type:'text', inputMode:'numeric', style: { ...S.inp, width:'100%', fontFamily:'monospace', letterSpacing:'0.2em' }, value: directorPin, maxLength: 8, onChange: e => setDirectorPin(e.target.value) })
+        ),
+        h('div', { style: { flex:1, minWidth:150 } },
+          h('label', { style: S.lbl }, 'PIN HR / Отдел кадров'),
+          h('input', { type:'text', inputMode:'numeric', style: { ...S.inp, width:'100%', fontFamily:'monospace', letterSpacing:'0.2em' }, value: hrPin, maxLength: 8, onChange: e => setHrPin(e.target.value) })
+        ),
+        h('div', { style: { flex:1, minWidth:150 } },
+          h('label', { style: S.lbl }, 'PIN мастера цеха'),
+          h('input', { type:'text', inputMode:'numeric', style: { ...S.inp, width:'100%', fontFamily:'monospace', letterSpacing:'0.2em' }, value: shopMasterPin, maxLength: 8, onChange: e => setShopMasterPin(e.target.value) })
+        ),
+        h('div', { style: { flex:1, minWidth:150 } },
+          h('label', { style: S.lbl }, 'PIN администратора'),
+          h('input', { type:'text', inputMode:'numeric', style: { ...S.inp, width:'100%', fontFamily:'monospace', letterSpacing:'0.2em' }, value: adminPin, maxLength: 8, onChange: e => setAdminPin(e.target.value) })
         ),
         h('div', { style: { flex:1, minWidth:150 } },
           h('label', { style: S.lbl }, 'Мастер-ключ (сброс любого PIN)'),
@@ -4906,16 +5287,47 @@ const ReportsBuilder = memo(({ data, onUpdate, addToast }) => {
 });
 
 // ==================== MasterScreen ====================
-const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick }) => {
-  const [tab, setTab] = useState('ops');
+const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, role }) => {
   const [qrOpData, setQrOpData] = useState(null);
-  const [activeGroup, setActiveGroup] = useState('production');
-  const tabGroups = {
+
+  // Конфигурация вкладок по ролям
+  const ALL_GROUPS = {
     production: { label: '⚙ Производство', tabs: [['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['orders','Заказы'],['plan','План']] },
-    reference: { label: '📋 Справочники', tabs: [['workers','Сотрудники'],['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],['materials','Материалы'],['equipment','Оборудование'],['bom','Спецификации'],['sections','Участки']] },
-    analytics: { label: '📊 Аналитика', tabs: [['reports','Отчёты'],['analytics','Аналитика'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['journal','Журнал'],['notifications','Уведомления']] },
-    system: { label: '🔧 Система', tabs: [['time','Учёт времени'],['admin','Управление']] }
+    reference:  { label: '📋 Справочники', tabs: [['workers','Сотрудники'],['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],['materials','Материалы'],['equipment','Оборудование'],['bom','Спецификации'],['sections','Участки']] },
+    analytics:  { label: '📊 Аналитика',   tabs: [['reports','Отчёты'],['analytics','Аналитика'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['journal','Журнал'],['notifications','Уведомления']] },
+    system:     { label: '🔧 Система',      tabs: [['time','Учёт времени'],['admin','Управление']] }
   };
+
+  // Вкладки для каждой роли
+  const ROLE_TABS = {
+    master:      ALL_GROUPS, // полный доступ
+    pdo: {
+      production: { label: '⚙ Производство', tabs: [['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['orders','Заказы'],['plan','План']] },
+      analytics:  { label: '📊 Аналитика',   tabs: [['reports','Отчёты'],['journal','Журнал'],['notifications','Уведомления']] },
+    },
+    director: {
+      analytics:  { label: '📊 Аналитика',   tabs: [['analytics','Аналитика'],['kpi','KPI / Премии'],['reports','Отчёты'],['reclamations','Рекламации']] },
+      production: { label: '⚙ Производство', tabs: [['orders','Заказы'],['kanban','Канбан']] },
+    },
+    hr: {
+      reference:  { label: '👥 Сотрудники',  tabs: [['workers','Сотрудники']] },
+      analytics:  { label: '📊 Аналитика',   tabs: [['kpi','KPI / Премии'],['reports','Отчёты']] },
+      system:     { label: '🕐 Учёт',         tabs: [['time','Учёт времени']] },
+    },
+    shop_master: {
+      production: { label: '⚙ Производство', tabs: [['ops','Операции'],['recommend','Назначения'],['orders','Заказы']] },
+      analytics:  { label: '📊 Аналитика',   tabs: [['journal','Журнал'],['notifications','Уведомления']] },
+    },
+    admin: {
+      reference:  { label: '📋 Справочники', tabs: [['workers','Сотрудники'],['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],['materials','Материалы'],['equipment','Оборудование'],['bom','Спецификации'],['sections','Участки']] },
+      system:     { label: '🔧 Система',      tabs: [['time','Учёт времени'],['admin','Управление']] },
+    },
+  };
+
+  const tabGroups = ROLE_TABS[role] || ALL_GROUPS;
+  const firstGroup = Object.keys(tabGroups)[0];
+  const [activeGroup, setActiveGroup] = useState(firstGroup);
+  const [tab, setTab] = useState(tabGroups[firstGroup]?.tabs[0]?.[0] || 'ops');
   const currentTabs = tabGroups[activeGroup]?.tabs || [];
   const switchGroup = (g) => { setActiveGroup(g); setTab(tabGroups[g].tabs[0][0]); };
   const filteredData = useMemo(() => {
@@ -4946,6 +5358,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick }
       )
     ),
     tab === 'ops' && h('div', null,
+      h(SectionAnalytics, { section: 'production', data }),
       // Сводка мастера
       (() => {
         const { activeOps, pendingOps, defectOps, onCheckOps, wipOrders, freeWorkers } = masterSummary;
@@ -6000,6 +6413,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
   const totalValue = data.materials.reduce((s, m) => s + m.quantity * (m.unitCost || 0), 0);
 
   return h('div', { style: { maxWidth: 800, margin: '0 auto', padding: '0 0 24px' } },
+    h(SectionAnalytics, { section: 'warehouse', data }),
     showImport && h(MaterialImportModal, { data, onClose: () => setShowImport(false), onUpdate, addToast, defaultMode: importMode }),
     // Вкладки
     h('div', { style: { display: 'flex', gap: 4, marginBottom: 16, borderBottom: '0.5px solid rgba(0,0,0,0.08)', paddingBottom: 8 } },
@@ -6179,6 +6593,7 @@ const Dashboard = memo(({ data, addToast, onOrderClick }) => {
   }, [data, addToast]);
 
   return h('div', { style: { padding: '0 0 24px' } },
+    h(SectionAnalytics, { section: 'dashboard', data }),
     // Заголовок с часами
     h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } },
       h('div', null,
@@ -6776,7 +7191,18 @@ function App() {
   return h('div', null,
     h('div', { style: { display:'flex', gap:12, padding:'10px 0', borderBottom:'0.5px solid rgba(0,0,0,0.08)', alignItems:'center', flexWrap:'wrap' } },
       h('button', { style: gbtn({ fontSize:11 }), onClick: goBack }, '← Выход'),
-      h('div', { style: { fontSize:12, color:'#888' } }, effectiveRole === 'master' ? 'Мастер' : effectiveRole === 'controller' ? 'Контролёр' : effectiveRole === 'warehouse' ? 'Склад' : effectiveRole === 'dashboard' ? 'Дашборд' : currentUser.name),
+      h('div', { style: { fontSize:12, color:'#888' } },
+        effectiveRole === 'master'      ? 'Мастер'        :
+        effectiveRole === 'controller'  ? 'Контролёр'     :
+        effectiveRole === 'warehouse'   ? 'Склад'          :
+        effectiveRole === 'dashboard'   ? 'Дашборд'        :
+        effectiveRole === 'pdo'         ? 'ПДО'            :
+        effectiveRole === 'director'    ? 'Руководитель'   :
+        effectiveRole === 'hr'          ? 'HR'             :
+        effectiveRole === 'shop_master' ? 'Мастер цеха'   :
+        effectiveRole === 'admin'       ? 'Администратор'  :
+        currentUser.name
+      ),
       effectiveRole !== 'dashboard' && (() => {
         const chatLastRead = Number(localStorage.getItem(`chat_lastRead_${currentUser.id || 'anon'}`)) || 0;
         const unread = (data.messages || []).filter(m => m.timestamp > chatLastRead && m.senderId !== (currentUser.id || 'system')).length;
@@ -6805,8 +7231,13 @@ function App() {
     showChat
       ? h(ChatScreen, { data, onUpdate: save, addToast, currentUser, onBack: () => setShowChat(false) })
       : h('div', null,
-          effectiveRole === 'master' && h(MasterScreen, { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId }),
-          effectiveRole === 'controller' && h(ControllerScreen, { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId }),
+          effectiveRole === 'master'      && h(MasterScreen, { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId, role: 'master' }),
+          effectiveRole === 'pdo'         && h(MasterScreen, { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId, role: 'pdo' }),
+          effectiveRole === 'director'    && h(MasterScreen, { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId, role: 'director' }),
+          effectiveRole === 'hr'          && h(MasterScreen, { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId, role: 'hr' }),
+          effectiveRole === 'shop_master' && h(MasterScreen, { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId, role: 'shop_master' }),
+          effectiveRole === 'admin'       && h(MasterScreen, { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId, role: 'admin' }),
+          effectiveRole === 'controller'  && h(ControllerScreen, { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId }),
           effectiveRole === 'worker' && workerId && h(WorkerScreen, { data, workerId, sectionId, onUpdate: save, initialOpId: null, addToast }),
           effectiveRole === 'warehouse' && h(WarehouseScreen, { data, onUpdate: save, addToast }),
           effectiveRole === 'dashboard' && h(Dashboard, { data, addToast, onOrderClick: setSelectedOrderId })
