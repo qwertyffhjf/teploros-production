@@ -5237,7 +5237,7 @@ const WIDGET_METRICS = [
   { id:'mat_critical',   cat:'Склад',        name:'Критичные остатки',           types:['horizontalBar','bar'],           color: RD },
   { id:'worker_status',  cat:'HR',           name:'Статус сотрудников',          types:['doughnut','bar'],                color: GN },
   { id:'ops_status',     cat:'Производство', name:'Статус операций',             types:['doughnut','bar'],                color: AM },
-  { id:'shift_output',   cat:'Производство', name:'Выработка по сменам',         types:['bar','line'],                    color: GN4 || '#1D9E75' },
+  { id:'shift_output',   cat:'Производство', name:'Выработка по сменам',         types:['bar','line'],                    color: GN },
 ];
 
 const CHART_TYPE_LABELS = { bar:'Столбцы', line:'Линия', area:'Область', doughnut:'Круговая', horizontalBar:'Горизонт.' };
@@ -5741,7 +5741,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
     tab === 'sections' && h(MasterSections, { data, onUpdate, addToast }),
     tab === 'plan' && h(MasterTodayPlan, { data }),
     tab === 'notifications' && h(MasterNotifications, { data }),
-    tab === 'reports' && h(ReportsBuilder, { data, onUpdate, addToast }),
+    tab === 'reports' && h(ReportsBuilder, { data }),
     tab === 'analytics' && h(AnalyticsDashboard, { data }),
     tab === 'kpi' && h(KPIReport, { data }),
     tab === 'reclamations' && h(MasterReclamations, { data, onUpdate, addToast }),
