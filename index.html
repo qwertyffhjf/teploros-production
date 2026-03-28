@@ -969,13 +969,13 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
   const resolvePin = (inputPin) => {
     const p = inputPin.trim();
     if (!p) return null;
-    if (pinMatch(p, settings.masterPin || '0000')) return { role: 'master', workerId: null, sectionId: null, name: 'Мастер' };
+    if (pinMatch(p, settings.masterPin || '0000')) return { role: 'master', workerId: null, sectionId: null, name: 'Начальник цеха' };
     if (pinMatch(p, settings.controllerPin || '1111')) return { role: 'controller', workerId: null, sectionId: null, name: 'Контролёр' };
     if (pinMatch(p, settings.warehousePin || '2222')) return { role: 'warehouse', workerId: null, sectionId: null, name: 'Склад' };
     if (pinMatch(p, settings.pdoPin || '3333')) return { role: 'pdo', workerId: null, sectionId: null, name: 'ПДО' };
     if (pinMatch(p, settings.directorPin || '4444')) return { role: 'director', workerId: null, sectionId: null, name: 'Руководитель' };
     if (pinMatch(p, settings.hrPin || '5555')) return { role: 'hr', workerId: null, sectionId: null, name: 'HR' };
-    if (pinMatch(p, settings.shopMasterPin || '6666')) return { role: 'shop_master', workerId: null, sectionId: null, name: 'Мастер цеха' };
+    if (pinMatch(p, settings.shopMasterPin || '6666')) return { role: 'shop_master', workerId: null, sectionId: null, name: 'Сменный мастер' };
     if (pinMatch(p, settings.adminPin || '7777')) return { role: 'admin', workerId: null, sectionId: null, name: 'Администратор' };
     const worker = data.workers.find(w => pinMatch(p, w.pin));
     if (worker) return { role: 'worker', workerId: worker.id, sectionId: worker.sectionId || null, name: worker.name };
@@ -1067,7 +1067,7 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
       h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' } },
         [
           ['worker',      '👷 Сотрудник'],
-          ['shop_master', '🔧 Мастер цеха'],
+          ['shop_master', '🔧 Сменный мастер'],
           ['controller',  '🔍 Контролёр'],
           ['warehouse',   '📦 Склад'],
         ].map(([r, label]) => h('button', {
@@ -1080,7 +1080,7 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
       h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' } },
         [
           ['pdo',      '📋 ПДО'],
-          ['master',   '🔑 Мастер'],
+          ['master',   '🔑 Начальник цеха'],
           ['director', '👔 Руководитель'],
           ['hr',       '👥 HR'],
           ['admin',    '⚙ Администратор'],
@@ -2901,6 +2901,29 @@ const MasterBOM = memo(({ data, onUpdate, addToast }) => {
     // Создать
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Создать спецификацию'),
+      h(PasteImportWidget, { addToast, hint: 'Вставить спецификации из Excel (Изделие | Материал | Кол-во | Ед.)',
+        columns: [
+          { key: 'productName', label: 'Изделие', required: true },
+          { key: 'materialName', label: 'Материал', required: false, default: '' },
+          { key: 'qty', label: 'Количество', required: false, default: '' },
+          { key: 'unit', label: 'Ед. изм.', required: false, default: '' },
+        ],
+        onImport: async (rows) => {
+          let updated = [...data.bomTemplates];
+          let addedBom = 0, addedMat = 0;
+          rows.forEach(r => {
+            const pname = r.productName?.trim(); if (!pname) return;
+            let bom = updated.find(b => b.productName.toLowerCase() === pname.toLowerCase());
+            if (!bom) { bom = { id: uid(), productName: pname, materials: [] }; updated.push(bom); addedBom++; }
+            if (r.materialName?.trim()) {
+              const mat = data.materials.find(m => normStr(m.name) === normStr(r.materialName));
+              if (mat) { bom.materials = [...(bom.materials||[]), { materialId: mat.id, qty: Number(r.qty)||1 }]; addedMat++; }
+            }
+          });
+          const d = { ...data, bomTemplates: updated };
+          await DB.save(d); onUpdate(d);
+          addToast(`Спецификации: +${addedBom} изделий, +${addedMat} позиций материалов`, 'success');
+        }}),
       h('div', { style: { display: 'flex', gap: 8 } },
         h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Название изделия (Котёл КВ-100...)', value: form.productName, onChange: e => setForm(p => ({ ...p, productName: e.target.value })), onKeyDown: e => e.key === 'Enter' && add() }),
         h('button', { style: abtn(), onClick: add }, '+ Создать')
@@ -4145,7 +4168,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
       ),
       h('div', { style: { display:'flex', gap:12, flexWrap:'wrap', marginBottom:12 } },
         h('div', { style: { flex:1, minWidth:150 } },
-          h('label', { style: S.lbl, htmlFor: 'adminMasterPin' }, 'PIN мастера (полный доступ)'),
+          h('label', { style: S.lbl, htmlFor: 'adminMasterPin' }, 'PIN начальника цеха'),
           h('input', { id:'adminMasterPin', type:'text', inputMode:'numeric', style: { ...S.inp, width:'100%', fontFamily:'monospace', letterSpacing:'0.2em' }, value: masterPin, maxLength: 8, onChange: e => setMasterPin(e.target.value) })
         ),
         h('div', { style: { flex:1, minWidth:150 } },
@@ -4169,7 +4192,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
           h('input', { type:'text', inputMode:'numeric', style: { ...S.inp, width:'100%', fontFamily:'monospace', letterSpacing:'0.2em' }, value: hrPin, maxLength: 8, onChange: e => setHrPin(e.target.value) })
         ),
         h('div', { style: { flex:1, minWidth:150 } },
-          h('label', { style: S.lbl }, 'PIN мастера цеха'),
+          h('label', { style: S.lbl }, 'PIN сменного мастера'),
           h('input', { type:'text', inputMode:'numeric', style: { ...S.inp, width:'100%', fontFamily:'monospace', letterSpacing:'0.2em' }, value: shopMasterPin, maxLength: 8, onChange: e => setShopMasterPin(e.target.value) })
         ),
         h('div', { style: { flex:1, minWidth:150 } },
@@ -4860,6 +4883,27 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
       ),
       h('button', { style: abtn({ marginLeft: 'auto' }), onClick: () => setShowForm(v => !v) }, showForm ? '✕ Свернуть' : '+ Новая рекламация')
     ),
+    h(PasteImportWidget, { addToast, hint: 'Вставить рекламации из Excel',
+      columns: [
+        { key: 'description', label: 'Описание дефекта', required: true },
+        { key: 'orderNumber', label: 'Номер заказа',     required: false, default: '' },
+        { key: 'severity',    label: 'Серьёзность',      required: false, default: 'minor' },
+        { key: 'source',      label: 'Источник',         required: false, default: 'external' },
+      ],
+      onImport: async (rows) => {
+        const orderMap = {};
+        data.orders.forEach(o => { orderMap[o.number?.toLowerCase()] = o.id; });
+        const items = rows.filter(r => r.description).map(r => ({
+          id: uid(), description: r.description,
+          orderId: orderMap[r.orderNumber?.toLowerCase()] || '',
+          severity: ['minor','major','critical'].includes(r.severity) ? r.severity : 'minor',
+          defectSource: ['external','current','previous_stage'].includes(r.source) ? r.source : 'external',
+          status: 'open', detectedDate: new Date().toISOString().slice(0,10), createdAt: now(), d8Steps: {}
+        }));
+        if (!items.length) { addToast('Нет данных для импорта', 'error'); return; }
+        const d = { ...data, reclamations: [...(data.reclamations||[]), ...items] };
+        await DB.save(d); onUpdate(d); addToast(`Добавлено рекламаций: ${items.length}`, 'success');
+      }}),
     // Форма создания
     showForm && h('div', { style: { ...S.card, marginBottom: 12, border: `0.5px solid ${AM}` } },
       h('div', { style: { display: 'flex', gap: 6, marginBottom: 12 } },
@@ -5177,112 +5221,418 @@ const AnalyticsDashboard = memo(({ data }) => {
   );
 });
 
-// ==================== ReportsBuilder (расширенный) ====================
-const ReportsBuilder = memo(({ data, onUpdate, addToast }) => {
-  const [reportType, setReportType] = useState('defects');
-  const [period, setPeriod] = useState(30);
-  const periodStart = useMemo(() => now() - period * 86400000, [period]);
+// ==================== ReportsBuilder (конструктор дашборда) ====================
+// Метрики доступные для виджетов
+const WIDGET_METRICS = [
+  { id:'done_day',       cat:'Производство', name:'Выработка по дням',         types:['bar','line','area'],              color: GN },
+  { id:'defect_reason',  cat:'Производство', name:'Брак по причинам',           types:['bar','horizontalBar','doughnut'], color: RD },
+  { id:'worker_output',  cat:'Производство', name:'Выработка по сотрудникам',   types:['bar','horizontalBar','doughnut'], color: BL },
+  { id:'quality_trend',  cat:'Качество',     name:'Качество (тренд)',            types:['line','area','bar'],              color: GN },
+  { id:'defect_worker',  cat:'Качество',     name:'Брак по исполнителям',        types:['bar','horizontalBar','doughnut'], color: RD },
+  { id:'downtime_cat',   cat:'Простои',      name:'Простои по категориям',       types:['doughnut','bar','horizontalBar'], color: AM },
+  { id:'downtime_equip', cat:'Простои',      name:'Простои по оборудованию',     types:['bar','horizontalBar'],           color: AM4 },
+  { id:'orders_prog',    cat:'Заказы',       name:'Прогресс заказов',            types:['bar','horizontalBar'],           color: '#7F77DD' },
+  { id:'leadtime',       cat:'Заказы',       name:'Lead Time по заказам',        types:['bar','line'],                    color: '#7F77DD' },
+  { id:'mat_consume',    cat:'Склад',        name:'Расход материалов',           types:['bar','horizontalBar','doughnut'],color: BL },
+  { id:'mat_critical',   cat:'Склад',        name:'Критичные остатки',           types:['horizontalBar','bar'],           color: RD },
+  { id:'worker_status',  cat:'HR',           name:'Статус сотрудников',          types:['doughnut','bar'],                color: GN },
+  { id:'ops_status',     cat:'Производство', name:'Статус операций',             types:['doughnut','bar'],                color: AM },
+  { id:'shift_output',   cat:'Производство', name:'Выработка по сменам',         types:['bar','line'],                    color: GN4 || '#1D9E75' },
+];
 
-  const reportData = useMemo(() => {
-    if (reportType === 'defects') {
-      return data.ops.filter(op => op.status === 'defect' && op.finishedAt >= periodStart).map(op => {
-        const order = data.orders.find(o => o.id === op.orderId);
-        const reason = data.defectReasons?.find(r => r.id === op.defectReasonId);
-        const workerNames = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name).filter(Boolean).join(', ');
-        return { op: op.name, order: order?.number || '—', reason: reason?.name || op.defectNote || '—', source: op.defectSource === 'current' ? 'Текущий этап' : op.defectSource === 'previous_stage' ? 'Пред. участок' : '—', worker: workerNames || '—', date: op.finishedAt ? new Date(op.finishedAt).toLocaleString() : '—' };
+const CHART_TYPE_LABELS = { bar:'Столбцы', line:'Линия', area:'Область', doughnut:'Круговая', horizontalBar:'Горизонт.' };
+const CHART_TYPE_ICONS  = { bar:'▊', line:'∿', area:'◭', doughnut:'◉', horizontalBar:'▬' };
+const LAYOUT_STORAGE_KEY = 'teploros_dashboard_layout_v1';
+const DEFAULT_LAYOUT = [
+  { id:'w1', metric:'done_day',      type:'bar',          title:'Выработка по дням',     period:7  },
+  { id:'w2', metric:'defect_reason', type:'doughnut',     title:'Брак по причинам',      period:30 },
+  { id:'w3', metric:'quality_trend', type:'line',         title:'Качество (тренд, %)',   period:7  },
+  { id:'w4', metric:'worker_output', type:'horizontalBar',title:'Топ сотрудников',       period:30 },
+];
+
+// Вычислить данные для метрики из реальных данных Firebase
+const computeWidgetData = (metricId, data, periodDays) => {
+  const periodStart = now() - periodDays * 86400000;
+  const DAY_LABELS = (n) => Array.from({ length: n }, (_, i) => {
+    const d = new Date(now() - (n - 1 - i) * 86400000);
+    return d.toLocaleDateString('ru-RU', { weekday: 'short' });
+  });
+
+  switch (metricId) {
+    case 'done_day': {
+      const n = Math.min(periodDays, 14);
+      const labels = DAY_LABELS(n);
+      const values = Array.from({ length: n }, (_, i) => {
+        const s = now() - (n - i) * 86400000, e = now() - (n - 1 - i) * 86400000;
+        return data.ops.filter(o => o.finishedAt >= s && o.finishedAt < e && o.status === 'done').length;
       });
+      return { labels, values };
     }
-    if (reportType === 'downtimes') {
-      return data.events.filter(e => e.type === 'downtime' && e.ts >= periodStart).map(e => {
-        const worker = data.workers.find(w => w.id === e.workerId);
-        const reason = data.downtimeTypes?.find(d => d.id === e.downtimeTypeId);
-        const eq = e.equipmentId ? data.equipment?.find(eq => eq.id === e.equipmentId) : null;
-        const op = e.opId ? data.ops.find(o => o.id === e.opId) : null;
-        const order = op ? data.orders.find(o => o.id === op.orderId) : null;
-        return { worker: worker?.name || '—', reason: reason?.name || '—', duration: fmtDur(e.duration || 0), equipment: eq?.name || '—', order: order?.number || '—', operation: op?.name || '—', shift: e.shift || '—', date: new Date(e.ts).toLocaleString() };
+    case 'defect_reason': {
+      const map = {};
+      data.ops.filter(o => o.status === 'defect' && o.finishedAt >= periodStart).forEach(o => {
+        const k = data.defectReasons?.find(r => r.id === o.defectReasonId)?.name || 'Прочее';
+        map[k] = (map[k] || 0) + 1;
       });
+      const sorted = Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 6);
+      return { labels: sorted.map(x => x[0]), values: sorted.map(x => x[1]) };
     }
-    if (reportType === 'orders') {
-      return data.orders.filter(o => !o.archived && o.createdAt >= periodStart).map(order => {
-        const ops = data.ops.filter(op => op.orderId === order.id);
+    case 'worker_output': {
+      const map = {};
+      data.ops.filter(o => o.status === 'done' && o.finishedAt >= periodStart).forEach(o => {
+        (o.workerIds || []).forEach(wid => {
+          const name = data.workers.find(w => w.id === wid)?.name?.split(' ')[0] || '?';
+          map[name] = (map[name] || 0) + 1;
+        });
+      });
+      const sorted = Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 7);
+      return { labels: sorted.map(x => x[0]), values: sorted.map(x => x[1]) };
+    }
+    case 'quality_trend': {
+      const n = Math.min(periodDays, 14);
+      const labels = DAY_LABELS(n);
+      const values = Array.from({ length: n }, (_, i) => {
+        const s = now() - (n - i) * 86400000, e = now() - (n - 1 - i) * 86400000;
+        const dn = data.ops.filter(o => o.finishedAt >= s && o.finishedAt < e && o.status === 'done').length;
+        const df = data.ops.filter(o => o.finishedAt >= s && o.finishedAt < e && o.status === 'defect').length;
+        return dn + df > 0 ? Math.round(dn / (dn + df) * 100) : 100;
+      });
+      return { labels, values };
+    }
+    case 'defect_worker': {
+      const map = {};
+      data.ops.filter(o => o.status === 'defect' && o.finishedAt >= periodStart).forEach(o => {
+        (o.workerIds || []).forEach(wid => {
+          const name = data.workers.find(w => w.id === wid)?.name?.split(' ')[0] || '?';
+          map[name] = (map[name] || 0) + 1;
+        });
+      });
+      const sorted = Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 6);
+      return { labels: sorted.map(x => x[0]), values: sorted.map(x => x[1]) };
+    }
+    case 'downtime_cat': {
+      const map = { 'Оборудование': 0, 'Материалы': 0, 'Организация': 0, 'Прочее': 0 };
+      data.events.filter(e => e.type === 'downtime' && e.ts >= periodStart).forEach(e => {
+        const reason = data.downtimeTypes?.find(d => d.id === e.downtimeTypeId)?.name || '';
+        const cat = reason.toLowerCase().includes('обор') ? 'Оборудование'
+          : reason.toLowerCase().includes('матер') ? 'Материалы'
+          : reason.toLowerCase().includes('орган') ? 'Организация' : 'Прочее';
+        map[cat] += Math.round((e.duration || 0) / 3600000 * 10) / 10;
+      });
+      const entries = Object.entries(map).filter(x => x[1] > 0);
+      return { labels: entries.map(x => x[0]), values: entries.map(x => x[1]) };
+    }
+    case 'downtime_equip': {
+      const map = {};
+      data.events.filter(e => e.type === 'downtime' && e.ts >= periodStart && e.equipmentId).forEach(e => {
+        const eq = data.equipment?.find(x => x.id === e.equipmentId)?.name || 'Неизвестно';
+        map[eq] = (map[eq] || 0) + Math.round((e.duration || 0) / 3600000 * 10) / 10;
+      });
+      const sorted = Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 6);
+      return { labels: sorted.map(x => x[0]), values: sorted.map(x => x[1]) };
+    }
+    case 'orders_prog': {
+      const orders = data.orders.filter(o => !o.archived).slice(0, 6);
+      const labels = orders.map(o => o.number || o.id.slice(0, 6));
+      const values = orders.map(o => {
+        const ops = data.ops.filter(op => op.orderId === o.id);
         const done = ops.filter(op => op.status === 'done').length;
-        const defect = ops.filter(op => op.status === 'defect').length;
-        const startedAt = ops.filter(op => op.startedAt).reduce((min, op) => (!min || op.startedAt < min) ? op.startedAt : min, null);
-        const finishedAt = ops.every(op => op.status === 'done' || op.status === 'defect') && ops.some(op => op.finishedAt) ? ops.reduce((max, op) => op.finishedAt > max ? op.finishedAt : max, 0) : null;
-        const pct = ops.length > 0 ? Math.round(done / ops.length * 100) : 0;
-        return { number: order.number, product: order.product, qty: order.qty, priority: PRIORITY[order.priority]?.label || '—', progress: `${done}/${ops.length} (${pct}%)`, defects: defect, deadline: order.deadline || '—', leadTime: startedAt && finishedAt ? fmtDur(finishedAt - startedAt) : '—' };
+        return ops.length > 0 ? Math.round(done / ops.length * 100) : 0;
       });
+      return { labels, values };
     }
-    if (reportType === 'workers') {
-      return data.workers.filter(w => !w.archived).map(w => {
-        const ops = data.ops.filter(op => op.workerIds?.includes(w.id) && op.finishedAt >= periodStart);
-        const done = ops.filter(op => op.status === 'done');
-        const defect = ops.filter(op => op.status === 'defect');
-        const totalTime = done.reduce((s, op) => s + (op.finishedAt && op.startedAt ? op.finishedAt - op.startedAt : 0), 0);
-        const avgTime = done.length > 0 ? totalTime / done.length : 0;
-        const total = done.length + defect.length;
-        const defectRate = total > 0 ? (defect.length / total * 100).toFixed(1) : '0.0';
-        const downtimes = data.events.filter(e => e.workerId === w.id && e.type === 'downtime' && e.ts >= periodStart).length;
-        return { name: w.name, position: w.position || '—', section: data.sections.find(s => s.id === w.sectionId)?.name || '—', done: done.length, defects: defect.length, defectRate: `${defectRate}%`, avgTime: avgTime ? fmtDur(avgTime) : '—', downtimes };
-      }).sort((a, b) => b.done - a.done);
-    }
-    if (reportType === 'materials') {
-      return (data.materialConsumptions || []).filter(mc => mc.ts >= periodStart).map(mc => {
-        const mat = data.materials.find(m => m.id === mc.materialId);
-        const op = data.ops.find(o => o.id === mc.opId);
-        const order = op ? data.orders.find(o => o.id === op.orderId) : null;
-        return { material: mat?.name || '—', unit: mat?.unit || '—', qty: mc.qty, cost: mat?.unitCost ? `${(mc.qty * mat.unitCost).toLocaleString()}₽` : '—', order: order?.number || '—', operation: op?.name || '—', date: new Date(mc.ts).toLocaleString() };
+    case 'leadtime': {
+      const orders = data.orders.filter(o => !o.archived).slice(0, 6);
+      const labels = orders.map(o => o.number || o.id.slice(0, 6));
+      const values = orders.map(o => {
+        const ops = data.ops.filter(op => op.orderId === o.id && op.startedAt);
+        if (!ops.length) return 0;
+        const start = Math.min(...ops.map(op => op.startedAt));
+        const end = Math.max(...ops.filter(op => op.finishedAt).map(op => op.finishedAt));
+        return end > start ? Math.round((end - start) / 86400000) : 0;
       });
+      return { labels, values };
     }
-    if (reportType === 'shifts') {
-      const shifts = data.settings?.shifts || [{ id: 1, name: 'Смена 1' }, { id: 2, name: 'Смена 2' }];
-      const shiftMap = {};
-      data.events.filter(e => (e.type === 'done' || e.type === 'defect' || e.type === 'downtime') && e.ts >= periodStart).forEach(e => {
-        const key = e.shift || 'unknown';
-        if (!shiftMap[key]) shiftMap[key] = { shift: key, done: 0, defects: 0, downtimes: 0, workers: new Set() };
-        if (e.type === 'done') shiftMap[key].done++;
-        if (e.type === 'defect') shiftMap[key].defects++;
-        if (e.type === 'downtime') shiftMap[key].downtimes++;
-        if (e.workerId) shiftMap[key].workers.add(e.workerId);
+    case 'mat_consume': {
+      const map = {};
+      (data.materialConsumptions || []).filter(mc => mc.ts >= periodStart).forEach(mc => {
+        const m = data.materials.find(x => x.id === mc.materialId);
+        if (m) { const k = m.name.length > 16 ? m.name.slice(0, 16) + '…' : m.name; map[k] = (map[k] || 0) + mc.qty; }
       });
-      return Object.values(shiftMap).map(s => ({ shift: s.shift, done: s.done, defects: s.defects, defectRate: s.done + s.defects > 0 ? `${(s.defects / (s.done + s.defects) * 100).toFixed(1)}%` : '0%', downtimes: s.downtimes, workers: s.workers.size })).sort((a, b) => b.done - a.done);
+      const sorted = Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 6);
+      return { labels: sorted.map(x => x[0]), values: sorted.map(x => Math.round(x[1] * 10) / 10) };
     }
-    return [];
-  }, [reportType, periodStart, data]);
+    case 'mat_critical': {
+      const crit = data.materials.filter(m => m.minStock && m.quantity <= m.minStock).slice(0, 6);
+      return { labels: crit.map(m => m.name.length > 14 ? m.name.slice(0, 14) + '…' : m.name), values: crit.map(m => m.quantity) };
+    }
+    case 'worker_status': {
+      const active = data.workers.filter(w => !w.archived);
+      const groups = { 'На смене': 0, 'Отсутствует': 0, 'Больничный': 0, 'Отпуск': 0 };
+      active.forEach(w => {
+        const s = w.status || 'working';
+        if (s === 'working') groups['На смене']++;
+        else if (s === 'absent') groups['Отсутствует']++;
+        else if (s === 'sick') groups['Больничный']++;
+        else if (s === 'vacation') groups['Отпуск']++;
+      });
+      const entries = Object.entries(groups).filter(x => x[1] > 0);
+      return { labels: entries.map(x => x[0]), values: entries.map(x => x[1]) };
+    }
+    case 'ops_status': {
+      const active = data.ops.filter(o => !o.archived);
+      const g = { 'Выполнено': 0, 'В работе': 0, 'Ожидание': 0, 'Брак': 0 };
+      active.forEach(o => {
+        if (o.status === 'done') g['Выполнено']++;
+        else if (o.status === 'in_progress') g['В работе']++;
+        else if (o.status === 'pending') g['Ожидание']++;
+        else if (o.status === 'defect' || o.status === 'rework') g['Брак']++;
+      });
+      const entries = Object.entries(g).filter(x => x[1] > 0);
+      return { labels: entries.map(x => x[0]), values: entries.map(x => x[1]) };
+    }
+    case 'shift_output': {
+      const map = {};
+      data.events.filter(e => e.type === 'done' && e.ts >= periodStart).forEach(e => {
+        const k = e.shift || 'Смена ?'; map[k] = (map[k] || 0) + 1;
+      });
+      const entries = Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]));
+      return { labels: entries.map(x => x[0]), values: entries.map(x => x[1]) };
+    }
+    default: return { labels: [], values: [] };
+  }
+};
 
-  const reportConfig = {
-    defects:   { label: 'Брак',                headers: ['Операция','Заказ','Причина','Источник','Исполнитель','Дата'],      keys: ['op','order','reason','source','worker','date'] },
-    downtimes: { label: 'Простои',             headers: ['Сотрудник','Причина','Длительность','Заказ','Операция','Оборудование','Смена','Дата'], keys: ['worker','reason','duration','order','operation','equipment','shift','date'] },
-    orders:    { label: 'Выполнение заказов',  headers: ['Заказ','Изделие','Кол-во','Приоритет','Прогресс','Брак','Дедлайн','Lead Time'], keys: ['number','product','qty','priority','progress','defects','deadline','leadTime'] },
-    workers:   { label: 'Эффективность',       headers: ['Сотрудник','Должность','Участок','Выполнено','Брак','Брак %','Ср. время','Простои'], keys: ['name','position','section','done','defects','defectRate','avgTime','downtimes'] },
-    materials: { label: 'Расход материалов',   headers: ['Материал','Ед.','Кол-во','Стоимость','Заказ','Операция','Дата'],   keys: ['material','unit','qty','cost','order','operation','date'] },
-    shifts:    { label: 'Отчёт по сменам',     headers: ['Смена','Выполнено','Брак','Брак %','Простои','Рабочих'],           keys: ['shift','done','defects','defectRate','downtimes','workers'] },
-  };
-  const cfg = reportConfig[reportType];
+// Компонент одного виджета с Chart.js
+const DashWidget = memo(({ widget, data, editMode, onChangeType, onRemove, onEdit }) => {
+  const canvasRef = useRef(null);
+  const chartRef  = useRef(null);
+  const m = WIDGET_METRICS.find(x => x.id === widget.metric);
+  const color = m?.color || AM;
+  const PIE_COLORS = [AM, BL, GN, RD, '#7F77DD', '#1D9E75', '#D85A30'];
 
-  const exportXlsx = () => {
-    if (reportData.length === 0) return;
-    const ws = XLSX.utils.json_to_sheet(reportData.map(row => { const out = {}; cfg.headers.forEach((h, i) => { out[h] = row[cfg.keys[i]]; }); return out; }));
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, cfg.label);
-    XLSX.writeFile(wb, `report_${reportType}_${new Date().toISOString().slice(0,10)}.xlsx`);
-  };
+  const chartData = useMemo(() => computeWidgetData(widget.metric, data, widget.period || 30), [widget.metric, widget.period, data]);
 
-  return h('div', { style: S.card },
-    h('div', { style: S.sec }, 'Конструктор отчётов'),
-    h('div', { style: { display:'flex', gap:8, marginBottom:12, flexWrap:'wrap', alignItems:'center' } },
-      h('select', { style: { ...S.inp, minWidth:200 }, value: reportType, onChange: e => setReportType(e.target.value) },
-        Object.entries(reportConfig).map(([k, v]) => h('option', { key: k, value: k }, v.label))
-      ),
-      [7,14,30,90].map(d => h('button', { key: d, style: period === d ? abtn({ fontSize:11 }) : gbtn({ fontSize:11 }), onClick: () => setPeriod(d) }, `${d} дней`)),
-      reportData.length > 0 && h('button', { style: gbtn({ fontSize:11, marginLeft:'auto' }), onClick: exportXlsx }, '📥 Excel')
+  useEffect(() => {
+    if (!canvasRef.current || !window.Chart || !chartData.labels.length) return;
+    if (chartRef.current) { try { chartRef.current.destroy(); } catch(e) {} chartRef.current = null; }
+    const type = widget.type;
+    const isDonut = type === 'doughnut';
+    const isHBar  = type === 'horizontalBar';
+    const isArea  = type === 'area';
+    const isLine  = type === 'line';
+
+    const datasets = isDonut
+      ? [{ data: chartData.values, backgroundColor: PIE_COLORS, borderWidth: 0 }]
+      : [{
+          data: chartData.values,
+          backgroundColor: isArea ? color + '33' : color,
+          borderColor: color,
+          fill: isArea,
+          tension: isArea || isLine ? 0.4 : 0,
+          borderRadius: (!isLine && !isArea) ? 3 : 0,
+          borderWidth: isLine || isArea ? 2 : 0,
+          pointRadius: isLine || isArea ? 3 : 0,
+          pointBackgroundColor: color,
+        }];
+
+    try {
+      chartRef.current = new Chart(canvasRef.current, {
+        type: isHBar ? 'bar' : isDonut ? 'doughnut' : isArea ? 'line' : type,
+        data: { labels: chartData.labels, datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          indexAxis: isHBar ? 'y' : undefined,
+          plugins: {
+            legend: { display: isDonut, position: 'right', labels: { font: { size: 10 }, boxWidth: 10 } },
+            tooltip: { enabled: true }
+          },
+          scales: isDonut ? {} : {
+            x: { display: true, grid: { display: false }, ticks: { font: { size: 10 }, maxTicksLimit: 8 } },
+            y: { display: true, beginAtZero: true, ticks: { font: { size: 10 } }, grid: { color: 'rgba(0,0,0,0.04)' } }
+          },
+          animation: { duration: 300 }
+        }
+      });
+    } catch(e) { console.warn('Chart error:', e); }
+    return () => { if (chartRef.current) { try { chartRef.current.destroy(); } catch(e) {} } };
+  }, [chartData, widget.type, color]);
+
+  return h('div', { style: { background: '#fff', border: '0.5px solid rgba(0,0,0,0.08)', borderRadius: 10, overflow: 'hidden' } },
+    // Заголовок виджета
+    h('div', { style: { padding: '10px 12px 8px', display: 'flex', alignItems: 'center', gap: 6, borderBottom: '0.5px solid rgba(0,0,0,0.05)' } },
+      h('span', { style: { fontSize: 12, fontWeight: 500, color: '#333', flex: 1 } }, widget.title),
+      h('span', { style: { fontSize: 10, color: '#aaa', marginRight: 4 } }, `${widget.period}д`),
+      // В режиме редактирования — кнопки типов
+      editMode && m?.types.map(t => h('button', { key: t, title: CHART_TYPE_LABELS[t],
+        style: { ...( widget.type === t ? abtn({ fontSize: 10, padding: '2px 7px' }) : gbtn({ fontSize: 10, padding: '2px 7px' }) ) },
+        onClick: () => onChangeType(widget.id, t)
+      }, CHART_TYPE_ICONS[t])),
+      // Кнопка настройки
+      h('button', { title: 'Настроить виджет', style: gbtn({ fontSize: 10, padding: '2px 8px' }), onClick: () => onEdit(widget.id) }, '⚙'),
+      // Удалить (только в режиме редактирования)
+      editMode && h('button', { title: 'Удалить', style: { ...rbtn({ fontSize: 10, padding: '2px 7px' }) }, onClick: () => onRemove(widget.id) }, '✕')
     ),
-    h('div', { style: { fontSize:11, color:'#888', marginBottom:12 } }, `Записей: ${reportData.length}`),
-    reportData.length === 0
-      ? h('div', { style: { padding:16, textAlign:'center', color:'#888' } }, 'Нет данных за выбранный период')
-      : h('div', { className: 'table-responsive' }, h('table', { style: { width:'100%', borderCollapse:'collapse' } },
-          h('thead', null, h('tr', null, cfg.headers.map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
-          h('tbody', null, reportData.map((row, i) => h('tr', { key: i }, cfg.keys.map(k => h('td', { key: k, style: S.td }, row[k])))))
+    // График
+    h('div', { style: { padding: '8px 12px 12px', height: 160 } },
+      chartData.labels.length === 0
+        ? h('div', { style: { height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#aaa', fontSize: 12 } }, 'Нет данных за период')
+        : h('canvas', { ref: canvasRef, style: { width: '100%', height: '100%' } })
+    )
+  );
+});
+
+// Панель редактирования одного виджета
+const WidgetEditPanel = memo(({ widget, onUpdate, onClose }) => {
+  const [form, setForm] = useState({ ...widget });
+  const m = WIDGET_METRICS.find(x => x.id === form.metric);
+
+  return h('div', { style: { background: '#fff', border: `1.5px solid ${AM}`, borderRadius: 10, padding: 16, marginBottom: 14 } },
+    h('div', { style: { fontSize: 13, fontWeight: 500, marginBottom: 14, color: '#333' } }, '⚙ Настройка виджета'),
+    // Метрика
+    h('div', { style: { marginBottom: 10 } },
+      h('label', { style: S.lbl }, 'Метрика'),
+      h('select', { style: S.inp, value: form.metric, onChange: e => {
+        const nm = WIDGET_METRICS.find(x => x.id === e.target.value);
+        setForm(p => ({ ...p, metric: e.target.value, type: nm?.types[0] || 'bar', title: nm?.name || p.title }));
+      }},
+        WIDGET_METRICS.map(x => h('option', { key: x.id, value: x.id }, `${x.cat}: ${x.name}`))
+      )
+    ),
+    // Тип графика
+    h('div', { style: { marginBottom: 10 } },
+      h('label', { style: S.lbl }, 'Тип графика'),
+      h('div', { style: { display: 'flex', gap: 5, flexWrap: 'wrap' } },
+        (m?.types || ['bar']).map(t => h('button', { key: t,
+          style: form.type === t ? abtn({ fontSize: 11, padding: '5px 12px' }) : gbtn({ fontSize: 11, padding: '5px 12px' }),
+          onClick: () => setForm(p => ({ ...p, type: t }))
+        }, `${CHART_TYPE_ICONS[t]} ${CHART_TYPE_LABELS[t]}`))
+      )
+    ),
+    // Период
+    h('div', { style: { marginBottom: 10 } },
+      h('label', { style: S.lbl }, 'Период'),
+      h('div', { style: { display: 'flex', gap: 5 } },
+        [7, 14, 30, 90].map(d => h('button', { key: d,
+          style: form.period === d ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }),
+          onClick: () => setForm(p => ({ ...p, period: d }))
+        }, `${d}д`))
+      )
+    ),
+    // Название
+    h('div', { style: { marginBottom: 14 } },
+      h('label', { style: S.lbl }, 'Название'),
+      h('input', { style: S.inp, value: form.title, onChange: e => setForm(p => ({ ...p, title: e.target.value })) })
+    ),
+    h('div', { style: { display: 'flex', gap: 8 } },
+      h('button', { style: { ...abtn({ flex: 1 }), background: GN, color: '#fff' }, onClick: () => { onUpdate(form); onClose(); } }, '✓ Применить'),
+      h('button', { style: gbtn({ flex: 1 }), onClick: onClose }, 'Отмена')
+    )
+  );
+});
+
+const ReportsBuilder = memo(({ data }) => {
+  const [layout, setLayout] = useState(() => {
+    try {
+      const saved = localStorage.getItem(LAYOUT_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : DEFAULT_LAYOUT;
+    } catch(e) { return DEFAULT_LAYOUT; }
+  });
+  const [editMode, setEditMode]   = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [showLibrary, setShowLibrary] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const saveLayout = useCallback((newLayout) => {
+    try { localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(newLayout)); } catch(e) {}
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }, []);
+
+  const addWidget = useCallback((metricId) => {
+    const m = WIDGET_METRICS.find(x => x.id === metricId);
+    if (!m) return;
+    const w = { id: 'w' + uid(), metric: metricId, type: m.types[0], title: m.name, period: 30 };
+    setLayout(prev => { const nl = [...prev, w]; saveLayout(nl); return nl; });
+    setShowLibrary(false);
+  }, [saveLayout]);
+
+  const removeWidget = useCallback((id) => {
+    setLayout(prev => { const nl = prev.filter(w => w.id !== id); saveLayout(nl); return nl; });
+    if (editingId === id) setEditingId(null);
+  }, [saveLayout, editingId]);
+
+  const changeType = useCallback((id, type) => {
+    setLayout(prev => { const nl = prev.map(w => w.id === id ? { ...w, type } : w); saveLayout(nl); return nl; });
+  }, [saveLayout]);
+
+  const updateWidget = useCallback((updated) => {
+    setLayout(prev => { const nl = prev.map(w => w.id === updated.id ? updated : w); saveLayout(nl); return nl; });
+  }, [saveLayout]);
+
+  const resetLayout = useCallback(() => {
+    setLayout(DEFAULT_LAYOUT);
+    saveLayout(DEFAULT_LAYOUT);
+    setEditingId(null);
+  }, [saveLayout]);
+
+  const editingWidget = layout.find(w => w.id === editingId);
+
+  return h('div', null,
+    // Шапка
+    h('div', { style: { display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' } },
+      h('span', { style: { fontSize: 13, fontWeight: 500, flex: 1 } }, 'Конструктор дашборда'),
+      saved && h('span', { style: { fontSize: 11, color: GN2, background: GN3, padding: '3px 10px', borderRadius: 20 } }, '✓ Сохранено'),
+      h('button', { style: editMode ? abtn({ fontSize: 11 }) : gbtn({ fontSize: 11 }), onClick: () => { setEditMode(v => !v); setShowLibrary(false); setEditingId(null); } },
+        editMode ? '✓ Готово' : '✏️ Настроить'
+      ),
+      h('button', { style: gbtn({ fontSize: 11 }), onClick: () => { setShowLibrary(v => !v); setEditMode(true); } }, '+ Добавить'),
+      h('button', { style: gbtn({ fontSize: 11 }), onClick: resetLayout, title: 'Сбросить к стандартному виду' }, '↺'),
+      h('button', { style: gbtn({ fontSize: 11 }), onClick: () => {
+        const wb = XLSX.utils.book_new();
+        layout.forEach(w => {
+          const d = computeWidgetData(w.metric, data, w.period);
+          if (d.labels.length) {
+            const rows = d.labels.map((l, i) => ({ Метрика: l, Значение: d.values[i] }));
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), w.title.slice(0, 31));
+          }
+        });
+        XLSX.writeFile(wb, `dashboard_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      }}, '📥 Excel')
+    ),
+
+    // Библиотека метрик
+    showLibrary && h('div', { style: { background: '#f8f8f5', border: '0.5px solid rgba(0,0,0,0.08)', borderRadius: 10, padding: 14, marginBottom: 14 } },
+      h('div', { style: { fontSize: 11, fontWeight: 500, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 } }, 'Выберите метрику для добавления'),
+      h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6 } },
+        WIDGET_METRICS.map(m => h('button', { key: m.id,
+          style: { ...gbtn(), textAlign: 'left', padding: '8px 10px', lineHeight: 1.4 },
+          onClick: () => addWidget(m.id)
+        },
+          h('div', { style: { fontSize: 9, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 } }, m.cat),
+          h('div', { style: { fontSize: 12 } }, m.name)
         ))
+      )
+    ),
+
+    // Панель редактирования конкретного виджета
+    editingWidget && h(WidgetEditPanel, { widget: editingWidget, onUpdate: updateWidget, onClose: () => setEditingId(null) }),
+
+    // Сетка виджетов
+    layout.length === 0
+      ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888', padding: 40 } },
+          h('div', { style: { fontSize: 24, marginBottom: 8 } }, '📊'),
+          h('div', { style: { marginBottom: 12 } }, 'Дашборд пустой — добавьте виджеты'),
+          h('button', { style: abtn(), onClick: () => { setShowLibrary(true); setEditMode(true); } }, '+ Добавить виджет')
+        )
+      : h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 } },
+          layout.map(w => h(DashWidget, {
+            key: w.id, widget: w, data, editMode,
+            onChangeType: changeType,
+            onRemove: removeWidget,
+            onEdit: (id) => setEditingId(prev => prev === id ? null : id)
+          }))
+        )
   );
 });
 
@@ -5315,8 +5665,8 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
       system:     { label: '🕐 Учёт',         tabs: [['time','Учёт времени']] },
     },
     shop_master: {
-      production: { label: '⚙ Производство', tabs: [['ops','Операции'],['recommend','Назначения'],['orders','Заказы']] },
-      analytics:  { label: '📊 Аналитика',   tabs: [['journal','Журнал'],['notifications','Уведомления']] },
+      production: { label: '⚙ Производство', tabs: [['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['orders','Заказы']] },
+      analytics:  { label: '📊 Аналитика',   tabs: [['journal','Журнал'],['notifications','Уведомления'],['reports','Отчёты']] },
     },
     admin: {
       reference:  { label: '📋 Справочники', tabs: [['workers','Сотрудники'],['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],['materials','Материалы'],['equipment','Оборудование'],['bom','Спецификации'],['sections','Участки']] },
@@ -7141,7 +7491,7 @@ function App() {
   // Текущий пользователь для чата
   const currentUser = useMemo(() => {
     if (role === 'worker' || role === 'chat') { const w = data.workers.find(w => w.id === workerId); return { id: workerId, name: w?.name || 'Сотрудник', role: 'worker' }; }
-    if (role === 'master' || role === 'chat_master') return { id: 'master', name: 'Мастер', role: 'master' };
+    if (role === 'master' || role === 'chat_master') return { id: 'master', name: 'Начальник цеха', role: 'master' };
     if (role === 'controller' || role === 'chat_controller') return { id: 'controller', name: 'Контролёр', role: 'controller' };
     if (role === 'warehouse') return { id: 'warehouse', name: 'Склад', role: 'warehouse' };
     return { id: 'system', name: 'Система', role: 'system' };
@@ -7199,7 +7549,7 @@ function App() {
         effectiveRole === 'pdo'         ? 'ПДО'            :
         effectiveRole === 'director'    ? 'Руководитель'   :
         effectiveRole === 'hr'          ? 'HR'             :
-        effectiveRole === 'shop_master' ? 'Мастер цеха'   :
+        effectiveRole === 'shop_master' ? 'Сменный мастер' :
         effectiveRole === 'admin'       ? 'Администратор'  :
         currentUser.name
       ),
