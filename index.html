@@ -5579,7 +5579,17 @@ const ReportsBuilder = memo(({ data }) => {
   const editingWidget = layout.find(w => w.id === editingId);
 
   return h('div', null,
-    // Шапка
+    // Шапка с инструкцией
+    h('div', { style: { ...S.card, marginBottom: 14, padding: '12px 16px', background: AM3, border: `0.5px solid ${AM4}` } },
+      h('div', { style: { fontSize: 13, fontWeight: 500, color: AM2, marginBottom: 4 } }, '📊 Конструктор дашборда'),
+      h('div', { style: { fontSize: 11, color: AM4, lineHeight: 1.6 } },
+        '⚙ Настроить — переключить тип графика и удалить виджеты  ·  ',
+        '+ Добавить — выбрать метрику из библиотеки  ·  ',
+        'Нажмите ⚙ на карточке — сменить метрику, период, название  ·  ',
+        '↺ — вернуть стандартный вид'
+      )
+    ),
+    // Шапка конструктора
     h('div', { style: { display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' } },
       h('span', { style: { fontSize: 13, fontWeight: 500, flex: 1 } }, 'Конструктор дашборда'),
       saved && h('span', { style: { fontSize: 11, color: GN2, background: GN3, padding: '3px 10px', borderRadius: 20 } }, '✓ Сохранено'),
@@ -6943,7 +6953,6 @@ const Dashboard = memo(({ data, addToast, onOrderClick }) => {
   }, [data, addToast]);
 
   return h('div', { style: { padding: '0 0 24px' } },
-    h(SectionAnalytics, { section: 'dashboard', data }),
     // Заголовок с часами
     h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } },
       h('div', null,
