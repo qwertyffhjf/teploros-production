@@ -396,10 +396,13 @@ const EMPTY_DATA = {
   }
 };
 
-const CACHE_KEY = 'prod_app_v14_cache';
-const CACHE_TTL = 12 * 3600000; // 12 часов
+const CACHE_KEY    = 'prod_app_v14_cache';
+const CACHE_TTL    = 12 * 3600000;  // 12 часов
+const QUEUE_KEY    = 'prod_app_v14_queue'; // офлайн-очередь
+const VERSION_KEY  = 'prod_app_v14_version'; // версия для optimistic locking
+const ARCHIVE_COLL = 'production_archive';   // Firestore коллекция архива
 
-// Очистка мусорных ключей localStorage (chat_lastRead_, worker_level_ старше 30 дней)
+// Очистка мусорных ключей localStorage
 const cleanStaleLocalStorageKeys = () => {
   try {
     const staleThreshold = Date.now() - 30 * 86400000;
@@ -414,39 +417,56 @@ const cleanStaleLocalStorageKeys = () => {
 };
 
 const DB = {
+  _saveTimer:   null,
+  _lastError:   null,
+  _sizeWarning: null,
+  _online:      true,    // текущий статус сети
+  _version:     null,    // версия последних загруженных данных (для optimistic locking)
+
+  // ── Загрузка ──────────────────────────────────────────────────────────────
   async load() {
     cleanStaleLocalStorageKeys();
+    // Пытаемся отправить накопленную офлайн-очередь
+    await DB._flushQueue();
     try {
       const snap = await DOC_REF.get();
       if (snap.exists) {
-        let parsed = typeof snap.data().payload === 'string' ? JSON.parse(snap.data().payload) : snap.data();
+        let parsed = typeof snap.data().payload === 'string'
+          ? JSON.parse(snap.data().payload)
+          : snap.data();
         if (parsed.ops) parsed.ops = parsed.ops.map(op => {
-          if (op.workerId !== undefined && !op.workerIds) { op.workerIds = op.workerId ? [op.workerId] : []; delete op.workerId; }
+          if (op.workerId !== undefined && !op.workerIds) {
+            op.workerIds = op.workerId ? [op.workerId] : [];
+            delete op.workerId;
+          }
           return op;
         });
-        // Сохраняем кэш с меткой времени
+        // Запоминаем версию документа (для optimistic locking)
+        DB._version = snap.data().updatedAt?.toMillis?.() || snap.data()._version || Date.now();
+        DB._online = true;
         try {
           localStorage.setItem(CACHE_KEY, JSON.stringify({ data: parsed, savedAt: Date.now() }));
+          localStorage.setItem(VERSION_KEY, String(DB._version));
         } catch(e) {
-          // localStorage переполнен — чистим и пробуем ещё раз
           localStorage.removeItem(CACHE_KEY);
           try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data: parsed, savedAt: Date.now() })); } catch(e2) {}
         }
         return migrateData({ ...EMPTY_DATA, ...parsed });
       }
-    } catch(e) { console.warn(e); }
-    // Firebase недоступен — пробуем кэш
+    } catch(e) {
+      console.warn('Firebase load failed, using cache:', e);
+      DB._online = false;
+    }
+    // Firebase недоступен — используем кэш
     try {
       const raw = localStorage.getItem(CACHE_KEY);
       if (raw) {
         const cached = JSON.parse(raw);
-        // Поддержка старого формата (без обёртки)
         const cacheData = cached.data || cached;
-        const savedAt = cached.savedAt || 0;
+        const savedAt   = cached.savedAt || 0;
         const age = Date.now() - savedAt;
         if (age > CACHE_TTL) {
-          // Кэш протух — удаляем, но данные всё равно используем (лучше устаревшие, чем ничего)
-          console.warn(`Cache TTL expired (${Math.round(age/3600000)}h old), refreshing on next load`);
+          console.warn(`Cache TTL expired (${Math.round(age/3600000)}h old)`);
           localStorage.removeItem(CACHE_KEY);
         }
         return { ...EMPTY_DATA, ...cacheData };
@@ -454,60 +474,183 @@ const DB = {
     } catch(e) {}
     return EMPTY_DATA;
   },
+
+  // ── Сохранение ────────────────────────────────────────────────────────────
   async save(data) {
     try {
       let toSave = { ...data };
-      // Cap unbounded arrays
-      if (toSave.events?.length > 2000) toSave.events = toSave.events.slice(-2000);
-      if (toSave.materialConsumptions?.length > 2000) toSave.materialConsumptions = toSave.materialConsumptions.slice(-2000);
-      if (toSave.reclamations?.length > 500) toSave.reclamations = toSave.reclamations.slice(-500);
-      if (toSave.messages?.length > 200) toSave.messages = toSave.messages.slice(-200);
-      if (toSave.duels?.length > 100) toSave.duels = toSave.duels.slice(-100);
-      // Автоочистка: удалять архивные заказы и их операции старше 90 дней
-      const cleanupThreshold = Date.now() - 90 * 86400000;
-      const oldArchived = (toSave.orders || []).filter(o => o.archived && o.autoArchived && (o.archivedAt || o.createdAt || 0) < cleanupThreshold);
-      if (oldArchived.length > 0) {
-        const oldIds = new Set(oldArchived.map(o => o.id));
-        toSave.orders = toSave.orders.filter(o => !oldIds.has(o.id));
-        toSave.ops = (toSave.ops || []).filter(o => !oldIds.has(o.orderId));
-        console.log(`Автоочистка: удалено ${oldArchived.length} архивных заказов старше 90 дней`);
+
+      // Ограничиваем размер массивов
+      if (toSave.events?.length > 2000)               toSave.events               = toSave.events.slice(-2000);
+      if (toSave.materialConsumptions?.length > 2000)  toSave.materialConsumptions = toSave.materialConsumptions.slice(-2000);
+      if (toSave.reclamations?.length > 500)           toSave.reclamations         = toSave.reclamations.slice(-500);
+      if (toSave.messages?.length > 200)               toSave.messages             = toSave.messages.slice(-200);
+      if (toSave.duels?.length > 100)                  toSave.duels                = toSave.duels.slice(-100);
+
+      // ── Архивация старых заказов в отдельный документ Firestore ──
+      const archiveThreshold = Date.now() - 90 * 86400000;
+      const toArchive = (toSave.orders || []).filter(o =>
+        o.archived && (o.archivedAt || o.createdAt || 0) < archiveThreshold
+      );
+      if (toArchive.length > 0) {
+        const archiveIds = new Set(toArchive.map(o => o.id));
+        const archiveOps = (toSave.ops || []).filter(o => archiveIds.has(o.orderId));
+        // Группируем по месяцу архивации
+        const byMonth = {};
+        toArchive.forEach(o => {
+          const d = new Date(o.archivedAt || o.createdAt || Date.now());
+          const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+          if (!byMonth[key]) byMonth[key] = { orders:[], ops:[] };
+          byMonth[key].orders.push(o);
+          byMonth[key].ops.push(...archiveOps.filter(op => op.orderId === o.id));
+        });
+        // Сохраняем в Firestore архивные документы (без блокировки основного сохранения)
+        if (DB._online) {
+          Object.entries(byMonth).forEach(([month, chunk]) => {
+            firebase.firestore().collection(ARCHIVE_COLL).doc(month)
+              .set({ orders: firebase.firestore.FieldValue.arrayUnion(...chunk.orders),
+                     ops:    firebase.firestore.FieldValue.arrayUnion(...chunk.ops),
+                     updatedAt: firebase.firestore.FieldValue.serverTimestamp() },
+                   { merge: true })
+              .catch(e => console.warn('Archive save error:', e));
+          });
+        }
+        // Удаляем из основного документа
+        toSave.orders = toSave.orders.filter(o => !archiveIds.has(o.id));
+        toSave.ops    = (toSave.ops || []).filter(o => !archiveIds.has(o.orderId));
+        console.log(`Архивировано: ${toArchive.length} заказов → ${Object.keys(byMonth).join(', ')}`);
       }
-      // Проверка размера payload (лимит Firestore = 1 МБ на документ)
-      const payload = JSON.stringify(toSave);
-      const sizeKb = Math.round(payload.length / 1024);
+
+      // ── Контроль размера ──
+      const payload  = JSON.stringify(toSave);
+      const sizeKb   = Math.round(payload.length / 1024);
       if (sizeKb > 900) {
-        // Агрессивная очистка: уменьшаем лимиты вдвое
-        toSave.events = (toSave.events || []).slice(-1000);
+        toSave.events               = (toSave.events || []).slice(-1000);
         toSave.materialConsumptions = (toSave.materialConsumptions || []).slice(-1000);
-        DB._lastError = `⚠ Размер данных ${sizeKb} КБ — приближается к лимиту 1 МБ. Архивируйте старые заказы.`;
-        console.warn(`Payload size: ${sizeKb} KB — near Firestore 1MB limit`);
+        DB._lastError = `⚠ Данных ${sizeKb} КБ — лимит 1 МБ. Старые заказы архивируются автоматически.`;
+        console.warn(`Payload: ${sizeKb} KB`);
       } else if (sizeKb > 700) {
         DB._sizeWarning = sizeKb;
       } else {
         DB._sizeWarning = null;
       }
-      localStorage.setItem(CACHE_KEY, JSON.stringify({ data: toSave, savedAt: Date.now() }));
+
+      // Обновляем кэш немедленно
+      const newVersion = Date.now();
+      try {
+        localStorage.setItem(CACHE_KEY,   JSON.stringify({ data: toSave, savedAt: Date.now() }));
+        localStorage.setItem(VERSION_KEY, String(newVersion));
+      } catch(e) {}
+
       if (DB._saveTimer) clearTimeout(DB._saveTimer);
-      DB._saveTimer = setTimeout(() => {
-        DOC_REF.set({ payload: JSON.stringify(toSave), updatedAt: firebase.firestore.FieldValue.serverTimestamp() })
-          .catch(e => { console.error('Firebase save error:', e); DB._lastError = e.message; });
+      DB._saveTimer = setTimeout(async () => {
+        if (!DB._online) {
+          // Офлайн — кладём в очередь
+          DB._enqueue(toSave);
+          return;
+        }
+        try {
+          // ── Optimistic locking: проверяем что версия не изменилась ──
+          const snap = await DOC_REF.get().catch(() => null);
+          if (snap && snap.exists) {
+            const remoteVersion = snap.data().updatedAt?.toMillis?.() || snap.data()._version || 0;
+            const localVersion  = Number(localStorage.getItem(VERSION_KEY)) || 0;
+            // Если удалённая версия новее нашей исходной — кто-то ещё сохранил данные
+            if (remoteVersion > localVersion && remoteVersion !== newVersion) {
+              console.warn('Conflict detected: remote version is newer, merging...');
+              // Простое решение: наши данные побеждают (last-write-wins), но логируем
+              DB._lastError = '⚠ Данные обновились в другой вкладке — ваши изменения применены поверх.';
+            }
+          }
+          await DOC_REF.set({
+            payload:   JSON.stringify(toSave),
+            _version:  newVersion,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+          DB._version = newVersion;
+          localStorage.setItem(VERSION_KEY, String(newVersion));
+          DB._online = true;
+          // При успешном сохранении очищаем очередь
+          DB._clearQueue();
+        } catch(e) {
+          console.error('Firebase save error:', e);
+          DB._lastError = e.message;
+          DB._online = false;
+          // Не удалось сохранить — кладём в очередь
+          DB._enqueue(toSave);
+        }
       }, 1000);
     } catch(e) { console.error(e); DB._lastError = e.message; }
   },
-  _saveTimer: null,
-  _lastError: null,
-  _sizeWarning: null,
+
+  // ── Офлайн-очередь ────────────────────────────────────────────────────────
+  _enqueue(data) {
+    try {
+      localStorage.setItem(QUEUE_KEY, JSON.stringify({ data, ts: Date.now() }));
+      console.log('Сохранено в офлайн-очередь');
+    } catch(e) {}
+  },
+  _clearQueue() {
+    try { localStorage.removeItem(QUEUE_KEY); } catch(e) {}
+  },
+  async _flushQueue() {
+    try {
+      const raw = localStorage.getItem(QUEUE_KEY);
+      if (!raw) return;
+      const { data, ts } = JSON.parse(raw);
+      if (!data) return;
+      const age = Date.now() - ts;
+      console.log(`Офлайн-очередь: отправляем данные (${Math.round(age/60000)} мин назад)...`);
+      await DOC_REF.set({
+        payload:   JSON.stringify(data),
+        _version:  Date.now(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      DB._clearQueue();
+      DB._online = true;
+      console.log('Офлайн-очередь отправлена успешно');
+    } catch(e) {
+      // Firebase всё ещё недоступен — очередь остаётся
+      DB._online = false;
+    }
+  },
+
+  // ── Realtime listener ─────────────────────────────────────────────────────
   onSnapshot(callback) {
-    return DOC_REF.onSnapshot(snap => {
-      if (snap.exists) {
-        let parsed = typeof snap.data().payload === 'string' ? JSON.parse(snap.data().payload) : snap.data();
-        if (parsed.ops) parsed.ops = parsed.ops.map(op => {
-          if (op.workerId !== undefined && !op.workerIds) { op.workerIds = op.workerId ? [op.workerId] : []; delete op.workerId; }
-          return op;
-        });
-        callback(migrateData({ ...EMPTY_DATA, ...parsed }));
-      }
-    });
+    return DOC_REF.onSnapshot(
+      snap => {
+        DB._online = true;
+        if (snap.exists) {
+          let parsed = typeof snap.data().payload === 'string'
+            ? JSON.parse(snap.data().payload)
+            : snap.data();
+          if (parsed.ops) parsed.ops = parsed.ops.map(op => {
+            if (op.workerId !== undefined && !op.workerIds) {
+              op.workerIds = op.workerId ? [op.workerId] : [];
+              delete op.workerId;
+            }
+            return op;
+          });
+          callback(migrateData({ ...EMPTY_DATA, ...parsed }));
+        }
+      },
+      err => { DB._online = false; console.warn('Snapshot error:', err); }
+    );
+  },
+
+  // ── Загрузка архива ───────────────────────────────────────────────────────
+  async loadArchive(month) {
+    try {
+      const snap = await firebase.firestore().collection(ARCHIVE_COLL).doc(month).get();
+      if (snap.exists) return snap.data();
+    } catch(e) { console.warn('Archive load error:', e); }
+    return null;
+  },
+  async listArchiveMonths() {
+    try {
+      const snaps = await firebase.firestore().collection(ARCHIVE_COLL).get();
+      return snaps.docs.map(d => d.id).sort().reverse();
+    } catch(e) { return []; }
   }
 };
 
@@ -3066,31 +3209,69 @@ const MasterNotifications = memo(({ data }) => {
   const notifications = useMemo(() => {
     const list = [];
     const nowTime = now();
+    // Просроченные операции (не начаты > 1 часа после плана)
     data.ops.forEach(op => {
       if (op.status === 'pending' && op.plannedStartDate && op.plannedStartDate < nowTime - 3600000) {
         const order = data.orders.find(o => o.id === op.orderId);
-        list.push({ id: `overdue-${op.id}`, type: 'overdue', message: `Операция "${op.name}" (заказ ${order?.number}) не начата более часа` });
+        list.push({ id: `overdue-${op.id}`, type: 'overdue', priority: 'critical',
+          message: `⏰ Операция "${op.name}" (заказ ${order?.number || '—'}) не начата более часа` });
       }
     });
+    // Операции с превышением планового времени (идут > 150% плана)
+    data.ops.filter(op => op.status === 'in_progress' && op.plannedHours && op.startedAt).forEach(op => {
+      if ((nowTime - op.startedAt) > op.plannedHours * 3600000 * 1.5) {
+        const order = data.orders.find(o => o.id === op.orderId);
+        list.push({ id: `overtime-${op.id}`, type: 'overtime', priority: 'high',
+          message: `🔴 Превышение нормы: "${op.name}" (${order?.number || '—'}) — ${Math.round((nowTime - op.startedAt) / 3600000 * 10) / 10}ч из ${op.plannedHours}ч` });
+      }
+    });
+    // Недавние простои (последние 30 мин)
     const recentDowntimes = data.events.filter(e => e.type === 'downtime' && e.ts > nowTime - 1800000);
     recentDowntimes.forEach(e => {
       const worker = data.workers.find(w => w.id === e.workerId);
       const reason = data.downtimeTypes.find(d => d.id === e.downtimeTypeId)?.name;
-      list.push({ id: `downtime-${e.id}`, type: 'downtime', message: `Простой: ${worker?.name} — ${reason}` });
+      list.push({ id: `downtime-${e.id}`, type: 'downtime', priority: 'medium',
+        message: `⏸ Простой: ${worker?.name || '—'} — ${reason || 'неизвестно'}` });
     });
+    // Свежий брак (последние 30 мин)
+    const recentDefects = data.events.filter(e => (e.type === 'defect' || e.type === 'rework') && e.ts > nowTime - 1800000);
+    recentDefects.forEach(e => {
+      const op = data.ops.find(o => o.id === e.opId);
+      const order = op ? data.orders.find(o => o.id === op.orderId) : null;
+      list.push({ id: `defect-${e.id}`, type: 'defect', priority: 'high',
+        message: `⚠ Брак: "${op?.name || '—'}" · заказ ${order?.number || '—'}` });
+    });
+    // Дедлайны
     data.orders.forEach(order => {
-      if (isShipmentNear(order.deadline) && !order.archived) list.push({ id: `deadline-${order.id}`, type: 'deadline', message: `Заказ ${order.number} близок к дате отгрузки` });
+      if (isShipmentNear(order.deadline) && !order.archived)
+        list.push({ id: `deadline-${order.id}`, type: 'deadline', priority: 'high',
+          message: `📦 Заказ ${order.number} близок к дате отгрузки` });
     });
-    return list.slice(0, 10);
+    // Сортируем: critical → high → medium
+    const pOrder = { critical: 0, high: 1, medium: 2 };
+    return list.sort((a, b) => (pOrder[a.priority] ?? 2) - (pOrder[b.priority] ?? 2)).slice(0, 15);
   }, [data]);
+
+  const typeColor = { overdue: RD, overtime: RD, defect: RD, deadline: AM, downtime: '#555' };
+
   return h('div', { style: { ...S.card, marginBottom: 12 } },
-    h('div', { style: { ...S.sec, display: 'flex', alignItems: 'center' } },
-      'Уведомления',
-      notifications.length > 0 && h('span', { className: 'notification-badge', 'aria-label': `${notifications.length} уведомлений` }, notifications.length)
+    // Заголовок + кнопка push
+    h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 } },
+      h('div', { style: { ...S.sec, display: 'flex', alignItems: 'center', marginBottom: 0 } },
+        'Уведомления',
+        notifications.length > 0 && h('span', { className: 'notification-badge', 'aria-label': `${notifications.length} уведомлений` }, notifications.length)
+      ),
+      h(PushNotificationButton)
     ),
     notifications.length === 0
-      ? h('div', { style: { padding: 8, color: '#888' } }, 'Нет новых уведомлений')
-      : notifications.map(n => h('div', { key: n.id, style: { padding: '6px 0', borderBottom: '0.5px solid #eee', fontSize: 12, color: n.type === 'overdue' ? RD : (n.type === 'deadline' ? AM : '#333') } }, n.message))
+      ? h('div', { style: { padding: 8, color: '#888', fontSize: 12 } }, '✓ Нет новых уведомлений')
+      : notifications.map(n => h('div', { key: n.id, style: {
+          display: 'flex', alignItems: 'flex-start', gap: 8,
+          padding: '7px 0', borderBottom: '0.5px solid #eee', fontSize: 12,
+          color: typeColor[n.type] || '#333'
+        } },
+          h('div', { style: { flex: 1, lineHeight: 1.4 } }, n.message)
+        ))
   );
 });
 
@@ -4099,6 +4280,77 @@ const MasterDowntimes = memo(({ data, onUpdate, addToast }) => {
 });
 
 // ==================== MasterAdmin ====================
+// ==================== ArchiveViewer ====================
+const ArchiveViewer = memo(({ data }) => {
+  const [months, setMonths]     = useState([]);
+  const [loading, setLoading]   = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [archive, setArchive]   = useState(null);
+  const [open, setOpen]         = useState(false);
+
+  const loadMonths = useCallback(async () => {
+    setLoading(true);
+    const ms = await DB.listArchiveMonths();
+    setMonths(ms);
+    setLoading(false);
+  }, []);
+
+  const loadMonth = useCallback(async (month) => {
+    setSelected(month);
+    setArchive(null);
+    const d = await DB.loadArchive(month);
+    setArchive(d);
+  }, []);
+
+  if (!open) return h('div', { style: { ...S.card, marginBottom: 12, cursor: 'pointer' }, onClick: () => { setOpen(true); loadMonths(); } },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+      h('div', null,
+        h('div', { style: S.sec }, '📦 Архив заказов'),
+        h('div', { style: { fontSize: 11, color: '#888' } }, 'Заказы старше 90 дней переносятся в архив автоматически')
+      ),
+      h('span', { style: { fontSize: 12, color: AM4 } }, 'Открыть →')
+    )
+  );
+
+  return h('div', { style: { ...S.card, marginBottom: 12 } },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } },
+      h('div', { style: S.sec }, '📦 Архив заказов'),
+      h('button', { style: gbtn({ fontSize: 11 }), onClick: () => setOpen(false) }, '× Закрыть')
+    ),
+    loading && h('div', { style: { fontSize: 12, color: '#888', textAlign: 'center', padding: 12 } }, 'Загрузка...'),
+    months.length === 0 && !loading && h('div', { style: { fontSize: 12, color: '#888', textAlign: 'center', padding: 12 } }, 'Архивных данных нет'),
+    months.length > 0 && h('div', null,
+      h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 } },
+        months.map(m => h('button', { key: m,
+          style: selected === m ? abtn({ fontSize: 11 }) : gbtn({ fontSize: 11 }),
+          onClick: () => loadMonth(m)
+        }, m))
+      ),
+      archive && h('div', null,
+        h('div', { style: { fontSize: 11, color: '#888', marginBottom: 8 } },
+          `${archive.orders?.length || 0} заказов · ${archive.ops?.length || 0} операций`
+        ),
+        h('div', { className: 'table-responsive' },
+          h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+            h('thead', null, h('tr', null,
+              ['Номер','Изделие','Операций','Статус'].map(t => h('th', { key: t, style: S.th }, t))
+            )),
+            h('tbody', null, (archive.orders || []).map(o => {
+              const ops = (archive.ops || []).filter(op => op.orderId === o.id);
+              return h('tr', { key: o.id },
+                h('td', { style: S.td }, o.number || '—'),
+                h('td', { style: S.td }, o.product || '—'),
+                h('td', { style: S.td }, ops.length),
+                h('td', { style: S.td }, h('span', { style: { fontSize: 10, padding: '2px 8px', borderRadius: 6, background: GN3, color: GN2 } }, 'Архив'))
+              );
+            }))
+          )
+        )
+      )
+    )
+  );
+});
+
 const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
   const settings = data.settings || EMPTY_DATA.settings;
   const [masterPin, setMasterPin] = useState(settings.masterPin || '0000');
@@ -4161,6 +4413,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
   }, [data, settings, onUpdate, addToast]);
 
   return h('div', null,
+    h(ArchiveViewer, { data }),
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'PIN-коды доступа'),
       h('div', { style: { background: '#fffbe6', border: '0.5px solid #f5c518', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 11, color: '#7a5900' } },
@@ -4994,12 +5247,293 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
   );
 });
 
+// ==================== ShiftAutoPlanner ====================
+// Автопланировщик смены: автоматически предлагает назначения по компетенциям, загрузке и дедлайнам
+const ShiftAutoPlanner = memo(({ data, onUpdate, addToast }) => {
+  const [applied, setApplied] = useState(false);
+  const { ask: askConfirm, confirmEl } = useConfirm();
+
+  // Генерируем план смены: берём все ожидающие операции, сортируем по приоритету+дедлайну,
+  // для каждой подбираем лучшего свободного кандидата с нужными компетенциями
+  const plan = useMemo(() => {
+    const nowTime = Date.now();
+    const pendingOps = data.ops.filter(op => op.status === 'pending' && !op.archived);
+    const busyWorkerIds = new Set(
+      data.ops.filter(op => op.status === 'in_progress').flatMap(op => op.workerIds || [])
+    );
+
+    // Очередь свободных сотрудников — клонируем статус нагрузки
+    const workerLoad = {};
+    data.workers.forEach(w => { workerLoad[w.id] = 0; });
+    data.ops.filter(op => op.status === 'pending' && (op.workerIds||[]).length > 0).forEach(op => {
+      (op.workerIds||[]).forEach(wid => { workerLoad[wid] = (workerLoad[wid]||0) + 1; });
+    });
+
+    // Сортируем операции: critical > high > medium > low, затем по ближайшему дедлайну
+    const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+    const sorted = [...pendingOps].sort((a, b) => {
+      const orderA = data.orders.find(o => o.id === a.orderId);
+      const orderB = data.orders.find(o => o.id === b.orderId);
+      const pA = priorityOrder[orderA?.priority || 'medium'] ?? 2;
+      const pB = priorityOrder[orderB?.priority || 'medium'] ?? 2;
+      if (pA !== pB) return pA - pB;
+      const dA = orderA?.deadline ? new Date(orderA.deadline).getTime() : Infinity;
+      const dB = orderB?.deadline ? new Date(orderB.deadline).getTime() : Infinity;
+      return dA - dB;
+    });
+
+    const assignments = [];
+    const assignedThisRound = {};
+
+    sorted.forEach(op => {
+      if ((op.workerIds||[]).length > 0) return; // уже назначен
+
+      const candidates = data.workers.filter(w =>
+        !w.archived &&
+        (w.status || 'working') === 'working' &&
+        !busyWorkerIds.has(w.id) &&
+        (!w.competences?.length || w.competences.includes(op.name)) &&
+        (assignedThisRound[w.id] || 0) === 0 // в текущем плане каждый рабочий — одна операция
+      );
+
+      if (candidates.length === 0) {
+        assignments.push({ op, workerId: null, workerName: null, reason: 'Нет свободных кандидатов' });
+        return;
+      }
+
+      const scored = candidates.map(w => scoreWorkerForOp(w, op.name, data))
+        .sort((a, b) => b.totalScore - a.totalScore);
+
+      const best = scored[0];
+      assignedThisRound[best.workerId] = 1;
+
+      const order = data.orders.find(o => o.id === op.orderId);
+      const daysLeft = order?.deadline
+        ? Math.ceil((new Date(order.deadline).getTime() - nowTime) / 86400000)
+        : null;
+
+      assignments.push({
+        op, workerId: best.workerId, workerName: best.workerName,
+        score: best.totalScore, level: best.level,
+        orderNumber: order?.number || '—', orderPriority: order?.priority || 'medium',
+        daysLeft,
+        reason: `Опыт:${best.details.experience} · Кач:${best.qualityScore}/25 · Загр:${best.details.activeOps}`
+      });
+    });
+
+    return assignments;
+  }, [data]);
+
+  const unassignableCount = plan.filter(p => !p.workerId).length;
+
+  const applyPlan = useCallback(async () => {
+    const toAssign = plan.filter(p => p.workerId);
+    if (toAssign.length === 0) { addToast('Нет операций для назначения', 'info'); return; }
+    const ok = await askConfirm({
+      message: `Назначить ${toAssign.length} операций согласно плану смены?`,
+      danger: false
+    });
+    if (!ok) return;
+
+    let updated = { ...data };
+    toAssign.forEach(({ op, workerId }) => {
+      updated = { ...updated, ops: updated.ops.map(o =>
+        o.id === op.id ? { ...o, workerIds: [workerId] } : o
+      )};
+    });
+    await DB.save(updated);
+    onUpdate(updated);
+    setApplied(true);
+    addToast(`Смена спланирована: ${toAssign.length} назначений`, 'success');
+  }, [plan, data, onUpdate, addToast, askConfirm]);
+
+  const assignableCount = plan.filter(p => p.workerId).length;
+
+  return h('div', null,
+    confirmEl,
+    h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 } },
+      h('div', null,
+        h('div', { style: S.sec }, `🤖 Автопланировщик смены (${assignableCount} операций)`),
+        unassignableCount > 0 && h('div', { style: { fontSize:11, color: RD, marginTop:2 } },
+          `⚠ ${unassignableCount} операций без кандидатов — проверьте компетенции`
+        )
+      ),
+      h('button', {
+        style: applied ? gbtn({ fontSize:12 }) : abtn({ fontSize:12 }),
+        onClick: applyPlan,
+        disabled: assignableCount === 0
+      }, applied ? '✓ Применено' : `▶ Применить план (${assignableCount})`)
+    ),
+    plan.length === 0
+      ? h('div', { style: { ...S.card, textAlign:'center', color:'#888', padding:20 } },
+          'Все ожидающие операции уже имеют исполнителей'
+        )
+      : h('div', { style: { ...S.card, padding:0 } },
+          h('div', { className:'table-responsive' }, h('table', { style:{ width:'100%', borderCollapse:'collapse' } },
+            h('thead', null, h('tr', null,
+              ['Операция','Заказ','Приоритет','Срок','Исполнитель','Обоснование'].map((t,i) =>
+                h('th', { key:i, style: S.th }, t)
+              )
+            )),
+            h('tbody', null, plan.slice(0, 30).map((item, i) => {
+              const prioColor = PRIORITY[item.orderPriority]?.color || '#888';
+              return h('tr', { key: item.op.id, style:{ background: i%2===0 ? '#fafaf8' : '#fff' } },
+                h('td', { style: S.td }, item.op.name),
+                h('td', { style:{ ...S.td, color: AM, fontWeight:500 } }, item.orderNumber),
+                h('td', { style:{ ...S.td, color: prioColor, fontWeight:500 } },
+                  PRIORITY[item.orderPriority]?.label || '—'
+                ),
+                h('td', { style:{ ...S.td, color: item.daysLeft !== null && item.daysLeft <= 2 ? RD : '#888', fontWeight: item.daysLeft !== null && item.daysLeft <= 2 ? 500 : 400 } },
+                  item.daysLeft !== null ? (item.daysLeft <= 0 ? '❗Просрочен' : `${item.daysLeft} дн.`) : '—'
+                ),
+                item.workerId
+                  ? h('td', { style:{ ...S.td, color: GN2, fontWeight:500 } },
+                      h('span', { style:{ display:'inline-flex', alignItems:'center', gap:4, padding:'2px 8px', background: GN3, borderRadius:6, fontSize:11 } },
+                        '★', item.workerName
+                      )
+                    )
+                  : h('td', { style:{ ...S.td, color: RD, fontSize:11 } }, item.reason),
+                h('td', { style:{ ...S.td, fontSize:10, color:'#888' } }, item.reason)
+              );
+            }))
+          ))
+        )
+  );
+});
+
+// ==================== PushNotificationManager ====================
+// Управление Web Push уведомлениями: запрос разрешения + отправка при критических событиях
+const usePushNotifications = (data) => {
+  const lastNotifRef = useRef({});
+
+  const sendPush = useCallback((title, body, tag) => {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    // Дедупликация: одно уведомление с тем же тегом не чаще раза в 10 минут
+    const now_ts = Date.now();
+    if (lastNotifRef.current[tag] && now_ts - lastNotifRef.current[tag] < 600000) return;
+    lastNotifRef.current[tag] = now_ts;
+    try {
+      new Notification(title, {
+        body,
+        icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23EF9F27' width='100' height='100' rx='20'/><text x='50' y='68' font-size='50' text-anchor='middle' fill='%23412402'>НТ</text></svg>",
+        badge: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23E24B4A' width='100' height='100' rx='20'/><text x='50' y='68' font-size='60' text-anchor='middle' fill='white'>!</text></svg>",
+        tag,
+        requireInteraction: false
+      });
+    } catch(e) {}
+  }, []);
+
+  // Мониторинг критических ситуаций каждые 2 минуты
+  useEffect(() => {
+    if (!data) return;
+    const check = () => {
+      const nowTime = Date.now();
+      // 1. Просроченные операции (не начаты > 1 часа после плана)
+      data.ops.forEach(op => {
+        if (op.status === 'pending' && op.plannedStartDate && op.plannedStartDate < nowTime - 3600000) {
+          const order = data.orders.find(o => o.id === op.orderId);
+          sendPush(
+            '⏰ Операция просрочена',
+            `«${op.name}» (заказ ${order?.number || '—'}) не начата более часа`,
+            `overdue-op-${op.id}`
+          );
+        }
+      });
+      // 2. Новые браки (за последние 5 минут)
+      const recentDefects = data.events.filter(e =>
+        (e.type === 'defect' || e.type === 'rework') &&
+        e.ts > nowTime - 300000
+      );
+      recentDefects.forEach(e => {
+        const op = data.ops.find(o => o.id === e.opId);
+        const order = op ? data.orders.find(o => o.id === op.orderId) : null;
+        sendPush(
+          '⚠ Зафиксирован брак',
+          `${op?.name || 'Операция'} · заказ ${order?.number || '—'}`,
+          `defect-event-${e.id}`
+        );
+      });
+      // 3. Дедлайны сегодня/завтра
+      data.orders.forEach(order => {
+        if (!order.archived && isShipmentNear(order.deadline)) {
+          const ops = data.ops.filter(o => o.orderId === order.id);
+          const allDone = ops.length > 0 && ops.every(o => o.status === 'done' || o.status === 'defect');
+          if (!allDone) {
+            sendPush(
+              '📦 Срочная отгрузка',
+              `Заказ ${order.number} — срок отгрузки через 1-2 дня`,
+              `deadline-order-${order.id}`
+            );
+          }
+        }
+      });
+    };
+    check(); // сразу при монтировании
+    const t = setInterval(check, 120000);
+    return () => clearInterval(t);
+  }, [data, sendPush]);
+
+  return { sendPush };
+};
+
+// Кнопка управления уведомлениями
+const PushNotificationButton = memo(() => {
+  const [permission, setPermission] = useState(
+    'Notification' in window ? Notification.permission : 'unsupported'
+  );
+
+  const requestPermission = useCallback(async () => {
+    if (!('Notification' in window)) return;
+    const result = await Notification.requestPermission();
+    setPermission(result);
+    if (result === 'granted') {
+      new Notification('Уведомления включены ✓', {
+        body: 'Вы будете получать оповещения о браке и просрочках',
+        icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23EF9F27' width='100' height='100' rx='20'/><text x='50' y='68' font-size='50' text-anchor='middle' fill='%23412402'>НТ</text></svg>"
+      });
+    }
+  }, []);
+
+  if (permission === 'unsupported') return null;
+
+  if (permission === 'granted') {
+    return h('div', { style: { display:'flex', alignItems:'center', gap:4, fontSize:11, color: GN, padding:'4px 8px', background: GN3, borderRadius:6 } },
+      '🔔 Уведомления вкл.'
+    );
+  }
+
+  if (permission === 'denied') {
+    return h('div', { style: { fontSize:10, color:'#888' }, title:'Уведомления заблокированы в браузере' },
+      '🔕 Уведомления выкл.'
+    );
+  }
+
+  return h('button', {
+    style: gbtn({ fontSize:11, background: AM3, color: AM2, borderColor: AM4 }),
+    onClick: requestPermission,
+    title: 'Включить push-уведомления о браке и просрочках'
+  }, '🔔 Включить уведомления');
+});
+
 // ==================== AnalyticsDashboard (Волна 1: Lead Time, Такт, Нормы, Парето, Тренды) ====================
-const AnalyticsDashboard = memo(({ data }) => {
+const AnalyticsDashboard = memo(({ data, onUpdate, addToast }) => {
   const [period, setPeriod] = useState(30);
   const periodStart = useMemo(() => now() - period * 86400000, [period]);
   const chartRef1 = useRef(null); const canvasRef1 = useRef(null);
   const chartRef2 = useRef(null); const canvasRef2 = useRef(null);
+
+  // Применение рекомендованной нормы ко всем ожидающим операциям того же типа
+  const applyNorm = useCallback(async (opName, suggestedHours) => {
+    if (!onUpdate || !addToast) return;
+    let count = 0;
+    const updatedOps = data.ops.map(op => {
+      if (op.name === opName && op.status === 'pending') { count++; return { ...op, plannedHours: suggestedHours }; }
+      return op;
+    });
+    const d = { ...data, ops: updatedOps };
+    await DB.save(d); onUpdate(d);
+    addToast(`Норма «${opName}» → ${suggestedHours}ч. Обновлено ${count} ожид. операций`, 'success');
+  }, [data, onUpdate, addToast]);
 
   // ===== 1. Lead Time по заказам =====
   const leadTimeData = useMemo(() => {
@@ -5205,7 +5739,7 @@ const AnalyticsDashboard = memo(({ data }) => {
       h('div', { style: S.sec }, 'Нормирование операций (факт vs план)'),
       normSuggestions.length === 0 ? h('div', { style: { padding: 12, color: '#888', textAlign: 'center' } }, 'Недостаточно данных (нужно ≥3 завершённых операций каждого типа)') :
         h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null, ['Операция', 'Замеров', 'Текущая норма', 'Медиана факт', 'Мин', 'Макс', 'Отклонение', 'Рекомендация'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
+          h('thead', null, h('tr', null, ['Операция', 'Замеров', 'Текущая норма', 'Медиана факт', 'Мин', 'Макс', 'Отклонение', 'Рекомендация', ''].map((t, i) => h('th', { key: i, style: S.th }, t)))),
           h('tbody', null, normSuggestions.map((s, i) => h('tr', { key: i, style: { background: s.deviation && Math.abs(s.deviation) > 30 ? '#FFF8E1' : 'transparent' } },
             h('td', { style: S.td }, s.name),
             h('td', { style: { ...S.td, textAlign: 'center' } }, s.count),
@@ -5214,7 +5748,8 @@ const AnalyticsDashboard = memo(({ data }) => {
             h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'center', color: '#888' } }, `${s.min}ч`),
             h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'center', color: '#888' } }, `${s.max}ч`),
             h('td', { style: { ...S.td, textAlign: 'center', color: s.deviation === null ? '#888' : Math.abs(s.deviation) > 30 ? RD : GN, fontWeight: 500 } }, s.deviation !== null ? `${s.deviation > 0 ? '+' : ''}${s.deviation}%` : '—'),
-            h('td', { style: { ...S.td, fontSize: 11 } }, s.deviation !== null && Math.abs(s.deviation) > 20 ? `Обновить до ${s.suggested}ч` : '✓ Норма актуальна')
+            h('td', { style: { ...S.td, fontSize: 11 } }, s.deviation !== null && Math.abs(s.deviation) > 20 ? `Обновить до ${s.suggested}ч` : '✓ Норма актуальна'),
+            h('td', { style: S.td }, onUpdate && s.deviation !== null && Math.abs(s.deviation) > 20 ? h('button', { style: abtn({ fontSize: 10, padding: '4px 10px', background: GN, color: '#fff', border:'none' }), onClick: () => applyNorm(s.name, s.suggested) }, '✓ Применить') : null)
           )))
         ))
     )
@@ -5752,7 +6287,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
     tab === 'plan' && h(MasterTodayPlan, { data }),
     tab === 'notifications' && h(MasterNotifications, { data }),
     tab === 'reports' && h(ReportsBuilder, { data }),
-    tab === 'analytics' && h(AnalyticsDashboard, { data }),
+    tab === 'analytics' && h(AnalyticsDashboard, { data, onUpdate, addToast }),
     tab === 'kpi' && h(KPIReport, { data }),
     tab === 'reclamations' && h(MasterReclamations, { data, onUpdate, addToast }),
     tab === 'admin' && h(MasterAdmin, { data, onUpdate, addToast })
@@ -7401,6 +7936,223 @@ const InstallPromptBanner = memo(() => {
   );
 });
 
+// ==================== ShopMasterScreen (Сменный мастер) ====================
+const ShopMasterScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
+  const [tab, setTab] = useState('ops');
+  const { ask: askConfirm, confirmEl } = useConfirm();
+
+  const activeOps = useMemo(() => data.ops.filter(o => o.status === 'in_progress' && !o.archived), [data.ops]);
+  const pendingOps = useMemo(() => data.ops.filter(o => o.status === 'pending' && !o.archived), [data.ops]);
+  const freeWorkers = useMemo(() => {
+    const busy = new Set(activeOps.flatMap(o => o.workerIds || []));
+    return data.workers.filter(w => !w.archived && (w.status || 'working') === 'working' && !busy.has(w.id));
+  }, [data.workers, activeOps]);
+  const alerts = useMemo(() => {
+    const res = [];
+    data.ops.filter(o => o.status === 'defect' && !o.archived).forEach(o => {
+      const order = data.orders.find(x => x.id === o.orderId);
+      res.push({ type: 'defect', text: `Брак: ${o.name}${order ? ` · ${order.number}` : ''}`, id: o.id });
+    });
+    activeOps.forEach(o => {
+      if (o.plannedHours && o.startedAt && (now() - o.startedAt) > o.plannedHours * 3600000 * 1.5) {
+        res.push({ type: 'overtime', text: `Превышение времени: ${o.name}`, id: o.id });
+      }
+    });
+    return res;
+  }, [data.ops, activeOps]);
+
+  const TABS = [['ops','Операции'],['orders','Заказы'],['shift_plan','🤖 План смены'],['journal','Журнал'],['notifications','Уведомления']];
+
+  return h('div', null,
+    confirmEl,
+    h(SectionAnalytics, { section: 'production', data }),
+    // Алерты
+    alerts.length > 0 && h('div', { style: { background: RD3, border: `0.5px solid ${RD}`, borderRadius: 10, padding: '8px 12px', marginBottom: 12 } },
+      h('div', { style: { fontSize: 10, color: RD2, fontWeight: 500, textTransform: 'uppercase', marginBottom: 4 } }, '⚠ Требует внимания'),
+      alerts.map((a, i) => h('div', { key: i, style: { fontSize: 12, color: RD2, marginBottom: 2 } }, a.text))
+    ),
+    // Быстрая сводка
+    h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 8, marginBottom: 14 } },
+      h('div', { style: { ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color:AM } }, activeOps.length), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'В работе')),
+      h('div', { style: { ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color:'#0277BD' } }, pendingOps.length), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Ожидают')),
+      h('div', { style: { ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color: freeWorkers.length > 0 ? GN : '#888' } }, freeWorkers.length), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Свободны'))
+    ),
+    // Вкладки
+    h('div', { style: { display:'flex', gap:4, marginBottom:14, borderBottom:`0.5px solid rgba(0,0,0,0.08)`, paddingBottom:8 } },
+      TABS.map(([id, label]) => h('button', { key:id, style: tab===id ? abtn({fontSize:12}) : gbtn({fontSize:12}), onClick: () => setTab(id) }, label))
+    ),
+    tab === 'ops'           && h(MasterOps,           { data, onUpdate, addToast, onOrderClick }),
+    tab === 'orders'        && h(MasterOrders,         { data, onUpdate, addToast, onOrderClick }),
+    tab === 'shift_plan'    && h(ShiftAutoPlanner,     { data, onUpdate, addToast }),
+    tab === 'journal'       && h(MasterJournal,        { data }),
+    tab === 'notifications' && h(MasterNotifications,  { data })
+  );
+});
+
+// ==================== PDOScreen (ПДО) ====================
+const PDOScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
+  const [tab, setTab] = useState('orders');
+  const TABS = [['orders','Заказы'],['ops','Операции'],['shift_plan','🤖 План смены'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['plan','План'],['reports','Отчёты'],['journal','Журнал'],['notifications','Уведомления']];
+
+  const overdueOrders = useMemo(() => data.orders.filter(o => !o.archived && o.deadline && new Date(o.deadline) < new Date()).length, [data.orders]);
+  const activeOrders  = useMemo(() => data.orders.filter(o => !o.archived).length, [data.orders]);
+  const inProgOps     = useMemo(() => data.ops.filter(o => o.status === 'in_progress' && !o.archived).length, [data.ops]);
+
+  return h('div', null,
+    h(SectionAnalytics, { section: 'production', data }),
+    // Сводка
+    h('div', { className: 'metrics-grid', style: { display:'grid', gap:8, marginBottom:14 } },
+      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500 } }, activeOrders), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Заказов')),
+      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color: overdueOrders > 0 ? RD : GN } }, overdueOrders), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Просрочено')),
+      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color:AM } }, inProgOps), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'В работе'))
+    ),
+    // Вкладки
+    h('div', { style:{ display:'flex', gap:4, marginBottom:14, overflowX:'auto', borderBottom:`0.5px solid rgba(0,0,0,0.08)`, paddingBottom:8 } },
+      h('div', { className:'tabs-scroll', style:{ display:'flex', gap:4 } },
+        TABS.map(([id, label]) => h('button', { key:id, style: tab===id ? abtn({fontSize:12}) : gbtn({fontSize:12}), onClick:()=>setTab(id) }, label))
+      )
+    ),
+    tab === 'orders'        && h(MasterOrders,              { data, onUpdate, addToast, onOrderClick }),
+    tab === 'ops'           && h(MasterOps,                 { data, onUpdate, addToast, onOrderClick }),
+    tab === 'shift_plan'   && h(ShiftAutoPlanner,          { data, onUpdate, addToast }),
+    tab === 'recommend'     && h(AssignmentRecommendations, { data, onUpdate, addToast }),
+    tab === 'kanban'        && h(MasterKanban,              { data, onUpdate, addToast }),
+    tab === 'gantt'         && h(GanttChart,                { data }),
+    tab === 'calendar'      && h(ResourceCalendar,          { data, onUpdate, addToast }),
+    tab === 'plan'          && h(MasterTodayPlan,           { data }),
+    tab === 'reports'       && h(ReportsBuilder,            { data }),
+    tab === 'journal'       && h(MasterJournal,             { data }),
+    tab === 'notifications' && h(MasterNotifications,       { data })
+  );
+});
+
+// ==================== DirectorScreen (Руководитель) ====================
+const DirectorScreen = memo(({ data, onOrderClick }) => {
+  const [tab, setTab] = useState('overview');
+  const TABS = [['overview','Обзор'],['analytics','Аналитика'],['reports','Отчёты'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['orders','Заказы'],['kanban','Канбан']];
+
+  const doneOps    = useMemo(() => data.ops.filter(o => o.status === 'done'   && o.finishedAt >= now() - 30*86400000).length, [data.ops]);
+  const defectOps  = useMemo(() => data.ops.filter(o => o.status === 'defect' && o.finishedAt >= now() - 30*86400000).length, [data.ops]);
+  const quality    = doneOps + defectOps > 0 ? Math.round(doneOps / (doneOps + defectOps) * 100) : 100;
+  const overdue    = useMemo(() => data.orders.filter(o => !o.archived && o.deadline && new Date(o.deadline) < new Date()).length, [data.orders]);
+  const recCount   = useMemo(() => (data.reclamations || []).filter(r => r.status !== 'closed').length, [data.reclamations]);
+  const downtime   = useMemo(() => Math.round(data.events.filter(e => e.type === 'downtime' && e.ts >= now() - 30*86400000).reduce((s, e) => s + (e.duration || 0), 0) / 3600000), [data.events]);
+
+  // Топ проблем для обзора
+  const topIssues = useMemo(() => {
+    const issues = [];
+    // Брак по исполнителям
+    const wmap = {};
+    data.ops.filter(o => o.status === 'defect' && o.finishedAt >= now() - 30*86400000).forEach(o => {
+      (o.workerIds||[]).forEach(wid => { wmap[wid] = (wmap[wid]||0)+1; });
+    });
+    const topWorker = Object.entries(wmap).sort((a,b)=>b[1]-a[1])[0];
+    if (topWorker) {
+      const w = data.workers.find(x=>x.id===topWorker[0]);
+      if (w) issues.push({ title:`Брак: ${w.name.split(' ')[0]}`, sub:`${topWorker[1]} случаев за 30 дней`, sev:'high' });
+    }
+    // Просроченные заказы
+    if (overdue > 0) issues.push({ title:`Просрочено заказов: ${overdue}`, sub:'требуют немедленного внимания', sev:'critical' });
+    // Рекламации
+    if (recCount > 0) issues.push({ title:`Рекламации: ${recCount}`, sub:'открытых и в работе', sev: recCount > 3 ? 'high' : 'medium' });
+    return issues;
+  }, [data, overdue, recCount]);
+
+  const sevColor = { critical: RD2, high: AM4, medium: '#888' };
+  const sevBg    = { critical: RD3,  high: AM3,  medium: '#f5f5f2' };
+
+  return h('div', null,
+    h(SectionAnalytics, { section: 'production', data }),
+    // KPI сводка
+    h('div', { className:'metrics-grid', style:{ display:'grid', gap:8, marginBottom:14 } },
+      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color: quality>=95?GN:quality>=85?AM:RD } }, `${quality}%`), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Качество')),
+      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color: overdue>0?RD:GN } }, overdue), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Просрочено')),
+      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color: recCount>0?AM:GN } }, recCount), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Рекламации')),
+      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500 } }, `${downtime}ч`), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Простоев/мес'))
+    ),
+    // Вкладки
+    h('div', { style:{ display:'flex', gap:4, marginBottom:14, overflowX:'auto', borderBottom:`0.5px solid rgba(0,0,0,0.08)`, paddingBottom:8 } },
+      h('div', { className:'tabs-scroll', style:{ display:'flex', gap:4 } },
+        TABS.map(([id, label]) => h('button', { key:id, style: tab===id?abtn({fontSize:12}):gbtn({fontSize:12}), onClick:()=>setTab(id) }, label))
+      )
+    ),
+    // Обзор — топ проблем
+    tab === 'overview' && h('div', null,
+      h('div', { style:{ fontSize:12, fontWeight:500, marginBottom:10 } }, 'Ключевые проблемы — 30 дней'),
+      topIssues.length === 0
+        ? h('div', { style:{ ...S.card, textAlign:'center', color:'#888', padding:24 } }, '✓ Критических проблем нет')
+        : topIssues.map((issue, i) => h('div', { key:i, style:{ background: sevBg[issue.sev], border:`0.5px solid ${sevColor[issue.sev]}`, borderRadius:10, padding:'10px 14px', marginBottom:8 } },
+            h('div', { style:{ fontSize:13, fontWeight:500, color: sevColor[issue.sev] } }, issue.title),
+            h('div', { style:{ fontSize:11, color: sevColor[issue.sev], marginTop:2 } }, issue.sub)
+          ))
+    ),
+    tab === 'analytics'    && h(AnalyticsDashboard, { data, onUpdate, addToast }),
+    tab === 'reports'      && h(ReportsBuilder,     { data }),
+    tab === 'kpi'          && h(KPIReport,           { data }),
+    tab === 'reclamations' && h(MasterReclamations,  { data, onUpdate, addToast }),
+    tab === 'orders'       && h(MasterOrders,        { data, onUpdate, addToast, onOrderClick }),
+    tab === 'kanban'       && h(MasterKanban,        { data, onUpdate, addToast })
+  );
+});
+
+// ==================== HRScreen (HR / Отдел кадров) ====================
+const HRScreen = memo(({ data, onUpdate, addToast }) => {
+  const [tab, setTab] = useState('workers');
+  const TABS = [['workers','Сотрудники'],['time','Учёт времени'],['kpi','KPI / Премии'],['reports','Отчёты']];
+
+  const active  = useMemo(() => data.workers.filter(w => !w.archived), [data.workers]);
+  const working = useMemo(() => active.filter(w => (w.status||'working') === 'working').length, [active]);
+  const absent  = useMemo(() => active.filter(w => w.status !== 'working').length, [active]);
+
+  return h('div', null,
+    h(SectionAnalytics, { section: 'hr', data }),
+    h('div', { className:'metrics-grid', style:{ display:'grid', gap:8, marginBottom:14 } },
+      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500 } }, active.length), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Сотрудников')),
+      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color:GN } }, working), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'На смене')),
+      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color: absent>0?AM:'#888' } }, absent), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Отсутствуют'))
+    ),
+    h('div', { style:{ display:'flex', gap:4, marginBottom:14, borderBottom:`0.5px solid rgba(0,0,0,0.08)`, paddingBottom:8 } },
+      TABS.map(([id,label]) => h('button', { key:id, style: tab===id?abtn({fontSize:12}):gbtn({fontSize:12}), onClick:()=>setTab(id) }, label))
+    ),
+    tab === 'workers' && h(MasterWorkers,      { data, onUpdate, addToast }),
+    tab === 'time'    && h(MasterTimeTracking, { data, onUpdate, addToast }),
+    tab === 'kpi'     && h(KPIReport,          { data }),
+    tab === 'reports' && h(ReportsBuilder,     { data })
+  );
+});
+
+// ==================== AdminScreen (Администратор) ====================
+const AdminScreen = memo(({ data, onUpdate, addToast }) => {
+  const [tab, setTab] = useState('stages');
+  const TABS = [
+    ['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],
+    ['equipment','Оборудование'],['materials','Материалы'],['bom','Спецификации'],
+    ['sections','Участки'],['workers','Сотрудники'],['time','Учёт времени'],['admin','Настройки']
+  ];
+
+  return h('div', null,
+    h('div', { style:{ ...S.card, background: AM3, border:`0.5px solid ${AM4}`, padding:'10px 14px', marginBottom:14 } },
+      h('div', { style:{ fontSize:13, fontWeight:500, color:AM2 } }, '⚙ Администратор — настройка системы'),
+      h('div', { style:{ fontSize:11, color:AM4, marginTop:2 } }, 'Справочники, оборудование, этапы производства, PIN-коды ролей')
+    ),
+    h('div', { style:{ display:'flex', gap:4, marginBottom:14, overflowX:'auto', borderBottom:`0.5px solid rgba(0,0,0,0.08)`, paddingBottom:8 } },
+      h('div', { className:'tabs-scroll', style:{ display:'flex', gap:4 } },
+        TABS.map(([id,label]) => h('button', { key:id, style: tab===id?abtn({fontSize:12}):gbtn({fontSize:12}), onClick:()=>setTab(id) }, label))
+      )
+    ),
+    tab === 'stages'        && h(MasterProductionStages, { data, onUpdate, addToast }),
+    tab === 'defectReasons' && h(MasterDefectReasons,    { data, onUpdate, addToast }),
+    tab === 'downtimes'     && h(MasterDowntimes,        { data, onUpdate, addToast }),
+    tab === 'equipment'     && h(MasterEquipment,        { data, onUpdate, addToast }),
+    tab === 'materials'     && h(MasterMaterials,        { data, onUpdate, addToast }),
+    tab === 'bom'           && h(MasterBOM,              { data, onUpdate, addToast }),
+    tab === 'sections'      && h(MasterSections,         { data, onUpdate, addToast }),
+    tab === 'workers'       && h(MasterWorkers,          { data, onUpdate, addToast }),
+    tab === 'time'          && h(MasterTimeTracking,     { data, onUpdate, addToast }),
+    tab === 'admin'         && h(MasterAdmin,            { data, onUpdate, addToast })
+  );
+});
+
 // ==================== App ====================
 function App() {
   const [data, setData] = useState(EMPTY_DATA);
@@ -7484,6 +8236,8 @@ function App() {
   }, []);
 
   const goBack = () => { setRole(null); setWorkerId(null); setSectionId(null); setInitialOpId(null); setShowChat(false); window.history.replaceState({}, '', window.location.pathname); };
+  // Push-уведомления: мониторинг просрочек и брака в фоне
+  usePushNotifications(data);
   const addToast = useCallback((message, type = 'info') => { const id = Date.now() + Math.random(); setToasts(prev => [...prev, { id, message, type }]); }, []);
   const removeToast = useCallback(id => setToasts(prev => prev.filter(t => t.id !== id)), []);
 
@@ -7570,6 +8324,7 @@ function App() {
           !showChat && unread > 0 && h('span', { style: { position: 'absolute', top: -4, right: -4, background: RD, color: '#fff', borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 500 } }, unread > 9 ? '9+' : unread)
         );
       })(),
+      h(PushNotificationButton),
       h('div', { style: { marginLeft:'auto', fontSize:10, display:'flex', alignItems:'center', gap:8 } },
         isSaving && h('div', { style: { display:'flex', alignItems:'center', gap:4, color: AM4, fontWeight:500 } },
           h('span', { style: {
@@ -7584,18 +8339,21 @@ function App() {
         ),
         DB._sizeWarning && h('div', { style: { display:'flex', alignItems:'center', gap:3, color: AM4, fontSize: 9 } },
           `💾 ${DB._sizeWarning} КБ`
+        ),
+        !synced && localStorage.getItem(QUEUE_KEY) && h('div', { style: { display:'flex', alignItems:'center', gap:3, color: AM4, fontSize: 9, fontWeight:500 } },
+          '📤 Офлайн-очередь'
         )
       )
     ),
     showChat
       ? h(ChatScreen, { data, onUpdate: save, addToast, currentUser, onBack: () => setShowChat(false) })
       : h('div', null,
-          effectiveRole === 'master'      && h(MasterScreen, { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId, role: 'master' }),
-          effectiveRole === 'pdo'         && h(MasterScreen, { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId, role: 'pdo' }),
-          effectiveRole === 'director'    && h(MasterScreen, { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId, role: 'director' }),
-          effectiveRole === 'hr'          && h(MasterScreen, { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId, role: 'hr' }),
-          effectiveRole === 'shop_master' && h(MasterScreen, { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId, role: 'shop_master' }),
-          effectiveRole === 'admin'       && h(MasterScreen, { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId, role: 'admin' }),
+          effectiveRole === 'master'      && h(MasterScreen,   { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId, role: 'master' }),
+          effectiveRole === 'pdo'         && h(PDOScreen,       { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId }),
+          effectiveRole === 'director'    && h(DirectorScreen,  { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId }),
+          effectiveRole === 'hr'          && h(HRScreen,        { data, onUpdate: save, addToast }),
+          effectiveRole === 'shop_master' && h(ShopMasterScreen,{ data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId }),
+          effectiveRole === 'admin'       && h(AdminScreen,     { data, onUpdate: save, addToast }),
           effectiveRole === 'controller'  && h(ControllerScreen, { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId }),
           effectiveRole === 'worker' && workerId && h(WorkerScreen, { data, workerId, sectionId, onUpdate: save, initialOpId: null, addToast }),
           effectiveRole === 'warehouse' && h(WarehouseScreen, { data, onUpdate: save, addToast }),
