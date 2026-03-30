@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-  <meta name="theme-color" content="#EF9F27">
+  <meta name="theme-color" content="#EF9F27" id="meta-theme-color">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Производственный учёт · НТ</title>
@@ -30,18 +30,67 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <style>
+    /* ===== CSS переменные — светлая и тёмная темы ===== */
+    :root {
+      --bg: #f5f5f2;
+      --bg2: #ffffff;
+      --bg3: #f8f8f5;
+      --text: #1a1a18;
+      --text2: #666666;
+      --text3: #888888;
+      --border: rgba(0,0,0,0.12);
+      --border2: rgba(0,0,0,0.06);
+      --card-bg: #ffffff;
+      --card-border: rgba(0,0,0,0.10);
+      --input-bg: #ffffff;
+      --am: #EF9F27;
+      --am2: #412402;
+      --am3: #FAEEDA;
+      --am4: #BA7517;
+      --gn: #1D9E75;
+      --gn2: #04342C;
+      --gn3: #E1F5EE;
+      --rd: #E24B4A;
+      --rd2: #501313;
+      --rd3: #FCEBEB;
+      --shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    [data-theme="dark"] {
+      --bg: #111110;
+      --bg2: #1c1c1a;
+      --bg3: #242422;
+      --text: #f0ede8;
+      --text2: #aaa8a4;
+      --text3: #777572;
+      --border: rgba(255,255,255,0.10);
+      --border2: rgba(255,255,255,0.05);
+      --card-bg: #1c1c1a;
+      --card-border: rgba(255,255,255,0.08);
+      --input-bg: #242422;
+      --am: #EF9F27;
+      --am2: #FAEEDA;
+      --am3: #3a2a0e;
+      --am4: #d4921a;
+      --gn: #1D9E75;
+      --gn2: #a3f0d8;
+      --gn3: #0d2e22;
+      --rd: #E24B4A;
+      --rd2: #f9c5c5;
+      --rd3: #2d1212;
+      --shadow: 0 1px 4px rgba(0,0,0,0.4);
+    }
     *{box-sizing:border-box}
-    body{margin:0;padding:16px;font-family:system-ui,sans-serif;background:#f5f5f2;color:#1a1a18;-webkit-text-size-adjust:100%}
+    body{margin:0;padding:16px;font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);-webkit-text-size-adjust:100%;transition:background .2s,color .2s}
     input,select,textarea,button{font-family:inherit;font-size:16px}
-    input,select,textarea{background:#fff;border:.5px solid rgba(0,0,0,.25);border-radius:8px;padding:8px 10px;outline:none;width:100%}
-    button{cursor:pointer;border-radius:8px;font-size:14px;font-weight:500;padding:8px 14px;background:transparent;border:.5px solid rgba(0,0,0,.2);min-height:44px}
+    input,select,textarea{background:var(--input-bg);color:var(--text);border:.5px solid var(--border);border-radius:8px;padding:8px 10px;outline:none;width:100%}
+    button{cursor:pointer;border-radius:8px;font-size:14px;font-weight:500;padding:8px 14px;background:transparent;border:.5px solid var(--border);min-height:44px;color:var(--text)}
     button:disabled{opacity:.4;cursor:not-allowed}
     #root{max-width:1200px;margin:0 auto}
     .deadline-warning{color:#E24B4A;font-weight:500;margin-left:4px}
     .priority-critical{color:#E24B4A;font-weight:700}
     .priority-high{color:#EF9F27;font-weight:600}
     .priority-medium{color:#378ADD}
-    .toast{position:fixed;bottom:calc(20px + env(safe-area-inset-bottom, 0px));right:20px;left:20px;background:#333;color:#fff;padding:12px 20px;border-radius:8px;z-index:1000;animation:slideIn .3s;font-size:14px}
+    .toast{position:fixed;bottom:calc(20px + env(safe-area-inset-bottom, 0px));right:20px;left:20px;background:#1a1a18;color:#fff;padding:12px 20px;border-radius:8px;z-index:1000;animation:slideIn .3s;font-size:14px}
     @keyframes slideIn{from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1}}
     .error-message{color:#E24B4A;font-size:12px;margin-top:2px}
     .pagination{display:flex;gap:8px;justify-content:center;margin-top:12px;align-items:center;flex-wrap:wrap}
@@ -124,9 +173,43 @@
       .metrics-grid{grid-template-columns:repeat(5,1fr)!important}
       .forecast-grid{grid-template-columns:repeat(7,1fr)!important}
     }
+
+    /* ===== РАБОЧИЙ — оптимизация для мобильных ===== */
+    .worker-op-card{border-radius:14px;padding:16px;margin-bottom:12px;border:1.5px solid var(--border);background:var(--card-bg)}
+    .worker-op-card.active{border-color:var(--am);background:var(--am3)}
+    .worker-op-card.pending{border-color:var(--border)}
+    .worker-action-btn{min-height:54px;font-size:16px;font-weight:600;border-radius:12px;width:100%;padding:14px;margin-bottom:8px}
+    .worker-action-btn.start{background:var(--am);color:var(--am2);border:none}
+    .worker-action-btn.finish{background:var(--gn);color:#fff;border:none}
+    .worker-action-btn.defect{background:var(--rd3);color:var(--rd2);border:1px solid var(--rd)}
+    .worker-action-btn.downtime{background:var(--bg3);color:var(--text2);border:1px solid var(--border)}
+    .worker-status-bar{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:10px;background:var(--bg3);margin-bottom:12px}
+    .worker-timer{font-size:32px;font-weight:700;font-family:monospace;color:var(--am);letter-spacing:1px}
+    /* Тёмная тема — карточки */
+    [data-theme="dark"] .gantt-row{border-bottom-color:#2a2a28}
+    [data-theme="dark"] .gantt-label{background:#242422;border-right-color:#2a2a28}
+    [data-theme="dark"] .gantt-cell{border-left-color:#2a2a28}
+    [data-theme="dark"] .worker-calendar-table th{background:#242422}
+    [data-theme="dark"] .worker-calendar-table th,.worker-calendar-table td{border-color:#2a2a28}
+    [data-theme="dark"] .worker-cell{background:#1c1c1a}
+    [data-theme="dark"] .worker-cell.overload{background:#2d1212}
+    [data-theme="dark"] .worker-cell.vacation{background:#0d1e2d}
+    [data-theme="dark"] .checkbox-group{background:var(--input-bg);border-color:var(--border)}
+    /* Тёмная тема для табов */
+    [data-theme="dark"] .tabs-scroll button{color:var(--text2)}
+    /* Переключатель темы — кнопка в шапке */
+    .theme-toggle{min-height:36px;padding:4px 10px;font-size:14px;border-radius:8px;cursor:pointer;background:var(--bg3);border:1px solid var(--border);color:var(--text);transition:background .2s}
+    .theme-toggle:hover{background:var(--am3)}
+    /* ===== МОБИЛЬНЫЙ рабочий экран ===== */
+    @media(max-width:600px){
+      .worker-timer{font-size:40px}
+      .worker-action-btn{min-height:60px;font-size:17px;border-radius:14px}
+      .worker-op-card{padding:14px}
+    }
   </style>
 </head>
 <body>
+<script>(function(){try{var t=localStorage.getItem('nt_theme')||((window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light');document.documentElement.setAttribute('data-theme',t);if(t==='dark')document.body&&(document.body.style.background='#111110');}catch(e){}}());</script>
 <div id="root"></div>
 <script>
 const { useState, useEffect, useRef, useMemo, useCallback, memo, createElement: h } = React;
@@ -664,15 +747,15 @@ const migrateData = (d) => {
 
 // ==================== Стили и кнопки ====================
 const S = {
-  card: { background: '#fff', border: '0.5px solid rgba(0,0,0,0.1)', borderRadius: 12, padding: 16, marginBottom: 12 },
-  th: { textAlign: 'left', padding: '7px 10px', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#888', borderBottom: '0.5px solid rgba(0,0,0,0.08)', fontWeight: 400 },
-  td: { padding: '9px 10px', fontSize: 12, borderBottom: '0.5px solid rgba(0,0,0,0.06)', color: '#1a1a18', verticalAlign: 'middle' },
-  inp: { background: '#fff', border: '0.5px solid rgba(0,0,0,0.22)', borderRadius: 8, padding: '7px 10px', fontSize: 13, outline: 'none' },
-  lbl: { fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4, display: 'block' },
-  sec: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10, fontWeight: 500 }
+  card: { background: 'var(--card-bg)', border: '0.5px solid var(--card-border)', borderRadius: 12, padding: 16, marginBottom: 12 },
+  th: { textAlign: 'left', padding: '7px 10px', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text3)', borderBottom: '0.5px solid var(--border2)', fontWeight: 400 },
+  td: { padding: '9px 10px', fontSize: 12, borderBottom: '0.5px solid var(--border2)', color: 'var(--text)', verticalAlign: 'middle' },
+  inp: { background: 'var(--input-bg)', color: 'var(--text)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '7px 10px', fontSize: 13, outline: 'none' },
+  lbl: { fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4, display: 'block' },
+  sec: { fontSize: 10, color: 'var(--am4)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10, fontWeight: 500 }
 };
 const abtn = (e) => ({ padding: '8px 14px', background: AM, color: AM2, border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 500, ...e });
-const gbtn = (e) => ({ padding: '8px 14px', background: 'transparent', color: '#666', border: '0.5px solid rgba(0,0,0,0.2)', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 500, ...e });
+const gbtn = (e) => ({ padding: '8px 14px', background: 'transparent', color: 'var(--text2)', border: '0.5px solid var(--border)', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 500, ...e });
 const rbtn = (e) => ({ padding: '8px 14px', background: RD3, color: RD2, border: `0.5px solid ${RD}`, borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 500, ...e });
 
 // ==================== useConfirm (заменяет все confirm()) ====================
@@ -684,7 +767,7 @@ const useConfirm = () => {
   const answer = useCallback((yes) => { if (cfg) { cfg.resolve(yes); setCfg(null); } }, [cfg]);
   const confirmEl = cfg ? h('div', {
     role: 'dialog', 'aria-modal': 'true',
-    style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 400, padding: 16 }
+    style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 400, padding: 16 }
   },
     h('div', { style: { background: '#fff', borderRadius: 12, padding: 24, width: 'min(360px,100%)', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' } },
       h('div', { style: { fontSize: 15, fontWeight: 500, marginBottom: cfg.detail ? 6 : 20, lineHeight: 1.4 } }, cfg.msg),
@@ -1839,14 +1922,14 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Фиксация простоя',
       style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60 }
     },
-      h('div', { className: 'modal-content', style: { background: '#fff', borderRadius: 12, padding: 20, width: 'min(360px, calc(100vw - 24px))', maxHeight: '85vh', overflowY: 'auto' } },
+      h('div', { className: 'modal-content', style: { background: 'var(--card-bg)', color: 'var(--text)', borderRadius: 12, padding: 20, width: 'min(360px, calc(100vw - 24px))', maxHeight: '85vh', overflowY: 'auto' } },
         h('div', { style: { fontSize: 14, fontWeight: 500, marginBottom: 4, textAlign: 'center' } }, 'Фиксация простоя'),
         h(ElapsedTimer, { startedAt: downtimeStartedAt, style: { fontSize: 32, fontWeight: 500, color: RD, textAlign: 'center', margin: '12px 0' } }),
         h('div', { style: { fontSize: 11, color: '#888', textAlign: 'center', marginBottom: 12 } }, 'Выберите причину:'),
         // Причины — крупные кнопки
         h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 } },
           data.downtimeTypes.map(dt => h('button', { key: dt.id, type: 'button',
-            style: { padding: '14px 16px', fontSize: 14, fontWeight: selectedDowntimeType === dt.id ? 500 : 400, borderRadius: 10, border: selectedDowntimeType === dt.id ? `2px solid ${AM}` : '1px solid rgba(0,0,0,0.12)', background: selectedDowntimeType === dt.id ? AM3 : '#fff', color: selectedDowntimeType === dt.id ? AM2 : '#333', cursor: 'pointer', textAlign: 'left', minHeight: 48 },
+            style: { padding: '14px 16px', fontSize: 14, fontWeight: selectedDowntimeType === dt.id ? 500 : 400, borderRadius: 10, border: selectedDowntimeType === dt.id ? `2px solid ${AM}` : '1px solid var(--border)', background: selectedDowntimeType === dt.id ? AM3 : 'var(--bg3)', color: selectedDowntimeType === dt.id ? AM2 : 'var(--text)', cursor: 'pointer', textAlign: 'left', minHeight: 48 },
             onClick: () => setSelectedDowntimeType(dt.id)
           }, dt.name))
         ),
@@ -1879,10 +1962,10 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
         const isOverdue = daysLeft !== null && daysLeft < 0;
         // П.13: проверка зависимостей — можно ли начать
         const depsComplete = !op.dependsOn || op.dependsOn.length === 0 || op.dependsOn.every(depId => { const depOp = data.ops.find(d => d.id === depId); return depOp && depOp.status === 'done'; });
-        return h('div', { key: op.id, style: { ...S.card, marginBottom: 8, borderLeft: isOverdue ? `4px solid ${RD}` : isUrgent ? `4px solid ${AM}` : order?.priority === 'critical' ? `4px solid ${RD}` : 'none', opacity: depsComplete ? 1 : 0.6 } },
+        return h('div', { key: op.id, className: 'worker-op-card pending', style: { marginBottom: 10, borderLeft: isOverdue ? `4px solid ${RD}` : isUrgent ? `4px solid ${AM}` : order?.priority === 'critical' ? `4px solid ${RD}` : 'none', opacity: depsComplete ? 1 : 0.6 } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 8 } },
             h('div', null,
-              h('div', { style: { fontSize: 14, fontWeight: 500 } }, op.name),
+              h('div', { style: { fontSize: 16, fontWeight: 600, lineHeight: 1.3 } }, op.name),
               h('div', { style: { fontSize: 11, color: AM } }, order?.number || '—'),
               h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', marginTop: 2 } },
                 order?.priority && h('span', { style: { fontSize: 10, color: PRIORITY[order.priority]?.color } }, PRIORITY[order.priority].label),
@@ -1900,9 +1983,9 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
           op.drawingUrl && h('a', { href: op.drawingUrl, target: '_blank', rel: 'noopener', style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: BL, textDecoration: 'none', padding: '6px 10px', background: '#E3F2FD', borderRadius: 6, marginBottom: 6 } }, '📐 Открыть чертёж'),
           // П.13: Кнопка начала (с приёмкой)
           op.status === 'pending' && depsComplete && h('div', null,
-            h('button', { type: 'button', style: abtn({ width: '100%', padding: '10px' }), onClick: () => {
+            h('button', { type: 'button', className: 'worker-action-btn start', onClick: () => {
               (async () => { if (await askConfirm({ message: 'Принять изделие в работу?', detail: 'Подтвердите что визуальный осмотр проведён', danger: false })) doStart(op); })();
-            }}, '✓ Принять и начать'),
+            }}, '▶ Принять и начать'),
           ),
           op.status === 'pending' && !depsComplete && h('div', { style: { fontSize: 11, color: '#888', textAlign: 'center', padding: 4 } }, 'Ожидание завершения предыдущих этапов')
         );
@@ -4888,6 +4971,172 @@ const AssignmentRecommendations = memo(({ data, onUpdate, addToast }) => {
   );
 });
 
+
+// ==================== ReclamationRadarChart ====================
+// Лепестковая диаграмма показателей рекламаций с настройкой осей
+const ALL_RADAR_METRICS = [
+  { id: 'total',     label: 'Всего',       color: '#EF9F27' },
+  { id: 'open',      label: 'Открытых',    color: '#E24B4A' },
+  { id: 'external',  label: 'Внешних',     color: '#378ADD' },
+  { id: 'internal',  label: 'Внутренних',  color: '#E65100' },
+  { id: 'critical',  label: 'Критических', color: '#E24B4A' },
+  { id: 'major',     label: 'Серьёзных',   color: '#FF9800' },
+  { id: 'minor',     label: 'Незначит.',   color: '#FFC107' },
+  { id: 'inwork',    label: 'В работе',    color: '#1D9E75' },
+  { id: 'closed',    label: 'Закрытых',    color: '#1D9E75' },
+  { id: 'd8done',    label: 'D8 завершено',color: '#7F77DD' },
+];
+
+const RADAR_STORAGE_KEY = 'nt_rec_radar_axes';
+const DEFAULT_RADAR_AXES = ['total','open','external','internal','critical'];
+
+const ReclamationRadarChart = memo(({ allRecs, openCount, externalCount, internalCount }) => {
+  const canvasRef = useRef(null);
+  const chartRef  = useRef(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [axes, setAxes] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(RADAR_STORAGE_KEY)) || DEFAULT_RADAR_AXES; }
+    catch { return DEFAULT_RADAR_AXES; }
+  });
+
+  const getVal = useCallback((id) => {
+    switch(id) {
+      case 'total':    return allRecs.length;
+      case 'open':     return openCount;
+      case 'external': return externalCount;
+      case 'internal': return internalCount;
+      case 'critical': return allRecs.filter(r => r.severity === 'critical').length;
+      case 'major':    return allRecs.filter(r => r.severity === 'major').length;
+      case 'minor':    return allRecs.filter(r => r.severity === 'minor').length;
+      case 'inwork':   return allRecs.filter(r => r.status === 'in_work').length;
+      case 'closed':   return allRecs.filter(r => r.status === 'closed').length;
+      case 'd8done':   return allRecs.filter(r => r.d8?.currentStep >= 7).length;
+      default: return 0;
+    }
+  }, [allRecs, openCount, externalCount, internalCount]);
+
+  const saveAxes = (newAxes) => {
+    setAxes(newAxes);
+    try { localStorage.setItem(RADAR_STORAGE_KEY, JSON.stringify(newAxes)); } catch {}
+  };
+
+  const toggleAxis = (id) => {
+    if (axes.includes(id)) {
+      if (axes.length <= 3) return; // минимум 3 оси
+      saveAxes(axes.filter(a => a !== id));
+    } else {
+      if (axes.length >= 8) return; // максимум 8 осей
+      saveAxes([...axes, id]);
+    }
+  };
+
+  const selectedAxes = ALL_RADAR_METRICS.filter(m => axes.includes(m.id));
+  const values = selectedAxes.map(m => getVal(m.id));
+  const maxVal = Math.max(...values, 1);
+
+  useEffect(() => {
+    if (!canvasRef.current || !window.Chart || selectedAxes.length < 3) return;
+    if (chartRef.current) { try { chartRef.current.destroy(); } catch {} }
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const gridColor = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)';
+    const labelColor = isDark ? '#aaa8a4' : '#666';
+    chartRef.current = new Chart(canvasRef.current, {
+      type: 'radar',
+      data: {
+        labels: selectedAxes.map(m => m.label),
+        datasets: [{
+          data: values,
+          backgroundColor: 'rgba(239,159,39,0.18)',
+          borderColor: '#EF9F27',
+          borderWidth: 2.5,
+          pointBackgroundColor: selectedAxes.map(m => m.color),
+          pointRadius: 5,
+          pointHoverRadius: 7,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => ` ${ctx.parsed.r} рекламаций`
+            }
+          }
+        },
+        scales: {
+          r: {
+            min: 0,
+            max: Math.ceil(maxVal * 1.2) || 5,
+            ticks: {
+              stepSize: Math.max(1, Math.ceil(maxVal / 4)),
+              font: { size: 10 },
+              color: labelColor,
+              backdropColor: 'transparent'
+            },
+            pointLabels: { font: { size: 11, weight: '500' }, color: labelColor },
+            grid: { color: gridColor },
+            angleLines: { color: gridColor }
+          }
+        }
+      }
+    });
+    return () => { if (chartRef.current) { try { chartRef.current.destroy(); } catch {} } };
+  }, [axes, values, maxVal]);
+
+  // Re-render chart when theme changes
+  useEffect(() => {
+    const obs = new MutationObserver(() => {
+      if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; }
+    });
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => obs.disconnect();
+  }, []);
+
+  return h('div', { style: { ...S.card, marginBottom: 12 } },
+    // Header
+    h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 } },
+      h('div', { style: { ...S.sec, marginBottom: 0 } }, 'Обзор показателей'),
+      h('button', {
+        style: showSettings ? { ...{ padding:'4px 10px', background:'var(--am)',color:'var(--am2)',border:'none',borderRadius:6,cursor:'pointer',fontSize:11,fontWeight:500 }} : { padding:'4px 10px', background:'var(--bg3)',color:'var(--text2)',border:'1px solid var(--border)',borderRadius:6,cursor:'pointer',fontSize:11,fontWeight:500 },
+        onClick: () => setShowSettings(v => !v)
+      }, showSettings ? '✓ Готово' : '⚙ Настроить оси')
+    ),
+    // Axis selector
+    showSettings && h('div', { style: { display:'flex', gap:6, flexWrap:'wrap', marginBottom:10, padding:'8px 10px', background:'var(--bg3)', borderRadius:8 } },
+      ALL_RADAR_METRICS.map(m => h('button', {
+        key: m.id,
+        onClick: () => toggleAxis(m.id),
+        style: {
+          padding:'4px 10px', fontSize:11, borderRadius:6, cursor:'pointer', fontWeight:500, minHeight:32,
+          background: axes.includes(m.id) ? m.color : 'var(--bg2)',
+          color: axes.includes(m.id) ? '#fff' : 'var(--text2)',
+          border: axes.includes(m.id) ? `1px solid ${m.color}` : '1px solid var(--border)',
+          opacity: !axes.includes(m.id) && axes.length >= 8 ? 0.4 : 1
+        }
+      }, m.label))
+    ),
+    // Chart + counters side by side
+    h('div', { style: { display:'grid', gridTemplateColumns: '1fr auto', gap:12, alignItems:'center' } },
+      h('div', { style: { height: 220 } },
+        selectedAxes.length >= 3
+          ? h('canvas', { ref: canvasRef, style: { width:'100%', height:'100%' } })
+          : h('div', { style: { display:'flex', alignItems:'center', justifyContent:'center', height:'100%', color:'var(--text3)', fontSize:12 } }, 'Выберите минимум 3 оси')
+      ),
+      h('div', { style: { display:'flex', flexDirection:'column', gap:6, minWidth:90 } },
+        selectedAxes.map((m, i) => h('div', { key: m.id, style: { display:'flex', alignItems:'center', gap:6 } },
+          h('div', { style: { width:10, height:10, borderRadius:'50%', background:m.color, flexShrink:0 } }),
+          h('div', null,
+            h('div', { style: { fontSize:16, fontWeight:600, color:m.color, lineHeight:1 } }, values[i]),
+            h('div', { style: { fontSize:9, color:'var(--text3)', textTransform:'uppercase' } }, m.label)
+          )
+        ))
+      )
+    )
+  );
+});
+
 // ==================== MasterReclamations ====================
 const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
   const [form, setForm] = useState({ orderId: '', description: '', severity: 'minor', detectedDate: '', operationName: '', defectSource: 'external' });
@@ -5114,14 +5363,8 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
 
   return h('div', null,
     confirmEl,
-    // Сводка
-    h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 10, marginBottom: 12 } },
-      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: allRecs.length > 0 ? AM : GN } }, allRecs.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Всего')),
-      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: openCount > 0 ? RD : GN } }, openCount), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Открытых')),
-      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: '#0277BD' } }, externalCount), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Внешних')),
-      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: '#E65100' } }, internalCount), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Внутренних')),
-      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: '#888' } }, allRecs.filter(r => r.severity === 'critical').length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Критических'))
-    ),
+    // Сводка: лепестковая диаграмма + настройка показателей
+    h(ReclamationRadarChart, { allRecs, openCount, externalCount, internalCount }),
     // Фильтры
     h('div', { style: { display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' } },
       h('span', { style: { fontSize: 11, color: '#888', alignSelf: 'center', marginRight: 4 } }, 'Тип:'),
@@ -5407,20 +5650,37 @@ const usePushNotifications = (data) => {
   const lastNotifRef = useRef({});
 
   const sendPush = useCallback((title, body, tag) => {
-    if (!('Notification' in window) || Notification.permission !== 'granted') return;
     // Дедупликация: одно уведомление с тем же тегом не чаще раза в 10 минут
     const now_ts = Date.now();
     if (lastNotifRef.current[tag] && now_ts - lastNotifRef.current[tag] < 600000) return;
     lastNotifRef.current[tag] = now_ts;
-    try {
-      new Notification(title, {
-        body,
-        icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23EF9F27' width='100' height='100' rx='20'/><text x='50' y='68' font-size='50' text-anchor='middle' fill='%23412402'>НТ</text></svg>",
-        badge: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23E24B4A' width='100' height='100' rx='20'/><text x='50' y='68' font-size='60' text-anchor='middle' fill='white'>!</text></svg>",
-        tag,
-        requireInteraction: false
-      });
-    } catch(e) {}
+
+    // Вибрация на мобильных (тактильный сигнал)
+    try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]); } catch {}
+
+    // Web Notification API
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        // Предпочитаем ServiceWorker Notification (работает когда вкладка скрыта)
+        if (navigator.serviceWorker?.controller) {
+          navigator.serviceWorker.ready.then(reg => {
+            reg.showNotification(title, {
+              body,
+              icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23EF9F27' width='100' height='100' rx='20'/><text x='50' y='68' font-size='50' text-anchor='middle' fill='%23412402'>НТ</text></svg>",
+              badge: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23E24B4A' width='100' height='100' rx='20'/><text x='50' y='68' font-size='60' text-anchor='middle' fill='white'>!</text></svg>",
+              tag,
+              renotify: true,
+              requireInteraction: false,
+              vibrate: [200, 100, 200]
+            });
+          }).catch(() => {
+            new Notification(title, { body, tag, icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23EF9F27' width='100' height='100' rx='20'/><text x='50' y='68' font-size='50' text-anchor='middle' fill='%23412402'>НТ</text></svg>" });
+          });
+        } else {
+          new Notification(title, { body, tag, icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23EF9F27' width='100' height='100' rx='20'/><text x='50' y='68' font-size='50' text-anchor='middle' fill='%23412402'>НТ</text></svg>" });
+        }
+      } catch(e) {}
+    }
   }, []);
 
   // Мониторинг критических ситуаций каждые 2 минуты
@@ -5508,11 +5768,15 @@ const PushNotificationButton = memo(() => {
     );
   }
 
-  return h('button', {
-    style: gbtn({ fontSize:11, background: AM3, color: AM2, borderColor: AM4 }),
-    onClick: requestPermission,
-    title: 'Включить push-уведомления о браке и просрочках'
-  }, '🔔 Включить уведомления');
+  const isMobileDevice = /Android|iPhone|iPad/i.test(navigator.userAgent);
+  return h('div', { style: { display:'flex', flexDirection:'column', gap:4 } },
+    h('button', {
+      style: gbtn({ fontSize:11, background: 'var(--am3)', color: 'var(--am2)', borderColor: 'var(--am4)' }),
+      onClick: requestPermission,
+      title: 'Включить push-уведомления о браке и просрочках'
+    }, isMobileDevice ? '🔔 Включить на телефоне' : '🔔 Включить уведомления'),
+    isMobileDevice && h('div', { style: { fontSize:10, color:'var(--text3)' } }, 'Браузерные + вибрация')
+  );
 });
 
 // ==================== AnalyticsDashboard (Волна 1: Lead Time, Такт, Нормы, Парето, Тренды) ====================
@@ -6388,12 +6652,11 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
         (op.status === 'pending' || op.status === 'in_progress') && h('button', { style: gbtn({ flex:1 }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
       )
     );
-    return h('div', { className: 'action-btns', style: { display:'flex', gap:8, flexWrap:'wrap' } },
-      op.status === 'pending' && workerNames && h('button', { style: abtn({ flex:1, padding:'12px' }), onClick: handleStart }, '▶ Старт'),
-      op.status === 'in_progress' && h('button', { style: { ...abtn({ flex:1 }), background:GN, color:GN2 }, onClick: () => handleFinish() }, '✓ Завершить'),
-      op.status === 'in_progress' && h('button', { style: rbtn({ flex:1 }), onClick: () => { setShowDefForm(true); setDefectFromPrev(true); } }, '⚠ Брак с пред.'),
-      op.status === 'in_progress' && h('button', { style: { ...rbtn({ flex:1 }), background:'#FFF0F0', borderColor:'#F09595' }, onClick: () => { setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
-      (op.status === 'pending' || op.status === 'in_progress') && h('button', { style: gbtn({ flex:1 }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
+    return h('div', { className: 'action-btns', style: { display:'flex', flexDirection:'column', gap:8 } },
+      op.status === 'pending' && workerNames && h('button', { className:'worker-action-btn start', onClick: handleStart }, '▶ Старт'),
+      op.status === 'in_progress' && h('button', { className:'worker-action-btn finish', onClick: () => handleFinish() }, '✓ Завершить'),
+      op.status === 'in_progress' && h('button', { className:'worker-action-btn defect', onClick: () => { setShowDefForm(true); setDefectFromPrev(true); } }, '⚠ Брак'),
+      (op.status === 'pending' || op.status === 'in_progress') && h('button', { className:'worker-action-btn downtime', onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
     );
   };
 
@@ -6536,7 +6799,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
     achievement: { bg: '#E8F5E9', border: '#4CAF50', icon: '🏆' }
   };
 
-  return h('div', { style: { ...S.card, height: '100%', minHeight: 500, display: 'flex', flexDirection: 'column', padding: 12 } },
+  return h('div', { style: { ...S.card, height: '100%', minHeight: 500, display: 'flex', flexDirection: 'column', padding: 12, background: 'var(--card-bg)', color: 'var(--text)' } },
     // Шапка с кнопкой назад
     h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 } },
       h('div', { style: S.sec }, '💬 Чат производства'),
@@ -6554,7 +6817,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
     ),
 
     // Сообщения
-    h('div', { 'aria-live': 'polite', style: { flex: 1, overflowY: 'auto', padding: 8, background: '#fafaf8', borderRadius: 8, marginBottom: 8 } },
+    h('div', { 'aria-live': 'polite', style: { flex: 1, overflowY: 'auto', padding: 8, background: 'var(--bg3)', borderRadius: 8, marginBottom: 8 } },
       regularMessages.length === 0 && h('div', { style: { textAlign: 'center', color: '#888', fontSize: 12, marginTop: 32 } }, 'Сообщений пока нет. Используйте быстрые кнопки для общения.'),
       regularMessages.map(m => {
         const ts = typeStyles[m.type];
@@ -7711,7 +7974,7 @@ const OrderDetailModal = memo(({ orderId, data, onClose }) => {
     style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 300, overflowY: 'auto', padding: '16px 8px' },
     onClick: e => { if (e.target === e.currentTarget) onClose(); }
   },
-    h('div', { style: { background: '#fff', borderRadius: 14, width: 'min(700px, 100%)', maxHeight: 'none', boxShadow: '0 8px 40px rgba(0,0,0,0.22)' } },
+    h('div', { style: { background: 'var(--card-bg)', color: 'var(--text)', borderRadius: 14, width: 'min(700px, 100%)', maxHeight: 'none', boxShadow: '0 8px 40px rgba(0,0,0,0.28)' } },
 
       // ── Шапка ──
       h('div', { style: { padding: '18px 20px 14px', borderBottom: '0.5px solid rgba(0,0,0,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' } },
@@ -8153,6 +8416,48 @@ const AdminScreen = memo(({ data, onUpdate, addToast }) => {
   );
 });
 
+// ==================== ThemeToggle ====================
+const THEME_KEY = 'nt_theme';
+const getSystemTheme = () => window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+
+const useTheme = () => {
+  const [theme, setTheme] = useState(() => localStorage.getItem(THEME_KEY) || getSystemTheme());
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem(THEME_KEY, theme);
+    // Обновляем meta theme-color
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = theme === 'dark' ? '#1c1c1a' : '#EF9F27';
+  }, [theme]);
+
+  const toggle = useCallback(() => setTheme(t => t === 'dark' ? 'light' : 'dark'), []);
+  return { theme, toggle };
+};
+
+// Глобальный стейт темы (singleton через module-level ref)
+let _themeToggleFn = null;
+const ThemeToggle = memo(() => {
+  const { theme, toggle } = useTheme();
+  _themeToggleFn = toggle;
+  return h('button', {
+    className: 'theme-toggle',
+    onClick: toggle,
+    title: theme === 'dark' ? 'Переключить на светлую тему' : 'Переключить на тёмную тему',
+    'aria-label': 'Переключить тему'
+  }, theme === 'dark' ? '☀️' : '🌙');
+});
+
+// Применить тему при загрузке (до React — предотвращает мигание)
+(function() {
+  try {
+    const saved = localStorage.getItem('nt_theme');
+    const system = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', saved || system);
+  } catch(e) {}
+})();
+
+
 // ==================== App ====================
 function App() {
   const [data, setData] = useState(EMPTY_DATA);
@@ -8319,9 +8624,12 @@ function App() {
       effectiveRole !== 'dashboard' && (() => {
         const chatLastRead = Number(localStorage.getItem(`chat_lastRead_${currentUser.id || 'anon'}`)) || 0;
         const unread = (data.messages || []).filter(m => m.timestamp > chatLastRead && m.senderId !== (currentUser.id || 'system')).length;
-        return h('button', { style: showChat ? abtn({ fontSize:11 }) : gbtn({ fontSize:11, position: 'relative' }), onClick: () => setShowChat(!showChat) },
-          showChat ? '💬 Чат (скрыть)' : '💬 Чат',
-          !showChat && unread > 0 && h('span', { style: { position: 'absolute', top: -4, right: -4, background: RD, color: '#fff', borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 500 } }, unread > 9 ? '9+' : unread)
+        return h(React.Fragment, null,
+          h(ThemeToggle),
+          h('button', { style: showChat ? abtn({ fontSize:11 }) : gbtn({ fontSize:11, position: 'relative' }), onClick: () => setShowChat(!showChat) },
+            showChat ? '💬 Чат (скрыть)' : '💬 Чат',
+            !showChat && unread > 0 && h('span', { style: { position: 'absolute', top: -4, right: -4, background: RD, color: '#fff', borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 500 } }, unread > 9 ? '9+' : unread)
+          )
         );
       })(),
       h(PushNotificationButton),
