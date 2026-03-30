@@ -475,7 +475,8 @@ const EMPTY_DATA = {
     adminPin: '7777',     // Администратор / Настройки
     masterKey: '9999',       // Мастер-ключ: сбрасывает любой PIN, виден только в этом файле
     welcomeTitle: 'teploros', welcomeSubtitle: 'надежная техника',
-    welcomeLabel: 'Производственный учёт · НТ'
+    welcomeLabel: 'Производственный учёт · НТ',
+    hourlyRate: 500  // руб/час — используется в расчёте себестоимости и выгрузке 1С
   }
 };
 
@@ -1908,7 +1909,8 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       // Блокировка завершения если чек-лист не выполнен
       (active.checklist?.length > 0 && active.checklist.some(c => !c.checked))
         ? h('div', { style: { textAlign: 'center', padding: 8, color: '#888', fontSize: 12 } }, 'Выполните все пункты чек-листа для завершения')
-        : renderActionButtons(active)
+        : renderActionButtons(active),
+      h(OpPhotoPanel, { opId: active.id, workerId, canUpload: true })
     ),
     // QR-операция
     !active && canStartQr && h('div', { style: { ...S.card, border: `1px solid ${AM}`, background: AM3, marginBottom: 16 } },
@@ -1978,7 +1980,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
             h(Badge, { st: op.status })
           ),
           // П.19: Комментарий к операции
-          op.comment && h('div', { style: { fontSize: 11, color: '#666', background: '#f8f8f5', padding: '4px 8px', borderRadius: 6, marginBottom: 6, whiteSpace: 'pre-line' } }, `💬 ${op.comment}`),
+          op.comment && h('div', { style: { fontSize: 11, color: 'var(--text2)', background: 'var(--bg3)', padding: '4px 8px', borderRadius: 6, marginBottom: 6, whiteSpace: 'pre-line' } }, `💬 ${op.comment}`),
           // Ссылка на чертёж
           op.drawingUrl && h('a', { href: op.drawingUrl, target: '_blank', rel: 'noopener', style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: BL, textDecoration: 'none', padding: '6px 10px', background: '#E3F2FD', borderRadius: 6, marginBottom: 6 } }, '📐 Открыть чертёж'),
           // П.13: Кнопка начала (с приёмкой)
@@ -4447,6 +4449,8 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
   const [masterKey, setMasterKey] = useState(settings.masterKey || '9999');
   const [showMasterKey, setShowMasterKey] = useState(false);
   const [welcomeTitle, setWelcomeTitle] = useState(settings.welcomeTitle || 'teploros');
+  const [hourlyRate, setHourlyRate]   = useState(String(settings.hourlyRate || 500));
+  const [hourlyRate, setHourlyRate]   = useState(String(settings.hourlyRate || 500));
   const [welcomeSubtitle, setWelcomeSubtitle] = useState(settings.welcomeSubtitle || 'надежная техника');
   const [welcomeLabel, setWelcomeLabel] = useState(settings.welcomeLabel || 'Производственный учёт · НТ');
   const [editPins, setEditPins] = useState({});
@@ -4471,7 +4475,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
   }, [data, settings, masterPin, controllerPin, warehousePin, masterKey, onUpdate, addToast]);
 
   const saveWelcome = useCallback(async () => {
-    const d = { ...data, settings: { ...settings, welcomeTitle: welcomeTitle.trim(), welcomeSubtitle: welcomeSubtitle.trim(), welcomeLabel: welcomeLabel.trim() } };
+    const d = { ...data, settings: { ...settings, welcomeTitle: welcomeTitle.trim(), welcomeSubtitle: welcomeSubtitle.trim(), welcomeLabel: welcomeLabel.trim(), hourlyRate: Number(hourlyRate) || 500 } };
     await DB.save(d); onUpdate(d); addToast('Текст главной страницы обновлён', 'success');
   }, [data, settings, welcomeTitle, welcomeSubtitle, welcomeLabel, onUpdate, addToast]);
 
@@ -4552,6 +4556,11 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         h('div', { style: { flex:1, minWidth:180 } }, h('label', { style: S.lbl }, 'Подзаголовок'), h('input', { type:'text', style: { ...S.inp, width:'100%' }, value: welcomeSubtitle, onChange: e => setWelcomeSubtitle(e.target.value) })),
         h('div', { style: { flex:1, minWidth:180 } }, h('label', { style: S.lbl }, 'Метка'), h('input', { type:'text', style: { ...S.inp, width:'100%' }, value: welcomeLabel, onChange: e => setWelcomeLabel(e.target.value) }))
       ),
+      ),
+      h('div', { style: { ...S.card, marginBottom:12 } },
+        h('label', { style: S.lbl }, 'Ставка норма-часа (руб/час) — для себестоимости и выгрузки в 1С'),
+        h('input', { type:'number', style: { ...S.inp, width:180 }, value: hourlyRate, min: 1, onChange: e => setHourlyRate(e.target.value), placeholder: '500' })
+      
       h('div', { style: { ...S.card, background:'#f8f8f5', marginBottom:12, textAlign:'center' } },
         h('div', { style: { fontSize:10, color:'#888', marginBottom:8 } }, 'Предпросмотр:'),
         h('div', { style: { fontSize:24, fontWeight:700, color:AM } }, welcomeTitle),
@@ -5780,7 +5789,7 @@ const PushNotificationButton = memo(() => {
 });
 
 // ==================== AnalyticsDashboard (Волна 1: Lead Time, Такт, Нормы, Парето, Тренды) ====================
-const AnalyticsDashboard = memo(({ data, onUpdate, addToast }) => {
+const AnalyticsDashboard = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [period, setPeriod] = useState(30);
   const periodStart = useMemo(() => now() - period * 86400000, [period]);
   const chartRef1 = useRef(null); const canvasRef1 = useRef(null);
@@ -5933,6 +5942,10 @@ const AnalyticsDashboard = memo(({ data, onUpdate, addToast }) => {
       [7, 14, 30, 60, 90].map(d => h('button', { key: d, style: period === d ? abtn({ fontSize: 11 }) : gbtn({ fontSize: 11 }), onClick: () => setPeriod(d) }, `${d} дней`))
     ),
 
+    // Прогноз дедлайнов
+    h(DeadlineForecast, { data, onOrderClick }),
+    // Межоперационные ожидания
+    h(InterOpWaiting, { data, onOrderClick }),
     // Алерт: тренд качества
     qualityTrends.trending && h('div', { role: 'alert', style: { ...S.card, background: RD3, border: `0.5px solid ${RD}`, marginBottom: 12, padding: 12 } },
       h('div', { style: { fontSize: 12, color: RD, fontWeight: 500 } }, '⚠ Брак растёт 3 недели подряд! Возможна системная проблема — проверьте оборудование и материалы.')
@@ -6453,7 +6466,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
   const ALL_GROUPS = {
     production: { label: '⚙ Производство', tabs: [['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['orders','Заказы'],['plan','План']] },
     reference:  { label: '📋 Справочники', tabs: [['workers','Сотрудники'],['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],['materials','Материалы'],['equipment','Оборудование'],['bom','Спецификации'],['sections','Участки']] },
-    analytics:  { label: '📊 Аналитика',   tabs: [['reports','Отчёты'],['analytics','Аналитика'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['journal','Журнал'],['notifications','Уведомления']] },
+    analytics:  { label: '📊 Аналитика',   tabs: [['reports','Отчёты'],['analytics','Аналитика'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['export1c','📤 1С'],['journal','Журнал'],['notifications','Уведомления']] },
     system:     { label: '🔧 Система',      tabs: [['time','Учёт времени'],['admin','Управление']] }
   };
 
@@ -6551,9 +6564,10 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
     tab === 'plan' && h(MasterTodayPlan, { data }),
     tab === 'notifications' && h(MasterNotifications, { data }),
     tab === 'reports' && h(ReportsBuilder, { data }),
-    tab === 'analytics' && h(AnalyticsDashboard, { data, onUpdate, addToast }),
+    tab === 'analytics' && h(AnalyticsDashboard, { data, onUpdate, addToast, onOrderClick }),
     tab === 'kpi' && h(KPIReport, { data }),
     tab === 'reclamations' && h(MasterReclamations, { data, onUpdate, addToast }),
+    tab === 'export1c'    && h(Export1CPanel,      { data, addToast }),
     tab === 'admin' && h(MasterAdmin, { data, onUpdate, addToast })
   );
 });
@@ -7697,50 +7711,142 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
 
 // ==================== Dashboard (Цеховое табло) ====================
 const Dashboard = memo(({ data, addToast, onOrderClick }) => {
-  const [, setTick] = useState(0);
-  useEffect(() => { const t = setInterval(() => setTick(n => n + 1), 15000); return () => clearInterval(t); }, []);
+  const [tick, setTick] = useState(0);
+  const [safetyIncidentOpen, setSafetyIncidentOpen] = useState(false);
+  const [safetyForm, setSafetyForm] = useState({ type: 'near_miss', description: '', workerId: '', location: '' });
+  useEffect(() => { const t = setInterval(() => setTick(n => n + 1), 10000); return () => clearInterval(t); }, []);
 
-  // Реальные данные
-  const activeOps = useMemo(() => data.ops.filter(o => o.status === 'in_progress' && !o.archived), [data.ops]);
-  const pendingOps = useMemo(() => data.ops.filter(o => o.status === 'pending' && !o.archived), [data.ops]);
-  const onCheckOps = useMemo(() => data.ops.filter(o => o.status === 'on_check' && !o.archived), [data.ops]);
-  const defectOps = useMemo(() => data.ops.filter(o => (o.status === 'defect' || o.status === 'rework') && !o.archived), [data.ops]);
-  const doneToday = useMemo(() => { const t = new Date().setHours(0,0,0,0); return data.ops.filter(o => o.status === 'done' && o.finishedAt >= t); }, [data.ops]);
-  const defectsToday = useMemo(() => { const t = new Date().setHours(0,0,0,0); return data.ops.filter(o => o.status === 'defect' && o.finishedAt >= t); }, [data.ops]);
-  const downtimesToday = useMemo(() => { const t = new Date().setHours(0,0,0,0); return data.events.filter(e => e.type === 'downtime' && e.ts >= t); }, [data.events]);
+  const nowTs = Date.now();
+  const todayStart = new Date().setHours(0,0,0,0);
+
+  // ── Данные ──────────────────────────────────────────────────────
+  const activeOps       = useMemo(() => data.ops.filter(o => o.status === 'in_progress' && !o.archived), [data.ops]);
+  const pendingOps      = useMemo(() => data.ops.filter(o => o.status === 'pending' && !o.archived), [data.ops]);
+  const onCheckOps      = useMemo(() => data.ops.filter(o => o.status === 'on_check' && !o.archived), [data.ops]);
+  const defectOps       = useMemo(() => data.ops.filter(o => (o.status === 'defect' || o.status === 'rework') && !o.archived), [data.ops]);
+  const doneToday       = useMemo(() => data.ops.filter(o => o.status === 'done' && o.finishedAt >= todayStart), [data.ops, todayStart]);
+  const defectsToday    = useMemo(() => data.ops.filter(o => o.status === 'defect' && o.finishedAt >= todayStart), [data.ops, todayStart]);
+  const downtimesToday  = useMemo(() => data.events.filter(e => e.type === 'downtime' && e.ts >= todayStart), [data.events, todayStart]);
   const totalDowntimeMin = useMemo(() => Math.round(downtimesToday.reduce((s, e) => s + (e.duration || 0), 0) / 60000), [downtimesToday]);
-  const activeWorkers = useMemo(() => data.workers.filter(w => !w.archived && (w.status || 'working') === 'working'), [data.workers]);
-  const busyWorkers = useMemo(() => new Set(activeOps.flatMap(op => op.workerIds || [])), [activeOps]);
-  const freeWorkers = useMemo(() => activeWorkers.filter(w => !busyWorkers.has(w.id)), [activeWorkers, busyWorkers]);
-  const criticalMaterials = useMemo(() => data.materials.filter(m => m.minStock && m.quantity <= m.minStock), [data.materials]);
-  const activeOrders = useMemo(() => data.orders.filter(o => !o.archived), [data.orders]);
-  const activeDuels = useMemo(() => (data.duels || []).filter(d => d.status === 'active'), [data.duels]);
+  const allWorkers      = useMemo(() => data.workers.filter(w => !w.archived), [data.workers]);
+  const activeWorkers   = useMemo(() => allWorkers.filter(w => (w.status || 'working') === 'working'), [allWorkers]);
+  const busyWorkerIds   = useMemo(() => new Set(activeOps.flatMap(op => op.workerIds || [])), [activeOps]);
+  const freeWorkers     = useMemo(() => activeWorkers.filter(w => !busyWorkerIds.has(w.id)), [activeWorkers, busyWorkerIds]);
+  const criticalMats    = useMemo(() => data.materials.filter(m => m.minStock && m.quantity <= m.minStock), [data.materials]);
+  const activeOrders    = useMemo(() => data.orders.filter(o => !o.archived), [data.orders]);
+  const activeDuels     = useMemo(() => (data.duels || []).filter(d => d.status === 'active'), [data.duels]);
+  const safetyEvents    = useMemo(() => (data.events || []).filter(e => e.type === 'safety_incident'), [data.events]);
+  const safetyDaysOk    = useMemo(() => {
+    const lastInc = safetyEvents.reduce((max, e) => Math.max(max, e.ts || 0), 0);
+    return lastInc ? Math.floor((nowTs - lastInc) / 86400000) : null;
+  }, [safetyEvents, nowTs]);
 
-  // Заказы с прогрессом
+  // ── Заказы с полным расчётом ──────────────────────────────────
+  const stageIndex = useMemo(() => new Map((data.productionStages || []).map((s, i) => [s.name, i])), [data.productionStages]);
+
   const ordersProgress = useMemo(() => activeOrders.map(order => {
-    const ops = data.ops.filter(op => op.orderId === order.id && !op.archived);
-    const done = ops.filter(op => op.status === 'done').length;
-    const total = ops.length;
-    const pct = total > 0 ? Math.round(done / total * 100) : 0;
-    const hasDefect = ops.some(op => op.status === 'defect' || op.status === 'rework');
-    const daysLeft = order.deadline ? Math.ceil((new Date(order.deadline).getTime() - Date.now()) / 86400000) : null;
-    return { ...order, ops, done, total, pct, hasDefect, daysLeft };
-  }).sort((a, b) => (a.daysLeft ?? 999) - (b.daysLeft ?? 999)), [activeOrders, data.ops]);
+    const ops         = data.ops.filter(op => op.orderId === order.id && !op.archived);
+    const done        = ops.filter(op => op.status === 'done').length;
+    const inProg      = ops.filter(op => op.status === 'in_progress');
+    const defect      = ops.filter(op => op.status === 'defect' || op.status === 'rework').length;
+    const total       = ops.length;
+    const pct         = total > 0 ? Math.round(done / total * 100) : 0;
+    const daysLeft    = order.deadline ? Math.ceil((new Date(order.deadline).getTime() - nowTs) / 86400000) : null;
+    // Текущий активный этап
+    const activeStage = inProg.length > 0
+      ? inProg.sort((a, b) => (stageIndex.get(a.name) ?? 99) - (stageIndex.get(b.name) ?? 99))[0]?.name
+      : ops.filter(op => op.status === 'pending').sort((a, b) => (stageIndex.get(a.name) ?? 99) - (stageIndex.get(b.name) ?? 99))[0]?.name;
+    // Приоритетная метка A/B/C
+    const prioLabel = { critical: 'A', high: 'B', medium: 'C', low: 'C' }[order.priority] || 'C';
+    const prioColor = { critical: RD, high: AM, medium: BL, low: '#888' }[order.priority] || '#888';
+    return { ...order, ops, done, defect, total, pct, daysLeft, activeStage, prioLabel, prioColor,
+      hasDefect: defect > 0, hasMissing: !activeStage && done < total };
+  }).sort((a, b) => {
+    const u = { critical: 0, high: 1, medium: 2, low: 3 };
+    if (a.daysLeft !== null && b.daysLeft !== null && a.daysLeft !== b.daysLeft) return a.daysLeft - b.daysLeft;
+    return (u[a.priority] ?? 4) - (u[b.priority] ?? 4);
+  }), [activeOrders, data.ops, stageIndex, nowTs]);
 
-  // Лидеры дня
+  // ── Лидеры дня ───────────────────────────────────────────────
   const todayLeaders = useMemo(() => {
-    const t = new Date().setHours(0,0,0,0);
     const counts = {};
-    data.ops.filter(op => op.status === 'done' && op.finishedAt >= t).forEach(op => {
-      (op.workerIds || []).forEach(wid => { counts[wid] = (counts[wid] || 0) + 1; });
-    });
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([wid, count]) => ({
-      name: data.workers.find(w => w.id === wid)?.name || '?', count
-    }));
-  }, [data.ops, data.workers]);
+    doneToday.forEach(op => (op.workerIds || []).forEach(wid => { counts[wid] = (counts[wid] || 0) + 1; }));
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 5)
+      .map(([wid, count]) => ({ name: data.workers.find(w => w.id === wid)?.name || '?', count }));
+  }, [doneToday, data.workers]);
 
-  const qualityToday = doneToday.length + defectsToday.length > 0 ? Math.round(doneToday.length / (doneToday.length + defectsToday.length) * 100) : 100;
-  const mc = (color) => ({ ...S.card, textAlign: 'center', padding: '12px 8px', marginBottom: 0 });
+  // ── Алерты: структурированные с конкретными действиями ──────
+  const alerts = useMemo(() => {
+    const list = [];
+    // Брак — конкретно по заказу и операции
+    defectOps.forEach(op => {
+      const order = data.orders.find(o => o.id === op.orderId);
+      const workerNames = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name?.split(' ')[0]).filter(Boolean).join(', ');
+      const hoursAgo = op.finishedAt ? Math.round((nowTs - op.finishedAt) / 3600000) : 0;
+      list.push({
+        id: `defect-${op.id}`,
+        urgency: hoursAgo >= 24 ? 'critical' : hoursAgo >= 8 ? 'high' : 'medium',
+        icon: '⚠',
+        action: `Исправить брак`,
+        detail: `${op.name} · заказ ${order?.number || '—'}`,
+        extra: workerNames ? `Исполнитель: ${workerNames}` : '',
+        hoursAgo,
+        orderId: order?.id
+      });
+    });
+    // Дедлайны
+    ordersProgress.forEach(o => {
+      if (o.daysLeft === null || o.pct >= 100) return;
+      if (o.daysLeft < 0) {
+        list.push({ id: `overdue-${o.id}`, urgency: 'critical', icon: '🔴',
+          action: `Просрочен на ${Math.abs(o.daysLeft)} дн.`,
+          detail: `${o.number} — ${o.product}`, extra: `Выполнено ${o.pct}% (${o.done}/${o.total} операций)`,
+          orderId: o.id });
+      } else if (o.daysLeft === 0) {
+        list.push({ id: `today-${o.id}`, urgency: 'critical', icon: '🟠',
+          action: 'Отгрузка сегодня!',
+          detail: `${o.number} — ${o.product}`, extra: `Выполнено ${o.pct}%`,
+          orderId: o.id });
+      } else if (o.daysLeft === 1) {
+        list.push({ id: `tmrw-${o.id}`, urgency: 'high', icon: '🟡',
+          action: 'Отгрузка завтра',
+          detail: `${o.number} — ${o.product}`, extra: `Выполнено ${o.pct}%`,
+          orderId: o.id });
+      }
+    });
+    // Критические материалы
+    criticalMats.forEach(m => {
+      list.push({ id: `mat-${m.id}`, urgency: 'high', icon: '📦',
+        action: 'Пополнить запас',
+        detail: m.name, extra: `Осталось: ${m.quantity} ${m.unit} (минимум: ${m.minStock})` });
+    });
+    // Превышение планового времени
+    activeOps.forEach(op => {
+      if (!op.plannedHours || !op.startedAt) return;
+      const overPct = Math.round((nowTs - op.startedAt) / (op.plannedHours * 3600000) * 100);
+      if (overPct > 150) {
+        const order = data.orders.find(o => o.id === op.orderId);
+        const workerNames = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name?.split(' ')[0]).filter(Boolean).join(', ');
+        list.push({ id: `long-${op.id}`, urgency: 'high', icon: '⏱',
+          action: `Норма превышена на ${overPct - 100}%`,
+          detail: `${op.name} · ${order?.number || '—'}`,
+          extra: workerNames, orderId: order?.id });
+      }
+    });
+    // Сортировка: critical → high → medium
+    const u = { critical: 0, high: 1, medium: 2 };
+    return list.sort((a, b) => (u[a.urgency] ?? 3) - (u[b.urgency] ?? 3));
+  }, [defectOps, ordersProgress, criticalMats, activeOps, data.orders, data.workers, nowTs]);
+
+  const urgencyStyle = {
+    critical: { bg: RD3, border: RD, color: RD2, dot: RD },
+    high:     { bg: '#FFF3E0', border: '#FF9800', color: '#BF360C', dot: AM },
+    medium:   { bg: AM3, border: AM4, color: AM2, dot: AM4 },
+  };
+
+  const qualityToday = doneToday.length + defectsToday.length > 0
+    ? Math.round(doneToday.length / (doneToday.length + defectsToday.length) * 100) : 100;
+  const mc = () => ({ ...S.card, textAlign: 'center', padding: '12px 8px', marginBottom: 0 });
 
   const exportToExcel = useCallback(() => {
     const wb = XLSX.utils.book_new();
@@ -7750,135 +7856,366 @@ const Dashboard = memo(({ data, addToast, onOrderClick }) => {
     addToast('Экспорт завершён', 'success');
   }, [data, addToast]);
 
-  return h('div', { style: { padding: '0 0 24px' } },
-    // Заголовок с часами
-    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } },
+  const saveSafetyIncident = useCallback(async () => {
+    if (!safetyForm.description.trim()) { addToast('Опишите инцидент', 'error'); return; }
+    const event = { id: uid(), type: 'safety_incident', safetyType: safetyForm.type,
+      description: safetyForm.description.trim(), workerId: safetyForm.workerId,
+      location: safetyForm.location.trim(), ts: Date.now(), shift: getCurrentShift() };
+    // We need onUpdate but Dashboard only has addToast — use DB directly
+    const snap = await firebase.firestore().collection('app').doc('production_v14').get().catch(() => null);
+    if (snap?.exists) {
+      const parsed = typeof snap.data().payload === 'string' ? JSON.parse(snap.data().payload) : snap.data();
+      const updated = { ...parsed, events: [...(parsed.events || []), event] };
+      await firebase.firestore().collection('app').doc('production_v14').set({ payload: JSON.stringify(updated), updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    }
+    setSafetyIncidentOpen(false);
+    setSafetyForm({ type: 'near_miss', description: '', workerId: '', location: '' });
+    addToast('Инцидент зарегистрирован', 'success');
+  }, [safetyForm, addToast]);
+
+  // ── Рендер ───────────────────────────────────────────────────
+  return h('div', { style: { padding: '0 0 32px' } },
+
+    // ── Заголовок ──
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 } },
       h('div', null,
-        h('div', { style: { fontSize: 18, fontWeight: 500 } }, 'Цеховое табло'),
-        h('div', { style: { fontSize: 11, color: '#888' } }, new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' }))
+        h('div', { style: { fontSize: 20, fontWeight: 600, letterSpacing: '-0.3px' } }, 'Цеховое табло'),
+        h('div', { style: { fontSize: 11, color: 'var(--text3)' } },
+          new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' }))
       ),
-      h('div', { style: { textAlign: 'right' } },
-        h('div', { style: { fontSize: 28, fontWeight: 500, fontFamily: 'monospace', color: AM } }, new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
-        h('button', { style: gbtn({ fontSize: 10, padding: '3px 8px' }), onClick: exportToExcel }, '📥 Excel')
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+        h('div', { style: { textAlign: 'right' } },
+          h('div', { style: { fontSize: 30, fontWeight: 700, fontFamily: 'monospace', color: AM, lineHeight: 1 } },
+            new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+          h('div', { style: { fontSize: 10, color: 'var(--text3)', textAlign: 'right' } }, getCurrentShift().split('-').slice(1).join(' смена'))
+        ),
+        h('button', { style: gbtn({ fontSize: 10, padding: '4px 8px' }), onClick: exportToExcel }, '📥')
       )
     ),
 
-    // Блок 1: Ключевые метрики дня
-    h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 8, marginBottom: 12 } },
-      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: GN } }, doneToday.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Выполнено')),
-      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: AM } }, activeOps.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'В работе')),
-      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: defectsToday.length > 0 ? RD : GN } }, defectsToday.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Брак')),
-      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: qualityToday >= 95 ? GN : qualityToday >= 80 ? AM : RD } }, `${qualityToday}%`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Качество')),
-      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: totalDowntimeMin > 60 ? RD : AM } }, `${totalDowntimeMin}м`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Простои')),
-      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: freeWorkers.length > 0 ? GN : AM } }, `${busyWorkers.size}/${activeWorkers.length}`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Загрузка'))
+    // ── Метрики дня ──
+    h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 8, marginBottom: 14 } },
+      h('div', { style: mc() }, h('div', { style: { fontSize: 30, fontWeight: 700, color: GN } }, doneToday.length), h('div', { style: { fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase' } }, 'Выполнено')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 30, fontWeight: 700, color: AM } }, activeOps.length), h('div', { style: { fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase' } }, 'В работе')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 30, fontWeight: 700, color: defectsToday.length > 0 ? RD : GN } }, defectsToday.length), h('div', { style: { fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase' } }, 'Брак')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 30, fontWeight: 700, color: qualityToday >= 95 ? GN : qualityToday >= 80 ? AM : RD } }, `${qualityToday}%`), h('div', { style: { fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase' } }, 'Качество')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 30, fontWeight: 700, color: totalDowntimeMin > 60 ? RD : AM } }, `${totalDowntimeMin}м`), h('div', { style: { fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase' } }, 'Простои')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 30, fontWeight: 700, color: freeWorkers.length > 0 ? GN : AM } }, `${busyWorkerIds.size}/${activeWorkers.length}`), h('div', { style: { fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase' } }, 'Занято/всего'))
     ),
 
-    // Блок 2: Алерты (критические)
-    (criticalMaterials.length > 0 || defectOps.length > 0 || ordersProgress.some(o => o.daysLeft !== null && o.daysLeft <= 2 && o.pct < 100)) && h('div', { style: { ...S.card, background: RD3, border: `0.5px solid ${RD}`, marginBottom: 12, padding: 10 } },
-      h('div', { style: { fontSize: 10, color: RD, textTransform: 'uppercase', fontWeight: 500, marginBottom: 6 } }, '⚠ Требует внимания'),
-      defectOps.length > 0 && h('div', { style: { fontSize: 12, color: RD2, marginBottom: 4 } }, `${defectOps.length} операций с браком/на переделке`),
-      criticalMaterials.map(m => h('div', { key: m.id, style: { fontSize: 12, color: RD2, marginBottom: 2 } }, `Материал: ${m.name} — ${m.quantity} ${m.unit} (мин: ${m.minStock})`)),
-      ordersProgress.filter(o => o.daysLeft !== null && o.daysLeft <= 2 && o.pct < 100).map(o => h('div', { key: o.id, style: { fontSize: 12, color: RD2, marginBottom: 2 } }, `Срок: ${o.number} — ${o.daysLeft <= 0 ? 'ПРОСРОЧЕН' : `${o.daysLeft} дн.`} (${o.pct}%)`))
-    ),
-
-    // Блок 3: Кто что делает (живая лента)
-    h('div', { style: { ...S.card, marginBottom: 12, padding: 10 } },
-      h('div', { style: S.sec }, `Сейчас в работе (${activeOps.length})`),
-      activeOps.length === 0
-        ? h('div', { style: { fontSize: 12, color: '#888', textAlign: 'center', padding: 8 } }, 'Нет активных операций')
-        : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
-            activeOps.map(op => {
-              const order = data.orders.find(o => o.id === op.orderId);
-              const workers = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name?.split(' ')[0]).filter(Boolean);
-              const elapsed = op.startedAt ? fmtDur(now() - op.startedAt) : '—';
-              const isLong = op.plannedHours && op.startedAt && (now() - op.startedAt) > op.plannedHours * 3600000;
-              return h('div', { key: op.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8, background: isLong ? RD3 : '#f8f8f5', fontSize: 12 } },
-                h('div', { style: { width: 8, height: 8, borderRadius: '50%', background: isLong ? RD : GN, flexShrink: 0 } }),
-                h('span', { style: { fontWeight: 500, minWidth: 100 } }, workers.join(', ') || '—'),
-                h('span', { style: { color: AM, flex: 1 } }, op.name),
-                h('span', { style: { fontSize: 10, color: '#888' } }, order?.number),
-                h('span', { style: { fontFamily: 'monospace', fontSize: 11, color: isLong ? RD : '#888' } }, elapsed)
-              );
-            })
+    // ── КРЕСТ БЕЗОПАСНОСТИ ──
+    h('div', { style: { ...S.card, marginBottom: 14, padding: '12px 16px', borderLeft: `4px solid ${safetyEvents.length === 0 ? GN : RD}` } },
+      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 12 } },
+          // Крест-символ
+          h('div', { style: { width: 44, height: 44, flexShrink: 0, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
+            h('div', { style: { position: 'absolute', width: 12, height: 40, background: safetyDaysOk === null ? GN : safetyDaysOk >= 30 ? GN : safetyDaysOk >= 7 ? AM : RD, borderRadius: 3 } }),
+            h('div', { style: { position: 'absolute', width: 40, height: 12, background: safetyDaysOk === null ? GN : safetyDaysOk >= 30 ? GN : safetyDaysOk >= 7 ? AM : RD, borderRadius: 3 } })
           ),
-      // Свободные рабочие
-      freeWorkers.length > 0 && h('div', { style: { marginTop: 8, paddingTop: 8, borderTop: '0.5px solid rgba(0,0,0,0.06)' } },
-        h('div', { style: { fontSize: 10, color: GN, marginBottom: 4 } }, `Свободны (${freeWorkers.length}):`),
-        h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
-          freeWorkers.map(w => h('span', { key: w.id, style: { padding: '2px 8px', background: GN3, color: GN2, borderRadius: 6, fontSize: 11 } }, w.name.split(' ')[0]))
-        )
-      )
-    ),
-
-    // Блок 4: Прогресс заказов
-    h('div', { style: { ...S.card, marginBottom: 12, padding: 10 } },
-      h('div', { style: S.sec }, `Заказы (${activeOrders.length})`),
-      ordersProgress.length === 0
-        ? h('div', { style: { fontSize: 12, color: '#888', textAlign: 'center', padding: 8 } }, 'Нет активных заказов')
-        : ordersProgress.map(o => h('div', { key: o.id, style: { marginBottom: 8 } },
-            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 } },
-              h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 } },
-                onOrderClick
-                  ? h('span', { style: { fontWeight: 500, color: AM, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => onOrderClick(o.id), title: 'Открыть карточку' }, o.number)
-                  : h('span', { style: { fontWeight: 500 } }, o.number),
-                h('span', { style: { color: '#888' } }, o.product),
-                o.hasDefect && h('span', { style: { fontSize: 10, color: RD, fontWeight: 500 } }, '⚠'),
-                o.daysLeft !== null && h('span', { style: { fontSize: 10, padding: '1px 6px', borderRadius: 4, background: o.daysLeft <= 0 ? RD3 : o.daysLeft <= 3 ? AM3 : GN3, color: o.daysLeft <= 0 ? RD : o.daysLeft <= 3 ? AM2 : GN2 } }, o.daysLeft <= 0 ? 'просрочен' : `${o.daysLeft}д`)
-              ),
-              h('span', { style: { fontSize: 11, fontWeight: 500, color: o.pct === 100 ? GN : AM } }, `${o.done}/${o.total}`)
-            ),
-            h('div', { style: { height: 6, background: '#eee', borderRadius: 3, overflow: 'hidden' } },
-              h('div', { style: { height: 6, background: o.pct === 100 ? GN : o.hasDefect ? RD : AM, borderRadius: 3, width: `${o.pct}%`, transition: 'width 0.3s' } })
-            )
-          ))
-    ),
-
-    // Блок 5: Лидеры дня + активные дуэли
-    (todayLeaders.length > 0 || activeDuels.length > 0) && h('div', { style: { display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap' } },
-      todayLeaders.length > 0 && h('div', { style: { ...S.card, flex: 1, minWidth: 160, padding: 10, marginBottom: 0 } },
-        h('div', { style: S.sec }, 'Лидеры дня'),
-        todayLeaders.map((l, i) => h('div', { key: i, style: { display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: 12 } },
-          h('span', { style: { fontSize: i < 3 ? 14 : 11, width: 22 } }, ['🥇','🥈','🥉'][i] || `${i+1}.`),
-          h('span', { style: { flex: 1, fontWeight: i === 0 ? 500 : 400 } }, l.name),
-          h('span', { style: { fontWeight: 500, color: AM } }, `${l.count} оп.`)
-        ))
+          h('div', null,
+            h('div', { style: { fontSize: 13, fontWeight: 600 } }, '🦺 Охрана труда'),
+            safetyDaysOk === null
+              ? h('div', { style: { fontSize: 12, color: GN, fontWeight: 500 } }, '✓ Инцидентов не зарегистрировано')
+              : h('div', { style: { fontSize: 12, color: safetyDaysOk >= 30 ? GN : safetyDaysOk >= 7 ? AM : RD, fontWeight: 500 } },
+                  `${safetyDaysOk === 0 ? 'Инцидент сегодня' : `${safetyDaysOk} дней без инцидентов`}`
+                ),
+            h('div', { style: { fontSize: 10, color: 'var(--text3)' } }, `Всего инцидентов: ${safetyEvents.length}`)
+          )
+        ),
+        h('button', {
+          style: { ...gbtn({ fontSize: 11, padding: '6px 12px' }), color: RD2, borderColor: RD, background: RD3 },
+          onClick: () => setSafetyIncidentOpen(true)
+        }, '+ Инцидент')
       ),
-      activeDuels.length > 0 && h('div', { style: { ...S.card, flex: 1, minWidth: 160, padding: 10, marginBottom: 0 } },
-        h('div', { style: S.sec }, `⚔ Дуэли (${activeDuels.length})`),
-        activeDuels.map(d => {
-          const ch = data.ops.filter(op => op.workerIds?.includes(d.challengerId) && op.status === 'done' && op.finishedAt >= d.createdAt).length;
-          const op = data.ops.filter(op => op.workerIds?.includes(d.opponentId) && op.status === 'done' && op.finishedAt >= d.createdAt).length;
-          return h('div', { key: d.id, style: { fontSize: 11, padding: '4px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)' } },
-            h('div', { style: { display: 'flex', justifyContent: 'space-between' } },
-              h('span', null, `${d.challengerName.split(' ')[0]} vs ${d.opponentName.split(' ')[0]}`),
-              h('span', { style: { color: AM, fontWeight: 500 } }, `${ch}:${op} / ${d.targetOps}`)
-            )
+      // Последние инциденты
+      safetyEvents.length > 0 && h('div', { style: { marginTop: 8, borderTop: '0.5px solid var(--border2)', paddingTop: 8 } },
+        safetyEvents.slice(-3).reverse().map((e, i) => {
+          const typeLabel = { near_miss: 'Почти-инцидент', injury: 'Травма', equipment: 'Оборудование', fire: 'Пожар', other: 'Прочее' }[e.safetyType] || e.safetyType;
+          const w = e.workerId ? data.workers.find(x => x.id === e.workerId) : null;
+          return h('div', { key: i, style: { fontSize: 11, color: 'var(--text2)', padding: '3px 0', display: 'flex', gap: 8 } },
+            h('span', { style: { color: 'var(--text3)' } }, new Date(e.ts).toLocaleDateString('ru-RU')),
+            h('span', { style: { background: RD3, color: RD2, padding: '1px 6px', borderRadius: 4, fontSize: 10 } }, typeLabel),
+            h('span', { style: { flex: 1 } }, e.description),
+            w && h('span', { style: { color: 'var(--text3)' } }, w.name.split(' ')[0])
           );
         })
       )
     ),
 
-    // Блок 6: Очередь на контроле
-    onCheckOps.length > 0 && h('div', { style: { ...S.card, marginBottom: 12, padding: 10 } },
-      h('div', { style: S.sec }, `На контроле качества (${onCheckOps.length})`),
-      onCheckOps.map(op => {
-        const order = data.orders.find(o => o.id === op.orderId);
-        const workers = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name?.split(' ')[0]).filter(Boolean);
-        return h('div', { key: op.id, style: { display: 'flex', gap: 8, padding: '4px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', fontSize: 12 } },
-          h('span', { style: { fontWeight: 500 } }, op.name),
-          h('span', { style: { color: '#888' } }, order?.number),
-          h('span', { style: { color: AM } }, workers.join(', '))
-        );
-      })
+    // ── Модал регистрации инцидента ──
+    safetyIncidentOpen && h('div', {
+      style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }
+    },
+      h('div', { style: { background: 'var(--card-bg)', borderRadius: 14, padding: 24, width: 'min(440px, 100%)', maxHeight: '90vh', overflowY: 'auto' } },
+        h('div', { style: { fontSize: 16, fontWeight: 600, marginBottom: 16, color: RD } }, '🦺 Регистрация инцидента по охране труда'),
+        h('div', { style: { marginBottom: 12 } },
+          h('label', { style: S.lbl }, 'Тип'),
+          h('select', { style: { ...S.inp }, value: safetyForm.type, onChange: e => setSafetyForm(p => ({ ...p, type: e.target.value })) },
+            h('option', { value: 'near_miss' }, 'Почти-инцидент (near miss)'),
+            h('option', { value: 'injury' }, 'Травма'),
+            h('option', { value: 'equipment' }, 'Неисправность оборудования'),
+            h('option', { value: 'fire' }, 'Возгорание / пожар'),
+            h('option', { value: 'other' }, 'Прочее')
+          )
+        ),
+        h('div', { style: { marginBottom: 12 } },
+          h('label', { style: S.lbl }, 'Описание инцидента *'),
+          h('textarea', { style: { ...S.inp, resize: 'vertical' }, rows: 3, value: safetyForm.description, onChange: e => setSafetyForm(p => ({ ...p, description: e.target.value })), placeholder: 'Что произошло, при каких обстоятельствах...' })
+        ),
+        h('div', { style: { marginBottom: 12 } },
+          h('label', { style: S.lbl }, 'Сотрудник (если связано)'),
+          h('select', { style: S.inp, value: safetyForm.workerId, onChange: e => setSafetyForm(p => ({ ...p, workerId: e.target.value })) },
+            h('option', { value: '' }, '— не указан —'),
+            data.workers.filter(w => !w.archived).map(w => h('option', { key: w.id, value: w.id }, w.name))
+          )
+        ),
+        h('div', { style: { marginBottom: 16 } },
+          h('label', { style: S.lbl }, 'Место / участок'),
+          h('input', { style: S.inp, value: safetyForm.location, onChange: e => setSafetyForm(p => ({ ...p, location: e.target.value })), placeholder: 'Сварочный участок, склад...' })
+        ),
+        h('div', { style: { display: 'flex', gap: 8 } },
+          h('button', { style: gbtn({ flex: 1 }), onClick: () => setSafetyIncidentOpen(false) }, 'Отмена'),
+          h('button', { style: { ...gbtn({ flex: 1 }), background: RD3, color: RD2, borderColor: RD, fontWeight: 600 }, onClick: saveSafetyIncident }, 'Зарегистрировать')
+        )
+      )
     ),
 
-    // Блок 7: Ожидающие операции (если много)
-    pendingOps.length > 5 && h('div', { style: { ...S.card, marginBottom: 12, padding: 10 } },
-      h('div', { style: S.sec }, `Ожидают запуска (${pendingOps.length})`),
-      h('div', { style: { fontSize: 12, color: '#888' } },
-        (data.productionStages || []).map(s => {
-          const count = pendingOps.filter(op => op.name === s.name).length;
-          return count > 0 ? h('span', { key: s.id, style: { display: 'inline-block', padding: '3px 8px', background: '#f8f8f5', borderRadius: 6, margin: '2px 3px', fontSize: 11 } }, `${s.name}: ${count}`) : null;
+    // ── ТРЕБУЕТ ВНИМАНИЯ — структурированные алерты ──
+    alerts.length > 0 && h('div', { style: { ...S.card, marginBottom: 14, padding: 0, overflow: 'hidden' } },
+      h('div', { style: { padding: '10px 14px 8px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: '0.5px solid var(--border2)' } },
+        h('div', { style: { width: 8, height: 8, borderRadius: '50%', background: RD, animation: 'pulse 1.5s infinite' } }),
+        h('div', { style: { ...S.sec, marginBottom: 0, color: RD } }, `Требует внимания (${alerts.length})`),
+      ),
+      h('div', { style: { padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 4 } },
+        alerts.slice(0, 8).map(alert => {
+          const us = urgencyStyle[alert.urgency] || urgencyStyle.medium;
+          return h('div', { key: alert.id,
+            style: { display: 'flex', alignItems: 'flex-start', gap: 10, padding: '8px 10px', borderRadius: 8, background: us.bg, border: `1px solid ${us.border}`, cursor: alert.orderId && onOrderClick ? 'pointer' : 'default' },
+            onClick: () => alert.orderId && onOrderClick && onOrderClick(alert.orderId)
+          },
+            h('span', { style: { fontSize: 16, flexShrink: 0, marginTop: 1 } }, alert.icon),
+            h('div', { style: { flex: 1, minWidth: 0 } },
+              h('div', { style: { fontSize: 13, fontWeight: 600, color: us.color } }, alert.action),
+              h('div', { style: { fontSize: 11, color: us.color, opacity: 0.85, marginTop: 1 } }, alert.detail),
+              alert.extra && h('div', { style: { fontSize: 10, color: 'var(--text3)', marginTop: 1 } }, alert.extra)
+            ),
+            alert.urgency === 'critical' && h('div', { style: { fontSize: 10, fontWeight: 700, color: RD, background: RD3, padding: '2px 6px', borderRadius: 4, flexShrink: 0 } }, 'СРОЧНО')
+          );
+        })
+      )
+    ),
+
+    // ── СЕЙЧАС В РАБОТЕ — по участкам ──
+    h('div', { style: { ...S.card, marginBottom: 14, padding: 0, overflow: 'hidden' } },
+      h('div', { style: { padding: '10px 14px 8px', borderBottom: '0.5px solid var(--border2)' } },
+        h('div', { style: S.sec }, `В работе сейчас (${activeOps.length})`)
+      ),
+      activeOps.length === 0
+        ? h('div', { style: { padding: '16px 14px', textAlign: 'center' } },
+            h('div', { style: { fontSize: 13, color: 'var(--text3)', marginBottom: 6 } }, 'Нет активных операций'),
+            criticalMats.length > 0 && h('div', { style: { fontSize: 12, color: AM, marginTop: 4 } }, `⚠ Возможная причина: дефицит ${criticalMats.length} материалов`),
+            pendingOps.length > 0 && h('div', { style: { fontSize: 12, color: 'var(--text2)' } }, `${pendingOps.length} операций ожидают назначения`)
+          )
+        : h('div', { style: { padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 4 } },
+            activeOps.map(op => {
+              const order    = data.orders.find(o => o.id === op.orderId);
+              const workers  = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)).filter(Boolean);
+              const section  = data.sections.find(s => s.id === op.sectionId);
+              const elapsed  = op.startedAt ? nowTs - op.startedAt : 0;
+              const isLong   = op.plannedHours && elapsed > op.plannedHours * 3600000;
+              const expectedEnd = op.startedAt && op.plannedHours
+                ? new Date(op.startedAt + op.plannedHours * 3600000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                : null;
+              return h('div', { key: op.id,
+                style: { display: 'flex', alignItems: 'flex-start', gap: 10, padding: '8px 10px', borderRadius: 8,
+                  background: isLong ? RD3 : 'var(--bg3)', border: isLong ? `1px solid ${RD}` : '1px solid transparent',
+                  cursor: onOrderClick ? 'pointer' : 'default' },
+                onClick: () => onOrderClick && order && onOrderClick(order.id)
+              },
+                h('div', { style: { width: 10, height: 10, borderRadius: '50%', background: isLong ? RD : GN, flexShrink: 0, marginTop: 3, boxShadow: `0 0 0 3px ${isLong ? RD3 : GN3}` } }),
+                h('div', { style: { flex: 1, minWidth: 0 } },
+                  h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                    h('span', { style: { fontSize: 13, fontWeight: 600 } }, op.name),
+                    h('span', { style: { fontSize: 11, color: AM, fontWeight: 500 } }, order?.number || '—'),
+                    section && h('span', { style: { fontSize: 10, color: 'var(--text3)', background: 'var(--bg2)', padding: '1px 6px', borderRadius: 4, border: '0.5px solid var(--border)' } }, section.name)
+                  ),
+                  h('div', { style: { display: 'flex', gap: 10, marginTop: 3, flexWrap: 'wrap', alignItems: 'center' } },
+                    h('span', { style: { fontSize: 11, color: 'var(--text2)' } },
+                      workers.map(w => w.name.split(' ')[0]).join(', ') || 'Не назначен'
+                    ),
+                    h('span', { style: { fontSize: 11, fontFamily: 'monospace', color: isLong ? RD : 'var(--text3)', fontWeight: isLong ? 600 : 400 } }, fmtDur(elapsed)),
+                    expectedEnd && h('span', { style: { fontSize: 10, color: isLong ? RD : 'var(--text3)' } },
+                      isLong ? '⚠ план превышен' : `→ ${expectedEnd}`
+                    )
+                  )
+                )
+              );
+            })
+          )
+    ),
+
+    // ── РЕСУРСНАЯ ПАНЕЛЬ СОТРУДНИКОВ ──
+    h('div', { style: { ...S.card, marginBottom: 14, padding: 0, overflow: 'hidden' } },
+      h('div', { style: { padding: '10px 14px 8px', borderBottom: '0.5px solid var(--border2)' } },
+        h('div', { style: S.sec }, `Сотрудники (${activeWorkers.length} на смене)`),
+      ),
+      h('div', { style: { padding: '8px' } }, (() => {
+        // Группируем по участкам/секциям
+        const bySection = {};
+        allWorkers.forEach(w => {
+          const sectionName = data.sections.find(s => s.id === w.sectionId)?.name || 'Без участка';
+          if (!bySection[sectionName]) bySection[sectionName] = [];
+          bySection[sectionName].push(w);
+        });
+        return Object.entries(bySection).map(([sectionName, workers]) =>
+          h('div', { key: sectionName, style: { marginBottom: 10 } },
+            h('div', { style: { fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.07em', fontWeight: 500, marginBottom: 5, padding: '0 4px' } }, sectionName),
+            h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
+              workers.map(w => {
+                const wStatus   = w.status || 'working';
+                const activeOp  = activeOps.find(op => op.workerIds?.includes(w.id));
+                const activeOrder = activeOp ? data.orders.find(o => o.id === activeOp.orderId) : null;
+                const isBusy    = !!activeOp;
+                const isAbsent  = wStatus !== 'working';
+                // Цвет и иконка статуса
+                const statusBg    = isBusy ? GN3 : isAbsent ? (wStatus === 'sick' ? RD3 : wStatus === 'vacation' ? '#E6F1FB' : '#f0ede8') : '#f8f8f5';
+                const statusColor = isBusy ? GN2 : isAbsent ? (wStatus === 'sick' ? RD2 : wStatus === 'vacation' ? '#042C53' : '#888') : 'var(--text2)';
+                const statusIcon  = isBusy ? '🟢' : wStatus === 'sick' ? '🤒' : wStatus === 'vacation' ? '🏖' : wStatus === 'absent' ? '⬜' : '🔘';
+                // Tooltip с деталями
+                const tooltip = isBusy
+                  ? `${activeOp.name} · ${activeOrder?.number || '—'}
+В работе: ${activeOp.startedAt ? fmtDur(nowTs - activeOp.startedAt) : '—'}`
+                  : wStatus === 'sick' ? 'Больничный'
+                  : wStatus === 'vacation' ? 'Отпуск'
+                  : wStatus === 'absent' ? 'Отсутствует'
+                  : 'Свободен';
+                return h('div', { key: w.id, title: tooltip,
+                  style: { display: 'flex', alignItems: 'center', gap: 5, padding: '5px 8px', borderRadius: 8,
+                    background: statusBg, cursor: 'default', minWidth: 0,
+                    border: isBusy ? `1px solid ${GN}` : '1px solid transparent' }
+                  },
+                  h('span', { style: { fontSize: 11 } }, statusIcon),
+                  h('div', { style: { minWidth: 0 } },
+                    h('div', { style: { fontSize: 12, fontWeight: isBusy ? 500 : 400, color: statusColor, whiteSpace: 'nowrap' } },
+                      w.name.split(' ')[0]
+                    ),
+                    isBusy && h('div', { style: { fontSize: 9, color: GN2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 90 } },
+                      activeOp.name.length > 12 ? activeOp.name.slice(0, 12) + '…' : activeOp.name
+                    )
+                  )
+                );
+              })
+            )
+          )
+        );
+      })())
+    ),
+
+    // ── ЗАКАЗЫ — статусная доска ──
+    h('div', { style: { ...S.card, marginBottom: 14, padding: 0, overflow: 'hidden' } },
+      h('div', { style: { padding: '10px 14px 8px', borderBottom: '0.5px solid var(--border2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
+        h('div', { style: S.sec }, `Заказы в производстве (${ordersProgress.length})`),
+        h('div', { style: { display: 'flex', gap: 6, fontSize: 10, color: 'var(--text3)' } },
+          h('span', { style: { color: RD } }, `${ordersProgress.filter(o => o.daysLeft !== null && o.daysLeft < 0).length} просрочено`),
+          h('span', null, '·'),
+          h('span', { style: { color: AM } }, `${ordersProgress.filter(o => o.daysLeft !== null && o.daysLeft <= 2 && o.daysLeft >= 0).length} срочно`)
+        )
+      ),
+      ordersProgress.length === 0
+        ? h('div', { style: { padding: '20px', textAlign: 'center', color: 'var(--text3)', fontSize: 12 } }, 'Нет активных заказов')
+        : h('div', { style: { padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 4 } },
+            ordersProgress.map(o => {
+              const deadlineColor = o.daysLeft === null ? 'var(--text3)'
+                : o.daysLeft < 0 ? RD : o.daysLeft === 0 ? RD : o.daysLeft <= 2 ? AM : GN;
+              const cardBg = o.daysLeft !== null && o.daysLeft < 0 ? RD3
+                : o.daysLeft === 0 ? '#FFF3E0' : 'var(--bg3)';
+              return h('div', { key: o.id,
+                style: { padding: '10px 12px', borderRadius: 10, background: cardBg,
+                  border: `1px solid ${o.daysLeft !== null && o.daysLeft <= 0 ? RD : o.daysLeft !== null && o.daysLeft <= 2 ? AM : 'var(--border)'}`,
+                  cursor: onOrderClick ? 'pointer' : 'default' },
+                onClick: () => onOrderClick && onOrderClick(o.id)
+              },
+                // Строка 1: приоритет + номер + изделие + дедлайн
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5, flexWrap: 'wrap' } },
+                  h('span', { style: { fontSize: 11, fontWeight: 700, color: '#fff', background: o.prioColor, borderRadius: 4, padding: '1px 6px', flexShrink: 0 } }, o.prioLabel),
+                  h('span', { style: { fontSize: 13, fontWeight: 600, color: AM } }, o.number),
+                  h('span', { style: { fontSize: 12, color: 'var(--text)', flex: 1, minWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, o.product),
+                  o.deadline && h('span', { style: { fontSize: 11, fontWeight: 500, color: deadlineColor, flexShrink: 0 } },
+                    o.daysLeft < 0 ? `❗ просрочен ${Math.abs(o.daysLeft)}д`
+                    : o.daysLeft === 0 ? '⚡ сегодня'
+                    : o.daysLeft === 1 ? '⏰ завтра'
+                    : `📅 ${o.deadline}`
+                  )
+                ),
+                // Строка 2: текущий этап + прогресс
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                  h('div', { style: { flex: 1 } },
+                    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 } },
+                      h('span', { style: { fontSize: 11, color: 'var(--text2)', display: 'flex', alignItems: 'center', gap: 4 } },
+                        o.activeStage
+                          ? h(React.Fragment, null,
+                              h('span', { style: { width: 6, height: 6, borderRadius: '50%', background: GN, display: 'inline-block' } }),
+                              o.activeStage
+                            )
+                          : o.pct === 100 ? h(React.Fragment, null, h('span', { style: { color: GN } }, '✓'), ' Все операции выполнены')
+                          : h(React.Fragment, null, h('span', { style: { color: 'var(--text3)' } }, '⏳'), ' Ожидает операций')
+                      ),
+                      h('span', { style: { fontSize: 11, fontWeight: 500, color: 'var(--text2)' } }, `${o.done}/${o.total} оп.`)
+                    ),
+                    h('div', { style: { height: 5, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' } },
+                      h('div', { style: { height: 5, borderRadius: 3, transition: 'width 0.4s',
+                        width: `${o.pct}%`,
+                        background: o.pct === 100 ? GN : o.hasDefect ? RD : o.daysLeft !== null && o.daysLeft < 0 ? RD : AM
+                      } })
+                    )
+                  ),
+                  o.hasDefect && h('span', { style: { fontSize: 10, color: RD2, background: RD3, padding: '2px 6px', borderRadius: 4, fontWeight: 500, flexShrink: 0 } }, `⚠ брак`)
+                )
+              );
+            })
+          )
+    ),
+
+    // ── Контроль качества + лидеры дня ──
+    h('div', { style: { display: 'grid', gridTemplateColumns: onCheckOps.length > 0 ? '1fr 1fr' : '1fr', gap: 12, marginBottom: 14 } },
+      onCheckOps.length > 0 && h('div', { style: { ...S.card, padding: '10px 12px', marginBottom: 0 } },
+        h('div', { style: S.sec }, `На контроле (${onCheckOps.length})`),
+        onCheckOps.map(op => {
+          const order   = data.orders.find(o => o.id === op.orderId);
+          const workers = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name?.split(' ')[0]).filter(Boolean);
+          return h('div', { key: op.id, style: { fontSize: 12, padding: '4px 0', borderBottom: '0.5px solid var(--border2)' } },
+            h('div', { style: { fontWeight: 500 } }, op.name),
+            h('div', { style: { color: AM, fontSize: 11 } }, `${order?.number || '—'} · ${workers.join(', ')}`)
+          );
+        })
+      ),
+      todayLeaders.length > 0 && h('div', { style: { ...S.card, padding: '10px 12px', marginBottom: 0 } },
+        h('div', { style: S.sec }, '🏆 Лидеры дня'),
+        todayLeaders.map((l, i) => h('div', { key: i, style: { display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: 12 } },
+          h('span', { style: { fontSize: i < 3 ? 13 : 11, width: 22 } }, ['🥇','🥈','🥉'][i] || `${i+1}.`),
+          h('span', { style: { flex: 1, fontWeight: i === 0 ? 500 : 400 } }, l.name),
+          h('span', { style: { fontWeight: 500, color: AM } }, `${l.count}`)
+        ))
+      )
+    ),
+
+    // ── Дуэли ──
+    activeDuels.length > 0 && h('div', { style: { ...S.card, marginBottom: 14, padding: '10px 12px' } },
+      h('div', { style: S.sec }, `⚔ Дуэли (${activeDuels.length})`),
+      h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8 } },
+        activeDuels.map(d => {
+          const ch = data.ops.filter(op => op.workerIds?.includes(d.challengerId) && op.status === 'done' && op.finishedAt >= d.createdAt).length;
+          const op = data.ops.filter(op => op.workerIds?.includes(d.opponentId) && op.status === 'done' && op.finishedAt >= d.createdAt).length;
+          const leader = ch > op ? d.challengerName : op > ch ? d.opponentName : null;
+          return h('div', { key: d.id, style: { ...S.card, flex: '1 1 180px', marginBottom: 0, padding: '8px 12px', border: `1px solid ${AM}` } },
+            h('div', { style: { fontSize: 11, fontWeight: 500, color: AM2, marginBottom: 4 } }, `Цель: ${d.targetOps} операций`),
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 12 } },
+              h('div', null, h('div', null, d.challengerName.split(' ')[0]), h('div', { style: { fontWeight: 700, color: GN, fontSize: 16 } }, ch)),
+              h('div', { style: { alignSelf: 'center', color: 'var(--text3)' } }, 'vs'),
+              h('div', { style: { textAlign: 'right' } }, h('div', null, d.opponentName.split(' ')[0]), h('div', { style: { fontWeight: 700, color: GN, fontSize: 16 } }, op))
+            ),
+            leader && h('div', { style: { fontSize: 10, color: GN2, background: GN3, padding: '2px 6px', borderRadius: 4, marginTop: 4, textAlign: 'center' } }, `Ведёт: ${leader.split(' ')[0]}`)
+          );
         })
       )
     )
@@ -8255,7 +8592,7 @@ const ShopMasterScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 // ==================== PDOScreen (ПДО) ====================
 const PDOScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [tab, setTab] = useState('orders');
-  const TABS = [['orders','Заказы'],['ops','Операции'],['shift_plan','🤖 План смены'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['plan','План'],['reports','Отчёты'],['journal','Журнал'],['notifications','Уведомления']];
+  const TABS = [['orders','Заказы'],['ops','Операции'],['shift_plan','🤖 План смены'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['plan','План'],['analytics','Аналитика'],['reports','Отчёты'],['export1c','📤 1С'],['journal','Журнал'],['notifications','Уведомления']];
 
   const overdueOrders = useMemo(() => data.orders.filter(o => !o.archived && o.deadline && new Date(o.deadline) < new Date()).length, [data.orders]);
   const activeOrders  = useMemo(() => data.orders.filter(o => !o.archived).length, [data.orders]);
@@ -8283,7 +8620,9 @@ const PDOScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     tab === 'gantt'         && h(GanttChart,                { data }),
     tab === 'calendar'      && h(ResourceCalendar,          { data, onUpdate, addToast }),
     tab === 'plan'          && h(MasterTodayPlan,           { data }),
+    tab === 'analytics'     && h(AnalyticsDashboard,         { data, onUpdate, addToast, onOrderClick }),
     tab === 'reports'       && h(ReportsBuilder,            { data }),
+    tab === 'export1c'      && h(Export1CPanel,             { data, addToast }),
     tab === 'journal'       && h(MasterJournal,             { data }),
     tab === 'notifications' && h(MasterNotifications,       { data })
   );
@@ -8292,7 +8631,7 @@ const PDOScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 // ==================== DirectorScreen (Руководитель) ====================
 const DirectorScreen = memo(({ data, onOrderClick }) => {
   const [tab, setTab] = useState('overview');
-  const TABS = [['overview','Обзор'],['analytics','Аналитика'],['reports','Отчёты'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['orders','Заказы'],['kanban','Канбан']];
+  const TABS = [['overview','Обзор'],['analytics','Аналитика'],['reports','Отчёты'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['orders','Заказы'],['kanban','Канбан'],['export1c','📤 1С']];
 
   const doneOps    = useMemo(() => data.ops.filter(o => o.status === 'done'   && o.finishedAt >= now() - 30*86400000).length, [data.ops]);
   const defectOps  = useMemo(() => data.ops.filter(o => o.status === 'defect' && o.finishedAt >= now() - 30*86400000).length, [data.ops]);
@@ -8341,6 +8680,7 @@ const DirectorScreen = memo(({ data, onOrderClick }) => {
     ),
     // Обзор — топ проблем
     tab === 'overview' && h('div', null,
+      h(DeadlineForecast, { data, onOrderClick }),
       h('div', { style:{ fontSize:12, fontWeight:500, marginBottom:10 } }, 'Ключевые проблемы — 30 дней'),
       topIssues.length === 0
         ? h('div', { style:{ ...S.card, textAlign:'center', color:'#888', padding:24 } }, '✓ Критических проблем нет')
@@ -8349,12 +8689,13 @@ const DirectorScreen = memo(({ data, onOrderClick }) => {
             h('div', { style:{ fontSize:11, color: sevColor[issue.sev], marginTop:2 } }, issue.sub)
           ))
     ),
-    tab === 'analytics'    && h(AnalyticsDashboard, { data, onUpdate, addToast }),
+    tab === 'analytics'    && h(AnalyticsDashboard, { data, onUpdate, addToast, onOrderClick }),
     tab === 'reports'      && h(ReportsBuilder,     { data }),
     tab === 'kpi'          && h(KPIReport,           { data }),
     tab === 'reclamations' && h(MasterReclamations,  { data, onUpdate, addToast }),
     tab === 'orders'       && h(MasterOrders,        { data, onUpdate, addToast, onOrderClick }),
-    tab === 'kanban'       && h(MasterKanban,        { data, onUpdate, addToast })
+    tab === 'kanban'       && h(MasterKanban,        { data, onUpdate, addToast }),
+    tab === 'export1c'     && h(Export1CPanel,      { data, addToast })
   );
 });
 
@@ -8390,7 +8731,8 @@ const AdminScreen = memo(({ data, onUpdate, addToast }) => {
   const TABS = [
     ['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],
     ['equipment','Оборудование'],['materials','Материалы'],['bom','Спецификации'],
-    ['sections','Участки'],['workers','Сотрудники'],['time','Учёт времени'],['admin','Настройки']
+    ['sections','Участки'],['workers','Сотрудники'],['time','Учёт времени'],
+    ['export1c','📤 Выгрузка 1С'],['storage','💾 Хранилище'],['admin','Настройки']
   ];
 
   return h('div', null,
@@ -8412,7 +8754,822 @@ const AdminScreen = memo(({ data, onUpdate, addToast }) => {
     tab === 'sections'      && h(MasterSections,         { data, onUpdate, addToast }),
     tab === 'workers'       && h(MasterWorkers,          { data, onUpdate, addToast }),
     tab === 'time'          && h(MasterTimeTracking,     { data, onUpdate, addToast }),
+    tab === 'export1c'      && h(Export1CPanel,          { data, addToast }),
+    tab === 'storage'       && h(StorageMonitor,         { data }),
     tab === 'admin'         && h(MasterAdmin,            { data, onUpdate, addToast })
+  );
+});
+
+
+// ==================== PHOTOS — Firebase Firestore коллекция ====================
+const PHOTOS_COLL = 'op_photos';
+const PHOTO_MAX_KB = 150; // целевой размер после сжатия
+
+// Сжать изображение через Canvas → base64 JPEG
+const compressImage = (file, maxKb = PHOTO_MAX_KB) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      const maxSide = 1200;
+      let w = img.width, h = img.height;
+      if (w > maxSide || h > maxSide) {
+        if (w > h) { h = Math.round(h * maxSide / w); w = maxSide; }
+        else       { w = Math.round(w * maxSide / h); h = maxSide; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      // Подбираем качество чтобы уложиться в maxKb
+      let quality = 0.82;
+      let data = canvas.toDataURL('image/jpeg', quality);
+      while (data.length / 1024 > maxKb * 1.4 && quality > 0.3) {
+        quality -= 0.08;
+        data = canvas.toDataURL('image/jpeg', quality);
+      }
+      resolve(data); // base64 строка
+    };
+    img.onerror = reject;
+    img.src = e.target.result;
+  };
+  reader.onerror = reject;
+  reader.readAsDataURL(file);
+});
+
+// Загрузить фото операции в Firestore коллекцию op_photos
+const uploadOpPhoto = async (opId, workerId, base64) => {
+  const doc = {
+    opId, workerId,
+    data: base64,
+    sizeKb: Math.round(base64.length / 1024),
+    ts: Date.now()
+  };
+  await firebase.firestore().collection(PHOTOS_COLL).add(doc);
+  return doc;
+};
+
+// Загрузить фото для операции
+const loadOpPhotos = async (opId) => {
+  try {
+    // Simple query without compound index
+    const snap = await firebase.firestore().collection(PHOTOS_COLL)
+      .where('opId', '==', opId).limit(10).get();
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  } catch(e) {
+    console.warn('loadOpPhotos error:', e);
+    return [];
+  }
+};
+
+// Удалить фото
+const deleteOpPhoto = async (photoId) => {
+  await firebase.firestore().collection(PHOTOS_COLL).doc(photoId).delete();
+};
+
+// Подсчитать суммарный размер фото
+const countPhotosSize = async () => {
+  try {
+    const snap = await firebase.firestore().collection(PHOTOS_COLL).get();
+    const totalKb = snap.docs.reduce((s, d) => s + (d.data().sizeKb || 0), 0);
+    return { count: snap.size, totalKb };
+  } catch { return { count: 0, totalKb: 0 }; }
+};
+
+// ==================== OpPhotoPanel — прикрепление фото к операции ====================
+const OpPhotoPanel = memo(({ opId, workerId, canUpload = true }) => {
+  const [photos, setPhotos]     = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [lightbox, setLightbox]  = useState(null);
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    setLoading(true);
+    loadOpPhotos(opId).then(p => { setPhotos(p); setLoading(false); });
+  }, [opId]);
+
+  const handleFile = useCallback(async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    e.target.value = '';
+    setUploading(true);
+    try {
+      const base64 = await compressImage(file);
+      const doc = await uploadOpPhoto(opId, workerId, base64);
+      setPhotos(prev => [{ id: doc.ts?.toString() || uid(), ...doc }, ...prev]);
+    } catch(err) {
+      console.error('Photo upload error:', err);
+    }
+    setUploading(false);
+  }, [opId, workerId]);
+
+  const handleDelete = useCallback(async (photo) => {
+    await deleteOpPhoto(photo.id);
+    setPhotos(prev => prev.filter(p => p.id !== photo.id));
+  }, []);
+
+  return h('div', { style: { marginTop: 10 } },
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 } },
+      h('div', { style: { fontSize: 11, color: 'var(--text3)', fontWeight: 500 } }, `📷 Фото (${photos.length})`),
+      canUpload && h('button', {
+        type: 'button',
+        style: { ...gbtn({ fontSize: 11, padding: '4px 10px', minHeight: 32 }), background: 'var(--am3)', color: 'var(--am2)', borderColor: 'var(--am4)' },
+        onClick: () => fileRef.current?.click(),
+        disabled: uploading
+      }, uploading ? '⏳ Загрузка...' : '+ Фото'),
+      canUpload && h('input', {
+        ref: fileRef, type: 'file', accept: 'image/*', capture: 'environment',
+        style: { display: 'none' }, onChange: handleFile
+      })
+    ),
+    loading && h('div', { style: { fontSize: 11, color: 'var(--text3)' } }, 'Загрузка...'),
+    photos.length > 0 && h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+      photos.map(photo => h('div', { key: photo.id, style: { position: 'relative' } },
+        h('img', {
+          src: photo.data, alt: 'фото операции',
+          style: { width: 64, height: 64, objectFit: 'cover', borderRadius: 8, cursor: 'pointer', border: '1.5px solid var(--border)' },
+          onClick: () => setLightbox(photo)
+        }),
+        h('div', { style: { position: 'absolute', bottom: 2, right: 2, fontSize: 8, background: 'rgba(0,0,0,0.55)', color: '#fff', borderRadius: 3, padding: '1px 4px' } },
+          `${photo.sizeKb}кб`
+        )
+      ))
+    ),
+    // Лайтбокс
+    lightbox && h('div', {
+      style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)', zIndex: 500, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 16 },
+      onClick: () => setLightbox(null)
+    },
+      h('img', { src: lightbox.data, alt: 'фото', style: { maxWidth: '100%', maxHeight: '80vh', borderRadius: 10, objectFit: 'contain' }, onClick: e => e.stopPropagation() }),
+      h('div', { style: { display: 'flex', gap: 12, marginTop: 14 }, onClick: e => e.stopPropagation() },
+        h('div', { style: { fontSize: 12, color: '#ccc' } }, `${lightbox.sizeKb} КБ · ${new Date(lightbox.ts).toLocaleString()}`),
+        h('button', {
+          style: { padding: '6px 14px', background: '#E24B4A', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13 },
+          onClick: async () => { await handleDelete(lightbox); setLightbox(null); }
+        }, '🗑 Удалить')
+      ),
+      h('button', { style: { position: 'absolute', top: 16, right: 16, background: 'none', border: 'none', color: '#fff', fontSize: 28, cursor: 'pointer' }, onClick: () => setLightbox(null) }, '×')
+    )
+  );
+});
+
+// ==================== StorageMonitor — счётчик занятой памяти ====================
+const FIRESTORE_FREE_KB  = 1 * 1024 * 1024; // 1 ГБ в КБ
+const FIRESTORE_WARN_PCT = 70;
+const FIRESTORE_CRIT_PCT = 90;
+
+const StorageMonitor = memo(({ data }) => {
+  const [photoStats, setPhotoStats] = useState(null);
+  const [loading, setLoading]       = useState(false);
+  const [open, setOpen]             = useState(false);
+
+  const mainDocKb    = useMemo(() => Math.round(JSON.stringify(data).length / 1024), [data]);
+  const archiveKbEst = useMemo(() => Math.round((data.orders?.filter(o => o.archived).length || 0) * 4), [data.orders]);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    const ps = await countPhotosSize();
+    setPhotoStats(ps);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { if (open) refresh(); }, [open]);
+
+  const totalKb     = mainDocKb + archiveKbEst + (photoStats?.totalKb || 0);
+  const pct         = Math.round(totalKb / FIRESTORE_FREE_KB * 100);
+  const barColor    = pct >= FIRESTORE_CRIT_PCT ? RD : pct >= FIRESTORE_WARN_PCT ? AM : GN;
+  const freeKb      = Math.max(0, FIRESTORE_FREE_KB - totalKb);
+
+  const fmtSize = (kb) => kb >= 1024 ? `${(kb / 1024).toFixed(1)} МБ` : `${kb} КБ`;
+
+  if (!open) return h('div', {
+    style: { ...S.card, cursor: 'pointer', padding: '10px 14px', marginBottom: 12 },
+    onClick: () => setOpen(true)
+  },
+    h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
+      h('div', null,
+        h('div', { style: { ...S.sec, marginBottom: 2 } }, '💾 Хранилище Firebase'),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+          h('div', { style: { flex: 1, height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden', minWidth: 80 } },
+            h('div', { style: { height: 6, background: barColor, borderRadius: 3, width: `${Math.min(pct, 100)}%`, transition: 'width .4s' } })
+          ),
+          h('div', { style: { fontSize: 12, fontWeight: 500, color: barColor } }, `${pct}%`),
+          h('div', { style: { fontSize: 11, color: 'var(--text3)' } }, `${fmtSize(totalKb)} / 1 ГБ`)
+        )
+      ),
+      h('span', { style: { fontSize: 12, color: AM4 } }, 'Подробнее →')
+    )
+  );
+
+  const rows = [
+    { label: 'Основной документ', kb: mainDocKb, icon: '📄', desc: 'Заказы, операции, сотрудники, настройки' },
+    { label: 'Архив заказов',     kb: archiveKbEst, icon: '📦', desc: `~${data.orders?.filter(o => o.archived).length || 0} архивных заказов` },
+    { label: 'Фото операций',     kb: photoStats?.totalKb || 0, icon: '📷', desc: photoStats ? `${photoStats.count} файлов` : loading ? 'Загрузка...' : '—' },
+  ];
+
+  return h('div', { style: { ...S.card, marginBottom: 12 } },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } },
+      h('div', { style: S.sec }, '💾 Хранилище Firebase (Firestore)'),
+      h('div', { style: { display: 'flex', gap: 8 } },
+        h('button', { style: gbtn({ fontSize: 11 }), onClick: refresh, disabled: loading }, loading ? '⏳' : '🔄 Обновить'),
+        h('button', { style: gbtn({ fontSize: 11 }), onClick: () => setOpen(false) }, '× Свернуть')
+      )
+    ),
+    // Общий прогресс-бар
+    h('div', { style: { marginBottom: 16 } },
+      h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 } },
+        h('span', { style: { fontWeight: 500, color: barColor } }, `${pct}% использовано`),
+        h('span', { style: { color: 'var(--text3)' } }, `Свободно: ${fmtSize(freeKb)}`)
+      ),
+      h('div', { style: { height: 10, background: 'var(--border)', borderRadius: 5, overflow: 'hidden' } },
+        h('div', { style: { height: 10, background: barColor, borderRadius: 5, width: `${Math.min(pct, 100)}%`, transition: 'width .5s' } })
+      ),
+      pct >= FIRESTORE_WARN_PCT && h('div', { style: { fontSize: 11, color: barColor, marginTop: 6, fontWeight: 500 } },
+        pct >= FIRESTORE_CRIT_PCT
+          ? '🔴 Критически мало места! Архивируйте старые заказы.'
+          : '🟡 Занято более 70%. Рекомендуем архивировать заказы старше 6 месяцев.'
+      )
+    ),
+    // Детальная таблица
+    h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+      h('thead', null, h('tr', null,
+        ['Раздел', 'Описание', 'Размер', 'Доля', ''].map((t, i) => h('th', { key: i, style: S.th }, t))
+      )),
+      h('tbody', null, rows.map((row, i) => {
+        const rowPct = Math.round(row.kb / FIRESTORE_FREE_KB * 100);
+        return h('tr', { key: i },
+          h('td', { style: S.td }, `${row.icon} ${row.label}`),
+          h('td', { style: { ...S.td, color: 'var(--text3)', fontSize: 11 } }, row.desc),
+          h('td', { style: { ...S.td, fontFamily: 'monospace', fontWeight: 500 } }, fmtSize(row.kb)),
+          h('td', { style: { ...S.td, minWidth: 80 } },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+              h('div', { style: { flex: 1, height: 5, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' } },
+                h('div', { style: { height: 5, background: AM, borderRadius: 3, width: `${Math.min(rowPct * 10, 100)}%` } })
+              ),
+              h('span', { style: { fontSize: 10, color: 'var(--text3)', whiteSpace: 'nowrap' } }, `${rowPct}%`)
+            )
+          ),
+          h('td', { style: S.td })
+        );
+      })),
+      h('tfoot', null, h('tr', { style: { background: 'var(--bg3)' } },
+        h('td', { style: { ...S.td, fontWeight: 600 } }, 'Итого'),
+        h('td', { style: S.td }),
+        h('td', { style: { ...S.td, fontFamily: 'monospace', fontWeight: 700, color: barColor } }, fmtSize(totalKb)),
+        h('td', { style: { ...S.td, fontWeight: 700, color: barColor } }, `${pct}% из 100%`),
+        h('td', { style: S.td })
+      ))
+    )),
+    h('div', { style: { fontSize: 10, color: 'var(--text3)', marginTop: 8 } },
+      '* Бесплатный план Firestore: 1 ГБ хранилища, 50 000 чтений/день, 20 000 записей/день. Размер архива — оценка.'
+    )
+  );
+});
+
+// ==================== DeadlineForecast — прогноз срыва дедлайна ====================
+const calcDeadlineForecast = (data) => {
+  const nowTime = Date.now();
+
+  // Средняя скорость выполнения операций по типу (ч/операцию)
+  const avgTimeByType = {};
+  data.ops.filter(op => op.status === 'done' && op.startedAt && op.finishedAt).forEach(op => {
+    if (!avgTimeByType[op.name]) avgTimeByType[op.name] = [];
+    avgTimeByType[op.name].push((op.finishedAt - op.startedAt) / 3600000);
+  });
+  const medianTime = (arr) => {
+    if (!arr?.length) return null;
+    const s = [...arr].sort((a, b) => a - b);
+    return s[Math.floor(s.length / 2)];
+  };
+
+  // Активных рабочих сейчас
+  const busyWorkerIds = new Set(
+    data.ops.filter(op => op.status === 'in_progress').flatMap(op => op.workerIds || [])
+  );
+  const freeWorkers = data.workers.filter(w =>
+    !w.archived && (w.status || 'working') === 'working' && !busyWorkerIds.has(w.id)
+  ).length;
+  const totalWorkers = Math.max(1, data.workers.filter(w => !w.archived && (w.status || 'working') === 'working').length);
+
+  return data.orders
+    .filter(o => !o.archived && o.deadline)
+    .map(order => {
+      const ops           = data.ops.filter(op => op.orderId === order.id && !op.archived);
+      const doneOps       = ops.filter(op => op.status === 'done' || op.status === 'defect');
+      const remainingOps  = ops.filter(op => op.status === 'pending' || op.status === 'in_progress' || op.status === 'on_check');
+      const inProgressOps = ops.filter(op => op.status === 'in_progress');
+
+      if (ops.length === 0) return null;
+
+      // Сколько рабочих часов осталось (по медиане факта или плану)
+      const remainingHours = remainingOps.reduce((s, op) => {
+        if (op.status === 'in_progress' && op.startedAt) {
+          const elapsed = (nowTime - op.startedAt) / 3600000;
+          const planned = op.plannedHours || medianTime(avgTimeByType[op.name]) || 2;
+          return s + Math.max(0, planned - elapsed);
+        }
+        return s + (op.plannedHours || medianTime(avgTimeByType[op.name]) || 2);
+      }, 0);
+
+      // Дней до дедлайна
+      const deadlineMs  = new Date(order.deadline).getTime();
+      const daysLeft    = (deadlineMs - nowTime) / 86400000;
+
+      // Сколько часов доступно до дедлайна (8 рабочих часов в день)
+      const hoursAvail  = Math.max(0, daysLeft * 8);
+
+      // Параллелизм: сколько операций одновременно (грубо)
+      const parallelism  = Math.min(remainingOps.length, Math.max(1, Math.round(totalWorkers / 2)));
+      const effectiveHours = hoursAvail * parallelism;
+
+      // Прогноз: уложимся?
+      const onTrack      = effectiveHours >= remainingHours;
+      const expectedDays = parallelism > 0 ? remainingHours / (8 * parallelism) : 999;
+      const delayDays    = Math.max(0, Math.ceil(expectedDays - daysLeft));
+
+      const pct = ops.length > 0 ? Math.round(doneOps.length / ops.length * 100) : 0;
+
+      return {
+        orderId:       order.id,
+        orderNumber:   order.number,
+        product:       order.product,
+        deadline:      order.deadline,
+        priority:      order.priority,
+        daysLeft:      Math.ceil(daysLeft),
+        pct,
+        remainingOps:  remainingOps.length,
+        inProgressOps: inProgressOps.length,
+        remainingHours: Math.round(remainingHours * 10) / 10,
+        expectedDays:  Math.round(expectedDays * 10) / 10,
+        delayDays,
+        onTrack,
+        risk: daysLeft < 0 ? 'overdue' : !onTrack ? (delayDays > 3 ? 'high' : 'medium') : daysLeft <= 2 ? 'low' : 'ok'
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      const rOrder = { overdue: 0, high: 1, medium: 2, low: 3, ok: 4 };
+      return (rOrder[a.risk] ?? 5) - (rOrder[b.risk] ?? 5);
+    });
+};
+
+const DeadlineForecast = memo(({ data, onOrderClick }) => {
+  const forecasts = useMemo(() => calcDeadlineForecast(data), [data]);
+  const [showAll, setShowAll] = useState(false);
+
+  const riskStyle = {
+    overdue: { bg: RD3, cl: RD2, br: RD, label: '❗ Просрочен', icon: '🔴' },
+    high:    { bg: '#FFF3E0', cl: '#BF360C', br: '#FF5722', label: '⚠ Высокий риск', icon: '🟠' },
+    medium:  { bg: '#FFF8E1', cl: '#7B5800', br: '#FFC107', label: '⚡ Средний риск', icon: '🟡' },
+    low:     { bg: AM3, cl: AM2, br: AM, label: '⏰ Малый риск', icon: '🟡' },
+    ok:      { bg: GN3, cl: GN2, br: GN, label: '✓ В срок', icon: '🟢' }
+  };
+
+  const risky   = forecasts.filter(f => f.risk !== 'ok');
+  const onTrack = forecasts.filter(f => f.risk === 'ok');
+  const shown   = showAll ? forecasts : forecasts.slice(0, 10);
+
+  return h('div', { style: { ...S.card, marginBottom: 12 } },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } },
+      h('div', null,
+        h('div', { style: S.sec }, '🎯 Прогноз срыва дедлайнов'),
+        h('div', { style: { display: 'flex', gap: 12, fontSize: 11 } },
+          h('span', { style: { color: RD, fontWeight: 500 } }, `${risky.length} под угрозой`),
+          h('span', { style: { color: GN } }, `${onTrack.length} в срок`)
+        )
+      )
+    ),
+    forecasts.length === 0
+      ? h('div', { style: { textAlign: 'center', color: 'var(--text3)', padding: 20, fontSize: 12 } }, 'Нет активных заказов с дедлайнами')
+      : h('div', null,
+          h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+            h('thead', null, h('tr', null,
+              ['Заказ', 'Изделие', 'Осталось дней', 'Прогресс', 'Осталось операций', 'Ожид. дней', 'Задержка', 'Риск'].map((t, i) =>
+                h('th', { key: i, style: S.th }, t)
+              )
+            )),
+            h('tbody', null, shown.map(f => {
+              const rs = riskStyle[f.risk] || riskStyle.ok;
+              return h('tr', { key: f.orderId, style: { background: f.risk !== 'ok' ? rs.bg : 'transparent', cursor: onOrderClick ? 'pointer' : 'default' },
+                onClick: () => onOrderClick && onOrderClick(f.orderId) },
+                h('td', { style: { ...S.td, fontWeight: 600, color: AM } }, f.orderNumber),
+                h('td', { style: S.td }, f.product),
+                h('td', { style: { ...S.td, fontWeight: 500, color: f.daysLeft <= 0 ? RD : f.daysLeft <= 3 ? AM : GN } },
+                  f.daysLeft <= 0 ? `${Math.abs(f.daysLeft)}д назад` : `${f.daysLeft} дн.`
+                ),
+                h('td', { style: S.td },
+                  h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+                    h('div', { style: { flex: 1, height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden', minWidth: 50 } },
+                      h('div', { style: { height: 6, background: f.pct === 100 ? GN : f.pct > 60 ? AM : RD, borderRadius: 3, width: `${f.pct}%` } })
+                    ),
+                    h('span', { style: { fontSize: 11, fontWeight: 500 } }, `${f.pct}%`)
+                  )
+                ),
+                h('td', { style: { ...S.td, textAlign: 'center' } },
+                  h('span', null, `${f.remainingOps}`),
+                  f.inProgressOps > 0 && h('span', { style: { fontSize: 10, color: GN, marginLeft: 4 } }, `(${f.inProgressOps} идут)`)
+                ),
+                h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'center' } }, `${f.expectedDays}д`),
+                h('td', { style: { ...S.td, textAlign: 'center', fontWeight: 500, color: f.delayDays > 0 ? RD : GN } },
+                  f.delayDays > 0 ? `+${f.delayDays}д` : '—'
+                ),
+                h('td', { style: { ...S.td } },
+                  h('span', { style: { padding: '2px 8px', fontSize: 10, borderRadius: 6, fontWeight: 500, background: rs.bg, color: rs.cl, border: `1px solid ${rs.br}` } },
+                    `${rs.icon} ${rs.label}`
+                  )
+                )
+              );
+            }))
+          )),
+          forecasts.length > 10 && h('button', {
+            style: gbtn({ fontSize: 11, width: '100%', marginTop: 8 }),
+            onClick: () => setShowAll(v => !v)
+          }, showAll ? '▲ Свернуть' : `▼ Показать все (${forecasts.length})`)
+        )
+  );
+});
+
+// ==================== InterOpWaiting — межоперационные ожидания ====================
+const calcInterOpWaiting = (data) => {
+  const stageIndex = new Map((data.productionStages || []).map((s, i) => [s.name, i]));
+
+  return data.orders.filter(o => !o.archived).map(order => {
+    const ops = data.ops
+      .filter(op => op.orderId === order.id && !op.archived && op.startedAt)
+      .sort((a, b) => (stageIndex.get(a.name) ?? 99) - (stageIndex.get(b.name) ?? 99));
+
+    if (ops.length < 2) return null;
+
+    const gaps = [];
+    for (let i = 0; i < ops.length - 1; i++) {
+      const cur  = ops[i];
+      const next = ops[i + 1];
+      if (!cur.finishedAt || !next.startedAt) continue;
+      const waitMs = next.startedAt - cur.finishedAt;
+      if (waitMs > 300000) { // игнорируем < 5 мин
+        gaps.push({
+          from:    cur.name,
+          to:      next.name,
+          waitMs,
+          waitHrs: Math.round(waitMs / 360000) / 10,
+          fromWorker: (cur.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name?.split(' ')[0]).filter(Boolean).join(', ') || '—',
+          toWorker:   (next.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name?.split(' ')[0]).filter(Boolean).join(', ') || '—',
+        });
+      }
+    }
+
+    if (gaps.length === 0) return null;
+
+    const totalWaitMs = gaps.reduce((s, g) => s + g.waitMs, 0);
+    const totalWorkMs = ops.filter(op => op.finishedAt && op.startedAt).reduce((s, op) => s + (op.finishedAt - op.startedAt), 0);
+    const leadTimeMs  = totalWaitMs + totalWorkMs;
+    const waitPct     = leadTimeMs > 0 ? Math.round(totalWaitMs / leadTimeMs * 100) : 0;
+
+    return { orderId: order.id, orderNumber: order.number, product: order.product, gaps, totalWaitHrs: Math.round(totalWaitMs / 360000) / 10, totalWorkHrs: Math.round(totalWorkMs / 360000) / 10, waitPct };
+  }).filter(Boolean).sort((a, b) => b.totalWaitHrs - a.totalWaitHrs);
+};
+
+// Агрегация: самые длинные ожидания между конкретными парами этапов
+const calcBottleneckPairs = (waitingData) => {
+  const pairs = {};
+  waitingData.forEach(order => {
+    order.gaps.forEach(gap => {
+      const key = `${gap.from} → ${gap.to}`;
+      if (!pairs[key]) pairs[key] = { key, count: 0, totalHrs: 0, maxHrs: 0 };
+      pairs[key].count++;
+      pairs[key].totalHrs += gap.waitHrs;
+      pairs[key].maxHrs = Math.max(pairs[key].maxHrs, gap.waitHrs);
+    });
+  });
+  return Object.values(pairs)
+    .map(p => ({ ...p, avgHrs: Math.round(p.totalHrs / p.count * 10) / 10 }))
+    .sort((a, b) => b.avgHrs - a.avgHrs)
+    .slice(0, 10);
+};
+
+const InterOpWaiting = memo(({ data, onOrderClick }) => {
+  const waitingData   = useMemo(() => calcInterOpWaiting(data), [data]);
+  const bottlenecks   = useMemo(() => calcBottleneckPairs(waitingData), [waitingData]);
+  const [mode, setMode] = useState('bottlenecks'); // bottlenecks | orders
+  const [showAll, setShowAll] = useState(false);
+
+  const avgWaitPct = waitingData.length > 0
+    ? Math.round(waitingData.reduce((s, o) => s + o.waitPct, 0) / waitingData.length)
+    : 0;
+
+  return h('div', { style: { ...S.card, marginBottom: 12 } },
+    // Header
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 } },
+      h('div', null,
+        h('div', { style: S.sec }, '⏳ Межоперационные ожидания'),
+        waitingData.length > 0 && h('div', { style: { fontSize: 11, color: avgWaitPct > 50 ? RD : AM } },
+          `Среднее ожидание: ${avgWaitPct}% от Lead Time · ${waitingData.length} заказов`
+        )
+      ),
+      h('div', { style: { display: 'flex', gap: 6 } },
+        h('button', { style: mode === 'bottlenecks' ? abtn({ fontSize: 11 }) : gbtn({ fontSize: 11 }), onClick: () => setMode('bottlenecks') }, 'Узкие места'),
+        h('button', { style: mode === 'orders' ? abtn({ fontSize: 11 }) : gbtn({ fontSize: 11 }), onClick: () => setMode('orders') }, 'По заказам')
+      )
+    ),
+
+    waitingData.length === 0
+      ? h('div', { style: { textAlign: 'center', color: 'var(--text3)', padding: 20, fontSize: 12 } }, 'Нет данных. Нужно минимум 2 завершённые последовательные операции в одном заказе.')
+      : mode === 'bottlenecks'
+        ? h('div', null,
+            bottlenecks.length === 0
+              ? h('div', { style: { color: 'var(--text3)', fontSize: 12, textAlign: 'center', padding: 16 } }, 'Нет значительных ожиданий')
+              : h('div', null,
+                  h('div', { style: { fontSize: 11, color: 'var(--text3)', marginBottom: 8 } },
+                    'Пары этапов с наибольшим средним ожиданием — здесь нужно искать причину простоев'
+                  ),
+                  h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+                    h('thead', null, h('tr', null,
+                      ['Переход', 'Заказов', 'Среднее ожид.', 'Макс. ожид.', 'Итого потерь', ''].map((t, i) =>
+                        h('th', { key: i, style: S.th }, t)
+                      )
+                    )),
+                    h('tbody', null, bottlenecks.map((pair, i) => {
+                      const severity = pair.avgHrs > 24 ? RD : pair.avgHrs > 8 ? AM : '#888';
+                      return h('tr', { key: i, style: { background: pair.avgHrs > 24 ? RD3 : pair.avgHrs > 8 ? AM3 : 'transparent' } },
+                        h('td', { style: { ...S.td, fontWeight: 500 } }, pair.key),
+                        h('td', { style: { ...S.td, textAlign: 'center' } }, pair.count),
+                        h('td', { style: { ...S.td, fontFamily: 'monospace', fontWeight: 600, color: severity } }, `${pair.avgHrs}ч`),
+                        h('td', { style: { ...S.td, fontFamily: 'monospace', color: 'var(--text3)' } }, `${pair.maxHrs}ч`),
+                        h('td', { style: { ...S.td, fontFamily: 'monospace', color: severity } }, `${Math.round(pair.totalHrs)}ч`),
+                        h('td', { style: S.td },
+                          pair.avgHrs > 24
+                            ? h('span', { style: { fontSize: 10, color: RD2, background: RD3, padding: '2px 6px', borderRadius: 4 } }, '🔴 Критично')
+                            : pair.avgHrs > 8
+                              ? h('span', { style: { fontSize: 10, color: AM2, background: AM3, padding: '2px 6px', borderRadius: 4 } }, '🟡 Обратить внимание')
+                              : null
+                        )
+                      );
+                    }))
+                  ))
+                )
+          )
+        : h('div', null,
+            (showAll ? waitingData : waitingData.slice(0, 8)).map(order =>
+              h('div', { key: order.orderId, style: { marginBottom: 10, padding: '10px 12px', background: 'var(--bg3)', borderRadius: 10, cursor: onOrderClick ? 'pointer' : 'default' },
+                onClick: () => onOrderClick && onOrderClick(order.orderId) },
+                h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 } },
+                  h('div', null,
+                    h('span', { style: { fontWeight: 600, color: AM } }, order.orderNumber),
+                    h('span', { style: { marginLeft: 8, fontSize: 12, color: 'var(--text2)' } }, order.product)
+                  ),
+                  h('div', { style: { fontSize: 11, color: order.waitPct > 50 ? RD : AM, fontWeight: 500 } },
+                    `Ожидание: ${order.waitPct}% · ${order.totalWaitHrs}ч`
+                  )
+                ),
+                order.gaps.map((gap, i) =>
+                  h('div', { key: i, style: { display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', borderTop: i > 0 ? '0.5px solid var(--border2)' : 'none', fontSize: 11 } },
+                    h('span', { style: { color: 'var(--text3)', flex: 1 } }, `${gap.from} → ${gap.to}`),
+                    h('span', { style: { fontFamily: 'monospace', fontWeight: 600, color: gap.waitHrs > 8 ? RD : AM } }, `${gap.waitHrs}ч`),
+                    h('span', { style: { fontSize: 10, color: 'var(--text3)' } }, `(${gap.fromWorker} → ${gap.toWorker})`)
+                  )
+                )
+              )
+            ),
+            waitingData.length > 8 && h('button', {
+              style: gbtn({ fontSize: 11, width: '100%', marginTop: 6 }),
+              onClick: () => setShowAll(v => !v)
+            }, showAll ? '▲ Свернуть' : `▼ Все заказы (${waitingData.length})`)
+          )
+  );
+});
+
+// ==================== Export1C — выгрузка в 1С ====================
+// Формат: XML совместимый с "Универсальным форматом обмена данными" 1С
+// Также генерирует Excel в формате, который 1С импортирует через обработку
+
+const export1CXml = (data, periodDays = 30) => {
+  const periodStart = Date.now() - periodDays * 86400000;
+  const doneOps = data.ops.filter(op =>
+    op.status === 'done' && op.finishedAt >= periodStart && op.startedAt && op.finishedAt
+  );
+
+  const lines = doneOps.map(op => {
+    const order  = data.orders.find(o => o.id === op.orderId);
+    const workers = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name || '').filter(Boolean);
+    const hoursActual = Math.round((op.finishedAt - op.startedAt) / 360000) / 10;
+    const date   = new Date(op.finishedAt).toISOString().slice(0, 10);
+    return { op, order, workers, hoursActual, date };
+  });
+
+  // XML формат "Загрузка данных о выполненных работах" для 1С
+  const escXml = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  const xml = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<КоммерческаяИнформация ВерсияФормата="2.09" ДатаФормирования="' + new Date().toISOString() + '">',
+    ...lines.map(({ op, order, workers, hoursActual, date }) =>
+      [
+        '  <Документ>',
+        '    <Ид>' + escXml(op.id) + '</Ид>',
+        '    <Номер>' + escXml(order?.number || op.id) + '</Номер>',
+        '    <Дата>' + escXml(date) + '</Дата>',
+        '    <ХозОперация>Выполнение работ</ХозОперация>',
+        '    <Товары>',
+        '      <Товар>',
+        '        <Наименование>' + escXml(op.name) + '</Наименование>',
+        '        <ЕдиницаИзмерения>ч</ЕдиницаИзмерения>',
+        '        <Количество>' + hoursActual + '</Количество>',
+        '        <ЦенаЗаЕдиницу>' + (data.settings?.hourlyRate || 500) + '</ЦенаЗаЕдиницу>',
+        '        <Сумма>' + Math.round(hoursActual * (data.settings?.hourlyRate || 500)) + '</Сумма>',
+        '      </Товар>',
+        '    </Товары>',
+        '    <Комментарий>' + escXml(`Заказ: ${order?.product || '—'} | Исполнители: ${workers.join(', ')}`) + '</Комментарий>',
+        '  </Документ>',
+      ].join('\n')
+    ),
+    '</КоммерческаяИнформация>'
+  ].join('\n');
+
+  return xml;
+};
+
+const export1CExcel = (data, periodDays = 30) => {
+  const periodStart = Date.now() - periodDays * 86400000;
+  const doneOps = data.ops.filter(op =>
+    op.status === 'done' && op.finishedAt >= periodStart && op.startedAt && op.finishedAt
+  );
+
+  // Лист 1: Выработка (для зарплатного расчёта)
+  const outputRows = doneOps.map(op => {
+    const order     = data.orders.find(o => o.id === op.orderId);
+    const workers   = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid));
+    const hoursActual = Math.round((op.finishedAt - op.startedAt) / 360000) / 10;
+    return {
+      'Дата':             new Date(op.finishedAt).toLocaleDateString('ru-RU'),
+      'Номер заказа':     order?.number || '—',
+      'Изделие':          order?.product || '—',
+      'Операция':         op.name,
+      'Норма-часы':       op.plannedHours || '',
+      'Факт-часы':        hoursActual,
+      'Исполнители':      workers.filter(Boolean).map(w => w.name).join(', '),
+      'Код сотрудника':   workers.filter(Boolean).map(w => w.id).join(', '),
+      'Статус':           op.status === 'done' ? 'Выполнено' : op.status,
+      'Смена':            op.shift || '',
+      'Участок':          data.sections.find(s => s.id === op.sectionId)?.name || '',
+    };
+  });
+
+  // Лист 2: Расход материалов
+  const matRows = (data.materialConsumptions || [])
+    .filter(mc => mc.ts >= periodStart)
+    .map(mc => {
+      const mat = data.materials.find(m => m.id === mc.materialId);
+      const op  = data.ops.find(o => o.id === mc.opId);
+      const order = op ? data.orders.find(o => o.id === op.orderId) : null;
+      return {
+        'Дата':          new Date(mc.ts).toLocaleDateString('ru-RU'),
+        'Материал':      mat?.name || '—',
+        'Количество':    mc.qty,
+        'Единица':       mat?.unit || 'шт',
+        'Цена за ед.':   mat?.unitCost || 0,
+        'Сумма':         Math.round(mc.qty * (mat?.unitCost || 0)),
+        'Номер заказа':  order?.number || '—',
+        'Операция':      op?.name || '—',
+      };
+    });
+
+  // Лист 3: Сводка по сотрудникам (для ФОТ)
+  const workerMap = {};
+  doneOps.forEach(op => {
+    const hoursActual = (op.finishedAt - op.startedAt) / 3600000;
+    (op.workerIds || []).forEach(wid => {
+      if (!workerMap[wid]) workerMap[wid] = { ops: 0, hours: 0, defects: 0 };
+      workerMap[wid].ops++;
+      workerMap[wid].hours += hoursActual;
+    });
+  });
+  data.ops.filter(op => op.status === 'defect' && op.finishedAt >= periodStart).forEach(op => {
+    (op.workerIds || []).forEach(wid => {
+      if (!workerMap[wid]) workerMap[wid] = { ops: 0, hours: 0, defects: 0 };
+      workerMap[wid].defects++;
+    });
+  });
+  const fотRows = Object.entries(workerMap).map(([wid, stats]) => {
+    const worker = data.workers.find(w => w.id === wid);
+    return {
+      'Табельный номер': worker?.id || wid,
+      'ФИО':             worker?.name || '—',
+      'Должность':       worker?.position || '',
+      'Участок':         data.sections.find(s => s.id === worker?.sectionId)?.name || '',
+      'Операций':        stats.ops,
+      'Факт-часов':      Math.round(stats.hours * 10) / 10,
+      'Браков':          stats.defects,
+      'KPI %':           stats.ops + stats.defects > 0 ? Math.round(stats.ops / (stats.ops + stats.defects) * 100) : 100,
+    };
+  });
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(outputRows), 'Выработка');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(matRows), 'Материалы');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(fотRows), 'Сводка_ФОТ');
+  return wb;
+};
+
+const Export1CPanel = memo(({ data, addToast }) => {
+  const [period, setPeriod] = useState(30);
+  const [format, setFormat] = useState('excel');
+  const [loading, setLoading] = useState(false);
+
+  const doneCount = useMemo(() => {
+    const start = Date.now() - period * 86400000;
+    return data.ops.filter(op => op.status === 'done' && op.finishedAt >= start).length;
+  }, [data.ops, period]);
+
+  const matCount = useMemo(() => {
+    const start = Date.now() - period * 86400000;
+    return (data.materialConsumptions || []).filter(mc => mc.ts >= start).length;
+  }, [data.materialConsumptions, period]);
+
+  const doExport = useCallback(async () => {
+    setLoading(true);
+    try {
+      const dateStr = new Date().toISOString().slice(0, 10);
+      if (format === 'xml') {
+        const xml = export1CXml(data, period);
+        const blob = new Blob([xml], { type: 'text/xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url;
+        a.download = `1c_export_${dateStr}.xml`;
+        a.click(); URL.revokeObjectURL(url);
+        addToast(`XML для 1С сформирован (${doneCount} операций)`, 'success');
+      } else {
+        const wb = export1CExcel(data, period);
+        XLSX.writeFile(wb, `1c_export_${dateStr}.xlsx`);
+        addToast(`Excel для 1С сформирован (${doneCount} операций, 3 листа)`, 'success');
+      }
+    } catch(e) {
+      addToast('Ошибка экспорта: ' + e.message, 'error');
+    }
+    setLoading(false);
+  }, [data, period, format, doneCount, addToast]);
+
+  return h('div', { style: { ...S.card, marginBottom: 12 } },
+    h('div', { style: S.sec }, '📤 Выгрузка в 1С'),
+    h('div', { style: { fontSize: 12, color: 'var(--text3)', marginBottom: 12, lineHeight: 1.6 } },
+      'Формирует файл, который загружается в 1С без ручного ввода: выработка по операциям, расход материалов, сводка ФОТ по сотрудникам.'
+    ),
+
+    // Период
+    h('div', { style: { marginBottom: 12 } },
+      h('div', { style: S.lbl }, 'Период выгрузки'),
+      h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+        [7, 14, 30, 60, 90].map(d => h('button', {
+          key: d,
+          style: period === d ? abtn({ fontSize: 11 }) : gbtn({ fontSize: 11 }),
+          onClick: () => setPeriod(d)
+        }, `${d} дней`))
+      )
+    ),
+
+    // Формат
+    h('div', { style: { marginBottom: 16 } },
+      h('div', { style: S.lbl }, 'Формат'),
+      h('div', { style: { display: 'flex', gap: 6 } },
+        h('button', {
+          style: format === 'excel' ? abtn({ fontSize: 12 }) : gbtn({ fontSize: 12 }),
+          onClick: () => setFormat('excel')
+        }, '📊 Excel (.xlsx) — 3 листа'),
+        h('button', {
+          style: format === 'xml' ? abtn({ fontSize: 12 }) : gbtn({ fontSize: 12 }),
+          onClick: () => setFormat('xml')
+        }, '🔗 XML (КоммерцИнфо)')
+      )
+    ),
+
+    // Статистика
+    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginBottom: 16 } },
+      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } },
+        h('div', { style: { fontSize: 22, fontWeight: 600, color: GN } }, doneCount),
+        h('div', { style: { fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase' } }, 'операций')
+      ),
+      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } },
+        h('div', { style: { fontSize: 22, fontWeight: 600, color: AM } }, matCount),
+        h('div', { style: { fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase' } }, 'расходов мат.')
+      ),
+      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } },
+        h('div', { style: { fontSize: 22, fontWeight: 600, color: BL } }, data.workers.filter(w => !w.archived).length),
+        h('div', { style: { fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase' } }, 'сотрудников')
+      )
+    ),
+
+    // Что войдёт в выгрузку
+    format === 'excel' && h('div', { style: { fontSize: 11, color: 'var(--text3)', marginBottom: 12, background: 'var(--bg3)', borderRadius: 8, padding: '8px 12px', lineHeight: 1.8 } },
+      h('div', null, '📋 Лист «Выработка» — все выполненные операции с датой, исполнителем, фактическим временем'),
+      h('div', null, '📦 Лист «Материалы» — расход по операциям с ценой и суммой'),
+      h('div', null, '👷 Лист «Сводка_ФОТ» — итоги по каждому сотруднику: часы, KPI, брак')
+    ),
+
+    h('button', {
+      style: { ...abtn({ fontSize: 14, padding: '12px 24px', width: '100%' }), background: GN, color: '#fff', border: 'none' },
+      onClick: doExport,
+      disabled: loading || doneCount === 0
+    }, loading ? '⏳ Формирование...' : doneCount === 0 ? 'Нет данных за период' : `📤 Выгрузить в 1С (${doneCount} операций)`)
   );
 });
 
@@ -8645,8 +9802,8 @@ function App() {
           h('span', { style: { width:6, height:6, borderRadius:'50%', background: synced ? GN : '#ccc', display:'inline-block' } }),
           synced ? 'Firebase' : 'Оффлайн'
         ),
-        DB._sizeWarning && h('div', { style: { display:'flex', alignItems:'center', gap:3, color: AM4, fontSize: 9 } },
-          `💾 ${DB._sizeWarning} КБ`
+        DB._sizeWarning && h('div', { style: { display:'flex', alignItems:'center', gap:3, color: 'var(--am4)', fontSize: 9, cursor:'pointer' }, title: 'Перейдите в Администратор → Хранилище' },
+          `💾 ${DB._sizeWarning} КБ из 1000 КБ`
         ),
         !synced && localStorage.getItem(QUEUE_KEY) && h('div', { style: { display:'flex', alignItems:'center', gap:3, color: AM4, fontSize: 9, fontWeight:500 } },
           '📤 Офлайн-очередь'
