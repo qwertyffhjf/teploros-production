@@ -1425,6 +1425,7 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
 
 // ==================== WorkerScreen ====================
 const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, addToast }) => {
+  const { ask: askConfirm, confirmEl } = useConfirm();
   const worker = useMemo(() => data.workers.find(w => w.id === workerId), [data.workers, workerId]);
 
   const myOps = useMemo(() => data.ops.filter(o => {
