@@ -1183,7 +1183,7 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
     ),
     h('div', { style: { width: '100%', display: 'flex', flexDirection: 'column', gap: 10 } },
       h('div', null,
-        h('label', { style: S.lbl }, 'Мастер-ключ'),
+        h('label', { style: S.lbl }, 'Мастер-ключ (аварийный сброс PIN)'),
         h('input', { type: 'password', inputMode: 'numeric', style: { ...S.inp, width: '100%', textAlign: 'center', fontSize: 20, letterSpacing: '0.3em' }, placeholder: '• • • •', value: resetKey, maxLength: 8, onChange: e => setResetKey(e.target.value) })
       ),
       h('div', null,
@@ -1723,7 +1723,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     const allThanks = data.events.filter(e => e.type === 'thanks' && e.toWorkerId === workerId);
     const thanksCount = allThanks.length;
     const recentThanks = allThanks.sort((a, b) => b.ts - a.ts).slice(0, 5).map(t => {
-      const from = t.fromWorkerId === 'master' ? 'Мастер' : data.workers.find(w => w.id === t.fromWorkerId)?.name || 'Коллега';
+      const from = t.fromWorkerId === 'master' ? 'Начальник цеха' : data.workers.find(w => w.id === t.fromWorkerId)?.name || 'Коллега';
       return { from, note: t.note || '', ts: t.ts };
     });
     // Новые благодарности (после последнего просмотра)
@@ -4171,17 +4171,17 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
         )
       ),
       // Матрица с уровнями
-      h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { borderCollapse:'collapse', width:'100%', fontSize:12 } },
+      h('div', { style: { ...S.card, padding: 0, overflow: 'auto', maxHeight: '70vh' } }, h('table', { style: { borderCollapse:'collapse', width:'100%', fontSize:12 } },
         h('thead', null, h('tr', null,
-          h('th', { style: S.th, scope: 'col' }, 'Сотрудник'),
+          h('th', { style: { ...S.th, position: 'sticky', top: 0, left: 0, zIndex: 3, background: '#f8f8f5', minWidth: 160, boxShadow: '2px 0 4px rgba(0,0,0,0.06)' }, scope: 'col' }, 'Сотрудник'),
           stagesForMatrix.map(s => {
             const count = competenceCoverage[s.name] ?? 0;
             const color = count === 0 ? RD : count <= 2 ? AM : GN;
-            return h('th', { key: s.id, style: { ...S.th, borderBottom: `3px solid ${color}` } }, s.name);
+            return h('th', { key: s.id, style: { ...S.th, borderBottom: `3px solid ${color}`, position: 'sticky', top: 0, zIndex: 2, background: '#f8f8f5', whiteSpace: 'nowrap', minWidth: 90 } }, s.name);
           })
         )),
-        h('tbody', null, data.workers.map(w => h('tr', { key: w.id },
-          h('td', { style: { ...S.td, fontWeight:500 } }, w.name),
+        h('tbody', null, data.workers.filter(w => !w.archived).map(w => h('tr', { key: w.id },
+          h('td', { style: { ...S.td, fontWeight:500, position: 'sticky', left: 0, zIndex: 1, background: '#fff', boxShadow: '2px 0 4px rgba(0,0,0,0.06)', minWidth: 160 } }, w.name),
           stagesForMatrix.map(s => {
             const level = (w.competenceLevels || {})[s.name] || 0;
             const has = (w.competences || []).includes(s.name);
@@ -4199,7 +4199,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
             );
           })
         )))
-      ))),
+      )),
       h('div', { style: { fontSize: 10, color: '#888', marginTop: 6 } }, 'Нажмите на ячейку для переключения: — → Новичок → Компетентен → Эксперт → —')
     )
   );
@@ -4989,7 +4989,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
         lbl('Команда расследования'),
         (d8.team || []).length > 0 && h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 } },
           (d8.team || []).map(wid => {
-            const w = wid === 'master' ? { name: 'Мастер' } : data.workers.find(w => w.id === wid);
+            const w = wid === 'master' ? { name: 'Начальник цеха' } : data.workers.find(w => w.id === wid);
             return h('span', { key: wid, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: AM3, borderRadius: 6, fontSize: 11, color: AM2 } },
               w?.name || wid,
               h('span', { style: { cursor: 'pointer', fontWeight: 500, marginLeft: 2 }, onClick: () => saveD8(rec.id, 'team', (d8.team || []).filter(id => id !== wid)) }, '×')
@@ -4998,9 +4998,9 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
         ),
         // Быстрые кнопки
         h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 } },
-          !(d8.team || []).includes('master') && h('button', { style: gbtn({ fontSize: 11 }), onClick: () => saveD8(rec.id, 'team', [...(d8.team || []), 'master']) }, '+ Мастер'),
-          linkedWorkerIds.length > 0 && !(d8.team || []).some(id => linkedWorkerIds.includes(id)) && h('button', { style: abtn({ fontSize: 11 }), onClick: () => saveD8(rec.id, 'team', [...new Set([...(d8.team || []), 'master', ...linkedWorkerIds])]) }, '⚡ Мастер + исполнители'),
-          opName && competent.length > 0 && !(d8.team || []).length && h('button', { style: gbtn({ fontSize: 11 }), onClick: () => saveD8(rec.id, 'team', ['master', ...competent.slice(0, 3).map(w => w.id)]) }, `⚡ Мастер + допущенные к «${opName.length > 12 ? opName.slice(0, 12) + '…' : opName}»`)
+          !(d8.team || []).includes('master') && h('button', { style: gbtn({ fontSize: 11 }), onClick: () => saveD8(rec.id, 'team', [...(d8.team || []), 'master']) }, '+ Начальник цеха'),
+          linkedWorkerIds.length > 0 && !(d8.team || []).some(id => linkedWorkerIds.includes(id)) && h('button', { style: abtn({ fontSize: 11 }), onClick: () => saveD8(rec.id, 'team', [...new Set([...(d8.team || []), 'master', ...linkedWorkerIds])]) }, '⚡ Нач. цеха + исполнители'),
+          opName && competent.length > 0 && !(d8.team || []).length && h('button', { style: gbtn({ fontSize: 11 }), onClick: () => saveD8(rec.id, 'team', ['master', ...competent.slice(0, 3).map(w => w.id)]) }, `⚡ Нач. цеха + допущенные к «${opName.length > 12 ? opName.slice(0, 12) + '…' : opName}»`)
         ),
         // Группа 1: исполнители операции
         executors.length > 0 && h('div', { style: { marginTop: 4 } },
@@ -5064,7 +5064,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
       lbl('Ответственный'),
       h('select', { ...inp, value: d8.correctiveOwner || '', onChange: e => saveD8(rec.id, 'correctiveOwner', e.target.value) },
         h('option', { value: '' }, '— назначить —'),
-        h('option', { value: 'master' }, 'Мастер'),
+        h('option', { value: 'master' }, 'Начальник цеха'),
         data.workers.filter(w => (w.status || 'working') === 'working').map(w => h('option', { key: w.id, value: w.id }, w.name))
       ),
       lbl('Срок выполнения'),
@@ -5092,7 +5092,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
         lbl('Команда расследования'),
         h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
           (d8.team || []).map(wid => {
-            const w = wid === 'master' ? { name: 'Мастер' } : data.workers.find(w => w.id === wid);
+            const w = wid === 'master' ? { name: 'Начальник цеха' } : data.workers.find(w => w.id === wid);
             return h('span', { key: wid, style: { padding: '4px 10px', background: GN3, color: GN2, borderRadius: 6, fontSize: 11 } }, w?.name || wid);
           })
         )
@@ -8009,7 +8009,7 @@ function App() {
     h('div', { style: { display:'flex', gap:12, padding:'10px 0', borderBottom:'0.5px solid rgba(0,0,0,0.08)', alignItems:'center', flexWrap:'wrap' } },
       h('button', { style: gbtn({ fontSize:11 }), onClick: goBack }, '← Выход'),
       h('div', { style: { fontSize:12, color:'#888' } },
-        effectiveRole === 'master'      ? 'Мастер'        :
+        effectiveRole === 'master'      ? 'Начальник цеха' :
         effectiveRole === 'controller'  ? 'Контролёр'     :
         effectiveRole === 'warehouse'   ? 'Склад'          :
         effectiveRole === 'dashboard'   ? 'Дашборд'        :
