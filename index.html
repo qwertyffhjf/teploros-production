@@ -116,6 +116,11 @@
   </style>
 </head>
 <body>
+<div id="update-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#1a1a18;color:#fff;padding:12px 20px;z-index:9999;align-items:center;gap:12px;font-family:system-ui,sans-serif;font-size:14px;box-shadow:0 -2px 12px rgba(0,0,0,0.2)">
+  <span style="flex:1">🔄 Доступна новая версия приложения</span>
+  <button onclick="navigator.serviceWorker.getRegistration().then(r=>{if(r?.waiting){r.waiting.postMessage({type:'SKIP_WAITING'})}else{window.location.reload()}})" style="background:#EF9F27;color:#412402;border:none;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer">Обновить</button>
+  <button onclick="document.getElementById('update-banner').style.display='none'" style="background:transparent;color:#888;border:0.5px solid #555;padding:8px 14px;border-radius:8px;font-size:13px;cursor:pointer">Позже</button>
+</div>
 <div id="root"></div>
 <script>
 const { useState, useEffect, useRef, useMemo, useCallback, memo, createElement: h } = React;
@@ -287,10 +292,11 @@ const scoreWorkerForOp = (worker, opName, data) => {
 };
 
 const autoAssignWorker = (data, opName) => {
+  const anyHasCompetences = data.workers.some(w => !w.archived && w.competences?.length > 0);
   const candidates = data.workers.filter(w =>
     !w.archived &&
     (w.status || 'working') === 'working' &&
-    (!w.competences?.length || w.competences.includes(opName)) &&
+    (anyHasCompetences ? w.competences?.includes(opName) : true) &&
     !data.ops.some(op => op.status === 'in_progress' && op.workerIds?.includes(w.id))
   );
   if (candidates.length === 0) return null;
@@ -303,13 +309,17 @@ const getAssignmentRecommendations = (data) => {
   const pendingOps = data.ops.filter(op => op.status === 'pending' && !op.archived && (!op.workerIds || op.workerIds.length === 0));
   return pendingOps.map(op => {
     const order = data.orders.find(o => o.id === op.orderId);
-    const candidates = data.workers.filter(w =>
-      !w.archived &&
-      (w.status || 'working') === 'working' &&
-      (!w.competences?.length || w.competences.includes(op.name))
-    );
-    const scored = candidates.map(w => scoreWorkerForOp(w, op.name, data)).sort((a, b) => b.totalScore - a.totalScore);
-    return { opId: op.id, opName: op.name, orderNumber: order?.number || '—', orderPriority: order?.priority || 'medium', deadline: order?.deadline, candidates: scored.slice(0, 3) };
+    const anyHasCompetences = data.workers.some(w => !w.archived && w.competences?.length > 0);
+    const activeWorkers = data.workers.filter(w => !w.archived && (w.status || 'working') === 'working');
+
+    // С допуском — полный балл; без допуска — штраф −20 и пометка
+    const scored = activeWorkers.map(w => {
+      const hasAccess = !anyHasCompetences || w.competences?.includes(op.name);
+      const s = scoreWorkerForOp(w, op.name, data);
+      return { ...s, hasAccess, totalScore: hasAccess ? s.totalScore : s.totalScore - 20 };
+    }).sort((a, b) => b.totalScore - a.totalScore);
+
+    return { opId: op.id, opName: op.name, orderNumber: order?.number || '—', orderPriority: order?.priority || 'medium', deadline: order?.deadline, candidates: scored.slice(0, 4) };
   }).sort((a, b) => {
     const prio = { critical: 0, high: 1, medium: 2, low: 3 };
     return (prio[a.orderPriority] || 4) - (prio[b.orderPriority] || 4);
@@ -4864,15 +4874,28 @@ const AssignmentRecommendations = memo(({ data, onUpdate, addToast }) => {
           rec.candidates.length === 0
             ? h('div', { style: { fontSize: 11, color: RD } }, 'Нет подходящих кандидатов (проверьте компетенции и статусы)')
             : h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
-                rec.candidates.map((c, i) => h('div', { key: c.workerId, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 8, background: i === 0 ? GN3 : '#f8f8f5', border: i === 0 ? `0.5px solid ${GN}` : '0.5px solid rgba(0,0,0,0.08)', cursor: 'pointer' }, onClick: () => assignWorker(rec.opId, c.workerId) },
-                  h('div', null,
-                    h('div', { style: { fontSize: 12, fontWeight: i === 0 ? 500 : 400 } }, c.workerName, i === 0 && h('span', { style: { marginLeft: 4, fontSize: 10, color: GN } }, '★ лучший')),
-                    h('div', { style: { fontSize: 10, color: '#888' } },
-                      `Ур.${c.level} · Опыт:${c.details.experience} · Кач:${c.qualityScore}/25 · Загр:${c.details.activeOps}`
-                    )
-                  ),
-                  h('div', { style: { fontSize: 16, fontWeight: 500, color: i === 0 ? GN : AM, marginLeft: 'auto' } }, c.totalScore)
-                ))
+                rec.candidates.map((c, i) => {
+                  const isTop = i === 0 && c.hasAccess !== false;
+                  const noBadge = c.hasAccess === false;
+                  return h('div', { key: c.workerId,
+                    style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 8,
+                      background: noBadge ? '#f5f5f2' : isTop ? GN3 : '#f8f8f5',
+                      border: noBadge ? '0.5px solid rgba(0,0,0,0.1)' : isTop ? `0.5px solid ${GN}` : '0.5px solid rgba(0,0,0,0.08)',
+                      cursor: 'pointer', opacity: noBadge ? 0.75 : 1 },
+                    onClick: () => assignWorker(rec.opId, c.workerId) },
+                    h('div', null,
+                      h('div', { style: { fontSize: 12, fontWeight: isTop ? 500 : 400 } },
+                        c.workerName,
+                        isTop && h('span', { style: { marginLeft: 4, fontSize: 10, color: GN } }, '★ лучший'),
+                        noBadge && h('span', { style: { marginLeft: 4, fontSize: 10, color: '#aaa', background: '#eee', padding: '1px 5px', borderRadius: 4 } }, 'нет допуска')
+                      ),
+                      h('div', { style: { fontSize: 10, color: '#888' } },
+                        `Ур.${c.level} · Опыт:${c.details.experience} · Кач:${c.qualityScore}/25 · Загр:${c.details.activeOps}`
+                      )
+                    ),
+                    h('div', { style: { fontSize: 16, fontWeight: 500, color: noBadge ? '#aaa' : isTop ? GN : AM, marginLeft: 'auto' } }, c.totalScore)
+                  );
+                })
               )
         ))
   );
@@ -8077,9 +8100,26 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').then(reg => {
       console.log('SW registered:', reg.scope);
-      // Check for updates every 30 minutes
+      // Проверка обновлений каждые 30 минут
       setInterval(() => reg.update(), 30 * 60 * 1000);
+      // Уведомление о новой версии
+      reg.addEventListener('updatefound', () => {
+        const newWorker = reg.installing;
+        if (!newWorker) return;
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            // Новая версия готова — показываем баннер
+            const banner = document.getElementById('update-banner');
+            if (banner) banner.style.display = 'flex';
+          }
+        });
+      });
     }).catch(err => console.log('SW registration failed:', err));
+  });
+  // Перезагрузка после активации нового SW
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!refreshing) { refreshing = true; window.location.reload(); }
   });
 }
 </script>
