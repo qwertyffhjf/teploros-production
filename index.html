@@ -4488,7 +4488,13 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
             h('tbody', null, data.workers.map(w =>
               h('tr', { key: w.id },
                 h('td', { style: S.td }, w.name),
-                h('td', { style: { ...S.td, fontFamily:'monospace', fontSize:14, fontWeight:500, letterSpacing:'0.2em' } }, w.pin ? (w.pin.startsWith('H_') ? '••••' : w.pin) : '—'),
+                h('td', { style: { ...S.td, fontFamily:'monospace', fontSize:14, fontWeight:500, letterSpacing:'0.2em' } },
+                  w.pin
+                    ? w.pin.startsWith('H_')
+                      ? h('span', { title: 'PIN сохранён (захеширован). Введите новый для замены.' }, '••••')
+                      : w.pin
+                    : h('span', { style: { color: '#aaa', fontFamily: 'inherit', fontSize: 12, letterSpacing: 0 } }, 'не задан')
+                ),
                 h('td', { style: S.td },
                   h('input', {
                     type:'text', inputMode:'numeric',
@@ -6164,6 +6170,11 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
   const [showPeople, setShowPeople] = useState(false);
   const messagesEndRef = useRef(null);
 
+  const deleteMessage = useCallback(async (msgId) => {
+    const d = { ...data, messages: (data.messages || []).filter(m => m.id !== msgId) };
+    await DB.save(d); onUpdate(d);
+  }, [data, onUpdate]);
+
   const scrollToBottom = () => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); };
   useEffect(scrollToBottom, [data.messages]);
 
@@ -6295,7 +6306,9 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
             h('span', { style: { fontWeight: 500, cursor: m.senderId !== 'system' ? 'pointer' : 'default', color: m.senderId !== 'system' ? AM : '#888' }, onClick: () => { const w = data.workers.find(w => w.id === m.senderId); if (w) setViewProfileId(w.id); } }, m.senderName),
             m.senderRole === 'master' && h('span', { style: { fontSize: 9, padding: '1px 4px', background: AM3, color: AM2, borderRadius: 4 } }, 'мастер'),
             m.orderNumber && h('span', { style: { fontSize: 9, color: AM } }, `📋 ${m.orderNumber}`),
-            m.opName && h('span', { style: { fontSize: 9, color: '#666' } }, `→ ${m.opName}`)
+            m.opName && h('span', { style: { fontSize: 9, color: '#666' } }, `→ ${m.opName}`),
+            (isMaster || m.senderId === myId) && m.senderId !== 'system' &&
+              h('button', { title: 'Удалить сообщение', style: { background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 12, padding: '0 2px', lineHeight: 1, marginLeft: 2 }, onClick: () => deleteMessage(m.id) }, '×')
           ),
           h('div', { style: {
             background: ts ? ts.bg : isMe ? AM3 : '#fff',
