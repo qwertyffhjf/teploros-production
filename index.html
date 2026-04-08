@@ -166,7 +166,7 @@ const ACHIEVEMENTS = {
   quality_star: { icon: '💎', title: 'Безупречное качество', desc: 'Более 50 операций, брак менее 1%', condition: (s) => s.doneCount >= 50 && s.defectRate < 1 },
   weld_master: { icon: '🔥', title: 'Мастер сварки', desc: '50 сварочных операций', condition: (s) => s.weldCount >= 50 },
   speed_demon: { icon: '⚡', title: 'Скоростной монтаж', desc: 'Среднее время на 20% быстрее плана (мин. 10 операций)', condition: (s) => s.doneWithPlan >= 10 && s.avgRatio < 0.8 },
-  no_downtime: { icon: '🛡️', title: 'Нет простоям', desc: '0 простоев за последние 30 дней', condition: (s) => s.downtimes30d === 0 && s.doneCount >= 5 },
+  no_downtime: { icon: '🛡️', title: 'Нет простоям', desc: '0 простоев за 30 дней (минимум 5 операций)', condition: (s) => s.downtimes30d === 0 && s.doneCount >= 5 && s.doneCount7d >= 1 },
   streak_5: { icon: '🎯', title: 'Серия 5', desc: '5 операций подряд без брака', condition: (s) => s.currentStreak >= 5 },
   streak_20: { icon: '🎪', title: 'Серия 20', desc: '20 операций подряд без брака', condition: (s) => s.currentStreak >= 20 },
   multi_skill: { icon: '🌟', title: 'Универсал', desc: 'Выполнял 5+ разных типов операций', condition: (s) => s.uniqueOpTypes >= 5 },
@@ -176,7 +176,7 @@ const ACHIEVEMENTS = {
   universal_2_3: { icon: '🔄', title: 'Универсал 2.0', desc: 'Работал на 3+ разных участках', condition: (s) => s.uniqueSections >= 3 },
   weekend_5: { icon: '🌙', title: 'Трудоголик', desc: '5 операций в выходные дни', condition: (s) => s.weekendOps >= 5 },
   virtuoso_10: { icon: '🎻', title: 'Виртуоз', desc: '10 операций быстрее 50% плана', condition: (s) => s.fastOps >= 10 },
-  no_downtime_7: { icon: '🛡️', title: 'Антипростой', desc: '7 дней без простоев', condition: (s) => s.downtimes7d === 0 },
+  no_downtime_7: { icon: '🛡️', title: 'Антипростой', desc: '7 дней без простоев (минимум 3 операции за неделю)', condition: (s) => s.downtimes7d === 0 && s.doneCount7d >= 3 },
   speed_streak_5: { icon: '🚀', title: 'Скоростной рывок', desc: '5 операций подряд быстрее плана на 20%', condition: (s) => s.bestSpeedStreak >= 5 }
 };
 
@@ -208,7 +208,8 @@ const calcWorkerStats = (workerId, data, nowTime) => {
   const d30 = t - 30 * 86400000;
   const d7 = t - 7 * 86400000;
   const downtimes30d = data.events.filter(e => e.workerId === workerId && e.type === 'downtime' && e.ts >= d30).length;
-  const downtimes7d = data.events.filter(e => e.workerId === workerId && e.type === 'downtime' && e.ts >= d7).length;
+  const downtimes7d  = data.events.filter(e => e.workerId === workerId && e.type === 'downtime' && e.ts >= d7).length;
+  const doneCount7d  = doneOps.filter(op => op.finishedAt && op.finishedAt >= d7).length;
   const sorted = [...doneOps, ...defectOps].sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0));
   let currentStreak = 0;
   for (const op of sorted) { if (op.status === 'done') currentStreak++; else break; }
@@ -226,7 +227,7 @@ const calcWorkerStats = (workerId, data, nowTime) => {
     if (actual < planned * 0.8) { currentSpeedStreak++; if (currentSpeedStreak > bestSpeedStreak) bestSpeedStreak = currentSpeedStreak; }
     else currentSpeedStreak = 0;
   }
-  return { doneCount, defectCount, defectRate, weldCount, doneWithPlan, avgRatio, downtimes30d, downtimes7d, currentStreak, uniqueOpTypes, detectedDefects, thanksReceived, uniqueSections, weekendOps, fastOps, bestSpeedStreak };
+  return { doneCount, defectCount, defectRate, weldCount, doneWithPlan, avgRatio, downtimes30d, downtimes7d, doneCount7d, currentStreak, uniqueOpTypes, detectedDefects, thanksReceived, uniqueSections, weekendOps, fastOps, bestSpeedStreak };
 };
 
 const checkAchievements = (workerId, data) => {
@@ -1569,8 +1570,9 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     setActiveOp(null); setShowDefForm(false); setDefNote(''); setDefectReasonId('');
     setWeldParams({ seamNumber: '', electrode: '', result: 'ok' });
     addToast(`Операция "${op.name}" завершена (${STATUS[status]?.label || status})`, 'info');
-    // Показать модал расхода материалов если операция завершена успешно
-    if ((status === 'done' || status === 'on_check') && data.materials.length > 0) {
+    // Показать модал расхода материалов только если функция включена в настройках
+    if ((status === 'done' || status === 'on_check') && data.materials.length > 0
+        && data.settings?.materialTrackingEnabled) {
       setPendingFinishOp(op); setShowMaterialModal(true);
     }
   }, [data, workerId, onUpdate, defNote, defectReasonId, weldParams, addToast]);
@@ -4446,6 +4448,24 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         h('div', { style: { fontSize:10, color:AM4, textTransform:'uppercase', letterSpacing:'0.15em', marginTop:8 } }, welcomeLabel)
       ),
       h('button', { style: abtn(), onClick: saveWelcome }, 'Сохранить текст')
+    ),
+    h('div', { style: S.card },
+      h('div', { style: S.sec }, 'Функции производства'),
+      h('label', { style: { display:'flex', alignItems:'center', gap: 12, cursor:'pointer', padding: '8px 0' } },
+        h('input', { type:'checkbox',
+          checked: !!(data.settings?.materialTrackingEnabled),
+          style: { width: 20, height: 20, accentColor: AM, flexShrink: 0 },
+          onChange: async (e) => {
+            const d = { ...data, settings: { ...(data.settings || {}), materialTrackingEnabled: e.target.checked } };
+            await DB.save(d); onUpdate(d);
+            addToast(e.target.checked ? 'Списание материалов включено' : 'Списание материалов отключено', 'success');
+          }
+        }),
+        h('div', null,
+          h('div', { style: { fontSize: 13, fontWeight: 500 } }, 'Запрашивать списание материалов после операции'),
+          h('div', { style: { fontSize: 11, color: '#888', marginTop: 2 } }, 'Оператору будет предложено указать расход материалов при завершении каждой операции')
+        )
+      )
     ),
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'PIN-коды сотрудников'),
