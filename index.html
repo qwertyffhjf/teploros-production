@@ -312,14 +312,19 @@ const getAssignmentRecommendations = (data) => {
     const anyHasCompetences = data.workers.some(w => !w.archived && w.competences?.length > 0);
     const activeWorkers = data.workers.filter(w => !w.archived && (w.status || 'working') === 'working');
 
-    // С допуском — полный балл; без допуска — штраф −20 и пометка
-    const scored = activeWorkers.map(w => {
-      const hasAccess = !anyHasCompetences || w.competences?.includes(op.name);
-      const s = scoreWorkerForOp(w, op.name, data);
-      return { ...s, hasAccess, totalScore: hasAccess ? s.totalScore : s.totalScore - 20 };
-    }).sort((a, b) => b.totalScore - a.totalScore);
+    const qualified = activeWorkers
+      .filter(w => !anyHasCompetences || w.competences?.includes(op.name))
+      .map(w => ({ ...scoreWorkerForOp(w, op.name, data), hasAccess: true }))
+      .sort((a, b) => b.totalScore - a.totalScore);
 
-    return { opId: op.id, opName: op.name, orderNumber: order?.number || '—', orderPriority: order?.priority || 'medium', deadline: order?.deadline, candidates: scored.slice(0, 4) };
+    const others = activeWorkers
+      .filter(w => anyHasCompetences && !w.competences?.includes(op.name))
+      .map(w => ({ ...scoreWorkerForOp(w, op.name, data), hasAccess: false }))
+      .sort((a, b) => a.workerName.localeCompare(b.workerName, 'ru'));
+
+    const scored = [...qualified, { divider: true }, ...others].filter(Boolean);
+
+    return { opId: op.id, opName: op.name, orderNumber: order?.number || '—', orderPriority: order?.priority || 'medium', deadline: order?.deadline, candidates: scored };
   }).sort((a, b) => {
     const prio = { critical: 0, high: 1, medium: 2, low: 3 };
     return (prio[a.orderPriority] || 4) - (prio[b.orderPriority] || 4);
@@ -4877,29 +4882,39 @@ const AssignmentRecommendations = memo(({ data, onUpdate, addToast }) => {
             ),
             h('span', { style: { fontSize: 10, color: PRIORITY[rec.orderPriority]?.color } }, PRIORITY[rec.orderPriority]?.label)
           ),
-          rec.candidates.length === 0
-            ? h('div', { style: { fontSize: 11, color: RD } }, 'Нет подходящих кандидатов (проверьте компетенции и статусы)')
-            : h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+          rec.candidates.filter(c => !c.divider && c.hasAccess).length === 0 && rec.candidates.filter(c => !c.divider).length === 0
+            ? h('div', { style: { fontSize: 11, color: RD } }, 'Нет сотрудников')
+            : h('div', { style: { display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 6, WebkitOverflowScrolling: 'touch', scrollbarWidth: 'thin' } },
                 rec.candidates.map((c, i) => {
-                  const isTop = i === 0 && c.hasAccess !== false;
-                  const noBadge = c.hasAccess === false;
+                  // Разделитель между группами
+                  if (c.divider) {
+                    return rec.candidates.some(x => !x.divider && !x.hasAccess)
+                      ? h('div', { key: 'div', style: { display: 'flex', alignItems: 'center', flexShrink: 0, gap: 4 } },
+                          h('div', { style: { width: 1, height: 48, background: 'rgba(0,0,0,0.1)' } }),
+                          h('div', { style: { fontSize: 9, color: '#bbb', writingMode: 'vertical-lr', textOrientation: 'mixed', padding: '4px 0' } }, 'нет допуска')
+                        )
+                      : null;
+                  }
+                  const isTop = i === 0 && c.hasAccess;
+                  const noBadge = !c.hasAccess;
                   return h('div', { key: c.workerId,
-                    style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 8,
+                    style: { flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+                      borderRadius: 10, cursor: 'pointer',
                       background: noBadge ? '#f5f5f2' : isTop ? GN3 : '#f8f8f5',
-                      border: noBadge ? '0.5px solid rgba(0,0,0,0.1)' : isTop ? `0.5px solid ${GN}` : '0.5px solid rgba(0,0,0,0.08)',
-                      cursor: 'pointer', opacity: noBadge ? 0.75 : 1 },
+                      border: noBadge ? '0.5px solid rgba(0,0,0,0.08)' : isTop ? `0.5px solid ${GN}` : '0.5px solid rgba(0,0,0,0.1)',
+                      opacity: noBadge ? 0.7 : 1,
+                      minWidth: 160, maxWidth: 200 },
                     onClick: () => assignWorker(rec.opId, c.workerId) },
-                    h('div', null,
-                      h('div', { style: { fontSize: 12, fontWeight: isTop ? 500 : 400 } },
+                    h('div', { style: { flex: 1, minWidth: 0 } },
+                      h('div', { style: { fontSize: 12, fontWeight: isTop ? 500 : 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } },
                         c.workerName,
-                        isTop && h('span', { style: { marginLeft: 4, fontSize: 10, color: GN } }, '★ лучший'),
-                        noBadge && h('span', { style: { marginLeft: 4, fontSize: 10, color: '#aaa', background: '#eee', padding: '1px 5px', borderRadius: 4 } }, 'нет допуска')
+                        isTop && h('span', { style: { marginLeft: 4, fontSize: 10, color: GN } }, '★')
                       ),
-                      h('div', { style: { fontSize: 10, color: '#888' } },
-                        `Ур.${c.level} · Опыт:${c.details.experience} · Кач:${c.qualityScore}/25 · Загр:${c.details.activeOps}`
+                      h('div', { style: { fontSize: 10, color: '#888', marginTop: 2 } },
+                        `Ур.${c.level} · Опыт:${c.details.experience} · Кач:${c.qualityScore}/25`
                       )
                     ),
-                    h('div', { style: { fontSize: 16, fontWeight: 500, color: noBadge ? '#aaa' : isTop ? GN : AM, marginLeft: 'auto' } }, c.totalScore)
+                    h('div', { style: { fontSize: 15, fontWeight: 500, color: noBadge ? '#bbb' : isTop ? GN : AM, flexShrink: 0 } }, noBadge ? '—' : c.totalScore)
                   );
                 })
               )
