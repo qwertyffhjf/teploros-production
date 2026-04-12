@@ -384,6 +384,9 @@ const DOC_REF = firestore.collection('app').doc('production_v14');
 const EMPTY_DATA = {
   orders: [], ops: [], workers: [], downtimeTypes: [], events: [], materials: [], sections: [], equipment: [],
   bomTemplates: [], materialConsumptions: [], productionStages: [], defectReasons: [], workerAvailabilities: [], timesheet: {},
+  instructions: [],   // инструктажи ОТ: [{id, workerId, type, date, nextDate, conductedBy, note}]
+  vacations: [],      // плановые отпуска: [{id, workerId, startDate, endDate, approved, note}]
+  opNorms: {},        // нормы операций: {opName: {planned: N, samples: N, totalMs: N}}
   messages: [], reclamations: [], duels: [], materialReservations: [],
   settings: {
     // Единый PIN-вход: мастер и контролёр тоже входят по PIN
@@ -795,10 +798,19 @@ const buildFinishUpdate = (data, op, workerId, params = {}) => {
   if (isDefect) {
     reclamations = [...reclamations, { id: uid(), opId: op.id, orderId: op.orderId, workerIds: op.workerIds || [workerId], defectReasonId, defectNote: defNote, defectSource: source, createdAt: finishedAt, status: 'open', d8: { team: ['master', ...(op.workerIds || [workerId])], containment: '', whys: ['', '', '', '', ''], rootCause: '', corrective: '', correctiveOwner: '', correctiveDeadline: '', validation: '', validationDate: '', preventive: '', preventiveDocs: '', closedNote: '', currentStep: 0 } }];
   }
+  // Накапливаем статистику для нормирования (только успешные операции с временем)
+  let opNorms = { ...(data.opNorms || {}) };
+  if (status === 'done' && op.startedAt && finishedAt && op.name) {
+    const elapsed = finishedAt - op.startedAt;
+    const existing = opNorms[op.name] || { samples: 0, totalMs: 0 };
+    opNorms[op.name] = { samples: existing.samples + 1, totalMs: existing.totalMs + elapsed };
+  }
+
   return {
     ops: data.ops.map(o => o.id === op.id ? updatedOp : o),
     events: [...data.events, eventEntry],
     reclamations,
+    opNorms,
     _status: status,
     _finishedAt: finishedAt,
     _updatedOp: updatedOp
@@ -1751,7 +1763,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const doFinish = useCallback(async (op, isDefect = false, isRework = false, source = 'current') => {
     if (op.status !== 'in_progress') return;
     const result = buildFinishUpdate(data, op, workerId, { isDefect, isRework, source, defNote, defectReasonId, weldParams });
-    const updated = { ...data, ops: result.ops, events: result.events, reclamations: result.reclamations };
+    const updated = { ...data, ops: result.ops, events: result.events, reclamations: result.reclamations, opNorms: result.opNorms || data.opNorms || {} };
     const status = result._status;
     // Проверяем достижения и сохраняем ОДИН раз
     const withAch = checkAchievements(workerId, updated);
@@ -3328,7 +3340,30 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
   const [editingId, setEditingId] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
   const [search, setSearch] = useState('');
+  const [adjustModal, setAdjustModal] = useState(null); // {mat} — модал корректировки
+  const [adjustForm, setAdjustForm] = useState({ qty: '', comment: '' });
   const { ask: askConfirm, confirmEl } = useConfirm();
+
+  const openAdjust = useCallback((mat) => {
+    setAdjustModal(mat);
+    setAdjustForm({ qty: String(mat.quantity), comment: '' });
+  }, []);
+
+  const saveAdjust = useCallback(async () => {
+    if (!adjustModal) return;
+    const newQty = parseFloat(adjustForm.qty);
+    if (isNaN(newQty) || newQty < 0) { addToast('Введите корректное количество', 'error'); return; }
+    if (!adjustForm.comment.trim()) { addToast('Укажите причину корректировки', 'error'); return; }
+    const diff = newQty - adjustModal.quantity;
+    const historyEntry = { id: uid(), ts: now(), oldQty: adjustModal.quantity, newQty, diff, comment: adjustForm.comment.trim() };
+    const d = { ...data, materials: data.materials.map(m => m.id === adjustModal.id
+      ? { ...m, quantity: newQty, adjustHistory: [...(m.adjustHistory || []), historyEntry] }
+      : m
+    )};
+    await DB.save(d); onUpdate(d);
+    setAdjustModal(null); setAdjustForm({ qty: '', comment: '' });
+    addToast(`Остаток скорректирован: ${diff >= 0 ? '+' : ''}${Math.round(diff * 10) / 10} ${adjustModal.unit}`, 'success');
+  }, [data, adjustModal, adjustForm, onUpdate, addToast]);
 
   const validate = () => {
     const errors = {};
@@ -3403,6 +3438,38 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
 
   return h('div', null,
     confirmEl,
+    // Модал корректировки остатка
+    adjustModal && h('div', { style: { position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:60 } },
+      h('div', { style: { background:'#fff', borderRadius:14, padding:20, width:'min(360px, calc(100vw - 24px))', maxHeight:'85vh', overflowY:'auto' } },
+        h('div', { style: { fontSize:15, fontWeight:500, marginBottom:4 } }, 'Корректировка: '+adjustModal.name),
+        h('div', { style: { fontSize:12, color:'#888', marginBottom:16 } }, 'Текущий остаток: '+adjustModal.quantity+' '+adjustModal.unit),
+        h('label', { style: S.lbl }, 'Новое количество'),
+        h('input', { type:'number', min:0, step:'0.001', style: { ...S.inp, marginBottom:10 }, value: adjustForm.qty, onChange: e => setAdjustForm(p => ({ ...p, qty: e.target.value })) }),
+        (() => {
+          const newQty = parseFloat(adjustForm.qty);
+          const diff = !isNaN(newQty) ? newQty - adjustModal.quantity : null;
+          return diff !== null && diff !== 0 ? h('div', { style: { fontSize:12, color: diff > 0 ? GN2 : RD2, background: diff > 0 ? GN3 : '#FCEBEB', borderRadius:6, padding:'4px 10px', marginBottom:10 } },
+            (diff > 0 ? '+' : '')+Math.round(diff*1000)/1000+' '+adjustModal.unit
+          ) : null;
+        })(),
+        h('label', { style: S.lbl }, 'Причина корректировки *'),
+        h('textarea', { style: { ...S.inp, marginBottom:10 }, rows:3, placeholder:'Инвентаризация, пересчёт, ошибка учёта...', value: adjustForm.comment, onChange: e => setAdjustForm(p => ({ ...p, comment: e.target.value })) }),
+        adjustModal.adjustHistory?.length > 0 && h('div', { style: { marginBottom:12 } },
+          h('div', { style: { fontSize:11, color:'#888', marginBottom:6 } }, 'История ('+adjustModal.adjustHistory.length+'):'),
+          adjustModal.adjustHistory.slice(-3).reverse().map((h2, i) => h('div', { key:i, style: { fontSize:11, padding:'4px 8px', background:'#f8f8f5', borderRadius:6, marginBottom:4 } },
+            h('div', { style: { display:'flex', justifyContent:'space-between' } },
+              h('span', { style: { color: h2.diff >= 0 ? GN2 : RD2, fontWeight:500 } }, (h2.diff >= 0 ? '+' : '')+Math.round(h2.diff*1000)/1000+' -> '+h2.newQty),
+              h('span', { style: { color:'#aaa' } }, new Date(h2.ts).toLocaleDateString())
+            ),
+            h('div', { style: { color:'#888', marginTop:2 } }, h2.comment)
+          ))
+        ),
+        h('div', { style: { display:'flex', gap:8 } },
+          h('button', { style: abtn({ flex:1 }), onClick: saveAdjust }, 'Сохранить'),
+          h('button', { style: gbtn({ flex:1 }), onClick: () => setAdjustModal(null) }, 'Отмена')
+        )
+      )
+    ),
     h(PasteImportWidget, { addToast, hint: 'Вставить материалы из Excel',
       columns: [
         { key: 'name',     label: 'Название',        required: true },
@@ -3469,6 +3536,7 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
             h('td', { style: { ...S.td, color: AM } }, m.unitCost ? `${Math.round(m.quantity * m.unitCost).toLocaleString()}₽` : '—'),
             h('td', { style: S.td }, m.batch || '—'),
             h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
+              h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), title: 'Скорректировать остаток', onClick: () => openAdjust(m) }, '±'),
               h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => edit(m) }, '✎'),
               h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => del(m.id) }, '✕')
             ))
@@ -4028,7 +4096,17 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
           )),
           h('button', { style: gbtn({ marginTop: 4, fontSize: 11, padding: '4px 8px' }), onClick: autoAssign }, '🤖 Подобрать')
         ),
-        h('div', { style: { minWidth: 100 } }, h('input', { type: 'number', step: '0.1', style: { ...S.inp, width: '100%' }, placeholder: 'План, ч', value: form.plannedHours, onChange: e => setForm(p => ({ ...p, plannedHours: e.target.value })) })),
+        h('div', { style: { minWidth: 100 } },
+          h('input', { type: 'number', step: '0.1', style: { ...S.inp, width: '100%' }, placeholder: 'План, ч', value: form.plannedHours, onChange: e => setForm(p => ({ ...p, plannedHours: e.target.value })) }),
+          (() => {
+            const norm = data.opNorms?.[form.name];
+            if (!norm || norm.samples < 2) return null;
+            const suggested = Math.round(norm.totalMs / norm.samples / 3600000 * 10) / 10;
+            return h('div', { style: { fontSize: 10, color: AM4, marginTop: 2, cursor: 'pointer' }, onClick: () => setForm(p => ({ ...p, plannedHours: String(suggested) })) },
+              `↑ норма ${suggested}ч (${norm.samples} оп.)`
+            );
+          })()
+        ),
         h('div', { style: { minWidth: 140 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Ссылка на чертёж', value: form.drawingUrl, onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value })) })),
         h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, '+')
       )
@@ -4554,7 +4632,6 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
   );
 
   return h('div', null,
-    h(SectionAnalytics, { section: 'hr', data }),
     confirmEl,
     cardWorker && h(WorkerCardModal, { worker: cardWorker, data, onClose: () => setCardWorker(null) }),
     thanksModal && h('div', { role:'dialog','aria-modal':'true','aria-label':'Отправить благодарность', style: { position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:200 } },
@@ -4715,6 +4792,417 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
         )))
       )),
       h('div', { style: { fontSize: 10, color: '#888', marginTop: 6 } }, 'Нажмите на ячейку для переключения: — → Новичок → Компетентен → Эксперт → —')
+    )
+  );
+});
+
+// ==================== InstructionsTracker (ОТ) ====================
+const INSTRUCTION_TYPES = [
+  { id: 'initial',     label: 'Вводный',                  months: null },
+  { id: 'workplace',   label: 'На рабочем месте',          months: 12 },
+  { id: 'fire',        label: 'Противопожарный',           months: 12 },
+  { id: 'electrical',  label: 'Электробезопасность',       months: 12 },
+  { id: 'unplanned',   label: 'Внеплановый',               months: null },
+  { id: 'targeted',    label: 'Целевой',                   months: null },
+];
+
+const InstructionsTracker = memo(({ data, onUpdate, addToast }) => {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ workerId: '', type: 'workplace', date: new Date().toISOString().slice(0,10), conductedBy: '', note: '' });
+  const [filter, setFilter] = useState('all'); // all | expiring | expired
+  const { ask: askConfirm, confirmEl } = useConfirm();
+
+  const instructions = data.instructions || [];
+  const workers = data.workers.filter(w => !w.archived);
+
+  const save = useCallback(async () => {
+    if (!form.workerId || !form.date) { addToast('Заполните сотрудника и дату', 'error'); return; }
+    const type = INSTRUCTION_TYPES.find(t => t.id === form.type);
+    const dateMs = new Date(form.date).getTime();
+    const nextDate = type?.months ? new Date(form.date).setMonth(new Date(form.date).getMonth() + type.months) : null;
+    const entry = { id: uid(), workerId: form.workerId, type: form.type, date: form.date, dateMs, nextDate, conductedBy: form.conductedBy.trim(), note: form.note.trim(), createdAt: now() };
+    const d = { ...data, instructions: [...instructions, entry] };
+    await DB.save(d); onUpdate(d);
+    setForm({ workerId: '', type: 'workplace', date: new Date().toISOString().slice(0,10), conductedBy: '', note: '' });
+    setShowForm(false); addToast('Инструктаж записан', 'success');
+  }, [data, instructions, form, onUpdate, addToast]);
+
+  const del = useCallback(async (id) => {
+    if (!(await askConfirm({ message: 'Удалить запись об инструктаже?' }))) return;
+    const d = { ...data, instructions: instructions.filter(i => i.id !== id) };
+    await DB.save(d); onUpdate(d); addToast('Удалено', 'info');
+  }, [data, instructions, onUpdate, addToast]);
+
+  // Статус инструктажа
+  const getStatus = (instr) => {
+    if (!instr.nextDate) return 'ok';
+    const daysLeft = Math.ceil((instr.nextDate - now()) / 86400000);
+    if (daysLeft < 0) return 'expired';
+    if (daysLeft <= 30) return 'expiring';
+    return 'ok';
+  };
+
+  // Сводка по сотрудникам — последний инструктаж каждого типа
+  const workerSummary = useMemo(() => {
+    return workers.map(w => {
+      const wInstr = instructions.filter(i => i.workerId === w.id);
+      const byType = {};
+      INSTRUCTION_TYPES.forEach(t => {
+        const last = wInstr.filter(i => i.type === t.id).sort((a,b) => b.dateMs - a.dateMs)[0];
+        byType[t.id] = last;
+      });
+      const hasExpired  = Object.values(byType).some(i => i && getStatus(i) === 'expired');
+      const hasExpiring = Object.values(byType).some(i => i && getStatus(i) === 'expiring');
+      return { worker: w, byType, hasExpired, hasExpiring };
+    });
+  }, [workers, instructions]);
+
+  const expired  = workerSummary.filter(s => s.hasExpired).length;
+  const expiring = workerSummary.filter(s => s.hasExpiring && !s.hasExpired).length;
+
+  const shown = filter === 'expired'  ? workerSummary.filter(s => s.hasExpired) :
+                filter === 'expiring' ? workerSummary.filter(s => s.hasExpiring) :
+                workerSummary;
+
+  const statusStyle = { ok: { bg: GN3, cl: GN2, lbl: '✓' }, expiring: { bg: AM3, cl: AM2, lbl: '!' }, expired: { bg: '#FCEBEB', cl: RD2, lbl: '✕' }, none: { bg: '#f5f5f2', cl: '#ccc', lbl: '—' } };
+
+  return h('div', null,
+    confirmEl,
+    // KPI
+    h('div', { style: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:14 } },
+      h('div', { style: { ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500 } }, workers.length), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Сотрудников')),
+      h('div', { style: { ...S.card, textAlign:'center', padding:10, marginBottom:0, cursor:'pointer' }, onClick: () => setFilter(f => f==='expiring'?'all':'expiring') },
+        h('div', { style:{ fontSize:24, fontWeight:500, color: expiring > 0 ? AM2 : '#888' } }, expiring),
+        h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Истекают (30 дн)')
+      ),
+      h('div', { style: { ...S.card, textAlign:'center', padding:10, marginBottom:0, cursor:'pointer' }, onClick: () => setFilter(f => f==='expired'?'all':'expired') },
+        h('div', { style:{ fontSize:24, fontWeight:500, color: expired > 0 ? RD : '#888' } }, expired),
+        h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Просрочены')
+      )
+    ),
+
+    // Шапка
+    h('div', { style:{ display:'flex', gap:8, marginBottom:12, flexWrap:'wrap', alignItems:'center' } },
+      h('div', { style:{ fontSize:13, fontWeight:500, flex:1 } }, 'Журнал инструктажей ОТ'),
+      [['all','Все'],['expiring','Истекают'],['expired','Просрочены']].map(([id,l]) =>
+        h('button', { key:id, style: filter===id ? abtn({fontSize:11}) : gbtn({fontSize:11}), onClick: () => setFilter(id) }, l)
+      ),
+      h('button', { style: abtn(), onClick: () => setShowForm(v => !v) }, '+ Записать инструктаж')
+    ),
+
+    // Форма
+    showForm && h('div', { style: { ...S.card, border:`1.5px solid ${AM}`, marginBottom:14 } },
+      h('div', { style:{ fontSize:13, fontWeight:500, marginBottom:12 } }, 'Новая запись'),
+      h('div', { style:{ display:'flex', gap:10, flexWrap:'wrap', marginBottom:10 } },
+        h('div', { style:{ flex:2, minWidth:180 } },
+          h('label', { style:S.lbl }, 'Сотрудник *'),
+          h('select', { style:S.inp, value: form.workerId, onChange: e => setForm(p => ({ ...p, workerId: e.target.value })) },
+            h('option', { value:'' }, '— выберите —'),
+            workers.map(w => h('option', { key:w.id, value:w.id }, w.name))
+          )
+        ),
+        h('div', { style:{ flex:2, minWidth:180 } },
+          h('label', { style:S.lbl }, 'Вид инструктажа *'),
+          h('select', { style:S.inp, value: form.type, onChange: e => setForm(p => ({ ...p, type: e.target.value })) },
+            INSTRUCTION_TYPES.map(t => h('option', { key:t.id, value:t.id }, t.label + (t.months ? ` (раз в ${t.months} мес)` : '')))
+          )
+        ),
+        h('div', { style:{ flex:1, minWidth:130 } },
+          h('label', { style:S.lbl }, 'Дата *'),
+          h('input', { type:'date', style:S.inp, value:form.date, onChange: e => setForm(p => ({ ...p, date: e.target.value })) })
+        )
+      ),
+      h('div', { style:{ display:'flex', gap:10, flexWrap:'wrap', marginBottom:12 } },
+        h('div', { style:{ flex:2, minWidth:180 } },
+          h('label', { style:S.lbl }, 'Кто проводил'),
+          h('input', { style:S.inp, placeholder:'ФИО инструктора', value:form.conductedBy, onChange: e => setForm(p => ({ ...p, conductedBy: e.target.value })) })
+        ),
+        h('div', { style:{ flex:3, minWidth:200 } },
+          h('label', { style:S.lbl }, 'Примечание'),
+          h('input', { style:S.inp, placeholder:'Дополнительная информация', value:form.note, onChange: e => setForm(p => ({ ...p, note: e.target.value })) })
+        )
+      ),
+      h('div', { style:{ display:'flex', gap:8 } },
+        h('button', { style: abtn({ flex:1 }), onClick: save }, '✓ Сохранить'),
+        h('button', { style: gbtn({ flex:1 }), onClick: () => setShowForm(false) }, 'Отмена')
+      )
+    ),
+
+    // Матрица: сотрудник × виды инструктажей
+    h('div', { style:{ ...S.card, padding:0, overflow:'auto', maxHeight:'60vh' } },
+      h('table', { style:{ borderCollapse:'collapse', fontSize:11, width:'100%' } },
+        h('thead', null, h('tr', null,
+          h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'#f8f8f5', minWidth:160, textAlign:'left', padding:'6px 10px' } }, 'Сотрудник'),
+          INSTRUCTION_TYPES.map(t => h('th', { key:t.id, style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:90, fontSize:10 } }, t.label))
+        )),
+        h('tbody', null, shown.map(({ worker: w, byType }) =>
+          h('tr', { key:w.id },
+            h('td', { style:{ ...S.td, position:'sticky', left:0, background:'#fff', zIndex:1, padding:'6px 10px', fontWeight:500, boxShadow:'2px 0 4px rgba(0,0,0,0.04)' } }, w.name),
+            INSTRUCTION_TYPES.map(t => {
+              const instr = byType[t.id];
+              const st = instr ? getStatus(instr) : 'none';
+              const { bg, cl, lbl } = statusStyle[st];
+              const daysLeft = instr?.nextDate ? Math.ceil((instr.nextDate - now()) / 86400000) : null;
+              return h('td', { key:t.id, style:{ ...S.td, padding:4, textAlign:'center' } },
+                h('span', { title: instr ? `${instr.date}${daysLeft !== null ? (daysLeft < 0 ? ` (просрочен ${Math.abs(daysLeft)} дн)` : ` (${daysLeft} дн)`) : ''}` : 'Не проводился',
+                  style:{ display:'inline-flex', flexDirection:'column', alignItems:'center', justifyContent:'center', width:50, padding:'3px 4px', borderRadius:4, background:bg, color:cl, fontSize:10, fontWeight:500, cursor:'default' } },
+                  lbl,
+                  instr && h('span', { style:{ fontSize:9, opacity:0.8 } }, instr.date.slice(0,7))
+                )
+              );
+            })
+          )
+        ))
+      )
+    ),
+
+    // Последние записи
+    instructions.length > 0 && h('div', { style:{ marginTop:14 } },
+      h('div', { style:{ fontSize:12, fontWeight:500, color:'#888', marginBottom:8 } }, 'Последние записи'),
+      [...instructions].sort((a,b) => b.dateMs - a.dateMs).slice(0,10).map(instr => {
+        const w = data.workers.find(x => x.id === instr.workerId);
+        const t = INSTRUCTION_TYPES.find(x => x.id === instr.type);
+        const st = getStatus(instr);
+        return h('div', { key:instr.id, style:{ display:'flex', alignItems:'center', gap:8, padding:'6px 0', borderBottom:'0.5px solid rgba(0,0,0,0.06)' } },
+          h('div', { style:{ flex:1, fontSize:12 } },
+            h('span', { style:{ fontWeight:500 } }, w?.name || '—'),
+            h('span', { style:{ color:'#888', margin:'0 6px' } }, '·'),
+            t?.label || instr.type,
+            h('span', { style:{ color:'#888', marginLeft:6, fontSize:11 } }, instr.date)
+          ),
+          st !== 'ok' && h('span', { style:{ fontSize:10, padding:'1px 6px', borderRadius:4, background: st==='expired'?'#FCEBEB':AM3, color: st==='expired'?RD2:AM2 } }, st==='expired'?'Просрочен':'Истекает'),
+          h('button', { style:{ background:'none', border:'none', color:'#ccc', cursor:'pointer', fontSize:14 }, onClick:() => del(instr.id) }, '×')
+        );
+      })
+    )
+  );
+});
+
+// ==================== VacationPlanner ====================
+const VacationPlanner = memo(({ data, onUpdate, addToast }) => {
+  const today = new Date().toISOString().slice(0,10);
+  const [form, setForm] = useState({ workerId:'', startDate:'', endDate:'', note:'' });
+  const [showForm, setShowForm] = useState(false);
+  const { ask: askConfirm, confirmEl } = useConfirm();
+
+  const vacations = data.vacations || [];
+  const workers = data.workers.filter(w => !w.archived);
+
+  const save = useCallback(async () => {
+    if (!form.workerId || !form.startDate || !form.endDate) { addToast('Заполните все поля', 'error'); return; }
+    if (form.endDate < form.startDate) { addToast('Дата окончания раньше начала', 'error'); return; }
+    const start = new Date(form.startDate), end = new Date(form.endDate);
+    const days = Math.ceil((end - start) / 86400000) + 1;
+    const entry = { id: uid(), workerId: form.workerId, startDate: form.startDate, endDate: form.endDate, days, note: form.note.trim(), createdAt: now(), approved: false };
+    const d = { ...data, vacations: [...vacations, entry] };
+    await DB.save(d); onUpdate(d);
+    setForm({ workerId:'', startDate:'', endDate:'', note:'' }); setShowForm(false);
+    addToast(`Отпуск ${days} дней записан`, 'success');
+  }, [data, vacations, form, onUpdate, addToast]);
+
+  const toggle = useCallback(async (id) => {
+    const d = { ...data, vacations: vacations.map(v => v.id === id ? { ...v, approved: !v.approved } : v) };
+    await DB.save(d); onUpdate(d);
+  }, [data, vacations, onUpdate]);
+
+  const del = useCallback(async (id) => {
+    if (!(await askConfirm({ message: 'Удалить запись об отпуске?' }))) return;
+    const d = { ...data, vacations: vacations.filter(v => v.id !== id) };
+    await DB.save(d); onUpdate(d); addToast('Удалено', 'info');
+  }, [data, vacations, onUpdate, addToast]);
+
+  const getVacStatus = (v) => {
+    if (v.endDate < today) return 'past';
+    if (v.startDate <= today) return 'active';
+    const days = Math.ceil((new Date(v.startDate) - new Date()) / 86400000);
+    if (days <= 14) return 'soon';
+    return 'planned';
+  };
+
+  const statusLabels = { past:'Завершён', active:'Идёт', soon:'Скоро', planned:'Запланирован' };
+  const statusColors = { past:['#f5f5f2','#888'], active:[GN3,GN2], soon:[AM3,AM2], planned:['#E6F1FB','#0C447C'] };
+
+  // Кто в отпуске сейчас / скоро
+  const activeNow = vacations.filter(v => getVacStatus(v) === 'active').length;
+  const soon14 = vacations.filter(v => getVacStatus(v) === 'soon').length;
+
+  return h('div', null,
+    confirmEl,
+    h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:14 } },
+      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color: activeNow>0?GN:'#888' } }, activeNow), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'В отпуске сейчас')),
+      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color: soon14>0?AM:'#888' } }, soon14), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Уходят (14 дн)')),
+      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500 } }, vacations.length), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Всего записей'))
+    ),
+
+    h('div', { style:{ display:'flex', gap:8, marginBottom:12, alignItems:'center' } },
+      h('div', { style:{ fontSize:13, fontWeight:500, flex:1 } }, 'Плановые отпуска'),
+      h('button', { style: abtn(), onClick:() => setShowForm(v=>!v) }, '+ Добавить')
+    ),
+
+    showForm && h('div', { style:{ ...S.card, border:`1.5px solid ${AM}`, marginBottom:14 } },
+      h('div', { style:{ display:'flex', gap:10, flexWrap:'wrap', marginBottom:10 } },
+        h('div', { style:{ flex:2, minWidth:180 } },
+          h('label', { style:S.lbl }, 'Сотрудник *'),
+          h('select', { style:S.inp, value:form.workerId, onChange:e=>setForm(p=>({...p, workerId:e.target.value})) },
+            h('option', { value:'' }, '— выберите —'),
+            workers.map(w => h('option', { key:w.id, value:w.id }, w.name))
+          )
+        ),
+        h('div', { style:{ flex:1, minWidth:130 } },
+          h('label', { style:S.lbl }, 'Начало *'),
+          h('input', { type:'date', style:S.inp, value:form.startDate, onChange:e=>setForm(p=>({...p, startDate:e.target.value})) })
+        ),
+        h('div', { style:{ flex:1, minWidth:130 } },
+          h('label', { style:S.lbl }, 'Конец *'),
+          h('input', { type:'date', style:S.inp, value:form.endDate, onChange:e=>setForm(p=>({...p, endDate:e.target.value})) })
+        ),
+        h('div', { style:{ flex:2, minWidth:180 } },
+          h('label', { style:S.lbl }, 'Примечание'),
+          h('input', { style:S.inp, placeholder:'Основной, учебный...', value:form.note, onChange:e=>setForm(p=>({...p, note:e.target.value})) })
+        )
+      ),
+      form.startDate && form.endDate && form.endDate >= form.startDate && h('div', { style:{ fontSize:12, color:AM2, background:AM3, borderRadius:6, padding:'4px 10px', marginBottom:10 } },
+        `${Math.ceil((new Date(form.endDate)-new Date(form.startDate))/86400000)+1} календарных дней`
+      ),
+      h('div', { style:{ display:'flex', gap:8 } },
+        h('button', { style: abtn({ flex:1 }), onClick:save }, '✓ Сохранить'),
+        h('button', { style: gbtn({ flex:1 }), onClick:()=>setShowForm(false) }, 'Отмена')
+      )
+    ),
+
+    h('div', { style:{ ...S.card, padding:0 } },
+      h('table', { style:{ borderCollapse:'collapse', width:'100%', fontSize:12 } },
+        h('thead', null, h('tr', null,
+          ['Сотрудник','Начало','Конец','Дней','Статус','Утверждён',''].map((t,i) => h('th', { key:i, style:S.th }, t))
+        )),
+        h('tbody', null, [...vacations].sort((a,b) => a.startDate.localeCompare(b.startDate)).map(v => {
+          const w = data.workers.find(x => x.id === v.workerId);
+          const st = getVacStatus(v);
+          const [bg, cl] = statusColors[st];
+          return h('tr', { key:v.id },
+            h('td', { style:S.td }, w?.name || '—'),
+            h('td', { style:S.td }, v.startDate),
+            h('td', { style:S.td }, v.endDate),
+            h('td', { style:{ ...S.td, textAlign:'center' } }, v.days),
+            h('td', { style:S.td }, h('span', { style:{ padding:'2px 8px', borderRadius:4, background:bg, color:cl, fontSize:10 } }, statusLabels[st])),
+            h('td', { style:{ ...S.td, textAlign:'center' } },
+              h('input', { type:'checkbox', checked:v.approved, onChange:()=>toggle(v.id), style:{ accentColor:GN, width:16, height:16 } })
+            ),
+            h('td', { style:S.td }, h('button', { style:{ background:'none', border:'none', color:'#ccc', cursor:'pointer' }, onClick:()=>del(v.id) }, '×'))
+          );
+        })),
+        vacations.length === 0 && h('tr', null, h('td', { colSpan:7, style:{ ...S.td, textAlign:'center', color:'#888', padding:24 } }, 'Нет записей об отпусках'))
+      )
+    )
+  );
+});
+
+// ==================== MonthlyReport ====================
+const MonthlyReport = memo(({ data }) => {
+  const today = new Date();
+  const [month, setMonth] = useState(today.getMonth());
+  const [year, setYear] = useState(today.getFullYear());
+  const MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+
+  const periodStart = new Date(year, month, 1).getTime();
+  const periodEnd   = new Date(year, month+1, 0, 23, 59, 59).getTime();
+
+  const report = useMemo(() => {
+    const ops = data.ops.filter(o => o.finishedAt >= periodStart && o.finishedAt <= periodEnd);
+    const done    = ops.filter(o => o.status === 'done').length;
+    const defect  = ops.filter(o => o.status === 'defect').length;
+    const total   = done + defect;
+    const quality = total > 0 ? Math.round(done/total*100) : 100;
+
+    const orders = data.orders.filter(o => !o.archived);
+    const completed = orders.filter(o => {
+      const oOps = data.ops.filter(op => op.orderId === o.id);
+      return oOps.length > 0 && oOps.every(op => op.status === 'done' || op.status === 'defect');
+    });
+    const overdue = orders.filter(o => o.deadline && new Date(o.deadline) < new Date() && !completed.find(c => c.id === o.id));
+
+    const downtimeMs = data.events.filter(e => e.type==='downtime' && e.ts>=periodStart && e.ts<=periodEnd).reduce((s,e) => s+(e.duration||0), 0);
+
+    const activeWorkers = data.workers.filter(w => !w.archived);
+    const topWorkers = activeWorkers.map(w => ({
+      name: w.name,
+      done: ops.filter(o => o.status==='done' && o.workerIds?.includes(w.id)).length,
+      defects: ops.filter(o => o.status==='defect' && o.workerIds?.includes(w.id)).length,
+    })).filter(w => w.done+w.defects > 0).sort((a,b) => b.done - a.done).slice(0,5);
+
+    // Нормы — топ операций с расхождением факт/план
+    const normsAlert = Object.entries(data.opNorms || {}).map(([name, n]) => {
+      const avgH = Math.round(n.totalMs / n.samples / 360000) / 10;
+      const planned = data.productionStages?.find(s => s.name === name);
+      return { name, avgH, samples: n.samples };
+    }).sort((a,b) => b.samples - a.samples).slice(0,5);
+
+    return { done, defect, total, quality, orders: orders.length, completed: completed.length, overdue: overdue.length, downtimeH: Math.round(downtimeMs/3600000*10)/10, topWorkers, normsAlert };
+  }, [data, month, year]);
+
+  const exportReport = useCallback(() => {
+    const wb = XLSX.utils.book_new();
+    const rows = [
+      ['Сводный отчёт за '+MONTHS[month]+' '+year],[''],
+      ['ПРОИЗВОДСТВО'],
+      ['Выполнено операций', report.done],
+      ['Брак', report.defect],
+      ['Качество (%)', report.quality],
+      ['Простои (ч)', report.downtimeH],[''],
+      ['ЗАКАЗЫ'],
+      ['Активных заказов', report.orders],
+      ['Завершено за период', report.completed],
+      ['Просрочено', report.overdue],[''],
+      ['ТОП СОТРУДНИКОВ'],
+      ['Сотрудник','Операций','Брак'],
+      ...report.topWorkers.map(w => [w.name, w.done, w.defects])
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Отчёт');
+    XLSX.writeFile(wb, `report_${month+1}_${year}.xlsx`);
+  }, [report, month, year]);
+
+  const kpi = [
+    [report.done, 'Операций выполнено', report.done > 0 ? GN : '#888'],
+    [`${report.quality}%`, 'Качество', report.quality>=95?GN:report.quality>=85?AM:RD],
+    [`${report.downtimeH}ч`, 'Простоев', report.downtimeH > 0 ? AM2 : '#888'],
+    [report.completed+'/'+report.orders, 'Заказов завершено', GN2],
+    [report.overdue, 'Просрочено', report.overdue > 0 ? RD : '#888'],
+    [report.defect, 'Брак', report.defect > 0 ? RD : '#888'],
+  ];
+
+  return h('div', null,
+    h('div', { style:{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center', marginBottom:16 } },
+      h('button', { style:gbtn({padding:'6px 12px'}), onClick:()=>{ let m=month-1,y=year; if(m<0){m=11;y--;} setMonth(m); setYear(y); } }, '‹'),
+      h('span', { style:{ fontSize:15, fontWeight:500, minWidth:140, textAlign:'center' } }, `${MONTHS[month]} ${year}`),
+      h('button', { style:gbtn({padding:'6px 12px'}), onClick:()=>{ let m=month+1,y=year; if(m>11){m=0;y++;} setMonth(m); setYear(y); } }, '›'),
+      h('button', { style:abtn({marginLeft:'auto'}), onClick:exportReport }, '📥 Excel')
+    ),
+
+    h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10, marginBottom:16 } },
+      kpi.map(([v,l,c]) => h('div', { key:l, style:{ ...S.card, textAlign:'center', padding:14, marginBottom:0 } },
+        h('div', { style:{ fontSize:26, fontWeight:500, color:c } }, v),
+        h('div', { style:{ fontSize:10, color:'#888', textTransform:'uppercase', marginTop:4 } }, l)
+      ))
+    ),
+
+    report.topWorkers.length > 0 && h('div', { style:S.card },
+      h('div', { style:S.sec }, 'Топ сотрудников'),
+      report.topWorkers.map((w,i) => h('div', { key:i, style:{ display:'flex', alignItems:'center', gap:10, padding:'6px 0', borderBottom:'0.5px solid rgba(0,0,0,0.05)' } },
+        h('div', { style:{ width:20, height:20, borderRadius:'50%', background:AM3, display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:500, color:AM2 } }, i+1),
+        h('div', { style:{ flex:1, fontSize:13 } }, w.name),
+        h('div', { style:{ fontSize:12, color:GN2, fontWeight:500 } }, `${w.done} оп.`),
+        w.defects > 0 && h('div', { style:{ fontSize:11, color:RD2, background:'#FCEBEB', padding:'1px 6px', borderRadius:4 } }, `${w.defects} брак`)
+      ))
+    ),
+
+    report.normsAlert.length > 0 && h('div', { style:S.card },
+      h('div', { style:S.sec }, 'Накопленные нормы времени'),
+      h('div', { style:{ fontSize:11, color:'#888', marginBottom:8 } }, 'Средний фактический результат — используйте для планирования'),
+      report.normsAlert.map((n,i) => h('div', { key:i, style:{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:'0.5px solid rgba(0,0,0,0.05)' } },
+        h('div', { style:{ flex:1, fontSize:12 } }, n.name),
+        h('div', { style:{ fontSize:12, fontWeight:500, color:AM2 } }, `${n.avgH}ч`),
+        h('div', { style:{ fontSize:11, color:'#888' } }, `(${n.samples} выборок)`)
+      ))
     )
   );
 });
@@ -8345,7 +8833,7 @@ const PDOScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 // ==================== DirectorScreen (Руководитель) ====================
 const DirectorScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [tab, setTab] = useState('overview');
-  const TABS = [['overview','Обзор'],['analytics','Аналитика'],['reports','Отчёты'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['orders','Заказы'],['kanban','Канбан']];
+  const TABS = [['overview','Обзор'],['monthly','Отчёт месяца'],['analytics','Аналитика'],['reports','Отчёты'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['orders','Заказы'],['kanban','Канбан']];
 
   const doneOps    = useMemo(() => data.ops.filter(o => o.status === 'done'   && o.finishedAt >= now() - 30*86400000).length, [data.ops]);
   const defectOps  = useMemo(() => data.ops.filter(o => o.status === 'defect' && o.finishedAt >= now() - 30*86400000).length, [data.ops]);
@@ -8404,6 +8892,7 @@ const DirectorScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     ),
     tab === 'analytics'    && h(AnalyticsDashboard, { data }),
     tab === 'reports'      && h(ReportsBuilder,     { data }),
+    tab === 'monthly'      && h(MonthlyReport,       { data }),
     tab === 'kpi'          && h(KPIReport,           { data }),
     tab === 'reclamations' && h(MasterReclamations,  { data, onUpdate, addToast }),
     tab === 'orders'       && h(MasterOrders,        { data, onUpdate, addToast, onOrderClick }),
@@ -8414,11 +8903,32 @@ const DirectorScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 // ==================== HRScreen (HR / Отдел кадров) ====================
 const HRScreen = memo(({ data, onUpdate, addToast }) => {
   const [tab, setTab] = useState('workers');
-  const TABS = [['workers','Сотрудники'],['time','Учёт времени'],['kpi','KPI / Премии'],['reports','Отчёты']];
+  const TABS = [
+    ['workers','Сотрудники'],['time','Учёт времени'],
+    ['instructions','Инструктажи ОТ'],['vacations','Отпуска'],
+    ['kpi','KPI / Премии'],['reports','Отчёты']
+  ];
 
   const active  = useMemo(() => data.workers.filter(w => !w.archived), [data.workers]);
   const working = useMemo(() => active.filter(w => (w.status||'working') === 'working').length, [active]);
   const absent  = useMemo(() => active.filter(w => w.status !== 'working').length, [active]);
+
+  // Алерты ОТ
+  const instrAlerts = useMemo(() => {
+    const instructions = data.instructions || [];
+    let expired = 0, expiring = 0;
+    active.forEach(w => {
+      ['workplace','fire','electrical'].forEach(type => {
+        const last = instructions.filter(i => i.workerId === w.id && i.type === type).sort((a,b) => b.dateMs - a.dateMs)[0];
+        if (!last) return;
+        if (!last.nextDate) return;
+        const days = Math.ceil((last.nextDate - Date.now()) / 86400000);
+        if (days < 0) expired++;
+        else if (days <= 30) expiring++;
+      });
+    });
+    return { expired, expiring };
+  }, [data.instructions, active]);
 
   return h('div', null,
     h(SectionAnalytics, { section: 'hr', data }),
@@ -8427,13 +8937,24 @@ const HRScreen = memo(({ data, onUpdate, addToast }) => {
       h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color:GN } }, working), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'На смене')),
       h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color: absent>0?AM:'#888' } }, absent), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Отсутствуют'))
     ),
-    h('div', { style:{ display:'flex', gap:4, marginBottom:14, borderBottom:`0.5px solid rgba(0,0,0,0.08)`, paddingBottom:8 } },
-      TABS.map(([id,label]) => h('button', { key:id, style: tab===id?abtn({fontSize:12}):gbtn({fontSize:12}), onClick:()=>setTab(id) }, label))
+    // Алерт ОТ
+    (instrAlerts.expired > 0 || instrAlerts.expiring > 0) && h('div', { style:{ background: instrAlerts.expired>0 ? '#FCEBEB' : AM3, border:`0.5px solid ${instrAlerts.expired>0 ? RD : AM4}`, borderRadius:8, padding:'8px 12px', marginBottom:12, fontSize:12, color: instrAlerts.expired>0 ? RD2 : AM2, cursor:'pointer' }, onClick:()=>setTab('instructions') },
+      instrAlerts.expired > 0 && `⚠ ${instrAlerts.expired} инструктажей просрочено`,
+      instrAlerts.expired > 0 && instrAlerts.expiring > 0 && ' · ',
+      instrAlerts.expiring > 0 && `${instrAlerts.expiring} истекают в ближайшие 30 дней`,
+      h('span', { style:{ marginLeft:8, textDecoration:'underline' } }, '→ к журналу')
     ),
-    tab === 'workers' && h(MasterWorkers,      { data, onUpdate, addToast }),
-    tab === 'time'    && h(MasterTimeTracking, { data, onUpdate, addToast }),
-    tab === 'kpi'     && h(KPIReport,          { data }),
-    tab === 'reports' && h(ReportsBuilder,     { data })
+    h('div', { style:{ display:'flex', gap:4, marginBottom:14, overflowX:'auto', borderBottom:`0.5px solid rgba(0,0,0,0.08)`, paddingBottom:8 } },
+      h('div', { className:'tabs-scroll', style:{ display:'flex', gap:4 } },
+        TABS.map(([id,label]) => h('button', { key:id, style: tab===id?abtn({fontSize:12}):gbtn({fontSize:12}), onClick:()=>setTab(id) }, label))
+      )
+    ),
+    tab === 'workers'      && h(MasterWorkers,         { data, onUpdate, addToast }),
+    tab === 'time'         && h(MasterTimeTracking,    { data, onUpdate, addToast }),
+    tab === 'instructions' && h(InstructionsTracker,   { data, onUpdate, addToast }),
+    tab === 'vacations'    && h(VacationPlanner,       { data, onUpdate, addToast }),
+    tab === 'kpi'          && h(KPIReport,             { data }),
+    tab === 'reports'      && h(ReportsBuilder,        { data })
   );
 });
 
