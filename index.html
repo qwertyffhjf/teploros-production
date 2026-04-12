@@ -1299,6 +1299,109 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
   );
 };
 
+// ==================== WorkerOnboarding ====================
+const WorkerOnboarding = memo(({ worker, myOps, onDone }) => {
+  const [step, setStep] = useState(1);
+  const TOTAL = 3;
+
+  const dots = Array.from({ length: TOTAL }, (_, i) =>
+    h('div', { key: i, style: {
+      height: 6, borderRadius: 3,
+      width: i + 1 === step ? 20 : 6,
+      background: i + 1 === step ? AM : 'rgba(0,0,0,0.15)',
+      transition: 'all .2s'
+    }})
+  );
+
+  const Step1 = () => h('div', { style: { textAlign: 'center' } },
+    h('div', { style: { width: 72, height: 72, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 500, color: AM2, margin: '0 auto 16px' } },
+      worker?.name?.charAt(0) || '?'
+    ),
+    h('div', { style: { fontSize: 20, fontWeight: 500, marginBottom: 6 } }, `Добро пожаловать,`),
+    h('div', { style: { fontSize: 18, fontWeight: 500, color: AM2, marginBottom: 8 } }, worker?.name?.split(' ')[0] + '!'),
+    h('div', { style: { fontSize: 13, color: '#888', marginBottom: 24, lineHeight: 1.6 } },
+      worker?.position ? `${worker.position}` : 'Добро пожаловать в систему',
+      h('br'), 'Здесь вы ведёте свои задания и отслеживаете результаты'
+    ),
+    h('button', { className: 'worker-btn worker-btn-start', style: { marginBottom: 10 }, onClick: () => setStep(2) }, 'Посмотреть задания →'),
+    h('button', { style: { background: 'none', border: 'none', fontSize: 12, color: '#aaa', cursor: 'pointer', width: '100%', padding: '6px' }, onClick: onDone }, 'Пропустить')
+  );
+
+  const Step2 = () => h('div', null,
+    h('div', { style: { fontSize: 14, color: '#888', marginBottom: 12 } },
+      myOps.length > 0 ? `Ваши задания на сегодня (${myOps.length}):` : 'Ваши задания'
+    ),
+    myOps.length > 0
+      ? myOps.slice(0, 3).map((op, i) => h('div', { key: op.id, style: { ...{ background: '#fff', border: '0.5px solid rgba(0,0,0,0.1)', borderRadius: 10, padding: '10px 14px', marginBottom: 8 } } },
+          h('div', { style: { fontSize: 14, fontWeight: 500 } }, op.name),
+          h('div', { style: { fontSize: 11, color: AM4, marginTop: 2 } }, '↑ Нажмите чтобы начать')
+        ))
+      : h('div', { style: { background: '#f8f8f5', borderRadius: 10, padding: '20px', textAlign: 'center', color: '#888', fontSize: 13, marginBottom: 12 } },
+          h('div', { style: { fontSize: 24, marginBottom: 6 } }, '⏳'),
+          'Мастер пока не назначил задания.',
+          h('br'), 'Обратитесь к начальнику цеха.'
+        ),
+    h('button', { className: 'worker-btn worker-btn-start', style: { marginTop: 8 }, onClick: () => setStep(3) }, 'Понятно →')
+  );
+
+  const Step3 = () => h('div', { style: { textAlign: 'center' } },
+    h('div', { style: { fontSize: 36, marginBottom: 12 } }, '🎯'),
+    h('div', { style: { fontSize: 18, fontWeight: 500, marginBottom: 16 } }, 'Всё готово!'),
+    [
+      ['📷', 'QR-код на рабочем месте — самый быстрый старт'],
+      ['⭐', 'Выполняйте операции вовремя — получайте достижения'],
+      ['🤝', 'В чате можно поблагодарить коллегу или сообщить о проблеме'],
+    ].map(([icon, text]) => h('div', { key: icon, style: { display: 'flex', gap: 10, alignItems: 'flex-start', background: AM3, borderRadius: 10, padding: '10px 12px', marginBottom: 8, textAlign: 'left' } },
+      h('span', { style: { fontSize: 16, flexShrink: 0 } }, icon),
+      h('span', { style: { fontSize: 13, color: AM2, lineHeight: 1.5 } }, text)
+    )),
+    h('button', { className: 'worker-btn worker-btn-start', style: { marginTop: 8 }, onClick: onDone }, 'Начать работу')
+  );
+
+  return h('div', { style: { maxWidth: 440, margin: '0 auto', padding: '24px 16px' } },
+    h('div', { style: { display: 'flex', gap: 4, justifyContent: 'center', marginBottom: 24 } }, dots),
+    step === 1 ? h(Step1) : step === 2 ? h(Step2) : h(Step3)
+  );
+});
+
+// ==================== MasterOnboarding ====================
+const MasterOnboarding = memo(({ data, onDone }) => {
+  const steps = useMemo(() => [
+    { id: 'workers',   label: 'Добавить сотрудников',          done: data.workers.filter(w => !w.archived).length > 0,       action: null },
+    { id: 'stages',    label: 'Создать этапы производства',     done: (data.productionStages || []).length > 0,                action: null },
+    { id: 'order',     label: 'Создать первый заказ',           done: data.orders.filter(o => !o.archived).length > 0,         action: null },
+    { id: 'competences', label: 'Заполнить матрицу компетенций', done: data.workers.some(w => w.competences?.length > 0),       action: null },
+    { id: 'assign',    label: 'Назначить операции',             done: data.ops.some(o => o.workerIds?.length > 0),             action: null },
+  ], [data]);
+
+  const doneCount = steps.filter(s => s.done).length;
+  const allDone = doneCount === steps.length;
+  const nextStep = steps.find(s => !s.done);
+  const pct = Math.round(doneCount / steps.length * 100);
+
+  if (allDone) return null; // Скрываем когда всё настроено
+
+  return h('div', { style: { ...{ background: '#fff', border: '0.5px solid rgba(0,0,0,0.1)', borderRadius: 12, padding: 16, marginBottom: 16 } } },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 } },
+      h('div', { style: { fontSize: 13, fontWeight: 500 } }, `Настройка системы · ${doneCount} из ${steps.length}`),
+      h('button', { style: { background: 'none', border: 'none', fontSize: 11, color: '#aaa', cursor: 'pointer' }, onClick: onDone }, 'Скрыть')
+    ),
+    // Прогресс-бар
+    h('div', { style: { height: 6, background: '#f0ede8', borderRadius: 3, overflow: 'hidden', marginBottom: 12 } },
+      h('div', { style: { height: 6, background: AM, borderRadius: 3, width: `${pct}%`, transition: 'width .3s' } })
+    ),
+    // Шаги
+    steps.map(s => h('div', { key: s.id, style: { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)' } },
+      h('div', { style: { width: 20, height: 20, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 500, background: s.done ? GN3 : 'rgba(0,0,0,0.06)', color: s.done ? GN2 : '#888', border: s.done ? `0.5px solid ${GN}` : 'none' } }, s.done ? '✓' : ''),
+      h('div', { style: { fontSize: 12, color: s.done ? '#888' : '#333', textDecoration: s.done ? 'line-through' : 'none', flex: 1 } }, s.label)
+    )),
+    // Следующий шаг
+    nextStep && h('div', { style: { marginTop: 10, background: AM3, border: `0.5px solid ${AM4}`, borderRadius: 8, padding: '8px 12px', fontSize: 12, color: AM2 } },
+      h('span', { style: { fontWeight: 500 } }, 'Следующий шаг: '), nextStep.label
+    )
+  );
+});
+
 // ==================== WorkerCardModal ====================
 const WorkerCardModal = memo(({ worker, data, onClose }) => {
   const [period, setPeriod] = useState(30);
@@ -1840,9 +1943,19 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
 
 
   const [workerTab, setWorkerTab] = useState('tasks');
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    try { return !localStorage.getItem(`onboarding_done_${workerId}`); } catch(e) { return false; }
+  });
+  const doneOnboarding = useCallback(() => {
+    try { localStorage.setItem(`onboarding_done_${workerId}`, '1'); } catch(e) {}
+    setShowOnboarding(false);
+  }, [workerId]);
   const [showThanksHistory, setShowThanksHistory] = useState(false);
 
   return h('div', { style: { maxWidth: 440, margin: '0 auto', padding: '0 12px 80px' } },
+    // Онбординг — только при первом входе
+    showOnboarding && h(WorkerOnboarding, { worker, myOps, onDone: doneOnboarding }),
+    !showOnboarding && h('div', null,
 
     // ── Уведомления (поверх обеих вкладок) ──────────────────────────────
     myStats.newThanks.length > 0 && h('div', { style: { ...S.card, background: '#FFF8E1', border: '0.5px solid #FFC107', marginBottom: 12, padding: 12, marginTop: 12 } },
@@ -2158,9 +2271,9 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       Object.keys(ACHIEVEMENTS).length > 6 && h('button', { style: { background: 'none', border: 'none', fontSize: 13, color: AM, cursor: 'pointer', padding: '10px 0', width: '100%', minHeight: 'auto' }, onClick: () => setShowAchievements(v => !v) },
         showAchievements ? '▾ Скрыть' : `▸ Показать все (${Object.keys(ACHIEVEMENTS).length})`
       )
-    ),
-
-    confirmEl
+    )
+  ),
+  confirmEl
   );
 });
 const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
@@ -2229,9 +2342,41 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 
 // ==================== MasterTimeTracking ====================
 // ── Вспомогательная функция: данные одного дня для сотрудника ──
+// Определяет является ли день рабочим по графику из настроек
+const isWorkday = (year, month, day, settings) => {
+  const ws = settings?.workSchedule || { type: '5/2' };
+  const date = new Date(year, month, day);
+  const dow = date.getDay(); // 0=вс, 6=сб
+
+  if (ws.type === '5/2') return dow !== 0 && dow !== 6;
+  if (ws.type === '6/1') return dow !== 0;
+
+  // Сменные графики: нужна дата начала
+  if (!ws.startDate) {
+    // Fallback: 5/2 если дата не задана
+    return dow !== 0 && dow !== 6;
+  }
+
+  const patterns = {
+    '2/2': [1, 1, 0, 0],
+    '3/3': [1, 1, 1, 0, 0, 0],
+    '4/2': [1, 1, 1, 1, 0, 0],
+  };
+
+  const pattern = ws.type === 'custom'
+    ? (ws.customPattern || [])
+    : (patterns[ws.type] || [1, 1, 1, 1, 1, 0, 0]);
+
+  if (!pattern.length) return dow !== 0 && dow !== 6;
+
+  const start = new Date(ws.startDate);
+  const diffDays = Math.floor((date - start) / 86400000);
+  const idx = ((diffDays % pattern.length) + pattern.length) % pattern.length;
+  return pattern[idx] === 1;
+};
+
 const calcDayData = (workerId, year, month, day, data) => {
-  const dow = new Date(year, month, day).getDay();
-  if (dow === 0 || dow === 6) return { type: 'we', code: 'В', h: 0 };
+  if (!isWorkday(year, month, day, data.settings)) return { type: 'we', code: 'В', h: 0 };
   const w = data.workers.find(x => x.id === workerId);
   const dayStart = new Date(year, month, day).getTime();
   const dayEnd   = new Date(year, month, day, 23, 59, 59, 999).getTime();
@@ -2351,7 +2496,7 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
       let totH = 0, totD = 0;
       days.forEach(d => {
         const dow = new Date(viewYear, viewMonth, d).getDay();
-        if (dow === 0 || dow === 6) { row.push('В'); return; }
+        if (!isWorkday(viewYear, viewMonth, d, data.settings)) { row.push('В'); return; }
         const val = getCellVal(w.id, d);
         if (!val) { row.push(''); return; }
         if (val.h != null) { totH += val.h; totD++; row.push(val.h); }
@@ -2436,12 +2581,17 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
     ),
 
     // Легенда
-    h('div', { style: { display:'flex', gap:10, flexWrap:'wrap', marginBottom:10 } },
-      [[GN3,GN2,'8ч — норма'],[AM3,AM2,'< 8ч'],['#FCEBEB','#791F1F','Б'],['#E6F1FB','#0C447C','ОТ / НО'],['#F1EFE8','#888','НН']].map(([bg,cl,l]) =>
+    h('div', { style: { display:'flex', gap:10, flexWrap:'wrap', marginBottom:10, alignItems:'center' } },
+      [[GN3,GN2,'8ч — норма'],[AM3,AM2,'< 8ч'],['#FCEBEB','#791F1F','Б — больничный'],
+       ['#E6F1FB','#0C447C','ОТ / НО'],['#F1EFE8','#888','НН — нет данных']].map(([bg,cl,l]) =>
         h('div', { key:l, style:{ display:'flex', alignItems:'center', gap:4, fontSize:11, color:'#888' } },
           h('div', { style:{ width:12, height:12, background:bg, borderRadius:2, border:`0.5px solid ${cl}44`, flexShrink:0 } }),
           l
         )
+      ),
+      h('div', { style:{ display:'flex', alignItems:'center', gap:4, fontSize:11, color:'#888' } },
+        h('div', { style:{ width:12, height:12, background:'rgba(226,75,74,0.08)', borderRadius:2, border:'0.5px solid rgba(226,75,74,0.2)', flexShrink:0 } }),
+        'В — выходной (кликните для работы в выходной)'
       )
     ),
 
@@ -2452,8 +2602,7 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
           h('thead', null, h('tr', null,
             h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'#f8f8f5', minWidth:160, textAlign:'left', padding:'6px 10px' } }, 'Сотрудник'),
             days.map(d => {
-              const dow = new Date(viewYear, viewMonth, d).getDay();
-              const isWe = dow===0||dow===6;
+              const isWe = !isWorkday(viewYear, viewMonth, d, data.settings);
               return h('th', { key:d, style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:32, color: isWe ? RD : undefined } },
                 d, h('br'), h('span', { style:{ fontSize:9, fontWeight:400 } }, DOW[dow])
               );
@@ -2466,20 +2615,21 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
               return h('tr', { key:w.id },
                 h('td', { style:{ ...S.td, position:'sticky', left:0, zIndex:1, background:'#fff', boxShadow:'2px 0 4px rgba(0,0,0,0.04)', padding:'6px 10px', fontWeight:500 } }, w.name),
                 days.map(d => {
-                  const dow = new Date(viewYear, viewMonth, d).getDay();
-                  const isWe = dow===0||dow===6;
-                  if (isWe) return h('td', { key:d, style:{ ...S.td, background:'transparent' } },
-                    h('span', { style:{ display:'inline-block', width:28, textAlign:'center', color:'#ddd', fontSize:10 } }, '·')
-                  );
+                  const isWe = !isWorkday(viewYear, viewMonth, d, data.settings);
                   const val = getCellVal(w.id, d);
                   const { bg, cl, lbl } = cellStyle(val);
                   if (val?.h) totH += val.h;
                   const isActive = activeCell?.workerId === w.id && activeCell?.day === d;
-                  return h('td', { key:d, style:{ ...S.td, padding:2 } },
+                  // Выходные: если нет данных — точка, если есть — показываем как обычно
+                  const weBg = val ? bg : 'transparent';
+                  const weCl = val ? cl : '#ddd';
+                  const weLbl = val ? lbl : '·';
+                  return h('td', { key:d, style:{ ...S.td, padding:2, background: isWe && !val ? 'rgba(226,75,74,0.04)' : undefined } },
                     h('span', {
-                      style:{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:28, height:24, borderRadius:4, fontSize:11, fontWeight:500, cursor:'pointer', background:bg, color:cl, outline: isActive ? `2px solid ${AM}` : 'none' },
-                      onClick: () => openPopup(w.id, d)
-                    }, lbl)
+                      style:{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:28, height:24, borderRadius:4, fontSize:11, fontWeight:500, cursor:'pointer', background:weBg, color:weCl, outline: isActive ? `2px solid ${AM}` : 'none' },
+                      onClick: () => openPopup(w.id, d),
+                      title: isWe ? 'Выходной — нажмите чтобы внести часы (работа в выходной)' : undefined
+                    }, weLbl)
                   );
                 }),
                 h('td', { style:{ ...S.td, fontWeight:500, background:'#f8f8f5', padding:'4px 6px' } }, totH > 0 ? `${Math.round(totH*10)/10}ч` : '')
@@ -2489,11 +2639,11 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
             showWorkers.length > 1 && h('tr', null,
               h('td', { style:{ ...S.td, position:'sticky', left:0, background:'#f8f8f5', fontWeight:500, fontSize:10, color:'#888', padding:'4px 10px' } }, 'Итого чел·ч'),
               days.map(d => {
-                const dow = new Date(viewYear, viewMonth, d).getDay();
-                if (dow===0||dow===6) return h('td', { key:d, style:{ ...S.td, background:'#f8f8f5' } });
                 let sum = 0;
                 showWorkers.forEach(w => { const v = getCellVal(w.id, d); if (v?.h) sum += v.h; });
-                return h('td', { key:d, style:{ ...S.td, background:'#f8f8f5', fontSize:10, fontWeight:500, color: sum > 0 ? AM2 : '#ccc' } }, sum > 0 ? Math.round(sum*10)/10 : '');
+                const dow = new Date(viewYear, viewMonth, d).getDay();
+                const isWe = !isWorkday(viewYear, viewMonth, d, data.settings);
+                return h('td', { key:d, style:{ ...S.td, background: isWe ? 'rgba(226,75,74,0.04)' : '#f8f8f5', fontSize:10, fontWeight:500, color: sum > 0 ? AM2 : '#ccc' } }, sum > 0 ? Math.round(sum*10)/10 : '');
               }),
               h('td', { style:{ ...S.td, background:'#f8f8f5' } })
             )
@@ -2503,10 +2653,11 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
 
       // Попап ввода
       activeCell && h('div', {
-        style:{ position:'absolute', top:40, left:'50%', transform:'translateX(-50%)', background:'#fff', border:`1.5px solid ${AM}`, borderRadius:12, padding:14, zIndex:50, width:200, boxShadow:'0 4px 20px rgba(0,0,0,0.15)' }
+        style:{ position:'absolute', top:40, left:'50%', transform:'translateX(-50%)', background:'#fff', border:`1.5px solid ${AM}`, borderRadius:12, padding:14, zIndex:50, width:210, boxShadow:'0 4px 20px rgba(0,0,0,0.15)' }
       },
-        h('div', { style:{ fontSize:11, color:'#888', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6 } },
-          `${workerName} · ${activeCell.day} ${MONTHS_RU[viewMonth].toLowerCase()}`
+        h('div', { style:{ fontSize:11, color:'#888', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6, display:'flex', alignItems:'center', gap:6 } },
+          `${workerName} · ${activeCell.day} ${MONTHS_RU[viewMonth].toLowerCase()}`,
+          (() => { const dow = new Date(viewYear, viewMonth, activeCell.day).getDay(); return (dow===0||dow===6) ? h('span', { style:{ background:'#FCEBEB', color:RD2, fontSize:10, padding:'1px 6px', borderRadius:4 } }, 'выходной') : null; })()
         ),
         h('input', { ref: inputRef, type:'number', min:0, max:24, step:0.5,
           style:{ ...S.inp, fontSize:22, fontWeight:500, textAlign:'center', marginBottom:8 },
@@ -4881,7 +5032,9 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
 // ==================== ShiftSettings ====================
 const ShiftSettings = memo(({ data, onUpdate, addToast }) => {
   const shifts = data.settings?.shifts || [{ id: 1, name: 'Смена 1', start: 8, end: 17 }];
+  const schedule = data.settings?.workSchedule || { type: '5/2', startDate: '', customPattern: [] };
   const [form, setForm] = useState({ name: '', start: '', end: '' });
+  const [schedForm, setSchedForm] = useState({ type: schedule.type, startDate: schedule.startDate || '', customPattern: (schedule.customPattern || []).join(',') });
 
   const addShift = useCallback(async () => {
     if (!form.name.trim() || form.start === '' || form.end === '') { addToast('Заполните все поля смены', 'error'); return; }
@@ -4895,20 +5048,76 @@ const ShiftSettings = memo(({ data, onUpdate, addToast }) => {
     await DB.save(d); onUpdate(d); addToast('Смена удалена', 'info');
   }, [data, shifts, onUpdate, addToast]);
 
-  return h('div', { style: { ...S.card, marginTop: 16 } },
-    h('div', { style: S.sec }, 'Настройка смен'),
-    h('div', { style: { fontSize: 11, color: '#888', marginBottom: 10 } }, 'Смены используются для разбивки журнала событий и отчётов. Часы: 0–23.'),
-    shifts.length > 0 && h('div', { style: { marginBottom: 12 } },
-      shifts.map(s => h('div', { key: s.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)' } },
-        h('span', { style: { flex: 1, fontSize: 13 } }, `${s.name} (${s.start}:00 — ${s.end}:00)`),
-        h('button', { style: rbtn({ fontSize: 11, padding: '3px 8px' }), onClick: () => removeShift(s.id) }, '✕')
-      ))
+  const saveSchedule = useCallback(async () => {
+    const pattern = schedForm.type === 'custom'
+      ? schedForm.customPattern.split(',').map(x => x.trim()).filter(Boolean).map(Number).filter(n => n === 0 || n === 1)
+      : [];
+    const ws = { type: schedForm.type, startDate: schedForm.startDate, customPattern: pattern };
+    const d = { ...data, settings: { ...data.settings, workSchedule: ws } };
+    await DB.save(d); onUpdate(d); addToast('График работы сохранён', 'success');
+  }, [data, schedForm, onUpdate, addToast]);
+
+  const SCHEDULE_TYPES = [
+    { id: '5/2',    label: '5/2 — пятидневка (пн–пт)',        desc: 'Суббота и воскресенье выходные' },
+    { id: '6/1',    label: '6/1 — шестидневка (пн–сб)',        desc: 'Только воскресенье выходной' },
+    { id: '2/2',    label: '2/2 — два через два',              desc: 'Укажите дату начала отсчёта' },
+    { id: '3/3',    label: '3/3 — три через три',              desc: 'Укажите дату начала отсчёта' },
+    { id: '4/2',    label: '4/2 — четыре через два',           desc: 'Укажите дату начала отсчёта' },
+    { id: 'custom', label: 'Свой график',                       desc: 'Задайте паттерн: 1=рабочий, 0=выходной (через запятую)' },
+  ];
+
+  return h('div', null,
+    // График работы
+    h('div', { style: { ...S.card, marginTop: 16 } },
+      h('div', { style: S.sec }, 'График работы'),
+      h('div', { style: { fontSize: 11, color: '#888', marginBottom: 12 } },
+        'Определяет какие дни считаются выходными в табеле учёта рабочего времени'
+      ),
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 } },
+        SCHEDULE_TYPES.map(st => h('label', { key: st.id, style: { display: 'flex', alignItems: 'flex-start', gap: 10, padding: '8px 10px', borderRadius: 8, background: schedForm.type === st.id ? AM3 : '#f8f8f5', border: `0.5px solid ${schedForm.type === st.id ? AM4 : 'rgba(0,0,0,0.08)'}`, cursor: 'pointer' } },
+          h('input', { type: 'radio', name: 'schedtype', value: st.id, checked: schedForm.type === st.id, onChange: () => setSchedForm(p => ({ ...p, type: st.id })), style: { marginTop: 2, accentColor: AM } }),
+          h('div', null,
+            h('div', { style: { fontSize: 13, fontWeight: 500, color: schedForm.type === st.id ? AM2 : '#333' } }, st.label),
+            h('div', { style: { fontSize: 11, color: '#888', marginTop: 1 } }, st.desc)
+          )
+        ))
+      ),
+      // Дата начала отсчёта для сменных графиков
+      ['2/2','3/3','4/2','custom'].includes(schedForm.type) && h('div', { style: { marginBottom: 12 } },
+        h('label', { style: S.lbl }, 'Дата начала отсчёта паттерна'),
+        h('input', { type: 'date', style: { ...S.inp, maxWidth: 200 }, value: schedForm.startDate, onChange: e => setSchedForm(p => ({ ...p, startDate: e.target.value })) }),
+        h('div', { style: { fontSize: 11, color: '#888', marginTop: 4 } }, 'С этой даты начинается цикл рабочих/выходных дней')
+      ),
+      // Свой паттерн
+      schedForm.type === 'custom' && h('div', { style: { marginBottom: 12 } },
+        h('label', { style: S.lbl }, 'Паттерн (1=рабочий, 0=выходной)'),
+        h('input', { style: S.inp, placeholder: 'Пример: 1,1,1,1,0,0 — для 4/2', value: schedForm.customPattern, onChange: e => setSchedForm(p => ({ ...p, customPattern: e.target.value })) }),
+        schedForm.customPattern && h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 } },
+          schedForm.customPattern.split(',').map((v, i) => {
+            const isWork = v.trim() === '1';
+            return h('div', { key: i, style: { width: 28, height: 28, borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 500, background: isWork ? GN3 : '#f5f5f2', color: isWork ? GN2 : '#888', border: `0.5px solid ${isWork ? GN : 'rgba(0,0,0,0.1)'}` } }, i + 1);
+          })
+        )
+      ),
+      h('button', { style: abtn(), onClick: saveSchedule }, 'Сохранить график')
     ),
-    h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
-      h('input', { style: { ...S.inp, flex: 2, minWidth: 120 }, placeholder: 'Название смены', value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })) }),
-      h('input', { type: 'number', min: 0, max: 23, style: { ...S.inp, width: 70 }, placeholder: 'С (ч)', value: form.start, onChange: e => setForm(p => ({ ...p, start: e.target.value })) }),
-      h('input', { type: 'number', min: 0, max: 24, style: { ...S.inp, width: 70 }, placeholder: 'До (ч)', value: form.end, onChange: e => setForm(p => ({ ...p, end: e.target.value })) }),
-      h('button', { style: abtn(), onClick: addShift }, '+ Добавить')
+
+    // Смены (временные диапазоны)
+    h('div', { style: { ...S.card, marginTop: 16 } },
+      h('div', { style: S.sec }, 'Временные диапазоны смен'),
+      h('div', { style: { fontSize: 11, color: '#888', marginBottom: 10 } }, 'Используются для разбивки журнала событий и отчётов по сменам.'),
+      shifts.length > 0 && h('div', { style: { marginBottom: 12 } },
+        shifts.map(s => h('div', { key: s.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)' } },
+          h('span', { style: { flex: 1, fontSize: 13 } }, `${s.name} (${s.start}:00 — ${s.end}:00)`),
+          h('button', { style: rbtn({ fontSize: 11, padding: '3px 8px' }), onClick: () => removeShift(s.id) }, '✕')
+        ))
+      ),
+      h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+        h('input', { style: { ...S.inp, flex: 2, minWidth: 120 }, placeholder: 'Название смены', value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })) }),
+        h('input', { type: 'number', min: 0, max: 23, style: { ...S.inp, width: 70 }, placeholder: 'С (ч)', value: form.start, onChange: e => setForm(p => ({ ...p, start: e.target.value })) }),
+        h('input', { type: 'number', min: 0, max: 24, style: { ...S.inp, width: 70 }, placeholder: 'До (ч)', value: form.end, onChange: e => setForm(p => ({ ...p, end: e.target.value })) }),
+        h('button', { style: abtn(), onClick: addShift }, '+ Добавить')
+      )
     )
   );
 });
@@ -6342,6 +6551,8 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
   }, [data.ops, data.orders, data.workers]);
   return h('div', { style: { padding:'0 0 24px' } },
     qrOpData && h(QRModal, { ops:[qrOpData.op], order: data.orders.find(o => o.id === qrOpData.op.orderId), worker: qrOpData.worker, onClose: () => setQrOpData(null) }),
+    // Онбординг мастера — автоматически скрывается когда всё настроено
+    role === 'master' && h(MasterOnboarding, { data, onDone: () => {} }),
     // Группы вкладок
     h('div', { className: 'tab-groups', style: { display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' } },
       Object.entries(tabGroups).map(([gid, g]) => h('button', { key: gid, style: activeGroup === gid ? abtn({ fontSize: 12, padding: '6px 14px' }) : gbtn({ fontSize: 12, padding: '6px 14px' }), onClick: () => switchGroup(gid) }, g.label))
