@@ -1440,6 +1440,88 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
 });
 
 // ==================== WorkerScreen ====================
+// ==================== WorkerHoursBlock ====================
+const WorkerHoursBlock = memo(({ workerId, data }) => {
+  const today = new Date();
+  const [viewMonth, setViewMonth] = useState(today.getMonth());
+  const [viewYear,  setViewYear]  = useState(today.getFullYear());
+  const [expanded,  setExpanded]  = useState(false);
+
+  const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  const DOW_SHORT = ['вс','пн','вт','ср','чт','пт','сб'];
+
+  const dim = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const days = Array.from({ length: dim }, (_, i) => i + 1);
+
+  const monthData = useMemo(() => {
+    let totH = 0, totDays = 0, totOps = 0;
+    const grid = days.map(d => {
+      const dow = new Date(viewYear, viewMonth, d).getDay();
+      const dd = calcDayData(workerId, viewYear, viewMonth, d, data);
+      if (dd.h > 0) { totH += dd.h; totDays++; }
+      if (dd.ops) totOps += dd.ops;
+      return { d, dow, ...dd };
+    });
+    return { grid, totH: Math.round(totH * 10) / 10, totDays, totOps };
+  }, [workerId, viewYear, viewMonth, data]);
+
+  const cellBg = (type) => ({
+    'full':'#E1F5EE', 'ops':'#FAEEDA', 'half':'#E6F1FB',
+    'sick':'#FCEBEB', 'vac':'#E6F1FB', 'abs':'#f5f5f2', 'we':''
+  }[type] || '');
+  const cellCl = (type) => ({
+    'full':GN2, 'ops':AM2, 'half':'#0C447C',
+    'sick':RD2, 'vac':'#042C53', 'abs':'#ccc', 'we':'#ddd'
+  }[type] || '#888');
+
+  return h('div', { style: { ...S.card, marginBottom: 16 } },
+    // Заголовок
+    h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom:12 } },
+      h('div', { style: { ...S.sec, marginBottom:0, flex:1 } }, 'Мои часы'),
+      h('button', { style: gbtn({ padding:'4px 10px', fontSize:11 }), onClick:() => { let m=viewMonth-1,y=viewYear; if(m<0){m=11;y--;} setViewMonth(m); setViewYear(y); } }, '‹'),
+      h('span', { style:{ fontSize:13, fontWeight:500, minWidth:120, textAlign:'center' } }, `${MONTHS_RU[viewMonth]} ${viewYear}`),
+      h('button', { style: gbtn({ padding:'4px 10px', fontSize:11 }), onClick:() => { let m=viewMonth+1,y=viewYear; if(m>11){m=0;y++;} setViewMonth(m); setViewYear(y); } }, '›')
+    ),
+
+    // KPI строка
+    h('div', { style: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:12 } },
+      h('div', { style:{ background:'#f8f8f5', borderRadius:8, padding:'8px 10px', textAlign:'center' } },
+        h('div', { style:{ fontSize:22, fontWeight:500, color:AM } }, `${monthData.totH}ч`),
+        h('div', { style:{ fontSize:10, color:'#888', textTransform:'uppercase', marginTop:2 } }, 'Отработано')
+      ),
+      h('div', { style:{ background:'#f8f8f5', borderRadius:8, padding:'8px 10px', textAlign:'center' } },
+        h('div', { style:{ fontSize:22, fontWeight:500, color:GN } }, monthData.totDays),
+        h('div', { style:{ fontSize:10, color:'#888', textTransform:'uppercase', marginTop:2 } }, 'Дней явок')
+      ),
+      h('div', { style:{ background:'#f8f8f5', borderRadius:8, padding:'8px 10px', textAlign:'center' } },
+        h('div', { style:{ fontSize:22, fontWeight:500 } }, monthData.totOps),
+        h('div', { style:{ fontSize:10, color:'#888', textTransform:'uppercase', marginTop:2 } }, 'Операций')
+      )
+    ),
+
+    // Мини-календарь
+    h('button', { style:{ background:'none', border:'none', fontSize:13, color:AM, cursor:'pointer', padding:'0 0 8px', fontWeight:500 }, onClick:()=>setExpanded(v=>!v) },
+      expanded ? '▾ Скрыть календарь' : '▸ Показать по дням'
+    ),
+
+    expanded && h('div', { style:{ display:'flex', flexWrap:'wrap', gap:4 } },
+      monthData.grid.map(({ d, dow, type, h: hrs, code }) => {
+        const isWe = type === 'we';
+        const lbl = isWe ? DOW_SHORT[dow] : hrs > 0 ? hrs : code;
+        return h('div', { key:d, style:{
+          width:38, height:42, borderRadius:6, display:'flex', flexDirection:'column',
+          alignItems:'center', justifyContent:'center', gap:1,
+          background: isWe ? 'transparent' : (cellBg(type) || '#f5f5f2'),
+          border: isWe ? 'none' : `0.5px solid ${isWe?'transparent':cellCl(type)+'44'}`
+        }},
+          h('div', { style:{ fontSize:9, color:'#bbb' } }, d),
+          h('div', { style:{ fontSize:12, fontWeight:500, color: cellCl(type) } }, lbl)
+        );
+      })
+    )
+  );
+});
+
 const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, addToast }) => {
   const { ask: askConfirm, confirmEl } = useConfirm();
   const worker = useMemo(() => data.workers.find(w => w.id === workerId), [data.workers, workerId]);
@@ -2045,6 +2127,9 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
         ))
       ),
 
+      // Часы — личный табель
+      h(WorkerHoursBlock, { workerId, data }),
+
       // Достижения
       h('div', { style: { ...S.sec, marginBottom: 12 } }, 'Достижения'),
       achHint && h('div', { style: { ...S.card, padding: '10px 14px', marginBottom: 12, background: AM3, border: `0.5px solid ${AM4}` } },
@@ -2143,50 +2228,282 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 });
 
 // ==================== MasterTimeTracking ====================
+// ── Вспомогательная функция: данные одного дня для сотрудника ──
+const calcDayData = (workerId, year, month, day, data) => {
+  const dow = new Date(year, month, day).getDay();
+  if (dow === 0 || dow === 6) return { type: 'we', code: 'В', h: 0 };
+  const w = data.workers.find(x => x.id === workerId);
+  const dayStart = new Date(year, month, day).getTime();
+  const dayEnd   = new Date(year, month, day, 23, 59, 59, 999).getTime();
+  // Статус сотрудника как источник кода
+  if (w?.status === 'sick')     return { type: 'sick', code: 'Б',  h: 0, src: 'статус' };
+  if (w?.status === 'vacation') return { type: 'vac',  code: 'ОТ', h: 0, src: 'статус' };
+  // Ручные отметки
+  const checkin  = data.events.find(e => e.workerId === workerId && e.type === 'checkin_manual'  && e.ts >= dayStart && e.ts <= dayEnd);
+  const checkout = data.events.find(e => e.workerId === workerId && e.type === 'checkout_manual' && e.ts >= dayStart && e.ts <= dayEnd);
+  if (checkin && checkout) {
+    const h = Math.round((checkout.ts - checkin.ts) / 3600000 * 10) / 10;
+    const hR = Math.min(h, 12);
+    return { type: 'full', code: 'Я', h: hR, src: 'ручная отметка', inn: new Date(checkin.ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }), out: new Date(checkout.ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }) };
+  }
+  if (checkin) {
+    return { type: 'half', code: 'НО', h: 0, src: 'ручная отметка', inn: new Date(checkin.ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }), out: '—' };
+  }
+  // По операциям
+  const dayOps = data.ops.filter(o => o.workerIds?.includes(workerId) && o.status === 'done' && o.startedAt >= dayStart && o.finishedAt <= dayEnd && o.startedAt && o.finishedAt);
+  if (dayOps.length > 0) {
+    const firstStart = Math.min(...dayOps.map(o => o.startedAt));
+    const lastEnd    = Math.max(...dayOps.map(o => o.finishedAt));
+    const h = Math.round((lastEnd - firstStart) / 3600000 * 10) / 10;
+    return { type: 'ops', code: 'Я', h: Math.min(h, 12), src: 'по операциям', inn: new Date(firstStart).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }), out: new Date(lastEnd).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }), ops: dayOps.length };
+  }
+  // Авто-checkin
+  const autoIn = data.events.find(e => e.workerId === workerId && e.type === 'checkin_auto' && e.ts >= dayStart && e.ts <= dayEnd);
+  if (autoIn) return { type: 'half', code: 'НО', h: 0, src: 'автоматически', inn: new Date(autoIn.ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }), out: '—' };
+  return { type: 'abs', code: 'НН', h: 0, src: 'нет данных' };
+};
+
 const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
+  const today = new Date();
+  const [viewMonth, setViewMonth] = useState(today.getMonth());
+  const [viewYear,  setViewYear]  = useState(today.getFullYear());
+  const [selWorker, setSelWorker] = useState('');
+  const [detailDay, setDetailDay] = useState(null);   // { workerId, day }
+  const [detailWorker, setDetailWorker] = useState(null); // workerId
+
   const recordEvent = useCallback((workerId, type) => {
     const shift = getCurrentShift(data?.settings?.shifts);
     const newEvent = { id: uid(), type, workerId, ts: now(), source: 'master', shift };
     const updated = { ...data, events: [...data.events, newEvent] };
-    DB.save(updated).then(() => {
-      onUpdate(updated);
-      addToast(`Событие ${type === 'checkin_manual' ? 'прихода' : 'ухода'} зафиксировано`, 'success');
-    });
+    DB.save(updated).then(() => { onUpdate(updated); addToast(`Событие ${type === 'checkin_manual' ? 'прихода' : 'ухода'} зафиксировано`, 'success'); });
   }, [data, onUpdate, addToast]);
 
-  const workersWithStatus = useMemo(() => {
-    const today = new Date();
-    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-    const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999).getTime();
-    return data.workers.map(w => {
-      const todayEvents = data.events.filter(e => e.workerId === w.id && e.ts >= todayStart && e.ts <= todayEnd && (e.type === 'checkin_manual' || e.type === 'checkout_manual'));
-      const lastEvent = todayEvents.sort((a,b) => b.ts - a.ts)[0];
-      const lastEventType = lastEvent?.type === 'checkin_manual' ? 'Пришёл' : (lastEvent?.type === 'checkout_manual' ? 'Ушёл' : 'Нет');
-      const lastEventTime = lastEvent ? new Date(lastEvent.ts).toLocaleTimeString() : '';
-      return { ...w, lastEventType, lastEventTime, eventsCount: todayEvents.length };
-    }).sort((a,b) => a.name.localeCompare(b.name));
-  }, [data.workers, data.events]);
+  const dim = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const days = Array.from({ length: dim }, (_, i) => i + 1);
+  const activeWorkers = useMemo(() => data.workers.filter(w => !w.archived), [data.workers]);
+  const showWorkers = selWorker ? activeWorkers.filter(w => w.id === selWorker) : activeWorkers;
+
+  // Матрица данных
+  const matrix = useMemo(() => {
+    const m = {};
+    showWorkers.forEach(w => {
+      m[w.id] = {};
+      days.forEach(d => { m[w.id][d] = calcDayData(w.id, viewYear, viewMonth, d, data); });
+    });
+    return m;
+  }, [showWorkers, viewYear, viewMonth, data, dim]);
+
+  // Итоги по дням (все сотрудники)
+  const dayTotals = useMemo(() => {
+    const dt = {};
+    days.forEach(d => {
+      const dow = new Date(viewYear, viewMonth, d).getDay();
+      if (dow === 0 || dow === 6) { dt[d] = null; return; }
+      dt[d] = showWorkers.reduce((s, w) => s + (matrix[w.id]?.[d]?.h || 0), 0);
+    });
+    return dt;
+  }, [matrix, days]);
+
+  const exportXlsx = useCallback(() => {
+    const wb = XLSX.utils.book_new();
+    // Лист Т-13
+    const header = ['Сотрудник', ...days.map(d => `${d}`), 'Итого ч', 'Дней'];
+    const rows = [header];
+    showWorkers.forEach(w => {
+      const row = [w.name];
+      let totH = 0, totD = 0;
+      days.forEach(d => {
+        const dd = matrix[w.id]?.[d];
+        if (!dd || dd.type === 'we') { row.push('В'); return; }
+        if (dd.h > 0) { totH += dd.h; totD++; row.push(dd.h); }
+        else row.push(dd.code);
+      });
+      row.push(totH, totD);
+      rows.push(row);
+    });
+    // Строка итогов по дням
+    const sumRow = ['ИТОГО чел·ч'];
+    days.forEach(d => { sumRow.push(dayTotals[d] ?? 'В'); });
+    rows.push(sumRow);
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, `Табель ${viewMonth+1}.${viewYear}`);
+    XLSX.writeFile(wb, `tabeli_T13_${viewMonth+1}_${viewYear}.xlsx`);
+    addToast('Табель выгружен в Excel', 'success');
+  }, [showWorkers, matrix, days, dayTotals, viewMonth, viewYear, addToast]);
+
+  const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  const DOW = ['вс','пн','вт','ср','чт','пт','сб'];
+  const cellStyle = (dd) => {
+    if (!dd) return {};
+    const base = { display:'inline-block', padding:'2px 4px', borderRadius:4, fontSize:11, fontWeight:500, minWidth:26, textAlign:'center', cursor:'pointer' };
+    if (dd.type==='we')   return { ...base, color:'#ccc' };
+    if (dd.type==='full') return { ...base, background:GN3, color:GN2 };
+    if (dd.type==='ops')  return { ...base, background:AM3, color:AM2 };
+    if (dd.type==='half') return { ...base, background:'#E6F1FB', color:'#0C447C' };
+    if (dd.type==='sick') return { ...base, background:RD3, color:RD2 };
+    if (dd.type==='vac')  return { ...base, background:'#E6F1FB', color:'#042C53' };
+    return { ...base, background:'#f5f5f2', color:'#bbb' };
+  };
+
+  // Детали дня
+  const dayDetail = detailDay && matrix[detailDay.workerId]?.[detailDay.day];
+  const workerDetail = detailWorker && (() => {
+    const w = data.workers.find(x => x.id === detailWorker);
+    if (!w) return null;
+    let totH=0, totDays=0, manual=0, byOps=0, sick=0, vac=0, abs=0, late=0;
+    days.forEach(d => {
+      const dow = new Date(viewYear, viewMonth, d).getDay();
+      if (dow===0||dow===6) return;
+      const dd = matrix[detailWorker]?.[d];
+      if (!dd) return;
+      if (dd.h > 0) { totH += dd.h; totDays++; }
+      if (dd.src==='ручная отметка') manual++;
+      if (dd.src==='по операциям') byOps++;
+      if (dd.type==='sick') sick++;
+      if (dd.type==='vac') vac++;
+      if (dd.type==='abs') abs++;
+      if (dd.inn && dd.inn > '08:05') late++;
+    });
+    return { name: w.name, totH: Math.round(totH*10)/10, totDays, manual, byOps, sick, vac, abs, late };
+  })();
 
   return h('div', null,
-    h('div', { style: S.card },
-      h('div', { style: S.sec }, 'Учёт рабочего времени (сегодня)'),
-      workersWithStatus.length === 0
-        ? h('div', { style: { textAlign: 'center', padding: 32 } }, 'Нет сотрудников')
-        : h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-            h('thead', null, h('tr', null, ['Сотрудник','Последнее событие','Время','Всего событий','Действия'].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
-            h('tbody', null, workersWithStatus.map(w =>
-              h('tr', { key: w.id },
-                h('td', { style: S.td }, w.name),
-                h('td', { style: S.td }, w.lastEventType),
-                h('td', { style: S.td }, w.lastEventTime),
-                h('td', { style: { ...S.td, textAlign: 'center' } }, w.eventsCount),
-                h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
-                  h('button', { style: abtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': `Отметить приход ${w.name}`, onClick: () => recordEvent(w.id, 'checkin_manual') }, 'Пришёл'),
-                  h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': `Отметить уход ${w.name}`, onClick: () => recordEvent(w.id, 'checkout_manual') }, 'Ушёл')
-                ))
-              )
-            ))
-          ))
+    // Шапка
+    h('div', { style: { display:'flex', gap:8, flexWrap:'wrap', alignItems:'center', marginBottom:14 } },
+      // Навигация по месяцу
+      h('button', { style: gbtn({ padding:'6px 12px' }), onClick: () => { let m=viewMonth-1,y=viewYear; if(m<0){m=11;y--;} setViewMonth(m); setViewYear(y); setDetailDay(null); setDetailWorker(null); } }, '‹'),
+      h('span', { style: { fontSize:15, fontWeight:500, minWidth:150, textAlign:'center' } }, `${MONTHS_RU[viewMonth]} ${viewYear}`),
+      h('button', { style: gbtn({ padding:'6px 12px' }), onClick: () => { let m=viewMonth+1,y=viewYear; if(m>11){m=0;y++;} setViewMonth(m); setViewYear(y); setDetailDay(null); setDetailWorker(null); } }, '›'),
+      h('select', { style: { ...S.inp, width:'auto', fontSize:13 }, value: selWorker, onChange: e => { setSelWorker(e.target.value); setDetailDay(null); setDetailWorker(null); } },
+        h('option', { value:'' }, 'Все сотрудники'),
+        activeWorkers.map(w => h('option', { key:w.id, value:w.id }, w.name))
+      ),
+      h('button', { style: abtn({ marginLeft:'auto' }), onClick: exportXlsx }, '📥 Т-13 Excel')
+    ),
+
+    // Легенда
+    h('div', { style: { display:'flex', gap:10, flexWrap:'wrap', marginBottom:10 } },
+      [[GN3,GN2,'Я — явка (ручн.)'],[AM3,AM2,'Я — по операциям'],['#E6F1FB','#0C447C','НО — неполный'],
+       [RD3,RD2,'Б — больничный'],['#E6F1FB','#042C53','ОТ — отпуск'],['#f5f5f2','#bbb','НН — нет данных']].map(([bg,cl,l]) =>
+        h('div', { style:{ display:'flex', alignItems:'center', gap:4, fontSize:11, color:'#888' } },
+          h('div', { style:{ width:12, height:12, background:bg, borderRadius:2, border:`0.5px solid ${cl}`, flexShrink:0 } }),
+          l
+        )
+      )
+    ),
+
+    // Итоговые KPI
+    h('div', { style: { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, marginBottom:14 } },
+      (() => {
+        let totH=0, totDays=0, totAbs=0, totSick=0;
+        showWorkers.forEach(w => { days.forEach(d => { const dd=matrix[w.id]?.[d]; if(!dd)return; if(dd.h>0){totH+=dd.h;totDays++;} if(dd.type==='abs')totAbs++; if(dd.type==='sick')totSick++; }); });
+        return [
+          [Math.round(totH*10)/10+'ч','Всего часов','#1a1a18'],
+          [totDays,'Явок',GN2],
+          [totAbs,'Нет данных',totAbs>0?'#888':'#ccc'],
+          [totSick,'Больничных',totSick>0?RD2:'#ccc'],
+        ].map(([v,l,c]) => h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } },
+          h('div', { style:{ fontSize:22, fontWeight:500, color:c } }, v),
+          h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase', marginTop:2 } }, l)
+        ));
+      })()
+    ),
+
+    // Таблица
+    h('div', { style: { ...S.card, padding:0, overflow:'auto', maxHeight:'60vh' } },
+      h('table', { style:{ borderCollapse:'collapse', width:'100%', fontSize:11 } },
+        h('thead', null, h('tr', null,
+          h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'#f8f8f5', minWidth:150, textAlign:'left', padding:'6px 10px' } }, 'Сотрудник'),
+          days.map(d => {
+            const dow = new Date(viewYear, viewMonth, d).getDay();
+            const isWe = dow===0||dow===6;
+            return h('th', { key:d, style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:34, color: isWe ? RD : undefined } },
+              d, h('br'), h('span', { style:{ fontSize:9, fontWeight:400 } }, DOW[dow])
+            );
+          }),
+          h('th', { style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:50 } }, 'Итого'),
+          h('th', { style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:36 } }, 'Дней')
+        )),
+        h('tbody', null,
+          showWorkers.map(w => {
+            let totH=0, totD=0;
+            return h('tr', { key:w.id },
+              h('td', { style:{ ...S.td, position:'sticky', left:0, zIndex:1, background:'#fff', boxShadow:'2px 0 4px rgba(0,0,0,0.04)', fontWeight:500, cursor:'pointer', color:AM4, padding:'6px 10px' }, onClick:()=>{ setDetailWorker(w.id); setDetailDay(null); } }, w.name),
+              days.map(d => {
+                const dd = matrix[w.id]?.[d];
+                if (!dd) return h('td', { key:d });
+                if (dd.h > 0) { totH += dd.h; totD++; }
+                const lbl = dd.type==='we' ? '·' : dd.h > 0 ? dd.h : dd.code;
+                return h('td', { key:d, style:{ ...S.td, padding:2 } },
+                  h('span', { style: cellStyle(dd), onClick: dd.type!=='we' ? ()=>{ setDetailDay({ workerId:w.id, day:d }); setDetailWorker(null); } : undefined }, lbl)
+                );
+              }),
+              h('td', { style:{ ...S.td, fontWeight:500, background:'#f8f8f5' } }, Math.round(totH*10)/10+'ч'),
+              h('td', { style:{ ...S.td, background:'#f8f8f5' } }, totD)
+            );
+          }),
+          // Итоговая строка
+          showWorkers.length > 1 && h('tr', null,
+            h('td', { style:{ ...S.td, position:'sticky', left:0, background:'#f8f8f5', fontWeight:500, fontSize:10, color:'#888', padding:'4px 10px' } }, 'Итого чел·ч'),
+            days.map(d => h('td', { key:d, style:{ ...S.td, fontSize:10, background:'#f8f8f5', fontWeight:500, color: dayTotals[d] > 0 ? AM2 : '#ccc' } }, dayTotals[d] ? Math.round(dayTotals[d]*10)/10 : '')),
+            h('td', { style:{ ...S.td, background:'#f8f8f5' } }), h('td', { style:{ ...S.td, background:'#f8f8f5' } })
+          )
+        )
+      )
+    ),
+
+    // Карточка сотрудника
+    workerDetail && h('div', { style:{ ...S.card, border:`1.5px solid ${AM}`, marginTop:12 } },
+      h('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 } },
+        h('div', { style:{ fontSize:13, fontWeight:500 } }, `${workerDetail.name} — ${MONTHS_RU[viewMonth]} ${viewYear}`),
+        h('button', { style: gbtn({ padding:'4px 10px', fontSize:12 }), onClick:()=>setDetailWorker(null) }, '×')
+      ),
+      h('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 } },
+        [
+          [`${workerDetail.totH}ч / ${workerDetail.totDays} дн.`,'Отработано',AM],
+          [`${workerDetail.manual}`,'Ручных отметок',GN],
+          [`${workerDetail.byOps}`,'По операциям',AM],
+          [`${workerDetail.sick}`,'Больничных',workerDetail.sick>0?RD:'#888'],
+          [`${workerDetail.vac}`,'Отпуск','#0C447C'],
+          [`${workerDetail.abs}`,'Нет данных',workerDetail.abs>0?'#aaa':'#ccc'],
+          [`${workerDetail.late}`,'Опозданий',workerDetail.late>0?AM2:'#ccc'],
+        ].map(([v,l,c]) => h('div', { style:{ background:'#f8f8f5', borderRadius:8, padding:'8px 12px' } },
+          h('div', { style:{ fontSize:15, fontWeight:500, color:c } }, v),
+          h('div', { style:{ fontSize:10, color:'#888', textTransform:'uppercase', marginTop:2 } }, l)
+        ))
+      ),
+      // Кнопки быстрой отметки
+      h('div', { style:{ display:'flex', gap:8, marginTop:12 } },
+        h('button', { style: abtn({ flex:1, fontSize:13 }), onClick:()=>recordEvent(detailWorker,'checkin_manual') }, '+ Пришёл'),
+        h('button', { style: rbtn({ flex:1, fontSize:13 }), onClick:()=>recordEvent(detailWorker,'checkout_manual') }, '+ Ушёл')
+      )
+    ),
+
+    // Карточка дня
+    detailDay && dayDetail && dayDetail.type !== 'we' && h('div', { style:{ ...S.card, border:`1.5px solid ${AM}`, marginTop:12 } },
+      h('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 } },
+        h('div', { style:{ fontSize:13, fontWeight:500 } },
+          `${data.workers.find(w=>w.id===detailDay.workerId)?.name} · ${detailDay.day}.${viewMonth+1}.${viewYear}`
+        ),
+        h('button', { style: gbtn({ padding:'4px 10px', fontSize:12 }), onClick:()=>setDetailDay(null) }, '×')
+      ),
+      h('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 } },
+        [
+          ['Код Т-13', dayDetail.code],
+          ['Источник', dayDetail.src || '—'],
+          ['Приход', dayDetail.inn || '—'],
+          ['Уход', dayDetail.out || '—'],
+          ['Часов', dayDetail.h > 0 ? dayDetail.h+'ч' : '—'],
+          ['Операций', dayDetail.ops || '—'],
+        ].map(([l,v]) => h('div', { style:{ background:'#f8f8f5', borderRadius:8, padding:'8px 12px' } },
+          h('div', { style:{ fontSize:10, color:'#888', textTransform:'uppercase', marginBottom:2 } }, l),
+          h('div', { style:{ fontSize:14, fontWeight:500 } }, v)
+        ))
+      ),
+      h('div', { style:{ display:'flex', gap:8, marginTop:12 } },
+        h('button', { style: abtn({ flex:1, fontSize:13 }), onClick:()=>recordEvent(detailDay.workerId,'checkin_manual') }, '+ Пришёл'),
+        h('button', { style: rbtn({ flex:1, fontSize:13 }), onClick:()=>recordEvent(detailDay.workerId,'checkout_manual') }, '+ Ушёл')
+      )
     )
   );
 });
