@@ -8904,14 +8904,12 @@ const DirectorScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 const HRScreen = memo(({ data, onUpdate, addToast }) => {
   const [tab, setTab] = useState('workers');
   const TABS = [
-    ['workers','Сотрудники'],['time','Учёт времени'],
+    ['workers','Сотрудники'],['time','Табель'],
     ['instructions','Инструктажи ОТ'],['vacations','Отпуска'],
     ['kpi','KPI / Премии'],['reports','Отчёты']
   ];
 
-  const active  = useMemo(() => data.workers.filter(w => !w.archived), [data.workers]);
-  const working = useMemo(() => active.filter(w => (w.status||'working') === 'working').length, [active]);
-  const absent  = useMemo(() => active.filter(w => w.status !== 'working').length, [active]);
+  const active = useMemo(() => data.workers.filter(w => !w.archived), [data.workers]);
 
   // Алерты ОТ
   const instrAlerts = useMemo(() => {
@@ -8920,8 +8918,7 @@ const HRScreen = memo(({ data, onUpdate, addToast }) => {
     active.forEach(w => {
       ['workplace','fire','electrical'].forEach(type => {
         const last = instructions.filter(i => i.workerId === w.id && i.type === type).sort((a,b) => b.dateMs - a.dateMs)[0];
-        if (!last) return;
-        if (!last.nextDate) return;
+        if (!last || !last.nextDate) return;
         const days = Math.ceil((last.nextDate - Date.now()) / 86400000);
         if (days < 0) expired++;
         else if (days <= 30) expiring++;
@@ -8931,12 +8928,8 @@ const HRScreen = memo(({ data, onUpdate, addToast }) => {
   }, [data.instructions, active]);
 
   return h('div', null,
-    h(SectionAnalytics, { section: 'hr', data }),
-    h('div', { className:'metrics-grid', style:{ display:'grid', gap:8, marginBottom:14 } },
-      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500 } }, active.length), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Сотрудников')),
-      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color:GN } }, working), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'На смене')),
-      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color: absent>0?AM:'#888' } }, absent), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Отсутствуют'))
-    ),
+    // SectionAnalytics только на вкладке сотрудников
+    tab === 'workers' && h(SectionAnalytics, { section: 'hr', data }),
     // Алерт ОТ
     (instrAlerts.expired > 0 || instrAlerts.expiring > 0) && h('div', { style:{ background: instrAlerts.expired>0 ? '#FCEBEB' : AM3, border:`0.5px solid ${instrAlerts.expired>0 ? RD : AM4}`, borderRadius:8, padding:'8px 12px', marginBottom:12, fontSize:12, color: instrAlerts.expired>0 ? RD2 : AM2, cursor:'pointer' }, onClick:()=>setTab('instructions') },
       instrAlerts.expired > 0 && `⚠ ${instrAlerts.expired} инструктажей просрочено`,
@@ -8964,7 +8957,7 @@ const AdminScreen = memo(({ data, onUpdate, addToast }) => {
   const TABS = [
     ['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],
     ['equipment','Оборудование'],['materials','Материалы'],['bom','Спецификации'],
-    ['sections','Участки'],['workers','Сотрудники'],['time','Учёт времени'],['admin','Настройки']
+    ['sections','Участки'],['workers','Сотрудники'],['time','Табель'],['admin','Настройки']
   ];
 
   return h('div', null,
