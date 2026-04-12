@@ -383,7 +383,7 @@ const DOC_REF = firestore.collection('app').doc('production_v14');
 
 const EMPTY_DATA = {
   orders: [], ops: [], workers: [], downtimeTypes: [], events: [], materials: [], sections: [], equipment: [],
-  bomTemplates: [], materialConsumptions: [], productionStages: [], defectReasons: [], workerAvailabilities: [],
+  bomTemplates: [], materialConsumptions: [], productionStages: [], defectReasons: [], workerAvailabilities: [], timesheet: {},
   messages: [], reclamations: [], duels: [], materialReservations: [],
   settings: {
     // Единый PIN-вход: мастер и контролёр тоже входят по PIN
@@ -2268,241 +2268,272 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [viewYear,  setViewYear]  = useState(today.getFullYear());
   const [selWorker, setSelWorker] = useState('');
-  const [detailDay, setDetailDay] = useState(null);   // { workerId, day }
-  const [detailWorker, setDetailWorker] = useState(null); // workerId
+  const [activeCell, setActiveCell] = useState(null); // {workerId, day, rect}
+  const [popupVal,  setPopupVal]  = useState('');
+  const [showImport, setShowImport] = useState(false);
+  const [pasteText, setPasteText]  = useState('');
+  const tableRef = useRef(null);
+  const inputRef = useRef(null);
 
-  const recordEvent = useCallback((workerId, type) => {
-    const shift = getCurrentShift(data?.settings?.shifts);
-    const newEvent = { id: uid(), type, workerId, ts: now(), source: 'master', shift };
-    const updated = { ...data, events: [...data.events, newEvent] };
-    DB.save(updated).then(() => { onUpdate(updated); addToast(`Событие ${type === 'checkin_manual' ? 'прихода' : 'ухода'} зафиксировано`, 'success'); });
-  }, [data, onUpdate, addToast]);
+  const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  const DOW = ['вс','пн','вт','ср','чт','пт','сб'];
+  const CODES = ['Б','ОТ','НО','НН'];
+  const CODE_LABELS = { 'Б':'больничный','ОТ':'отпуск','НО':'неполный','НН':'нет данных' };
 
   const dim = new Date(viewYear, viewMonth + 1, 0).getDate();
   const days = Array.from({ length: dim }, (_, i) => i + 1);
   const activeWorkers = useMemo(() => data.workers.filter(w => !w.archived), [data.workers]);
   const showWorkers = selWorker ? activeWorkers.filter(w => w.id === selWorker) : activeWorkers;
 
-  // Матрица данных
-  const matrix = useMemo(() => {
-    const m = {};
-    showWorkers.forEach(w => {
-      m[w.id] = {};
-      days.forEach(d => { m[w.id][d] = calcDayData(w.id, viewYear, viewMonth, d, data); });
-    });
-    return m;
-  }, [showWorkers, viewYear, viewMonth, data, dim]);
+  // Читаем сохранённые значения табеля из data.timesheet[YYYY-MM][workerId][day]
+  const tsKey = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}`;
+  const tsData = (data.timesheet || {})[tsKey] || {};
 
-  // Итоги по дням (все сотрудники)
-  const dayTotals = useMemo(() => {
-    const dt = {};
-    days.forEach(d => {
-      const dow = new Date(viewYear, viewMonth, d).getDay();
-      if (dow === 0 || dow === 6) { dt[d] = null; return; }
-      dt[d] = showWorkers.reduce((s, w) => s + (matrix[w.id]?.[d]?.h || 0), 0);
-    });
-    return dt;
-  }, [matrix, days]);
+  const getCellVal = (workerId, day) => tsData[workerId]?.[day] || null;
+
+  const setCellVal = useCallback(async (workerId, day, val) => {
+    const key = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}`;
+    const newTs = {
+      ...(data.timesheet || {}),
+      [key]: {
+        ...((data.timesheet || {})[key] || {}),
+        [workerId]: {
+          ...(((data.timesheet || {})[key] || {})[workerId] || {}),
+          [day]: val || null
+        }
+      }
+    };
+    const d = { ...data, timesheet: newTs };
+    await DB.save(d); onUpdate(d);
+  }, [data, viewYear, viewMonth, onUpdate]);
+
+  const openPopup = useCallback((workerId, day) => {
+    const val = getCellVal(workerId, day);
+    setActiveCell({ workerId, day });
+    setPopupVal(val?.h != null ? String(val.h) : val?.code || '');
+    setTimeout(() => inputRef.current?.focus(), 50);
+  }, [tsData]);
+
+  const saveCell = useCallback(async () => {
+    if (!activeCell) return;
+    const { workerId, day } = activeCell;
+    const h = parseFloat(popupVal);
+    if (!isNaN(h) && h >= 0 && h <= 24) {
+      await setCellVal(workerId, day, { h, code: null });
+    }
+    setActiveCell(null); setPopupVal('');
+  }, [activeCell, popupVal, setCellVal]);
+
+  const setCode = useCallback(async (code) => {
+    if (!activeCell) return;
+    const { workerId, day } = activeCell;
+    await setCellVal(workerId, day, code ? { h: null, code } : null);
+    setActiveCell(null); setPopupVal('');
+  }, [activeCell, setCellVal]);
+
+  const cellStyle = (val) => {
+    if (!val) return { bg: 'var(--color-background-secondary)', cl: '#bbb', lbl: '·' };
+    if (val.code === 'Б')  return { bg: '#FCEBEB', cl: '#791F1F', lbl: 'Б' };
+    if (val.code === 'ОТ') return { bg: '#E6F1FB', cl: '#0C447C', lbl: 'ОТ' };
+    if (val.code === 'НО') return { bg: '#E6F1FB', cl: '#0C447C', lbl: 'НО' };
+    if (val.code === 'НН') return { bg: '#F1EFE8', cl: '#888',   lbl: 'НН' };
+    if (val.h >= 8) return { bg: GN3, cl: GN2, lbl: val.h };
+    if (val.h > 0)  return { bg: AM3, cl: AM2, lbl: val.h };
+    return { bg: 'var(--color-background-secondary)', cl: '#bbb', lbl: '·' };
+  };
 
   const exportXlsx = useCallback(() => {
     const wb = XLSX.utils.book_new();
-    // Лист Т-13
-    const header = ['Сотрудник', ...days.map(d => `${d}`), 'Итого ч', 'Дней'];
+    const header = ['Сотрудник', ...days.map(d => d), 'Итого ч', 'Дней'];
     const rows = [header];
     showWorkers.forEach(w => {
       const row = [w.name];
       let totH = 0, totD = 0;
       days.forEach(d => {
-        const dd = matrix[w.id]?.[d];
-        if (!dd || dd.type === 'we') { row.push('В'); return; }
-        if (dd.h > 0) { totH += dd.h; totD++; row.push(dd.h); }
-        else row.push(dd.code);
+        const dow = new Date(viewYear, viewMonth, d).getDay();
+        if (dow === 0 || dow === 6) { row.push('В'); return; }
+        const val = getCellVal(w.id, d);
+        if (!val) { row.push(''); return; }
+        if (val.h != null) { totH += val.h; totD++; row.push(val.h); }
+        else row.push(val.code || '');
       });
-      row.push(totH, totD);
-      rows.push(row);
+      rows.push([...row, totH, totD]);
     });
-    // Строка итогов по дням
-    const sumRow = ['ИТОГО чел·ч'];
-    days.forEach(d => { sumRow.push(dayTotals[d] ?? 'В'); });
-    rows.push(sumRow);
     const ws = XLSX.utils.aoa_to_sheet(rows);
     XLSX.utils.book_append_sheet(wb, ws, `Табель ${viewMonth+1}.${viewYear}`);
     XLSX.writeFile(wb, `tabeli_T13_${viewMonth+1}_${viewYear}.xlsx`);
-    addToast('Табель выгружен в Excel', 'success');
-  }, [showWorkers, matrix, days, dayTotals, viewMonth, viewYear, addToast]);
+    addToast('Табель выгружен в Excel (Т-13)', 'success');
+  }, [showWorkers, days, viewYear, viewMonth, tsData, addToast]);
 
-  const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
-  const DOW = ['вс','пн','вт','ср','чт','пт','сб'];
-  const cellStyle = (dd) => {
-    if (!dd) return {};
-    const base = { display:'inline-block', padding:'2px 4px', borderRadius:4, fontSize:11, fontWeight:500, minWidth:26, textAlign:'center', cursor:'pointer' };
-    if (dd.type==='we')   return { ...base, color:'#ccc' };
-    if (dd.type==='full') return { ...base, background:GN3, color:GN2 };
-    if (dd.type==='ops')  return { ...base, background:AM3, color:AM2 };
-    if (dd.type==='half') return { ...base, background:'#E6F1FB', color:'#0C447C' };
-    if (dd.type==='sick') return { ...base, background:RD3, color:RD2 };
-    if (dd.type==='vac')  return { ...base, background:'#E6F1FB', color:'#042C53' };
-    return { ...base, background:'#f5f5f2', color:'#bbb' };
-  };
-
-  // Детали дня
-  const dayDetail = detailDay && matrix[detailDay.workerId]?.[detailDay.day];
-  const workerDetail = detailWorker && (() => {
-    const w = data.workers.find(x => x.id === detailWorker);
-    if (!w) return null;
-    let totH=0, totDays=0, manual=0, byOps=0, sick=0, vac=0, abs=0, late=0;
-    days.forEach(d => {
-      const dow = new Date(viewYear, viewMonth, d).getDay();
-      if (dow===0||dow===6) return;
-      const dd = matrix[detailWorker]?.[d];
-      if (!dd) return;
-      if (dd.h > 0) { totH += dd.h; totDays++; }
-      if (dd.src==='ручная отметка') manual++;
-      if (dd.src==='по операциям') byOps++;
-      if (dd.type==='sick') sick++;
-      if (dd.type==='vac') vac++;
-      if (dd.type==='abs') abs++;
-      if (dd.inn && dd.inn > '08:05') late++;
+  const doImport = useCallback(async () => {
+    if (!pasteText.trim()) return;
+    const rows = pasteText.trim().split('\n').map(r => r.split('\t'));
+    let imported = 0;
+    const newTs = { ...(data.timesheet || {}) };
+    const key = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}`;
+    if (!newTs[key]) newTs[key] = {};
+    rows.forEach(row => {
+      if (row.length < 2) return;
+      const name = row[0].trim().toLowerCase();
+      const w = activeWorkers.find(w => w.name.toLowerCase().includes(name.split(' ')[0]));
+      if (!w) return;
+      if (!newTs[key][w.id]) newTs[key][w.id] = {};
+      row.slice(1).forEach((cell, i) => {
+        const d = i + 1; if (d > dim) return;
+        const v = cell.trim();
+        if (!v || v === 'В' || v === '-') return;
+        const h = parseFloat(v);
+        if (!isNaN(h) && h >= 0 && h <= 24) { newTs[key][w.id][d] = { h, code: null }; imported++; }
+        else if (CODES.includes(v)) { newTs[key][w.id][d] = { h: null, code: v }; imported++; }
+      });
     });
-    return { name: w.name, totH: Math.round(totH*10)/10, totDays, manual, byOps, sick, vac, abs, late };
-  })();
+    const d = { ...data, timesheet: newTs };
+    await DB.save(d); onUpdate(d);
+    setPasteText(''); setShowImport(false);
+    addToast(`Импортировано: ${imported} ячеек`, 'success');
+  }, [pasteText, data, viewYear, viewMonth, activeWorkers, dim, onUpdate, addToast]);
+
+  // Закрытие попапа по Escape/Enter
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === 'Escape') { setActiveCell(null); setPopupVal(''); }
+      if (e.key === 'Enter' && activeCell) saveCell();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [activeCell, saveCell]);
+
+  const workerName = activeCell ? activeWorkers.find(w => w.id === activeCell.workerId)?.name?.split(' ')[0] : '';
 
   return h('div', null,
     // Шапка
     h('div', { style: { display:'flex', gap:8, flexWrap:'wrap', alignItems:'center', marginBottom:14 } },
-      // Навигация по месяцу
-      h('button', { style: gbtn({ padding:'6px 12px' }), onClick: () => { let m=viewMonth-1,y=viewYear; if(m<0){m=11;y--;} setViewMonth(m); setViewYear(y); setDetailDay(null); setDetailWorker(null); } }, '‹'),
-      h('span', { style: { fontSize:15, fontWeight:500, minWidth:150, textAlign:'center' } }, `${MONTHS_RU[viewMonth]} ${viewYear}`),
-      h('button', { style: gbtn({ padding:'6px 12px' }), onClick: () => { let m=viewMonth+1,y=viewYear; if(m>11){m=0;y++;} setViewMonth(m); setViewYear(y); setDetailDay(null); setDetailWorker(null); } }, '›'),
-      h('select', { style: { ...S.inp, width:'auto', fontSize:13 }, value: selWorker, onChange: e => { setSelWorker(e.target.value); setDetailDay(null); setDetailWorker(null); } },
+      h('button', { style: gbtn({ padding:'6px 12px' }), onClick: () => { let m=viewMonth-1,y=viewYear; if(m<0){m=11;y--;} setViewMonth(m); setViewYear(y); setActiveCell(null); } }, '‹'),
+      h('span', { style: { fontSize:15, fontWeight:500, minWidth:140, textAlign:'center' } }, `${MONTHS_RU[viewMonth]} ${viewYear}`),
+      h('button', { style: gbtn({ padding:'6px 12px' }), onClick: () => { let m=viewMonth+1,y=viewYear; if(m>11){m=0;y++;} setViewMonth(m); setViewYear(y); setActiveCell(null); } }, '›'),
+      h('select', { style: { ...S.inp, width:'auto', fontSize:13 }, value: selWorker, onChange: e => setSelWorker(e.target.value) },
         h('option', { value:'' }, 'Все сотрудники'),
         activeWorkers.map(w => h('option', { key:w.id, value:w.id }, w.name))
       ),
-      h('button', { style: abtn({ marginLeft:'auto' }), onClick: exportXlsx }, '📥 Т-13 Excel')
+      h('button', { style: gbtn({ fontSize:12 }), onClick: () => setShowImport(v => !v) }, '📋 Импорт'),
+      h('button', { style: abtn({ fontSize:12, marginLeft:'auto' }), onClick: exportXlsx }, '📥 Т-13 Excel')
+    ),
+
+    // Импорт
+    showImport && h('div', { style: { ...S.card, border:`1px dashed ${AM4}`, background: AM3, marginBottom:14 } },
+      h('div', { style: { fontSize:13, fontWeight:500, color:AM2, marginBottom:4 } }, '📋 Импорт из Excel'),
+      h('div', { style: { fontSize:11, color:AM4, marginBottom:8 } },
+        'Скопируйте строки из Excel: первая колонка — фамилия, далее значения по дням (числа или Б/ОТ/НО/НН). Вставьте Ctrl+V.'
+      ),
+      h('textarea', { style: { ...S.inp, width:'100%', fontSize:12, fontFamily:'monospace', resize:'vertical' },
+        rows:4, placeholder:'Вставьте данные Ctrl+V...\nИванов\t8\t8\t\t8\t7\tБ\t8...',
+        value: pasteText, onChange: e => setPasteText(e.target.value)
+      }),
+      h('div', { style: { display:'flex', gap:8, marginTop:8 } },
+        h('button', { style: abtn({ flex:1 }), onClick: doImport }, 'Импортировать'),
+        h('button', { style: gbtn({ flex:1 }), onClick: () => { setShowImport(false); setPasteText(''); } }, 'Отмена')
+      )
     ),
 
     // Легенда
     h('div', { style: { display:'flex', gap:10, flexWrap:'wrap', marginBottom:10 } },
-      [[GN3,GN2,'Я — явка (ручн.)'],[AM3,AM2,'Я — по операциям'],['#E6F1FB','#0C447C','НО — неполный'],
-       [RD3,RD2,'Б — больничный'],['#E6F1FB','#042C53','ОТ — отпуск'],['#f5f5f2','#bbb','НН — нет данных']].map(([bg,cl,l]) =>
-        h('div', { style:{ display:'flex', alignItems:'center', gap:4, fontSize:11, color:'#888' } },
-          h('div', { style:{ width:12, height:12, background:bg, borderRadius:2, border:`0.5px solid ${cl}`, flexShrink:0 } }),
+      [[GN3,GN2,'8ч — норма'],[AM3,AM2,'< 8ч'],['#FCEBEB','#791F1F','Б'],['#E6F1FB','#0C447C','ОТ / НО'],['#F1EFE8','#888','НН']].map(([bg,cl,l]) =>
+        h('div', { key:l, style:{ display:'flex', alignItems:'center', gap:4, fontSize:11, color:'#888' } },
+          h('div', { style:{ width:12, height:12, background:bg, borderRadius:2, border:`0.5px solid ${cl}44`, flexShrink:0 } }),
           l
         )
       )
     ),
 
-    // Итоговые KPI
-    h('div', { style: { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, marginBottom:14 } },
-      (() => {
-        let totH=0, totDays=0, totAbs=0, totSick=0;
-        showWorkers.forEach(w => { days.forEach(d => { const dd=matrix[w.id]?.[d]; if(!dd)return; if(dd.h>0){totH+=dd.h;totDays++;} if(dd.type==='abs')totAbs++; if(dd.type==='sick')totSick++; }); });
-        return [
-          [Math.round(totH*10)/10+'ч','Всего часов','#1a1a18'],
-          [totDays,'Явок',GN2],
-          [totAbs,'Нет данных',totAbs>0?'#888':'#ccc'],
-          [totSick,'Больничных',totSick>0?RD2:'#ccc'],
-        ].map(([v,l,c]) => h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } },
-          h('div', { style:{ fontSize:22, fontWeight:500, color:c } }, v),
-          h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase', marginTop:2 } }, l)
-        ));
-      })()
-    ),
-
-    // Таблица
-    h('div', { style: { ...S.card, padding:0, overflow:'auto', maxHeight:'60vh' } },
-      h('table', { style:{ borderCollapse:'collapse', width:'100%', fontSize:11 } },
-        h('thead', null, h('tr', null,
-          h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'#f8f8f5', minWidth:150, textAlign:'left', padding:'6px 10px' } }, 'Сотрудник'),
-          days.map(d => {
-            const dow = new Date(viewYear, viewMonth, d).getDay();
-            const isWe = dow===0||dow===6;
-            return h('th', { key:d, style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:34, color: isWe ? RD : undefined } },
-              d, h('br'), h('span', { style:{ fontSize:9, fontWeight:400 } }, DOW[dow])
-            );
-          }),
-          h('th', { style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:50 } }, 'Итого'),
-          h('th', { style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:36 } }, 'Дней')
-        )),
-        h('tbody', null,
-          showWorkers.map(w => {
-            let totH=0, totD=0;
-            return h('tr', { key:w.id },
-              h('td', { style:{ ...S.td, position:'sticky', left:0, zIndex:1, background:'#fff', boxShadow:'2px 0 4px rgba(0,0,0,0.04)', fontWeight:500, cursor:'pointer', color:AM4, padding:'6px 10px' }, onClick:()=>{ setDetailWorker(w.id); setDetailDay(null); } }, w.name),
+    // Таблица с попапом
+    h('div', { ref: tableRef, style:{ position:'relative' } },
+      h('div', { style:{ ...S.card, padding:0, overflow:'auto', maxHeight:'65vh' } },
+        h('table', { style:{ borderCollapse:'collapse', width:'100%', fontSize:11 } },
+          h('thead', null, h('tr', null,
+            h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'#f8f8f5', minWidth:160, textAlign:'left', padding:'6px 10px' } }, 'Сотрудник'),
+            days.map(d => {
+              const dow = new Date(viewYear, viewMonth, d).getDay();
+              const isWe = dow===0||dow===6;
+              return h('th', { key:d, style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:32, color: isWe ? RD : undefined } },
+                d, h('br'), h('span', { style:{ fontSize:9, fontWeight:400 } }, DOW[dow])
+              );
+            }),
+            h('th', { style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:48 } }, 'Итого')
+          )),
+          h('tbody', null,
+            showWorkers.map(w => {
+              let totH = 0;
+              return h('tr', { key:w.id },
+                h('td', { style:{ ...S.td, position:'sticky', left:0, zIndex:1, background:'#fff', boxShadow:'2px 0 4px rgba(0,0,0,0.04)', padding:'6px 10px', fontWeight:500 } }, w.name),
+                days.map(d => {
+                  const dow = new Date(viewYear, viewMonth, d).getDay();
+                  const isWe = dow===0||dow===6;
+                  if (isWe) return h('td', { key:d, style:{ ...S.td, background:'transparent' } },
+                    h('span', { style:{ display:'inline-block', width:28, textAlign:'center', color:'#ddd', fontSize:10 } }, '·')
+                  );
+                  const val = getCellVal(w.id, d);
+                  const { bg, cl, lbl } = cellStyle(val);
+                  if (val?.h) totH += val.h;
+                  const isActive = activeCell?.workerId === w.id && activeCell?.day === d;
+                  return h('td', { key:d, style:{ ...S.td, padding:2 } },
+                    h('span', {
+                      style:{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:28, height:24, borderRadius:4, fontSize:11, fontWeight:500, cursor:'pointer', background:bg, color:cl, outline: isActive ? `2px solid ${AM}` : 'none' },
+                      onClick: () => openPopup(w.id, d)
+                    }, lbl)
+                  );
+                }),
+                h('td', { style:{ ...S.td, fontWeight:500, background:'#f8f8f5', padding:'4px 6px' } }, totH > 0 ? `${Math.round(totH*10)/10}ч` : '')
+              );
+            }),
+            // Итоговая строка
+            showWorkers.length > 1 && h('tr', null,
+              h('td', { style:{ ...S.td, position:'sticky', left:0, background:'#f8f8f5', fontWeight:500, fontSize:10, color:'#888', padding:'4px 10px' } }, 'Итого чел·ч'),
               days.map(d => {
-                const dd = matrix[w.id]?.[d];
-                if (!dd) return h('td', { key:d });
-                if (dd.h > 0) { totH += dd.h; totD++; }
-                const lbl = dd.type==='we' ? '·' : dd.h > 0 ? dd.h : dd.code;
-                return h('td', { key:d, style:{ ...S.td, padding:2 } },
-                  h('span', { style: cellStyle(dd), onClick: dd.type!=='we' ? ()=>{ setDetailDay({ workerId:w.id, day:d }); setDetailWorker(null); } : undefined }, lbl)
-                );
+                const dow = new Date(viewYear, viewMonth, d).getDay();
+                if (dow===0||dow===6) return h('td', { key:d, style:{ ...S.td, background:'#f8f8f5' } });
+                let sum = 0;
+                showWorkers.forEach(w => { const v = getCellVal(w.id, d); if (v?.h) sum += v.h; });
+                return h('td', { key:d, style:{ ...S.td, background:'#f8f8f5', fontSize:10, fontWeight:500, color: sum > 0 ? AM2 : '#ccc' } }, sum > 0 ? Math.round(sum*10)/10 : '');
               }),
-              h('td', { style:{ ...S.td, fontWeight:500, background:'#f8f8f5' } }, Math.round(totH*10)/10+'ч'),
-              h('td', { style:{ ...S.td, background:'#f8f8f5' } }, totD)
-            );
-          }),
-          // Итоговая строка
-          showWorkers.length > 1 && h('tr', null,
-            h('td', { style:{ ...S.td, position:'sticky', left:0, background:'#f8f8f5', fontWeight:500, fontSize:10, color:'#888', padding:'4px 10px' } }, 'Итого чел·ч'),
-            days.map(d => h('td', { key:d, style:{ ...S.td, fontSize:10, background:'#f8f8f5', fontWeight:500, color: dayTotals[d] > 0 ? AM2 : '#ccc' } }, dayTotals[d] ? Math.round(dayTotals[d]*10)/10 : '')),
-            h('td', { style:{ ...S.td, background:'#f8f8f5' } }), h('td', { style:{ ...S.td, background:'#f8f8f5' } })
+              h('td', { style:{ ...S.td, background:'#f8f8f5' } })
+            )
           )
         )
-      )
-    ),
-
-    // Карточка сотрудника
-    workerDetail && h('div', { style:{ ...S.card, border:`1.5px solid ${AM}`, marginTop:12 } },
-      h('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 } },
-        h('div', { style:{ fontSize:13, fontWeight:500 } }, `${workerDetail.name} — ${MONTHS_RU[viewMonth]} ${viewYear}`),
-        h('button', { style: gbtn({ padding:'4px 10px', fontSize:12 }), onClick:()=>setDetailWorker(null) }, '×')
       ),
-      h('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 } },
-        [
-          [`${workerDetail.totH}ч / ${workerDetail.totDays} дн.`,'Отработано',AM],
-          [`${workerDetail.manual}`,'Ручных отметок',GN],
-          [`${workerDetail.byOps}`,'По операциям',AM],
-          [`${workerDetail.sick}`,'Больничных',workerDetail.sick>0?RD:'#888'],
-          [`${workerDetail.vac}`,'Отпуск','#0C447C'],
-          [`${workerDetail.abs}`,'Нет данных',workerDetail.abs>0?'#aaa':'#ccc'],
-          [`${workerDetail.late}`,'Опозданий',workerDetail.late>0?AM2:'#ccc'],
-        ].map(([v,l,c]) => h('div', { style:{ background:'#f8f8f5', borderRadius:8, padding:'8px 12px' } },
-          h('div', { style:{ fontSize:15, fontWeight:500, color:c } }, v),
-          h('div', { style:{ fontSize:10, color:'#888', textTransform:'uppercase', marginTop:2 } }, l)
-        ))
-      ),
-      // Кнопки быстрой отметки
-      h('div', { style:{ display:'flex', gap:8, marginTop:12 } },
-        h('button', { style: abtn({ flex:1, fontSize:13 }), onClick:()=>recordEvent(detailWorker,'checkin_manual') }, '+ Пришёл'),
-        h('button', { style: rbtn({ flex:1, fontSize:13 }), onClick:()=>recordEvent(detailWorker,'checkout_manual') }, '+ Ушёл')
-      )
-    ),
 
-    // Карточка дня
-    detailDay && dayDetail && dayDetail.type !== 'we' && h('div', { style:{ ...S.card, border:`1.5px solid ${AM}`, marginTop:12 } },
-      h('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 } },
-        h('div', { style:{ fontSize:13, fontWeight:500 } },
-          `${data.workers.find(w=>w.id===detailDay.workerId)?.name} · ${detailDay.day}.${viewMonth+1}.${viewYear}`
+      // Попап ввода
+      activeCell && h('div', {
+        style:{ position:'absolute', top:40, left:'50%', transform:'translateX(-50%)', background:'#fff', border:`1.5px solid ${AM}`, borderRadius:12, padding:14, zIndex:50, width:200, boxShadow:'0 4px 20px rgba(0,0,0,0.15)' }
+      },
+        h('div', { style:{ fontSize:11, color:'#888', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6 } },
+          `${workerName} · ${activeCell.day} ${MONTHS_RU[viewMonth].toLowerCase()}`
         ),
-        h('button', { style: gbtn({ padding:'4px 10px', fontSize:12 }), onClick:()=>setDetailDay(null) }, '×')
-      ),
-      h('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 } },
-        [
-          ['Код Т-13', dayDetail.code],
-          ['Источник', dayDetail.src || '—'],
-          ['Приход', dayDetail.inn || '—'],
-          ['Уход', dayDetail.out || '—'],
-          ['Часов', dayDetail.h > 0 ? dayDetail.h+'ч' : '—'],
-          ['Операций', dayDetail.ops || '—'],
-        ].map(([l,v]) => h('div', { style:{ background:'#f8f8f5', borderRadius:8, padding:'8px 12px' } },
-          h('div', { style:{ fontSize:10, color:'#888', textTransform:'uppercase', marginBottom:2 } }, l),
-          h('div', { style:{ fontSize:14, fontWeight:500 } }, v)
-        ))
-      ),
-      h('div', { style:{ display:'flex', gap:8, marginTop:12 } },
-        h('button', { style: abtn({ flex:1, fontSize:13 }), onClick:()=>recordEvent(detailDay.workerId,'checkin_manual') }, '+ Пришёл'),
-        h('button', { style: rbtn({ flex:1, fontSize:13 }), onClick:()=>recordEvent(detailDay.workerId,'checkout_manual') }, '+ Ушёл')
+        h('input', { ref: inputRef, type:'number', min:0, max:24, step:0.5,
+          style:{ ...S.inp, fontSize:22, fontWeight:500, textAlign:'center', marginBottom:8 },
+          placeholder:'ч', value: popupVal,
+          onChange: e => setPopupVal(e.target.value)
+        }),
+        // Быстрые кнопки
+        h('div', { style:{ display:'flex', gap:4, marginBottom:8, flexWrap:'wrap' } },
+          [8,7,6,4].map(v => h('button', { key:v,
+            style:{ padding:'4px 8px', borderRadius:6, fontSize:12, fontWeight:500, background:GN3, color:GN2, border:`0.5px solid ${GN}`, cursor:'pointer' },
+            onClick: () => setPopupVal(String(v))
+          }, `${v}ч`))
+        ),
+        // Коды Т-13
+        h('div', { style:{ fontSize:11, color:'#888', marginBottom:4 } }, 'Код Т-13:'),
+        h('div', { style:{ display:'flex', gap:4, flexWrap:'wrap', marginBottom:10 } },
+          CODES.map(code => h('button', { key:code,
+            style:{ padding:'4px 10px', borderRadius:6, fontSize:11, fontWeight:500, cursor:'pointer', background:'#f5f5f2', color:'#444', border:'0.5px solid rgba(0,0,0,0.12)' },
+            onClick: () => setCode(code),
+            title: CODE_LABELS[code]
+          }, code)),
+          h('button', { style:{ padding:'4px 8px', borderRadius:6, fontSize:11, cursor:'pointer', background:'#f5f5f2', color:'#888', border:'0.5px solid rgba(0,0,0,0.1)' }, onClick: () => setCode('') }, '× очистить')
+        ),
+        h('div', { style:{ display:'flex', gap:6 } },
+          h('button', { style: abtn({ flex:1, fontSize:13 }), onClick: saveCell }, 'Сохранить'),
+          h('button', { style: gbtn({ fontSize:13 }), onClick: () => { setActiveCell(null); setPopupVal(''); } }, '✕')
+        )
       )
     )
   );
