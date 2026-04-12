@@ -2614,6 +2614,7 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
           h('thead', null, h('tr', null,
             h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'#f8f8f5', minWidth:160, textAlign:'left', padding:'6px 10px' } }, 'Сотрудник'),
             days.map(d => {
+              const dow = new Date(viewYear, viewMonth, d).getDay();
               const isWe = !isWorkday(viewYear, viewMonth, d, data.settings);
               return h('th', { key:d, style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:32, color: isWe ? RD : undefined } },
                 d, h('br'), h('span', { style:{ fontSize:9, fontWeight:400 } }, DOW[dow])
