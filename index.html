@@ -386,6 +386,7 @@ const EMPTY_DATA = {
   instructions: [],   // инструктажи ОТ: [{id, workerId, type, date, nextDate, conductedBy, note}]
   vacations: [],      // плановые отпуска: [{id, workerId, startDate, endDate, approved, note}]
   opNorms: {},        // нормы операций: {opName: {planned: N, samples: N, totalMs: N}}
+  auxStats: {},       // агрегация вспомогательных работ: {"YYYY-MM": {total, totalMs, byCategory:{cat:{count,ms}}, byWorker:{wid:{count,ms}}}}
   messages: [], reclamations: [], duels: [], materialReservations: [],
   settings: {
     // Единый PIN-вход: все роли входят по PIN (хеши DJB2, дефолтные значения: 0000, 1111, 2222, 3333, 4444, 5555, 6666, 7777)
@@ -825,11 +826,30 @@ const buildFinishUpdate = (data, op, workerId, params = {}) => {
     opNorms[op.name] = { samples: existing.samples + 1, totalMs: existing.totalMs + elapsed };
   }
 
+  // Агрегация вспомогательных работ: помесячная статистика
+  let auxStats = { ...(data.auxStats || {}) };
+  if (op.isAuxiliary && status === 'done' && op.startedAt && finishedAt) {
+    const d = new Date(finishedAt);
+    const monthKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    const elapsed = finishedAt - op.startedAt;
+    const cat = op.auxCategory || 'other';
+    const prev = auxStats[monthKey] || { total: 0, totalMs: 0, byCategory: {}, byWorker: {} };
+    const prevCat = prev.byCategory[cat] || { count: 0, ms: 0 };
+    const newByCategory = { ...prev.byCategory, [cat]: { count: prevCat.count + 1, ms: prevCat.ms + elapsed } };
+    const newByWorker = { ...prev.byWorker };
+    (op.workerIds || [workerId]).forEach(wid => {
+      const pw = newByWorker[wid] || { count: 0, ms: 0 };
+      newByWorker[wid] = { count: pw.count + 1, ms: pw.ms + elapsed };
+    });
+    auxStats[monthKey] = { total: prev.total + 1, totalMs: prev.totalMs + elapsed, byCategory: newByCategory, byWorker: newByWorker };
+  }
+
   return {
     ops: data.ops.map(o => o.id === op.id ? updatedOp : o),
     events: [...data.events, eventEntry],
     reclamations,
     opNorms,
+    auxStats,
     _status: status,
     _finishedAt: finishedAt,
     _updatedOp: updatedOp
@@ -1779,7 +1799,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const doFinish = useCallback(async (op, isDefect = false, isRework = false, source = 'current') => {
     if (op.status !== 'in_progress') return;
     const result = buildFinishUpdate(data, op, workerId, { isDefect, isRework, source, defNote, defectReasonId, weldParams });
-    const updated = { ...data, ops: result.ops, events: result.events, reclamations: result.reclamations, opNorms: result.opNorms || data.opNorms || {} };
+    const updated = { ...data, ops: result.ops, events: result.events, reclamations: result.reclamations, opNorms: result.opNorms || data.opNorms || {}, auxStats: result.auxStats || data.auxStats || {} };
     const status = result._status;
     // Проверяем достижения и сохраняем ОДИН раз
     const withAch = checkAchievements(workerId, updated);
@@ -2518,7 +2538,7 @@ const calcDayData = (workerId, year, month, day, data) => {
     return { type: 'full', code: 'Я', h: hR, src: 'ручная отметка', inn: new Date(checkin.ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }), out: new Date(checkout.ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }) };
   }
   if (checkin) {
-    return { type: 'half', code: 'НО', h: 0, src: 'ручная отметка', inn: new Date(checkin.ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }), out: '—' };
+    return { type: 'half', code: 'Я', h: 0, src: 'ручная отметка', inn: new Date(checkin.ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }), out: '—' };
   }
   // По операциям
   const dayOps = data.ops.filter(o => o.workerIds?.includes(workerId) && o.status === 'done' && o.startedAt >= dayStart && o.finishedAt <= dayEnd && o.startedAt && o.finishedAt);
@@ -2530,7 +2550,7 @@ const calcDayData = (workerId, year, month, day, data) => {
   }
   // Авто-checkin
   const autoIn = data.events.find(e => e.workerId === workerId && e.type === 'checkin_auto' && e.ts >= dayStart && e.ts <= dayEnd);
-  if (autoIn) return { type: 'half', code: 'НО', h: 0, src: 'автоматически', inn: new Date(autoIn.ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }), out: '—' };
+  if (autoIn) return { type: 'half', code: 'Я', h: 0, src: 'автоматически', inn: new Date(autoIn.ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }), out: '—' };
   return { type: 'abs', code: 'НН', h: 0, src: 'нет данных' };
 };
 
@@ -2548,11 +2568,12 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
 
   const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
   const DOW = ['вс','пн','вт','ср','чт','пт','сб'];
-  const CODES = ['Б','ОТ','НО','НН'];
+  const CODES = ['Б','ОТ','ОЗ','К','НН'];
   const CODE_LABELS = {
     'Б':  'Б — больничный (нетрудоспособность)',
     'ОТ': 'ОТ — очередной отпуск',
-    'НО': 'НО — неполное рабочее время (< нормы)',
+    'ОЗ': 'ОЗ — отпуск за свой счёт',
+    'К':  'К — служебная командировка',
     'НН': 'НН — неявка по невыясненной причине',
   };
 
@@ -2611,7 +2632,8 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
     if (!val) return { bg: 'var(--color-background-secondary)', cl: '#bbb', lbl: '·' };
     if (val.code === 'Б')  return { bg: '#FCEBEB', cl: '#791F1F', lbl: 'Б' };
     if (val.code === 'ОТ') return { bg: '#E6F1FB', cl: '#0C447C', lbl: 'ОТ' };
-    if (val.code === 'НО') return { bg: '#E6F1FB', cl: '#0C447C', lbl: 'НО' };
+    if (val.code === 'ОЗ') return { bg: '#FFF3E0', cl: '#E65100', lbl: 'ОЗ' };
+    if (val.code === 'К')  return { bg: '#E8F5E9', cl: '#2E7D32', lbl: 'К' };
     if (val.code === 'НН') return { bg: '#F1EFE8', cl: '#888',   lbl: 'НН' };
     if (val.h >= 8) return { bg: GN3, cl: GN2, lbl: val.h };
     if (val.h > 0)  return { bg: AM3, cl: AM2, lbl: val.h };
@@ -2699,7 +2721,7 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
     showImport && h('div', { style: { ...S.card, border:`1px dashed ${AM4}`, background: AM3, marginBottom:14 } },
       h('div', { style: { fontSize:13, fontWeight:500, color:AM2, marginBottom:4 } }, '📋 Импорт из Excel'),
       h('div', { style: { fontSize:11, color:AM4, marginBottom:8 } },
-        'Скопируйте строки из Excel: первая колонка — фамилия, далее значения по дням (числа или Б/ОТ/НО/НН). Вставьте Ctrl+V.'
+        'Скопируйте строки из Excel: первая колонка — фамилия, далее значения по дням (числа или Б/ОТ/ОЗ/К/НН). Вставьте Ctrl+V.'
       ),
       h('textarea', { style: { ...S.inp, width:'100%', fontSize:12, fontFamily:'monospace', resize:'vertical' },
         rows:4, placeholder:'Вставьте данные Ctrl+V...\nИванов\t8\t8\t\t8\t7\tБ\t8...',
@@ -2718,7 +2740,8 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
         [AM3,  AM2,      '< 8ч — неполный день'],
         ['#FCEBEB', '#791F1F', 'Б — больничный'],
         ['#E6F1FB', '#0C447C', 'ОТ — очередной отпуск'],
-        ['#E6F1FB', '#185FA5', 'НО — неполное рабочее время'],
+        ['#FFF3E0', '#E65100', 'ОЗ — отпуск за свой счёт'],
+        ['#E8F5E9', '#2E7D32', 'К — командировка'],
         ['#F1EFE8', '#888',    'НН — неявка невыясненная'],
         ['rgba(226,75,74,0.08)', 'rgba(226,75,74,0.5)', 'В — выходной/праздник'],
       ].map(([bg, cl, l]) =>
@@ -2830,6 +2853,7 @@ const AUX_CAT_LABELS = { maintenance: '🔧 Обслуживание', cleaning:
 const AuxOpsViewer = memo(({ data, onUpdate, addToast }) => {
   const [period, setPeriod] = useState(7);
   const periodStart = useMemo(() => now() - period * 86400000, [period]);
+  const { canvasRef: trendRef, draw: drawTrend } = useChartRef();
 
   const auxOps = useMemo(() => {
     return data.ops
@@ -2855,6 +2879,44 @@ const AuxOpsViewer = memo(({ data, onUpdate, addToast }) => {
     });
     return { total: auxOps.length, byCat, byWorker, totalHours: Math.round(totalMs / 3600000 * 10) / 10, doneCount };
   }, [auxOps, data.workers]);
+
+  // Тренд по месяцам из auxStats (агрегированные данные)
+  const trend = useMemo(() => {
+    const as = data.auxStats || {};
+    const months = Object.keys(as).sort().slice(-6); // последние 6 месяцев
+    if (months.length === 0) return null;
+    const MONTHS_SHORT = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+    return {
+      labels: months.map(m => { const [, mm] = m.split('-'); return MONTHS_SHORT[parseInt(mm) - 1] || m; }),
+      counts: months.map(m => as[m]?.total || 0),
+      hours: months.map(m => Math.round((as[m]?.totalMs || 0) / 3600000 * 10) / 10),
+      months
+    };
+  }, [data.auxStats]);
+
+  // Рисуем тренд-график
+  useEffect(() => {
+    if (!trend || !window.Chart) return;
+    drawTrend({
+      type: 'bar',
+      data: {
+        labels: trend.labels,
+        datasets: [
+          { label: 'Работ', data: trend.counts, backgroundColor: AM, borderRadius: 4, yAxisID: 'y' },
+          { label: 'Часов', data: trend.hours, type: 'line', borderColor: GN, borderWidth: 2, pointRadius: 3, pointBackgroundColor: GN, fill: false, yAxisID: 'y1' }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: true, position: 'bottom', labels: { font: { size: 10 } } } },
+        scales: {
+          y: { beginAtZero: true, position: 'left', title: { display: true, text: 'Работ', font: { size: 10 } } },
+          y1: { beginAtZero: true, position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: 'Часов', font: { size: 10 } } }
+        },
+        animation: { duration: 300 }
+      }
+    });
+  }, [trend, drawTrend]);
 
   const exportXls = useCallback(() => {
     const rows = auxOps.map(op => {
@@ -2889,6 +2951,26 @@ const AuxOpsViewer = memo(({ data, onUpdate, addToast }) => {
       h(MC, { v: stats.doneCount, l: 'Выполнено', c: GN }),
       h(MC, { v: `${stats.totalHours}ч`, l: 'Трудозатраты', c: AM }),
       h(MC, { v: Object.keys(stats.byWorker).length, l: 'Сотрудников' })
+    ),
+    // Тренд по месяцам (из auxStats)
+    trend && h('div', { style: { ...S.card, padding: 12, marginBottom: 12 } },
+      h('div', { style: S.sec }, 'Динамика по месяцам'),
+      h('div', { style: { height: 180 } },
+        h('canvas', { ref: trendRef, style: { height: '100%', width: '100%' } })
+      ),
+      // Детализация по месяцам — текстовая
+      h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 } },
+        trend.months.map((m, i) => {
+          const ms = (data.auxStats || {})[m];
+          if (!ms) return null;
+          const topCat = Object.entries(ms.byCategory || {}).sort((a, b) => b[1].count - a[1].count)[0];
+          return h('div', { key: m, style: { flex: '1 1 120px', minWidth: 120, background: '#f8f8f5', borderRadius: 8, padding: '6px 10px', fontSize: 11 } },
+            h('div', { style: { fontWeight: 500, color: AM2, marginBottom: 2 } }, trend.labels[i]),
+            h('div', null, `${ms.total} работ · ${Math.round(ms.totalMs / 3600000 * 10) / 10}ч`),
+            topCat && h('div', { style: { color: '#888', marginTop: 2 } }, `${AUX_CAT_LABELS[topCat[0]]?.split(' ')[0] || topCat[0]}: ${topCat[1].count}`)
+          );
+        })
+      )
     ),
     // По категориям
     Object.keys(stats.byCat).length > 0 && h('div', { style: { ...S.card, padding: 12, marginBottom: 12 } },
