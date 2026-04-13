@@ -725,6 +725,26 @@ const ElapsedTimer = memo(({ startedAt, style }) => {
   return h('div', { style }, startedAt ? fmtDur(now() - startedAt) : '—');
 });
 
+// ==================== Общие компоненты: MC (MetricCard), TabBar ====================
+// MC — карточка метрики (KPI). Использование: h(MC, { v: '42', l: 'Заказов', c: GN, onClick: fn })
+const MC = memo(({ v, l, c, onClick, fs }) => h('div', {
+  style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0, cursor: onClick ? 'pointer' : 'default' },
+  onClick
+}, h('div', { style: { fontSize: fs || 24, fontWeight: 500, color: c || 'inherit' } }, v),
+   h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase', marginTop: 2 } }, l)
+));
+
+// TabBar — горизонтальные вкладки. Использование: h(TabBar, { tabs: [['id','Label']], tab, setTab })
+const TabBar = memo(({ tabs, tab, setTab }) => h('div', {
+  style: { display: 'flex', gap: 4, marginBottom: 14, overflowX: 'auto', borderBottom: '0.5px solid rgba(0,0,0,0.08)', paddingBottom: 8 }
+}, h('div', { className: 'tabs-scroll', style: { display: 'flex', gap: 4 } },
+  tabs.map(([id, label]) => h('button', {
+    key: id,
+    style: tab === id ? abtn({ fontSize: 12 }) : gbtn({ fontSize: 12 }),
+    onClick: () => setTab(id)
+  }, label))
+)));
+
 const vibrateOnAchievement = () => { try { if (navigator.vibrate) navigator.vibrate([100, 50, 200]); } catch(e) {} };
 // Вибрация + звуковой щелчок для iOS
 const vibrateAction = (type = 'start') => {
@@ -1470,10 +1490,10 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
         [7,30,90].map(d => h('button', { key: d, style: period === d ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setPeriod(d) }, `${d} дней`))
       ),
       h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 } },
-        h('div', { style: { ...S.card, textAlign: 'center' } }, h('div', { style: { fontSize: 24, fontWeight: 500, color: GN } }, totalOps), h('div', { style: { fontSize: 10, color: '#888' } }, 'Выполнено')),
-        h('div', { style: { ...S.card, textAlign: 'center' } }, h('div', { style: { fontSize: 24, fontWeight: 500, color: AM } }, fmtDur(avgTime)), h('div', { style: { fontSize: 10, color: '#888' } }, 'Ср. время')),
-        h('div', { style: { ...S.card, textAlign: 'center' } }, h('div', { style: { fontSize: 24, fontWeight: 500, color: Number(defectRate) > 5 ? RD : GN } }, `${defectRate}%`), h('div', { style: { fontSize: 10, color: '#888' } }, 'Брак')),
-        h('div', { style: { ...S.card, textAlign: 'center' } }, h('div', { style: { fontSize: 24, fontWeight: 500, color: BL } }, `${opsInProgress.length}/${opsPending.length}`), h('div', { style: { fontSize: 10, color: '#888' } }, 'В работе / Ожидает'))
+        h(MC, { v: totalOps, l: 'Выполнено', c: GN }),
+        h(MC, { v: fmtDur(avgTime), l: 'Ср. время', c: AM }),
+        h(MC, { v: `${defectRate}%`, l: 'Брак', c: Number(defectRate) > 5 ? RD : GN }),
+        h(MC, { v: `${opsInProgress.length}/${opsPending.length}`, l: 'В работе / Ожидает', c: BL })
       ),
       h('div', { style: { ...S.card, marginBottom: 16 } },
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 } },
@@ -2331,22 +2351,10 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
 
       // KPI — 2×2 сетка
       h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 } },
-        h('div', { style: { ...S.card, textAlign: 'center', padding: 14, marginBottom: 0 } },
-          h('div', { style: { fontSize: 28, fontWeight: 500, color: myStats.quality >= 95 ? GN : myStats.quality >= 80 ? AM : RD } }, `${myStats.quality}%`),
-          h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase', marginTop: 4 } }, 'Качество / 30 дней')
-        ),
-        h('div', { style: { ...S.card, textAlign: 'center', padding: 14, marginBottom: 0 } },
-          h('div', { style: { fontSize: 28, fontWeight: 500, color: AM } }, myStats.done30),
-          h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase', marginTop: 4 } }, 'Операций / 30 дней')
-        ),
-        h('div', { style: { ...S.card, textAlign: 'center', padding: 14, marginBottom: 0 } },
-          h('div', { style: { fontSize: 22, fontWeight: 500, color: AM2 } }, fmtDur(myStats.workedToday)),
-          h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase', marginTop: 4 } }, 'Отработано сегодня')
-        ),
-        h('div', { style: { ...S.card, textAlign: 'center', padding: 14, marginBottom: 0, cursor: 'pointer' }, onClick: () => setShowThanksHistory(v => !v) },
-          h('div', { style: { fontSize: 28, fontWeight: 500, color: myStats.thanksCount > 0 ? '#F57F17' : '#888' } }, `🤝${myStats.thanksCount}`),
-          h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase', marginTop: 4 } }, 'Благодарности')
-        )
+        h(MC, { v: `${myStats.quality}%`, l: 'Качество / 30 дней', c: myStats.quality >= 95 ? GN : myStats.quality >= 80 ? AM : RD, fs: 28 }),
+        h(MC, { v: myStats.done30, l: 'Операций / 30 дней', c: AM, fs: 28 }),
+        h(MC, { v: fmtDur(myStats.workedToday), l: 'Отработано сегодня', c: AM2, fs: 22 }),
+        h(MC, { v: `🤝${myStats.thanksCount}`, l: 'Благодарности', c: myStats.thanksCount > 0 ? '#F57F17' : '#888', fs: 28, onClick: () => setShowThanksHistory(v => !v) })
       ),
 
       // История благодарностей
@@ -3608,9 +3616,9 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
     ),
     // Сводка
     h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 8, marginBottom: 12 } },
-      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500 } }, data.materials.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Позиций')),
-      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500, color: RD } }, lowStock.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Критично')),
-      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 18, fontWeight: 500, color: AM } }, `${Math.round(totalValue).toLocaleString()}₽`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Стоимость склада'))
+      h(MC, { v: data.materials.length, l: 'Позиций', fs: 22 }),
+      h(MC, { v: lowStock.length, l: 'Критично', c: RD, fs: 22 }),
+      h(MC, { v: `${Math.round(totalValue).toLocaleString()}₽`, l: 'Стоимость склада', c: AM, fs: 18 })
     ),
     // Импорт / Экспорт
     h('div', { style: { display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' } },
@@ -4758,10 +4766,10 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
       )
     ),
     h('div', { className: 'metrics-grid', style: { display:'grid', gap:10, marginBottom:16 } },
-      h('div', { style: { ...S.card, textAlign:'center' } }, h('div', { style: { fontSize:24, fontWeight:500 } }, summary.total), h('div', { style: { fontSize:10, color:'#888', textTransform:'uppercase' } }, 'Всего')),
-      h('div', { style: { ...S.card, textAlign:'center' } }, h('div', { style: { fontSize:24, fontWeight:500, color:GN } }, summary.working), h('div', { style: { fontSize:10, color:'#888', textTransform:'uppercase' } }, 'На смене')),
-      h('div', { style: { ...S.card, textAlign:'center' } }, h('div', { style: { fontSize:24, fontWeight:500, color:RD } }, summary.absent+summary.sick+summary.vacation), h('div', { style: { fontSize:10, color:'#888', textTransform:'uppercase' } }, 'Отсутствуют')),
-      h('div', { style: { ...S.card, textAlign:'center' } }, h('div', { style: { fontSize:24, fontWeight:500, color:AM } }, `${summary.avgLoad}%`), h('div', { style: { fontSize:10, color:'#888', textTransform:'uppercase' } }, 'Загрузка, ср.'))
+      h(MC, { v: summary.total, l: 'Всего' }),
+      h(MC, { v: summary.working, l: 'На смене', c: GN }),
+      h(MC, { v: summary.absent+summary.sick+summary.vacation, l: 'Отсутствуют', c: RD }),
+      h(MC, { v: `${summary.avgLoad}%`, l: 'Загрузка, ср.', c: AM })
     ),
     h('div', { style: { display:'flex', gap:8, marginBottom:16, alignItems:'center', flexWrap:'wrap' } },
       h('input', { style: { ...S.inp, flex:1, minWidth:180 }, placeholder:'Поиск по имени...', value: search, onChange: e => setSearch(e.target.value) }),
@@ -4983,15 +4991,9 @@ const InstructionsTracker = memo(({ data, onUpdate, addToast }) => {
     confirmEl,
     // KPI
     h('div', { style: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:14 } },
-      h('div', { style: { ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500 } }, workers.length), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Сотрудников')),
-      h('div', { style: { ...S.card, textAlign:'center', padding:10, marginBottom:0, cursor:'pointer' }, onClick: () => setFilter(f => f==='expiring'?'all':'expiring') },
-        h('div', { style:{ fontSize:24, fontWeight:500, color: expiring > 0 ? AM2 : '#888' } }, expiring),
-        h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Истекают (30 дн)')
-      ),
-      h('div', { style: { ...S.card, textAlign:'center', padding:10, marginBottom:0, cursor:'pointer' }, onClick: () => setFilter(f => f==='expired'?'all':'expired') },
-        h('div', { style:{ fontSize:24, fontWeight:500, color: expired > 0 ? RD : '#888' } }, expired),
-        h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Просрочены')
-      )
+      h(MC, { v: workers.length, l: 'Сотрудников' }),
+      h(MC, { v: expiring, l: 'Истекают (30 дн)', c: expiring > 0 ? AM2 : '#888', onClick: () => setFilter(f => f==='expiring'?'all':'expiring') }),
+      h(MC, { v: expired, l: 'Просрочены', c: expired > 0 ? RD : '#888', onClick: () => setFilter(f => f==='expired'?'all':'expired') })
     ),
 
     // Шапка
@@ -5142,9 +5144,9 @@ const VacationPlanner = memo(({ data, onUpdate, addToast }) => {
   return h('div', null,
     confirmEl,
     h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:14 } },
-      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color: activeNow>0?GN:'#888' } }, activeNow), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'В отпуске сейчас')),
-      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color: soon14>0?AM:'#888' } }, soon14), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Уходят (14 дн)')),
-      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500 } }, vacations.length), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Всего записей'))
+      h(MC, { v: activeNow, l: 'В отпуске сейчас', c: activeNow>0?GN:'#888' }),
+      h(MC, { v: soon14, l: 'Уходят (14 дн)', c: soon14>0?AM:'#888' }),
+      h(MC, { v: vacations.length, l: 'Всего записей' })
     ),
 
     h('div', { style:{ display:'flex', gap:8, marginBottom:12, alignItems:'center' } },
@@ -5292,10 +5294,7 @@ const MonthlyReport = memo(({ data }) => {
     ),
 
     h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10, marginBottom:16 } },
-      kpi.map(([v,l,c]) => h('div', { key:l, style:{ ...S.card, textAlign:'center', padding:14, marginBottom:0 } },
-        h('div', { style:{ fontSize:26, fontWeight:500, color:c } }, v),
-        h('div', { style:{ fontSize:10, color:'#888', textTransform:'uppercase', marginTop:4 } }, l)
-      ))
+      kpi.map(([v,l,c]) => h(MC, { key: l, v, l, c, fs: 26 }))
     ),
 
     report.topWorkers.length > 0 && h('div', { style:S.card },
@@ -8261,11 +8260,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
     h(SectionAnalytics, { section: 'warehouse', data }),
     showImport && h(MaterialImportModal, { data, onClose: () => setShowImport(false), onUpdate, addToast, defaultMode: importMode }),
     // Вкладки
-    h('div', { style: { display: 'flex', gap: 4, marginBottom: 16, borderBottom: '0.5px solid rgba(0,0,0,0.08)', paddingBottom: 8 } },
-      [['stock', '📦 Остатки'], ['requests', `🔔 Заявки (${materialRequests.length})`], ['receive', '📥 Приёмка'], ['history', '📋 Движение'], ['materials', '🗂 Справочник'], ['bom', '📋 Спецификации']].map(([id, label]) =>
-        h('button', { key: id, style: tab === id ? abtn({ fontSize: 12 }) : gbtn({ fontSize: 12 }), onClick: () => setTab(id) }, label)
-      )
-    ),
+    h(TabBar, { tabs: [['stock', '📦 Остатки'], ['requests', `🔔 Заявки (${materialRequests.length})`], ['receive', '📥 Приёмка'], ['history', '📋 Движение'], ['materials', '🗂 Справочник'], ['bom', '📋 Спецификации']], tab, setTab }),
 
     // Заявки (уведомления)
     materialRequests.length > 0 && tab !== 'requests' && h('div', { role: 'alert', style: { padding: '8px 12px', background: AM3, border: `0.5px solid ${AM}`, borderRadius: 8, marginBottom: 12, fontSize: 12, cursor: 'pointer' }, onClick: () => setTab('requests') },
@@ -8276,9 +8271,9 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
     tab === 'stock' && h('div', null,
       // Сводка
       h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 10, marginBottom: 12 } },
-        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 24, fontWeight: 500 } }, data.materials.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Позиций')),
-        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 24, fontWeight: 500, color: criticalMaterials.length > 0 ? RD : GN } }, criticalMaterials.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Критич.')),
-        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 20, fontWeight: 500, color: AM } }, `${totalValue.toLocaleString()}₽`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Стоимость'))
+        h(MC, { v: data.materials.length, l: 'Позиций' }),
+        h(MC, { v: criticalMaterials.length, l: 'Критич.', c: criticalMaterials.length > 0 ? RD : GN }),
+        h(MC, { v: `${totalValue.toLocaleString()}₽`, l: 'Стоимость', c: AM, fs: 20 })
       ),
       // Критические
       criticalMaterials.length > 0 && h('div', { role: 'alert', style: { ...S.card, background: RD3, border: `0.5px solid ${RD}`, marginBottom: 12, padding: 10 } },
@@ -8941,14 +8936,12 @@ const ShopMasterScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     ),
     // Быстрая сводка
     h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 8, marginBottom: 14 } },
-      h('div', { style: { ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color:AM } }, activeOps.length), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'В работе')),
-      h('div', { style: { ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color:'#0277BD' } }, pendingOps.length), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Ожидают')),
-      h('div', { style: { ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color: freeWorkers.length > 0 ? GN : '#888' } }, freeWorkers.length), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Свободны'))
+      h(MC, { v: activeOps.length, l: 'В работе', c: AM }),
+      h(MC, { v: pendingOps.length, l: 'Ожидают', c: '#0277BD' }),
+      h(MC, { v: freeWorkers.length, l: 'Свободны', c: freeWorkers.length > 0 ? GN : '#888' })
     ),
     // Вкладки
-    h('div', { style: { display:'flex', gap:4, marginBottom:14, borderBottom:`0.5px solid rgba(0,0,0,0.08)`, paddingBottom:8 } },
-      TABS.map(([id, label]) => h('button', { key:id, style: tab===id ? abtn({fontSize:12}) : gbtn({fontSize:12}), onClick: () => setTab(id) }, label))
-    ),
+    h(TabBar, { tabs: TABS, tab, setTab }),
     tab === 'ops'           && h(MasterOps,           { data, onUpdate, addToast, onOrderClick }),
     tab === 'orders'        && h(MasterOrders,         { data, onUpdate, addToast, onOrderClick }),
     tab === 'journal'       && h(MasterJournal,        { data }),
@@ -8969,16 +8962,12 @@ const PDOScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     h(SectionAnalytics, { section: 'production', data }),
     // Сводка
     h('div', { className: 'metrics-grid', style: { display:'grid', gap:8, marginBottom:14 } },
-      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500 } }, activeOrders), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Заказов')),
-      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color: overdueOrders > 0 ? RD : GN } }, overdueOrders), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Просрочено')),
-      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color:AM } }, inProgOps), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'В работе'))
+      h(MC, { v: activeOrders, l: 'Заказов' }),
+      h(MC, { v: overdueOrders, l: 'Просрочено', c: overdueOrders > 0 ? RD : GN }),
+      h(MC, { v: inProgOps, l: 'В работе', c: AM })
     ),
     // Вкладки
-    h('div', { style:{ display:'flex', gap:4, marginBottom:14, overflowX:'auto', borderBottom:`0.5px solid rgba(0,0,0,0.08)`, paddingBottom:8 } },
-      h('div', { className:'tabs-scroll', style:{ display:'flex', gap:4 } },
-        TABS.map(([id, label]) => h('button', { key:id, style: tab===id ? abtn({fontSize:12}) : gbtn({fontSize:12}), onClick:()=>setTab(id) }, label))
-      )
-    ),
+    h(TabBar, { tabs: TABS, tab, setTab }),
     tab === 'orders'        && h(MasterOrders,              { data, onUpdate, addToast, onOrderClick }),
     tab === 'ops'           && h(MasterOps,                 { data, onUpdate, addToast, onOrderClick }),
     tab === 'recommend'     && h(AssignmentRecommendations, { data, onUpdate, addToast }),
@@ -9031,17 +9020,13 @@ const DirectorScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     h(SectionAnalytics, { section: 'production', data }),
     // KPI сводка
     h('div', { className:'metrics-grid', style:{ display:'grid', gap:8, marginBottom:14 } },
-      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color: quality>=95?GN:quality>=85?AM:RD } }, `${quality}%`), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Качество')),
-      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color: overdue>0?RD:GN } }, overdue), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Просрочено')),
-      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500, color: recCount>0?AM:GN } }, recCount), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Рекламации')),
-      h('div', { style:{ ...S.card, textAlign:'center', padding:10, marginBottom:0 } }, h('div', { style:{ fontSize:24, fontWeight:500 } }, `${downtime}ч`), h('div', { style:{ fontSize:9, color:'#888', textTransform:'uppercase' } }, 'Простоев/мес'))
+      h(MC, { v: `${quality}%`, l: 'Качество', c: quality>=95?GN:quality>=85?AM:RD }),
+      h(MC, { v: overdue, l: 'Просрочено', c: overdue>0?RD:GN }),
+      h(MC, { v: recCount, l: 'Рекламации', c: recCount>0?AM:GN }),
+      h(MC, { v: `${downtime}ч`, l: 'Простоев/мес' })
     ),
     // Вкладки
-    h('div', { style:{ display:'flex', gap:4, marginBottom:14, overflowX:'auto', borderBottom:`0.5px solid rgba(0,0,0,0.08)`, paddingBottom:8 } },
-      h('div', { className:'tabs-scroll', style:{ display:'flex', gap:4 } },
-        TABS.map(([id, label]) => h('button', { key:id, style: tab===id?abtn({fontSize:12}):gbtn({fontSize:12}), onClick:()=>setTab(id) }, label))
-      )
-    ),
+    h(TabBar, { tabs: TABS, tab, setTab }),
     // Обзор — топ проблем
     tab === 'overview' && h('div', null,
       h('div', { style:{ fontSize:12, fontWeight:500, marginBottom:10 } }, 'Ключевые проблемы — 30 дней'),
@@ -9099,11 +9084,7 @@ const HRScreen = memo(({ data, onUpdate, addToast }) => {
       instrAlerts.expiring > 0 && `${instrAlerts.expiring} истекают в ближайшие 30 дней`,
       h('span', { style:{ marginLeft:8, textDecoration:'underline' } }, '→ к журналу')
     ),
-    h('div', { style:{ display:'flex', gap:4, marginBottom:14, overflowX:'auto', borderBottom:`0.5px solid rgba(0,0,0,0.08)`, paddingBottom:8 } },
-      h('div', { className:'tabs-scroll', style:{ display:'flex', gap:4 } },
-        TABS.map(([id,label]) => h('button', { key:id, style: tab===id?abtn({fontSize:12}):gbtn({fontSize:12}), onClick:()=>setTab(id) }, label))
-      )
-    ),
+    h(TabBar, { tabs: TABS, tab, setTab }),
     tab === 'workers'      && h(MasterWorkers,         { data, onUpdate, addToast }),
     tab === 'time'         && h(MasterTimeTracking,    { data, onUpdate, addToast }),
     tab === 'instructions' && h(InstructionsTracker,   { data, onUpdate, addToast }),
@@ -9127,11 +9108,7 @@ const AdminScreen = memo(({ data, onUpdate, addToast }) => {
       h('div', { style:{ fontSize:13, fontWeight:500, color:AM2 } }, '⚙ Администратор — настройка системы'),
       h('div', { style:{ fontSize:11, color:AM4, marginTop:2 } }, 'Справочники, оборудование, этапы производства, PIN-коды ролей')
     ),
-    h('div', { style:{ display:'flex', gap:4, marginBottom:14, overflowX:'auto', borderBottom:`0.5px solid rgba(0,0,0,0.08)`, paddingBottom:8 } },
-      h('div', { className:'tabs-scroll', style:{ display:'flex', gap:4 } },
-        TABS.map(([id,label]) => h('button', { key:id, style: tab===id?abtn({fontSize:12}):gbtn({fontSize:12}), onClick:()=>setTab(id) }, label))
-      )
-    ),
+    h(TabBar, { tabs: TABS, tab, setTab }),
     tab === 'stages'        && h(MasterProductionStages, { data, onUpdate, addToast }),
     tab === 'defectReasons' && h(MasterDefectReasons,    { data, onUpdate, addToast }),
     tab === 'downtimes'     && h(MasterDowntimes,        { data, onUpdate, addToast }),
