@@ -1745,7 +1745,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     if (initialOpId && workerId) {
       const op = data.ops.find(o => o.id === initialOpId);
       if (op && op.status === 'pending' && !op.workerIds?.length && !op.archived) {
-        if (worker?.competences && worker.competences.length > 0 && !worker.competences.includes(op.name)) {
+        if (!op.isAuxiliary && worker?.competences && worker.competences.length > 0 && !worker.competences.includes(op.name)) {
           addToast('У вас нет компетенции для этой операции', 'error');
           return;
         }
@@ -1757,7 +1757,8 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   }, [initialOpId]);
 
   const doStart = useCallback(async (op) => {
-    if (worker?.competences && worker.competences.length > 0 && !worker.competences.includes(op.name)) {
+    // Вспомогательные операции — без проверки компетенций
+    if (!op.isAuxiliary && worker?.competences && worker.competences.length > 0 && !worker.competences.includes(op.name)) {
       addToast('У вас нет компетенции для этой операции', 'error');
       return;
     }
@@ -2820,6 +2821,115 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
         )
       )
     )
+  );
+});
+
+// ==================== AuxOpsViewer (Доп. работы — сводка для мастера) ====================
+const AUX_CAT_LABELS = { maintenance: '🔧 Обслуживание', cleaning: '🧹 Уборка', logistics: '📦 Логистика', setup: '⚙ Наладка', other: '📝 Прочее' };
+
+const AuxOpsViewer = memo(({ data, onUpdate, addToast }) => {
+  const [period, setPeriod] = useState(7);
+  const periodStart = useMemo(() => now() - period * 86400000, [period]);
+
+  const auxOps = useMemo(() => {
+    return data.ops
+      .filter(o => o.isAuxiliary && (o.createdAt >= periodStart || o.startedAt >= periodStart || o.finishedAt >= periodStart))
+      .sort((a, b) => (b.finishedAt || b.startedAt || b.createdAt || 0) - (a.finishedAt || a.startedAt || a.createdAt || 0));
+  }, [data.ops, periodStart]);
+
+  const stats = useMemo(() => {
+    const byCat = {};
+    const byWorker = {};
+    let totalMs = 0, doneCount = 0;
+    auxOps.forEach(op => {
+      const cat = op.auxCategory || 'other';
+      byCat[cat] = (byCat[cat] || 0) + 1;
+      (op.workerIds || []).forEach(wid => {
+        const name = data.workers.find(w => w.id === wid)?.name?.split(' ')[0] || '?';
+        byWorker[name] = (byWorker[name] || 0) + 1;
+      });
+      if (op.status === 'done' && op.startedAt && op.finishedAt) {
+        totalMs += op.finishedAt - op.startedAt;
+        doneCount++;
+      }
+    });
+    return { total: auxOps.length, byCat, byWorker, totalHours: Math.round(totalMs / 3600000 * 10) / 10, doneCount };
+  }, [auxOps, data.workers]);
+
+  const exportXls = useCallback(() => {
+    const rows = auxOps.map(op => {
+      const worker = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name).filter(Boolean).join(', ');
+      const order = data.orders.find(o => o.id === op.orderId);
+      return {
+        'Дата': op.createdAt ? new Date(op.createdAt).toLocaleDateString() : '—',
+        'Категория': AUX_CAT_LABELS[op.auxCategory] || 'Прочее',
+        'Работа': op.name,
+        'Сотрудник': worker || '—',
+        'Заказ': order?.number || '—',
+        'Статус': STATUS[op.status]?.label || op.status,
+        'Время (ч)': op.startedAt && op.finishedAt ? Math.round((op.finishedAt - op.startedAt) / 3600000 * 10) / 10 : '—',
+        'Комментарий': op.comment || ''
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Доп. работы');
+    XLSX.writeFile(wb, `aux_ops_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }, [auxOps, data]);
+
+  return h('div', null,
+    // Период
+    h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' } },
+      [7, 14, 30].map(d => h('button', { key: d, style: period === d ? abtn({ fontSize: 11, padding: '5px 10px' }) : gbtn({ fontSize: 11, padding: '5px 10px' }), onClick: () => setPeriod(d) }, `${d} дн`)),
+      h('button', { style: gbtn({ fontSize: 11, padding: '5px 10px', marginLeft: 'auto' }), onClick: exportXls }, '📥 Excel')
+    ),
+    // Сводка
+    h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 8, marginBottom: 14 } },
+      h(MC, { v: stats.total, l: 'Записей' }),
+      h(MC, { v: stats.doneCount, l: 'Выполнено', c: GN }),
+      h(MC, { v: `${stats.totalHours}ч`, l: 'Трудозатраты', c: AM }),
+      h(MC, { v: Object.keys(stats.byWorker).length, l: 'Сотрудников' })
+    ),
+    // По категориям
+    Object.keys(stats.byCat).length > 0 && h('div', { style: { ...S.card, padding: 12, marginBottom: 12 } },
+      h('div', { style: S.sec }, 'По категориям'),
+      Object.entries(stats.byCat).sort((a, b) => b[1] - a[1]).map(([cat, cnt]) =>
+        h('div', { key: cat, style: { display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', fontSize: 13 } },
+          h('span', null, AUX_CAT_LABELS[cat] || cat),
+          h('span', { style: { fontWeight: 500, color: AM } }, cnt)
+        )
+      )
+    ),
+    // По исполнителям
+    Object.keys(stats.byWorker).length > 0 && h('div', { style: { ...S.card, padding: 12, marginBottom: 12 } },
+      h('div', { style: S.sec }, 'По исполнителям'),
+      Object.entries(stats.byWorker).sort((a, b) => b[1] - a[1]).map(([name, cnt]) =>
+        h('div', { key: name, style: { display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', fontSize: 13 } },
+          h('span', null, name),
+          h('span', { style: { fontWeight: 500, color: AM } }, cnt)
+        )
+      )
+    ),
+    // Таблица
+    auxOps.length === 0
+      ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888', padding: 24 } }, `Нет доп. работ за ${period} дней`)
+      : h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+          h('thead', null, h('tr', null, ['Дата', 'Категория', 'Работа', 'Сотрудник', 'Заказ', 'Статус', 'Время'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
+          h('tbody', null, auxOps.slice(0, 50).map(op => {
+            const workers = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name?.split(' ')[0]).filter(Boolean).join(', ');
+            const order = data.orders.find(o => o.id === op.orderId);
+            const dur = op.startedAt && op.finishedAt ? fmtDur(op.finishedAt - op.startedAt) : '—';
+            return h('tr', { key: op.id },
+              h('td', { style: S.td }, op.createdAt ? new Date(op.createdAt).toLocaleDateString() : '—'),
+              h('td', { style: { ...S.td, fontSize: 11 } }, AUX_CAT_LABELS[op.auxCategory] || '📝'),
+              h('td', { style: { ...S.td, fontWeight: 500 } }, op.name),
+              h('td', { style: S.td }, workers || '—'),
+              h('td', { style: { ...S.td, color: AM } }, order?.number || '—'),
+              h('td', { style: S.td }, h(Badge, { st: op.status })),
+              h('td', { style: { ...S.td, fontFamily: 'monospace' } }, dur)
+            );
+          }))
+        )))
   );
 });
 
@@ -7129,7 +7239,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
   const ALL_GROUPS = {
     production: { label: '⚙ Производство', tabs: [['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['orders','Заказы'],['plan','План']] },
     reference:  { label: '📋 Справочники', tabs: [['workers','Сотрудники'],['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],['materials','Материалы'],['equipment','Оборудование'],['bom','Спецификации'],['sections','Участки']] },
-    analytics:  { label: '📊 Аналитика',   tabs: [['reports','Отчёты'],['analytics','Аналитика'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['journal','Журнал'],['notifications','Уведомления']] },
+    analytics:  { label: '📊 Аналитика',   tabs: [['reports','Отчёты'],['analytics','Аналитика'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['auxops','Доп. работы'],['journal','Журнал'],['notifications','Уведомления']] },
     system:     { label: '🔧 Система',      tabs: [['time','Учёт времени'],['admin','Управление']] }
   };
 
@@ -7138,10 +7248,10 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
     master:      ALL_GROUPS, // полный доступ
     pdo: {
       production: { label: '⚙ Производство', tabs: [['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['orders','Заказы'],['plan','План']] },
-      analytics:  { label: '📊 Аналитика',   tabs: [['reports','Отчёты'],['journal','Журнал'],['notifications','Уведомления']] },
+      analytics:  { label: '📊 Аналитика',   tabs: [['reports','Отчёты'],['auxops','Доп. работы'],['journal','Журнал'],['notifications','Уведомления']] },
     },
     director: {
-      analytics:  { label: '📊 Аналитика',   tabs: [['analytics','Аналитика'],['kpi','KPI / Премии'],['reports','Отчёты'],['reclamations','Рекламации']] },
+      analytics:  { label: '📊 Аналитика',   tabs: [['analytics','Аналитика'],['kpi','KPI / Премии'],['reports','Отчёты'],['reclamations','Рекламации'],['auxops','Доп. работы']] },
       production: { label: '⚙ Производство', tabs: [['orders','Заказы'],['kanban','Канбан']] },
     },
     hr: {
@@ -7151,7 +7261,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
     },
     shop_master: {
       production: { label: '⚙ Производство', tabs: [['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['orders','Заказы']] },
-      analytics:  { label: '📊 Аналитика',   tabs: [['journal','Журнал'],['notifications','Уведомления'],['reports','Отчёты']] },
+      analytics:  { label: '📊 Аналитика',   tabs: [['auxops','Доп. работы'],['journal','Журнал'],['notifications','Уведомления'],['reports','Отчёты']] },
     },
     admin: {
       reference:  { label: '📋 Справочники', tabs: [['workers','Сотрудники'],['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],['materials','Материалы'],['equipment','Оборудование'],['bom','Спецификации'],['sections','Участки']] },
@@ -7232,6 +7342,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
     tab === 'analytics' && h(AnalyticsDashboard, { data }),
     tab === 'kpi' && h(KPIReport, { data }),
     tab === 'reclamations' && h(MasterReclamations, { data, onUpdate, addToast }),
+    tab === 'auxops' && h(AuxOpsViewer, { data, onUpdate, addToast }),
     tab === 'admin' && h(MasterAdmin, { data, onUpdate, addToast })
   );
 });
@@ -8924,7 +9035,7 @@ const ShopMasterScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     return res;
   }, [data.ops, activeOps]);
 
-  const TABS = [['ops','Операции'],['orders','Заказы'],['journal','Журнал'],['notifications','Уведомления']];
+  const TABS = [['ops','Операции'],['orders','Заказы'],['auxops','Доп. работы'],['journal','Журнал'],['notifications','Уведомления']];
 
   return h('div', null,
     confirmEl,
@@ -8944,6 +9055,7 @@ const ShopMasterScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     h(TabBar, { tabs: TABS, tab, setTab }),
     tab === 'ops'           && h(MasterOps,           { data, onUpdate, addToast, onOrderClick }),
     tab === 'orders'        && h(MasterOrders,         { data, onUpdate, addToast, onOrderClick }),
+    tab === 'auxops'        && h(AuxOpsViewer,         { data, onUpdate, addToast }),
     tab === 'journal'       && h(MasterJournal,        { data }),
     tab === 'notifications' && h(MasterNotifications,  { data })
   );
@@ -8952,7 +9064,7 @@ const ShopMasterScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 // ==================== PDOScreen (ПДО) ====================
 const PDOScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [tab, setTab] = useState('orders');
-  const TABS = [['orders','Заказы'],['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['plan','План'],['reports','Отчёты'],['journal','Журнал'],['notifications','Уведомления']];
+  const TABS = [['orders','Заказы'],['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['plan','План'],['reports','Отчёты'],['auxops','Доп. работы'],['journal','Журнал'],['notifications','Уведомления']];
 
   const overdueOrders = useMemo(() => data.orders.filter(o => !o.archived && o.deadline && new Date(o.deadline) < new Date()).length, [data.orders]);
   const activeOrders  = useMemo(() => data.orders.filter(o => !o.archived).length, [data.orders]);
@@ -8976,6 +9088,7 @@ const PDOScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     tab === 'calendar'      && h(ResourceCalendar,          { data, onUpdate, addToast }),
     tab === 'plan'          && h(MasterTodayPlan,           { data }),
     tab === 'reports'       && h(ReportsBuilder,            { data }),
+    tab === 'auxops'        && h(AuxOpsViewer,              { data, onUpdate, addToast }),
     tab === 'journal'       && h(MasterJournal,             { data }),
     tab === 'notifications' && h(MasterNotifications,       { data })
   );
@@ -8984,7 +9097,7 @@ const PDOScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 // ==================== DirectorScreen (Руководитель) ====================
 const DirectorScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [tab, setTab] = useState('overview');
-  const TABS = [['overview','Обзор'],['monthly','Отчёт месяца'],['analytics','Аналитика'],['reports','Отчёты'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['orders','Заказы'],['kanban','Канбан']];
+  const TABS = [['overview','Обзор'],['monthly','Отчёт месяца'],['analytics','Аналитика'],['reports','Отчёты'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['auxops','Доп. работы'],['orders','Заказы'],['kanban','Канбан']];
 
   const doneOps    = useMemo(() => data.ops.filter(o => o.status === 'done'   && o.finishedAt >= now() - 30*86400000).length, [data.ops]);
   const defectOps  = useMemo(() => data.ops.filter(o => o.status === 'defect' && o.finishedAt >= now() - 30*86400000).length, [data.ops]);
@@ -9042,6 +9155,7 @@ const DirectorScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     tab === 'monthly'      && h(MonthlyReport,       { data }),
     tab === 'kpi'          && h(KPIReport,           { data }),
     tab === 'reclamations' && h(MasterReclamations,  { data, onUpdate, addToast }),
+    tab === 'auxops'       && h(AuxOpsViewer,        { data, onUpdate, addToast }),
     tab === 'orders'       && h(MasterOrders,        { data, onUpdate, addToast, onOrderClick }),
     tab === 'kanban'       && h(MasterKanban,        { data, onUpdate, addToast })
   );
