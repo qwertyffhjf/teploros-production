@@ -1798,6 +1798,25 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     await DB.save(d); onUpdate(d);
   }, [data, onUpdate]);
 
+  // Восстановление активной операции при монтировании / обновлении данных
+  // (решает проблему: после перезагрузки страницы activeOp=null, кнопка Завершить не работает)
+  useEffect(() => {
+    if (activeOp) return; // уже установлена
+    const inProgress = data.ops.find(o =>
+      o.status === 'in_progress' && o.workerIds?.includes(workerId) && !o.archived
+    );
+    if (inProgress) setActiveOp(inProgress);
+  }, [data.ops, workerId]);
+
+  // Синхронизация: если activeOp изменился в Firebase (другой пользователь завершил) — сбрасываем
+  useEffect(() => {
+    if (!activeOp) return;
+    const current = data.ops.find(o => o.id === activeOp.id);
+    if (current && current.status !== 'in_progress') {
+      setActiveOp(null);
+    }
+  }, [data.ops, activeOp]);
+
   // Таймер только когда есть активная операция
   useEffect(() => {
     if (!activeOp) return;
