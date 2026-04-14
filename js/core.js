@@ -3,6 +3,10 @@
 
 const { useState, useEffect, useRef, useMemo, useCallback, memo, createElement: h } = React;
 
+// ==================== PWA: ловим beforeinstallprompt глобально (до монтирования React) ====================
+window._pwaPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); window._pwaPrompt = e; });
+
 // ==================== Константы ====================
 const AM = '#EF9F27', AM2 = '#412402', AM3 = '#FAEEDA', AM4 = '#BA7517';
 const GN = '#1D9E75', GN2 = '#04342C', GN3 = '#E1F5EE';
