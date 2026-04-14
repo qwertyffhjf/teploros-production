@@ -426,6 +426,7 @@ const cleanStaleLocalStorageKeys = () => {
 
 const DB = {
   _saveTimer:   null,
+  _saveResolve: null,   // resolve-функция текущего pending save Promise
   _lastError:   null,
   _sizeWarning: null,
   _online:      true,    // текущий статус сети
@@ -496,7 +497,6 @@ const DB = {
       if (toArchive.length > 0) {
         const archiveIds = new Set(toArchive.map(o => o.id));
         const archiveOps = (toSave.ops || []).filter(o => archiveIds.has(o.orderId));
-        // Группируем по месяцу архивации
         const byMonth = {};
         toArchive.forEach(o => {
           const d = new Date(o.archivedAt || o.createdAt || Date.now());
@@ -505,7 +505,6 @@ const DB = {
           byMonth[key].orders.push(o);
           byMonth[key].ops.push(...archiveOps.filter(op => op.orderId === o.id));
         });
-        // Сохраняем в Firestore архивные документы (без блокировки основного сохранения)
         if (DB._online) {
           Object.entries(byMonth).forEach(([month, chunk]) => {
             firebase.firestore().collection(ARCHIVE_COLL).doc(month)
@@ -516,7 +515,6 @@ const DB = {
               .catch(e => console.warn('Archive save error:', e));
           });
         }
-        // Удаляем из основного документа
         toSave.orders = toSave.orders.filter(o => !archiveIds.has(o.id));
         toSave.ops    = (toSave.ops || []).filter(o => !archiveIds.has(o.orderId));
         console.log(`Архивировано: ${toArchive.length} заказов → ${Object.keys(byMonth).join(', ')}`);
@@ -543,44 +541,73 @@ const DB = {
         localStorage.setItem(VERSION_KEY, String(newVersion));
       } catch(e) {}
 
+      // ── Debounce с Promise — каждый вызов возвращает промис, разрешаемый по факту записи ──
+      // Если предыдущий debounce ещё не сработал — отменяем его и резолвим (данные superseded)
       if (DB._saveTimer) clearTimeout(DB._saveTimer);
-      DB._saveTimer = setTimeout(async () => {
-        if (!DB._online) {
-          // Офлайн — кладём в очередь
-          DB._enqueue(toSave);
-          return;
-        }
-        try {
-          // ── Optimistic locking: проверяем что версия не изменилась ──
-          const snap = await DOC_REF.get().catch(() => null);
-          if (snap && snap.exists) {
-            const remoteVersion = snap.data().updatedAt?.toMillis?.() || snap.data()._version || 0;
-            const localVersion  = Number(localStorage.getItem(VERSION_KEY)) || 0;
-            // Если удалённая версия новее нашей исходной — кто-то ещё сохранил данные
-            if (remoteVersion > localVersion && remoteVersion !== newVersion) {
-              console.warn('Conflict detected: remote version is newer, merging...');
-              // Простое решение: наши данные побеждают (last-write-wins), но логируем
-              DB._lastError = '⚠ Данные обновились в другой вкладке — ваши изменения применены поверх.';
-            }
+      if (DB._saveResolve) { DB._saveResolve(); DB._saveResolve = null; }
+
+      return new Promise((resolve) => {
+        DB._saveResolve = resolve;
+        DB._saveTimer = setTimeout(async () => {
+          DB._saveResolve = null;
+          if (!DB._online) {
+            DB._enqueue(toSave);
+            resolve();
+            return;
           }
-          await DOC_REF.set({
-            payload:   JSON.stringify(toSave),
-            _version:  newVersion,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-          });
-          DB._version = newVersion;
-          localStorage.setItem(VERSION_KEY, String(newVersion));
-          DB._online = true;
-          // При успешном сохранении очищаем очередь
-          DB._clearQueue();
-        } catch(e) {
-          console.error('Firebase save error:', e);
-          DB._lastError = e.message;
-          DB._online = false;
-          // Не удалось сохранить — кладём в очередь
-          DB._enqueue(toSave);
-        }
-      }, 1000);
+          try {
+            // ── Optimistic locking ──
+            const snap = await DOC_REF.get().catch(() => null);
+            if (snap && snap.exists) {
+              const remoteVersion = snap.data().updatedAt?.toMillis?.() || snap.data()._version || 0;
+              const localVersion  = Number(localStorage.getItem(VERSION_KEY)) || 0;
+              if (remoteVersion > localVersion && remoteVersion !== newVersion) {
+                console.warn('Conflict detected: remote version is newer');
+                // ── Мержим вместо перезаписи: берём удалённые данные как базу, накладываем наши изменения ──
+                try {
+                  const remoteData = typeof snap.data().payload === 'string' ? JSON.parse(snap.data().payload) : snap.data();
+                  // Мержим массивы: наши новые записи добавляем к удалённым
+                  const mergeArrayById = (remote, local, key) => {
+                    const remoteMap = new Map((remote || []).map(item => [item[key], item]));
+                    (local || []).forEach(item => remoteMap.set(item[key], item)); // наши перезаписывают по id
+                    return [...remoteMap.values()];
+                  };
+                  toSave.orders = mergeArrayById(remoteData.orders, toSave.orders, 'id');
+                  toSave.ops = mergeArrayById(remoteData.ops, toSave.ops, 'id');
+                  toSave.workers = mergeArrayById(remoteData.workers, toSave.workers, 'id');
+                  toSave.materials = mergeArrayById(remoteData.materials, toSave.materials, 'id');
+                  // Events, messages — конкатенируем и дедуплицируем
+                  const mergeEvents = (remote, local) => {
+                    const ids = new Set((local || []).map(e => e.id));
+                    return [...(local || []), ...(remote || []).filter(e => !ids.has(e.id))].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+                  };
+                  toSave.events = mergeEvents(remoteData.events, toSave.events).slice(-2000);
+                  toSave.messages = mergeEvents(remoteData.messages, toSave.messages).slice(-200);
+                  DB._lastError = '⚠ Данные объединены с изменениями другого пользователя.';
+                } catch(mergeErr) {
+                  console.warn('Merge failed, using last-write-wins:', mergeErr);
+                  DB._lastError = '⚠ Данные обновились — ваши изменения применены поверх.';
+                }
+              }
+            }
+            await DOC_REF.set({
+              payload:   JSON.stringify(toSave),
+              _version:  newVersion,
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            DB._version = newVersion;
+            localStorage.setItem(VERSION_KEY, String(newVersion));
+            DB._online = true;
+            DB._clearQueue();
+          } catch(e) {
+            console.error('Firebase save error:', e);
+            DB._lastError = e.message;
+            DB._online = false;
+            DB._enqueue(toSave);
+          }
+          resolve();
+        }, 800); // Уменьшаем debounce: 800ms вместо 1000ms — быстрее сохраняет
+      });
     } catch(e) { console.error(e); DB._lastError = e.message; }
   },
 
@@ -1117,8 +1144,25 @@ const QRModal = memo(({ ops, order, worker, onClose }) => {
         h('span', { style: { fontSize: 11, color: '#888' } }, `${index + 1} / ${ops.length}`),
         h('button', { type: 'button', style: gbtn({ padding: '4px 10px' }), onClick: () => setIndex(i => (i + 1) % ops.length) }, '→')
       ),
-      h('div', { style: { display: 'flex', gap: 8 } },
-        h('button', { type: 'button', style: gbtn({ flex: 1 }), onClick: () => window.print() }, '🖨 Печать'),
+      h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+        h('button', { type: 'button', style: gbtn({ flex: 1 }), onClick: () => {
+          // Открываем чистое окно только с QR-кодом для печати
+          const qrEl = ref.current;
+          const qrHtml = qrEl ? qrEl.innerHTML : '';
+          const printWin = window.open('', '_blank', 'width=400,height=500');
+          if (printWin) {
+            printWin.document.write(`<!DOCTYPE html><html><head><title>QR · ${op.id}</title><style>body{margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:system-ui,sans-serif;text-align:center}@media print{button{display:none!important}}</style></head><body><div style="margin-bottom:12px">${qrHtml}</div><div style="font-family:monospace;font-size:16px;font-weight:600;color:#BA7517;margin-bottom:4px">${op.id}</div><div style="font-size:13px;color:#666;margin-bottom:2px">${op.name}</div><div style="font-size:11px;color:#aaa">Заказ: ${order?.number || '—'} · ${order?.product || ''}</div>${worker ? '<div style="font-size:12px;color:#BA7517;margin-top:8px">'+worker.name+'</div>' : ''}<button onclick="window.print();setTimeout(()=>window.close(),500)" style="margin-top:20px;padding:10px 32px;font-size:14px;border-radius:8px;border:none;background:#EF9F27;color:#412402;cursor:pointer;font-weight:500">🖨 Печать</button></body></html>`);
+            printWin.document.close();
+          }
+        }}, '🖨 Печать'),
+        navigator.share && h('button', { type: 'button', style: gbtn({ flex: 1 }), onClick: async () => {
+          // Web Share API — на мобильном можно отправить QR в мессенджер / на принтер
+          const url = new URL(window.location.href);
+          url.searchParams.set('opId', op.id);
+          try {
+            await navigator.share({ title: `QR · ${op.name}`, text: `Операция: ${op.name}\nЗаказ: ${order?.number || '—'}\nСсылка: ${url.toString()}`, url: url.toString() });
+          } catch(e) { /* отмена */ }
+        }}, '📤 Поделиться'),
         h('button', { type: 'button', style: abtn({ flex: 1 }), onClick: () => { window.open('?opId=' + op.id, '_blank'); } }, 'Открыть как рабочий')
       )
     )
@@ -2523,6 +2567,19 @@ const isWorkday = (year, month, day, settings) => {
 
 const calcDayData = (workerId, year, month, day, data) => {
   if (!isWorkday(year, month, day, data.settings)) return { type: 'we', code: 'В', h: 0 };
+
+  // ── Приоритет 1: ручной ввод в табеле (мастер вписал часы/код) ──
+  const tsKey = `${year}-${String(month+1).padStart(2,'0')}`;
+  const tsVal = (data.timesheet || {})[tsKey]?.[workerId]?.[day];
+  if (tsVal) {
+    if (tsVal.code === 'Б')  return { type: 'sick', code: 'Б', h: 0, src: 'табель' };
+    if (tsVal.code === 'ОТ') return { type: 'vac', code: 'ОТ', h: 0, src: 'табель' };
+    if (tsVal.code === 'ОЗ') return { type: 'vac', code: 'ОЗ', h: 0, src: 'табель' };
+    if (tsVal.code === 'К')  return { type: 'full', code: 'К', h: tsVal.h || 8, src: 'табель' };
+    if (tsVal.code === 'НН') return { type: 'abs', code: 'НН', h: 0, src: 'табель' };
+    if (tsVal.h != null && tsVal.h > 0) return { type: tsVal.h >= 8 ? 'full' : 'ops', code: 'Я', h: tsVal.h, src: 'табель' };
+  }
+
   const w = data.workers.find(x => x.id === workerId);
   const dayStart = new Date(year, month, day).getTime();
   const dayEnd   = new Date(year, month, day, 23, 59, 59, 999).getTime();
@@ -8995,10 +9052,12 @@ function generateRouteSheet(order, data) {
 
 // ==================== InstallPromptBanner ====================
 const InstallPromptBanner = memo(() => {
-  const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [show, setShow] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
+  const [isAndroid, setIsAndroid] = useState(false);
+  const [hasPrompt, setHasPrompt] = useState(false);
   const [minimized, setMinimized] = useState(false);
+  const promptRef = useRef(null); // ref для deferredPrompt — доступен из любого замыкания
 
   useEffect(() => {
     // Уже установлено как PWA — не показываем
@@ -9006,25 +9065,28 @@ const InstallPromptBanner = memo(() => {
     // Свёрнуто в этой сессии — показываем мини-кнопку
     if (sessionStorage.getItem('pwa_minimized')) { setMinimized(true); setShow(true); return; }
 
-    // iOS Safari — нет события beforeinstallprompt, показываем инструкцию
-    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+    const ua = navigator.userAgent;
+    const ios = /iphone|ipad|ipod/i.test(ua) && !window.MSStream;
+    const android = /android/i.test(ua);
     if (ios) { setIsIOS(true); setShow(true); return; }
+    setIsAndroid(android);
 
     // Chrome / Edge / Android
-    const handler = (e) => { e.preventDefault(); setDeferredPrompt(e); setShow(true); };
+    const handler = (e) => { e.preventDefault(); promptRef.current = e; setHasPrompt(true); setShow(true); };
     window.addEventListener('beforeinstallprompt', handler);
     window.addEventListener('appinstalled', () => setShow(false));
-    // Если событие не сработало за 3 сек — показываем как инструкцию
-    const fallback = setTimeout(() => { if (!deferredPrompt) setShow(true); }, 3000);
+    // Если событие не сработало за 3 сек — показываем инструкцию
+    const fallback = setTimeout(() => { if (!promptRef.current) setShow(true); }, 3000);
     return () => { window.removeEventListener('beforeinstallprompt', handler); clearTimeout(fallback); };
   }, []);
 
   const handleInstall = async () => {
-    if (!deferredPrompt) return;
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
+    if (!promptRef.current) return;
+    promptRef.current.prompt();
+    const { outcome } = await promptRef.current.userChoice;
     if (outcome === 'accepted') setShow(false);
-    setDeferredPrompt(null);
+    promptRef.current = null;
+    setHasPrompt(false);
   };
 
   const handleMinimize = () => {
@@ -9034,7 +9096,7 @@ const InstallPromptBanner = memo(() => {
 
   if (!show) return null;
 
-  // Мини-кнопка (после сворачивания — всегда видна пока не установят)
+  // Мини-кнопка (после сворачивания)
   if (minimized) return h('button', {
     'aria-label': 'Установить приложение',
     style: {
@@ -9049,6 +9111,16 @@ const InstallPromptBanner = memo(() => {
     },
     onClick: () => { setMinimized(false); sessionStorage.removeItem('pwa_minimized'); }
   }, '📲');
+
+  // Инструкция для Android без beforeinstallprompt
+  const androidInstructions = h('div', { style: { fontSize: 12, color: '#bbb', lineHeight: 1.5 } },
+    'Нажмите ',
+    h('span', { style: { color: AM, fontWeight: 500 } }, '⋮ (меню браузера)'),
+    ' → ',
+    h('span', { style: { color: AM, fontWeight: 500 } }, '«Установить приложение»'),
+    ' или ',
+    h('span', { style: { color: AM, fontWeight: 500 } }, '«Добавить на главный экран»')
+  );
 
   return h('div', {
     role: 'banner',
@@ -9074,15 +9146,17 @@ const InstallPromptBanner = memo(() => {
             h('span', { style: { color: AM, fontWeight: 500 } }, '«На экран «Домой»»'),
             ' — и приложение всегда под рукой'
           )
-        : h('div', null,
-            h('div', { style: { fontSize: 12, color: '#bbb', marginBottom: 10, lineHeight: 1.5 } },
-              'Работает офлайн, открывается без браузера, занимает < 1 МБ'
-            ),
-            h('button', {
-              style: { ...abtn({ fontSize: 13, padding: '8px 20px' }) },
-              onClick: handleInstall
-            }, 'Установить')
-          )
+        : hasPrompt
+          ? h('div', null,
+              h('div', { style: { fontSize: 12, color: '#bbb', marginBottom: 10, lineHeight: 1.5 } },
+                'Работает офлайн, открывается без браузера, занимает < 1 МБ'
+              ),
+              h('button', {
+                style: { ...abtn({ fontSize: 13, padding: '8px 20px' }) },
+                onClick: handleInstall
+              }, 'Установить')
+            )
+          : androidInstructions
     ),
     h('button', {
       onClick: handleMinimize,
@@ -9380,12 +9454,14 @@ function App() {
     savingRef.current = true;
     setData(d);
     setIsSaving(true);
-    DB.save(d);
-    // Debounce Firebase 1000ms + запас на запись ~500ms
-    setTimeout(() => {
-      savingRef.current = false;
-      setIsSaving(false);
-    }, 1800);
+    DB.save(d).then(() => {
+      // savingRef остаётся true пока Firebase не подтвердит запись
+      // Сбрасываем с небольшой задержкой чтобы onSnapshot успел обработаться
+      setTimeout(() => {
+        savingRef.current = false;
+        setIsSaving(false);
+      }, 300);
+    });
   }, []);
 
   // Мониторинг ошибок сохранения
