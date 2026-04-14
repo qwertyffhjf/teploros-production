@@ -711,3 +711,143 @@ const MonthlyReport = memo(({ data }) => {
 
 
 
+
+// ==================== VacationTimeline (График отпусков — визуальная шкала) ====================
+const VacationTimeline = memo(({ data }) => {
+  const today = new Date();
+  const [year, setYear] = useState(today.getFullYear());
+  const MONTHS = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+
+  const workers = useMemo(() => data.workers.filter(w => !w.archived), [data.workers]);
+  const vacations = useMemo(() => (data.vacations || []).filter(v => {
+    const s = new Date(v.startDate), e = new Date(v.endDate);
+    return s.getFullYear() === year || e.getFullYear() === year;
+  }), [data.vacations, year]);
+
+  const daysInYear = useMemo(() => {
+    const arr = [];
+    for (let m = 0; m < 12; m++) arr.push(new Date(year, m + 1, 0).getDate());
+    return arr;
+  }, [year]);
+  const totalDays = daysInYear.reduce((s, d) => s + d, 0);
+
+  // По каждому дню года — сколько человек в отпуске
+  const overlapDays = useMemo(() => {
+    const dayMap = new Array(totalDays).fill(0);
+    vacations.forEach(v => {
+      const s = new Date(v.startDate), e = new Date(v.endDate);
+      const yearStart = new Date(year, 0, 1).getTime();
+      const dayStart = Math.max(0, Math.floor((s.getTime() - yearStart) / 86400000));
+      const dayEnd = Math.min(totalDays - 1, Math.floor((e.getTime() - yearStart) / 86400000));
+      for (let d = dayStart; d <= dayEnd; d++) dayMap[d]++;
+    });
+    return dayMap;
+  }, [vacations, year, totalDays]);
+
+  const stats = useMemo(() => {
+    const withVac = new Set(vacations.map(v => v.workerId));
+    const overlapCount = overlapDays.filter(d => d >= 2).length;
+    const maxOverlap = Math.max(0, ...overlapDays);
+    return { total: vacations.length, workers: withVac.size, overlapDays: overlapCount, maxOverlap };
+  }, [vacations, overlapDays]);
+
+  const getBar = (v) => {
+    const yearStart = new Date(year, 0, 1).getTime();
+    const yearEnd = new Date(year, 11, 31).getTime();
+    const s = Math.max(new Date(v.startDate).getTime(), yearStart);
+    const e = Math.min(new Date(v.endDate).getTime(), yearEnd);
+    const left = (s - yearStart) / (yearEnd - yearStart) * 100;
+    const width = Math.max(0.5, (e - s) / (yearEnd - yearStart) * 100);
+    return { left, width };
+  };
+
+  const fmtD = (d) => new Date(d).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+
+  return h('div', null,
+    // Год + сводка
+    h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' } },
+      h('button', { style: gbtn({ padding: '6px 12px' }), onClick: () => setYear(y => y - 1) }, '‹'),
+      h('span', { style: { fontSize: 18, fontWeight: 500, minWidth: 60, textAlign: 'center' } }, year),
+      h('button', { style: gbtn({ padding: '6px 12px' }), onClick: () => setYear(y => y + 1) }, '›'),
+      h('button', { style: gbtn({ padding: '6px 10px', fontSize: 11 }), onClick: () => setYear(today.getFullYear()) }, 'Сегодня')
+    ),
+    h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 8, marginBottom: 14 } },
+      h(MC, { v: stats.total, l: 'Отпусков' }),
+      h(MC, { v: stats.workers, l: 'Сотрудников' }),
+      h(MC, { v: `${stats.overlapDays} дн`, l: 'Пересечения', c: stats.overlapDays > 0 ? RD : GN }),
+      h(MC, { v: stats.maxOverlap, l: 'Макс. одноврем.', c: stats.maxOverlap >= 3 ? RD : stats.maxOverlap >= 2 ? AM : GN })
+    ),
+    // Полоса перекрытий
+    stats.overlapDays > 0 && h('div', { style: { ...S.card, padding: 10, marginBottom: 12 } },
+      h('div', { style: { fontSize: 10, color: RD, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, fontWeight: 500 } }, '⚠ Пересечения отпусков'),
+      h('div', { style: { display: 'flex', height: 16, borderRadius: 4, overflow: 'hidden', background: '#f5f5f2' } },
+        overlapDays.map((cnt, i) => h('div', { key: i, style: {
+          flex: 1, background: cnt >= 3 ? RD : cnt >= 2 ? AM : 'transparent',
+          opacity: cnt >= 2 ? 0.7 : 0
+        }}))
+      ),
+      h('div', { style: { display: 'flex', justifyContent: 'space-between', marginTop: 2 } },
+        MONTHS.map(m => h('span', { key: m, style: { fontSize: 8, color: '#aaa', flex: 1, textAlign: 'center' } }, m))
+      )
+    ),
+    // Таймлайн
+    vacations.length === 0
+      ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888', padding: 24 } }, 'Нет запланированных отпусков в ' + year + ' году')
+      : h('div', { style: { ...S.card, padding: 0, overflowX: 'auto' } },
+          // Заголовок месяцев
+          h('div', { style: { display: 'flex', borderBottom: '0.5px solid rgba(0,0,0,0.08)', position: 'sticky', top: 0, background: '#fff', zIndex: 2 } },
+            h('div', { style: { width: 140, flexShrink: 0, padding: '8px 10px', fontSize: 10, color: '#888', fontWeight: 500 } }, 'Сотрудник'),
+            h('div', { style: { flex: 1, display: 'flex', minWidth: 600 } },
+              MONTHS.map((m, i) => {
+                const isNow = today.getFullYear() === year && today.getMonth() === i;
+                return h('div', { key: m, style: {
+                  flex: daysInYear[i], textAlign: 'center', fontSize: 10, padding: '8px 0',
+                  color: isNow ? AM2 : '#888', fontWeight: isNow ? 600 : 400,
+                  background: isNow ? AM3 : 'transparent',
+                  borderLeft: i > 0 ? '0.5px solid rgba(0,0,0,0.06)' : 'none'
+                }}, m);
+              })
+            )
+          ),
+          // Строки сотрудников
+          workers.map(w => {
+            const wVacs = vacations.filter(v => v.workerId === w.id);
+            if (wVacs.length === 0) return null;
+            return h('div', { key: w.id, style: { display: 'flex', borderBottom: '0.5px solid rgba(0,0,0,0.04)', minHeight: 36, alignItems: 'center' } },
+              h('div', { style: { width: 140, flexShrink: 0, padding: '6px 10px', fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, w.name),
+              h('div', { style: { flex: 1, position: 'relative', minWidth: 600, height: 28 } },
+                // Сетка месяцев
+                MONTHS.map((_, i) => {
+                  const left = daysInYear.slice(0, i).reduce((s, d) => s + d, 0) / totalDays * 100;
+                  return i > 0 ? h('div', { key: i, style: { position: 'absolute', left: left + '%', top: 0, bottom: 0, width: 1, background: 'rgba(0,0,0,0.04)' } }) : null;
+                }),
+                // Полоски отпусков
+                wVacs.map(v => {
+                  const bar = getBar(v);
+                  const hasOverlap = vacations.some(ov => ov.id !== v.id && ov.workerId !== w.id &&
+                    new Date(v.startDate) < new Date(ov.endDate) && new Date(v.endDate) > new Date(ov.startDate));
+                  return h('div', { key: v.id, title: fmtD(v.startDate) + ' — ' + fmtD(v.endDate) + (v.approved ? ' ✓' : ' (не утв.)') + (hasOverlap ? ' ⚠ пересечение' : ''),
+                    style: {
+                      position: 'absolute', top: 4, height: 20, borderRadius: 4,
+                      left: bar.left + '%', width: bar.width + '%', minWidth: 6,
+                      background: hasOverlap ? RD : v.approved ? '#378ADD' : AM,
+                      opacity: v.approved ? 0.85 : 0.5,
+                      border: hasOverlap ? '1.5px solid ' + RD2 : 'none',
+                      cursor: 'default', fontSize: 9, color: '#fff', fontWeight: 500,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      overflow: 'hidden', whiteSpace: 'nowrap', padding: '0 3px'
+                    }
+                  }, bar.width > 4 ? fmtD(v.startDate) : '');
+                })
+              )
+            );
+          }),
+          // Легенда
+          h('div', { style: { display: 'flex', borderTop: '0.5px solid rgba(0,0,0,0.08)', padding: '8px 10px', gap: 16, fontSize: 11, color: '#888' } },
+            h('span', { style: { display: 'flex', alignItems: 'center', gap: 4 } }, h('div', { style: { width: 12, height: 12, background: '#378ADD', borderRadius: 3, opacity: 0.85 } }), 'Утверждён'),
+            h('span', { style: { display: 'flex', alignItems: 'center', gap: 4 } }, h('div', { style: { width: 12, height: 12, background: AM, borderRadius: 3, opacity: 0.5 } }), 'Не утверждён'),
+            h('span', { style: { display: 'flex', alignItems: 'center', gap: 4 } }, h('div', { style: { width: 12, height: 12, background: RD, borderRadius: 3, border: '1px solid ' + RD2 } }), 'Пересечение')
+          )
+        )
+  );
+});
