@@ -655,38 +655,47 @@ function generateRouteSheet(order, data) {
 const InstallPromptBanner = memo(() => {
   const [show, setShow] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
-  const [isAndroid, setIsAndroid] = useState(false);
   const [hasPrompt, setHasPrompt] = useState(false);
   const [minimized, setMinimized] = useState(false);
-  const promptRef = useRef(null); // ref для deferredPrompt — доступен из любого замыкания
+  const promptRef = useRef(null);
 
   useEffect(() => {
-    // Уже установлено как PWA — не показываем
+    // Уже установлено как PWA
     if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) return;
-    // Свёрнуто в этой сессии — показываем мини-кнопку
+    // Свёрнуто в этой сессии
     if (sessionStorage.getItem('pwa_minimized')) { setMinimized(true); setShow(true); return; }
 
     const ua = navigator.userAgent;
     const ios = /iphone|ipad|ipod/i.test(ua) && !window.MSStream;
-    const android = /android/i.test(ua);
     if (ios) { setIsIOS(true); setShow(true); return; }
-    setIsAndroid(android);
 
-    // Chrome / Edge / Android
-    const handler = (e) => { e.preventDefault(); promptRef.current = e; setHasPrompt(true); setShow(true); };
+    // Проверяем глобально пойманный prompt (из core.js)
+    if (window._pwaPrompt) {
+      promptRef.current = window._pwaPrompt;
+      setHasPrompt(true);
+      setShow(true);
+      return;
+    }
+
+    // Слушаем если ещё не пойман
+    const handler = (e) => { e.preventDefault(); promptRef.current = e; window._pwaPrompt = e; setHasPrompt(true); setShow(true); };
     window.addEventListener('beforeinstallprompt', handler);
-    window.addEventListener('appinstalled', () => setShow(false));
-    // Если событие не сработало за 3 сек — показываем инструкцию
-    const fallback = setTimeout(() => { if (!promptRef.current) setShow(true); }, 3000);
+    window.addEventListener('appinstalled', () => { setShow(false); window._pwaPrompt = null; });
+    // Fallback — показываем инструкцию через 2 сек
+    const fallback = setTimeout(() => { if (!promptRef.current) setShow(true); }, 2000);
     return () => { window.removeEventListener('beforeinstallprompt', handler); clearTimeout(fallback); };
   }, []);
 
   const handleInstall = async () => {
-    if (!promptRef.current) return;
-    promptRef.current.prompt();
-    const { outcome } = await promptRef.current.userChoice;
-    if (outcome === 'accepted') setShow(false);
+    const prompt = promptRef.current || window._pwaPrompt;
+    if (!prompt) return;
+    try {
+      prompt.prompt();
+      const { outcome } = await prompt.userChoice;
+      if (outcome === 'accepted') setShow(false);
+    } catch(e) { /* prompt уже использован */ }
     promptRef.current = null;
+    window._pwaPrompt = null;
     setHasPrompt(false);
   };
 
@@ -858,19 +867,19 @@ const DirectorScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [tab, setTab] = useState('overview');
   const TABS = [['overview','Обзор'],['monthly','Отчёт месяца'],['analytics','Аналитика'],['reports','Отчёты'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['auxops','Доп. работы'],['orders','Заказы'],['kanban','Канбан']];
 
-  const doneOps    = useMemo(() => data.ops.filter(o => o.status === 'done'   && o.finishedAt >= now() - 30*86400000).length, [data.ops]);
-  const defectOps  = useMemo(() => data.ops.filter(o => o.status === 'defect' && o.finishedAt >= now() - 30*86400000).length, [data.ops]);
+  const period30 = useMemo(() => Date.now() - 30 * 86400000, [data]); // пересчитывается при обновлении данных
+  const doneOps    = useMemo(() => data.ops.filter(o => o.status === 'done'   && o.finishedAt >= period30).length, [data.ops, period30]);
+  const defectOps  = useMemo(() => data.ops.filter(o => o.status === 'defect' && o.finishedAt >= period30).length, [data.ops, period30]);
   const quality    = doneOps + defectOps > 0 ? Math.round(doneOps / (doneOps + defectOps) * 100) : 100;
   const overdue    = useMemo(() => data.orders.filter(o => !o.archived && o.deadline && new Date(o.deadline) < new Date()).length, [data.orders]);
   const recCount   = useMemo(() => (data.reclamations || []).filter(r => r.status !== 'closed').length, [data.reclamations]);
-  const downtime   = useMemo(() => Math.round(data.events.filter(e => e.type === 'downtime' && e.ts >= now() - 30*86400000).reduce((s, e) => s + (e.duration || 0), 0) / 3600000), [data.events]);
+  const downtime   = useMemo(() => Math.round(data.events.filter(e => e.type === 'downtime' && e.ts >= period30).reduce((s, e) => s + (e.duration || 0), 0) / 3600000), [data.events, period30]);
 
   // Топ проблем для обзора
   const topIssues = useMemo(() => {
     const issues = [];
-    // Брак по исполнителям
     const wmap = {};
-    data.ops.filter(o => o.status === 'defect' && o.finishedAt >= now() - 30*86400000).forEach(o => {
+    data.ops.filter(o => o.status === 'defect' && o.finishedAt >= period30).forEach(o => {
       (o.workerIds||[]).forEach(wid => { wmap[wid] = (wmap[wid]||0)+1; });
     });
     const topWorker = Object.entries(wmap).sort((a,b)=>b[1]-a[1])[0];
