@@ -1,0 +1,903 @@
+// teploros · worker.js
+// WorkerScreen, WorkerOnboarding, доп. работы
+
+// ==================== WorkerOnboarding ====================
+const WorkerOnboarding = memo(({ worker, myOps, onDone }) => {
+  const [step, setStep] = useState(1);
+  const TOTAL = 3;
+
+  const dots = Array.from({ length: TOTAL }, (_, i) =>
+    h('div', { key: i, style: {
+      height: 6, borderRadius: 3,
+      width: i + 1 === step ? 20 : 6,
+      background: i + 1 === step ? AM : 'rgba(0,0,0,0.15)',
+      transition: 'all .2s'
+    }})
+  );
+
+  const Step1 = () => h('div', { style: { textAlign: 'center' } },
+    h('div', { style: { width: 72, height: 72, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 500, color: AM2, margin: '0 auto 16px' } },
+      worker?.name?.charAt(0) || '?'
+    ),
+    h('div', { style: { fontSize: 20, fontWeight: 500, marginBottom: 6 } }, `Добро пожаловать,`),
+    h('div', { style: { fontSize: 18, fontWeight: 500, color: AM2, marginBottom: 8 } }, worker?.name?.split(' ')[0] + '!'),
+    h('div', { style: { fontSize: 13, color: '#888', marginBottom: 24, lineHeight: 1.6 } },
+      worker?.position ? `${worker.position}` : 'Добро пожаловать в систему',
+      h('br'), 'Здесь вы ведёте свои задания и отслеживаете результаты'
+    ),
+    h('button', { className: 'worker-btn worker-btn-start', style: { marginBottom: 10 }, onClick: () => setStep(2) }, 'Посмотреть задания →'),
+    h('button', { style: { background: 'none', border: 'none', fontSize: 12, color: '#aaa', cursor: 'pointer', width: '100%', padding: '6px' }, onClick: onDone }, 'Пропустить')
+  );
+
+  const Step2 = () => h('div', null,
+    h('div', { style: { fontSize: 14, color: '#888', marginBottom: 12 } },
+      myOps.length > 0 ? `Ваши задания на сегодня (${myOps.length}):` : 'Ваши задания'
+    ),
+    myOps.length > 0
+      ? myOps.slice(0, 3).map((op, i) => h('div', { key: op.id, style: { ...{ background: '#fff', border: '0.5px solid rgba(0,0,0,0.1)', borderRadius: 10, padding: '10px 14px', marginBottom: 8 } } },
+          h('div', { style: { fontSize: 14, fontWeight: 500 } }, op.name),
+          h('div', { style: { fontSize: 11, color: AM4, marginTop: 2 } }, '↑ Нажмите чтобы начать')
+        ))
+      : h('div', { style: { background: '#f8f8f5', borderRadius: 10, padding: '20px', textAlign: 'center', color: '#888', fontSize: 13, marginBottom: 12 } },
+          h('div', { style: { fontSize: 24, marginBottom: 6 } }, '⏳'),
+          'Мастер пока не назначил задания.',
+          h('br'), 'Обратитесь к начальнику цеха.'
+        ),
+    h('button', { className: 'worker-btn worker-btn-start', style: { marginTop: 8 }, onClick: () => setStep(3) }, 'Понятно →')
+  );
+
+  const Step3 = () => h('div', { style: { textAlign: 'center' } },
+    h('div', { style: { fontSize: 36, marginBottom: 12 } }, '🎯'),
+    h('div', { style: { fontSize: 18, fontWeight: 500, marginBottom: 16 } }, 'Всё готово!'),
+    [
+      ['📷', 'QR-код на рабочем месте — самый быстрый старт'],
+      ['⭐', 'Выполняйте операции вовремя — получайте достижения'],
+      ['🤝', 'В чате можно поблагодарить коллегу или сообщить о проблеме'],
+    ].map(([icon, text]) => h('div', { key: icon, style: { display: 'flex', gap: 10, alignItems: 'flex-start', background: AM3, borderRadius: 10, padding: '10px 12px', marginBottom: 8, textAlign: 'left' } },
+      h('span', { style: { fontSize: 16, flexShrink: 0 } }, icon),
+      h('span', { style: { fontSize: 13, color: AM2, lineHeight: 1.5 } }, text)
+    )),
+    h('button', { className: 'worker-btn worker-btn-start', style: { marginTop: 8 }, onClick: onDone }, 'Начать работу')
+  );
+
+  return h('div', { style: { maxWidth: 440, margin: '0 auto', padding: '24px 16px' } },
+    h('div', { style: { display: 'flex', gap: 4, justifyContent: 'center', marginBottom: 24 } }, dots),
+    step === 1 ? h(Step1) : step === 2 ? h(Step2) : h(Step3)
+  );
+});
+
+
+// ==================== WorkerScreen ====================
+// ==================== WorkerHoursBlock ====================
+const WorkerHoursBlock = memo(({ workerId, data }) => {
+  const today = new Date();
+  const [viewMonth, setViewMonth] = useState(today.getMonth());
+  const [viewYear,  setViewYear]  = useState(today.getFullYear());
+  const [expanded,  setExpanded]  = useState(false);
+
+  const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  const DOW_SHORT = ['вс','пн','вт','ср','чт','пт','сб'];
+
+  const dim = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const days = Array.from({ length: dim }, (_, i) => i + 1);
+
+  const monthData = useMemo(() => {
+    let totH = 0, totDays = 0, totOps = 0;
+    const grid = days.map(d => {
+      const dow = new Date(viewYear, viewMonth, d).getDay();
+      const dd = calcDayData(workerId, viewYear, viewMonth, d, data);
+      if (dd.h > 0) { totH += dd.h; totDays++; }
+      if (dd.ops) totOps += dd.ops;
+      return { d, dow, ...dd };
+    });
+    return { grid, totH: Math.round(totH * 10) / 10, totDays, totOps };
+  }, [workerId, viewYear, viewMonth, data]);
+
+  const cellBg = (type) => ({
+    'full':'#E1F5EE', 'ops':'#FAEEDA', 'half':'#E6F1FB',
+    'sick':'#FCEBEB', 'vac':'#E6F1FB', 'abs':'#f5f5f2', 'we':''
+  }[type] || '');
+  const cellCl = (type) => ({
+    'full':GN2, 'ops':AM2, 'half':'#0C447C',
+    'sick':RD2, 'vac':'#042C53', 'abs':'#ccc', 'we':'#ddd'
+  }[type] || '#888');
+
+  return h('div', { style: { ...S.card, marginBottom: 16 } },
+    // Заголовок
+    h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom:12 } },
+      h('div', { style: { ...S.sec, marginBottom:0, flex:1 } }, 'Мои часы'),
+      h('button', { style: gbtn({ padding:'4px 10px', fontSize:11 }), onClick:() => { let m=viewMonth-1,y=viewYear; if(m<0){m=11;y--;} setViewMonth(m); setViewYear(y); } }, '‹'),
+      h('span', { style:{ fontSize:13, fontWeight:500, minWidth:120, textAlign:'center' } }, `${MONTHS_RU[viewMonth]} ${viewYear}`),
+      h('button', { style: gbtn({ padding:'4px 10px', fontSize:11 }), onClick:() => { let m=viewMonth+1,y=viewYear; if(m>11){m=0;y++;} setViewMonth(m); setViewYear(y); } }, '›')
+    ),
+
+    // KPI строка
+    h('div', { style: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:12 } },
+      h('div', { style:{ background:'#f8f8f5', borderRadius:8, padding:'8px 10px', textAlign:'center' } },
+        h('div', { style:{ fontSize:22, fontWeight:500, color:AM } }, `${monthData.totH}ч`),
+        h('div', { style:{ fontSize:10, color:'#888', textTransform:'uppercase', marginTop:2 } }, 'Отработано')
+      ),
+      h('div', { style:{ background:'#f8f8f5', borderRadius:8, padding:'8px 10px', textAlign:'center' } },
+        h('div', { style:{ fontSize:22, fontWeight:500, color:GN } }, monthData.totDays),
+        h('div', { style:{ fontSize:10, color:'#888', textTransform:'uppercase', marginTop:2 } }, 'Дней явок')
+      ),
+      h('div', { style:{ background:'#f8f8f5', borderRadius:8, padding:'8px 10px', textAlign:'center' } },
+        h('div', { style:{ fontSize:22, fontWeight:500 } }, monthData.totOps),
+        h('div', { style:{ fontSize:10, color:'#888', textTransform:'uppercase', marginTop:2 } }, 'Операций')
+      )
+    ),
+
+    // Мини-календарь
+    h('button', { style:{ background:'none', border:'none', fontSize:13, color:AM, cursor:'pointer', padding:'0 0 8px', fontWeight:500 }, onClick:()=>setExpanded(v=>!v) },
+      expanded ? '▾ Скрыть календарь' : '▸ Показать по дням'
+    ),
+
+    expanded && h('div', { style:{ display:'flex', flexWrap:'wrap', gap:4 } },
+      monthData.grid.map(({ d, dow, type, h: hrs, code }) => {
+        const isWe = type === 'we';
+        const lbl = isWe ? DOW_SHORT[dow] : hrs > 0 ? hrs : code;
+        return h('div', { key:d, style:{
+          width:38, height:42, borderRadius:6, display:'flex', flexDirection:'column',
+          alignItems:'center', justifyContent:'center', gap:1,
+          background: isWe ? 'transparent' : (cellBg(type) || '#f5f5f2'),
+          border: isWe ? 'none' : `0.5px solid ${isWe?'transparent':cellCl(type)+'44'}`
+        }},
+          h('div', { style:{ fontSize:9, color:'#bbb' } }, d),
+          h('div', { style:{ fontSize:12, fontWeight:500, color: cellCl(type) } }, lbl)
+        );
+      })
+    )
+  );
+});
+
+const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, addToast }) => {
+  const { ask: askConfirm, confirmEl } = useConfirm();
+  const worker = useMemo(() => data.workers.find(w => w.id === workerId), [data.workers, workerId]);
+
+  const myOps = useMemo(() => data.ops.filter(o => {
+    if (o.status === 'done' || o.status === 'defect' || o.archived) return false;
+    // 1. Явно назначена на этого рабочего — всегда показываем
+    if (o.workerIds?.includes(workerId)) return true;
+    // 2. Не назначена ни на кого — показываем только если:
+    //    - совпадает участок
+    //    - у рабочего ЕСТЬ компетенции и они включают эту операцию
+    if (!o.workerIds?.length && sectionId && o.sectionId === sectionId) {
+      const w = data.workers.find(w => w.id === workerId);
+      // Без компетенций — не показываем неназначенные (только явно назначенные)
+      if (!w?.competences?.length) return false;
+      return w.competences.includes(o.name);
+    }
+    return false;
+  }).sort((a,b) => {
+    const orderA = data.orders.find(ord => ord.id === a.orderId);
+    const orderB = data.orders.find(ord => ord.id === b.orderId);
+    const getCR = (op, order) => {
+      if (!order?.deadline) return 999;
+      const deadlineMs = new Date(order.deadline).getTime();
+      const remaining = (op.plannedHours || 2) * 3600000;
+      const timeLeft = deadlineMs - now();
+      if (timeLeft <= 0) return -1;
+      return timeLeft / remaining;
+    };
+    const crA = getCR(a, orderA), crB = getCR(b, orderB);
+    if (crA < 1 || crB < 1) return crA - crB;
+    const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+    const pA = priorityOrder[orderA?.priority] ?? 4;
+    const pB = priorityOrder[orderB?.priority] ?? 4;
+    return pA !== pB ? pA - pB : crA - crB;
+  }), [data.ops, data.orders, workerId, sectionId]);
+
+  const doneToday = useMemo(() => data.ops.filter(o =>
+    o.workerIds?.includes(workerId) && o.status === 'done' &&
+    o.finishedAt && Date.now() - o.finishedAt < 86400000 && !o.archived
+  ), [data.ops, workerId]);
+
+  const allDone = useMemo(() =>
+    data.ops.filter(op => op.workerIds?.includes(workerId) && op.status === 'done').length,
+  [data.ops, workerId]);
+
+  const [activeOp, setActiveOp] = useState(null);
+  const [, setTick] = useState(0);
+  const [defNote, setDefNote] = useState('');
+  const [defectReasonId, setDefectReasonId] = useState('');
+  const [showDefForm, setShowDefForm] = useState(false);
+  const [defectFromPrev, setDefectFromPrev] = useState(false); // true = с предыдущего участка, false = текущий
+  const [showDowntimeModal, setShowDowntimeModal] = useState(false);
+  const [selectedDowntimeType, setSelectedDowntimeType] = useState('');
+  const [weldParams, setWeldParams] = useState({ seamNumber: '', electrode: '', result: 'ok' });
+  const [showAchievements, setShowAchievements] = useState(false);
+  const [downtimeStartedAt, setDowntimeStartedAt] = useState(null);
+  const [downtimeEquipmentId, setDowntimeEquipmentId] = useState('');
+  const [showQRScanner, setShowQRScanner] = useState(false);
+  const [showMaterialModal, setShowMaterialModal] = useState(false);
+  const [pendingFinishOp, setPendingFinishOp] = useState(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyOp, setHistoryOp] = useState(null);
+  const [opComment, setOpComment] = useState('');
+
+  // Сохранить комментарий к операции
+  const saveComment = useCallback(async (opId) => {
+    if (!opComment.trim()) return;
+    const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, comment: (o.comment ? o.comment + '\n' : '') + `[${worker?.name || 'Рабочий'}]: ${opComment.trim()}` } : o) };
+    await DB.save(d); onUpdate(d); setOpComment(''); addToast('Комментарий добавлен', 'success');
+  }, [data, opComment, worker, onUpdate, addToast]);
+
+  // Чек-лист: переключение пункта
+  const toggleCheckItem = useCallback(async (opId, idx) => {
+    const d = { ...data, ops: data.ops.map(o => {
+      if (o.id !== opId || !o.checklist) return o;
+      const cl = o.checklist.map((item, i) => i === idx ? { ...item, checked: !item.checked, checkedAt: !item.checked ? now() : undefined } : item);
+      return { ...o, checklist: cl };
+    })};
+    await DB.save(d); onUpdate(d);
+  }, [data, onUpdate]);
+
+  // Таймер только когда есть активная операция
+  useEffect(() => {
+    if (!activeOp) return;
+    const t = setInterval(() => setTick(n => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [activeOp]);
+
+  useEffect(() => {
+    if (initialOpId && workerId) {
+      const op = data.ops.find(o => o.id === initialOpId);
+      if (op && op.status === 'pending' && !op.workerIds?.length && !op.archived) {
+        if (!op.isAuxiliary && worker?.competences && worker.competences.length > 0 && !worker.competences.includes(op.name)) {
+          addToast('У вас нет компетенции для этой операции', 'error');
+          return;
+        }
+        const updatedOps = data.ops.map(o => o.id === op.id ? { ...o, workerIds: [...(o.workerIds || []), workerId] } : o);
+        const newData = { ...data, ops: updatedOps };
+        DB.save(newData).then(() => onUpdate(newData));
+      }
+    }
+  }, [initialOpId]);
+
+  const doStart = useCallback(async (op) => {
+    // Вспомогательные операции — без проверки компетенций
+    if (!op.isAuxiliary && worker?.competences && worker.competences.length > 0 && !worker.competences.includes(op.name)) {
+      addToast('У вас нет компетенции для этой операции', 'error');
+      return;
+    }
+    // Блокировка двойного запуска: рабочий не может вести две операции одновременно
+    const alreadyActive = data.ops.find(o => o.status === 'in_progress' && o.workerIds?.includes(workerId) && o.id !== op.id);
+    if (alreadyActive) {
+      addToast(`Сначала завершите "${alreadyActive.name}"`, 'error');
+      return;
+    }
+    const result = buildStartUpdate(data, op, workerId);
+    const updated = { ...data, ops: result.ops, events: result.events };
+    await DB.save(updated); onUpdate(updated);
+    setActiveOp({ ...op, status: 'in_progress', startedAt: result._startedAt, workerIds: [...(op.workerIds || []), workerId] });
+    vibrateAction('start');
+    addToast(`Операция "${op.name}" начата` + (!result._hasCheckin ? ' · Рабочий день начат' : ''), 'success');
+  }, [data, workerId, worker, onUpdate, addToast]);
+
+  const doFinish = useCallback(async (op, isDefect = false, isRework = false, source = 'current') => {
+    if (op.status !== 'in_progress') return;
+    const result = buildFinishUpdate(data, op, workerId, { isDefect, isRework, source, defNote, defectReasonId, weldParams });
+    const updated = { ...data, ops: result.ops, events: result.events, reclamations: result.reclamations, opNorms: result.opNorms || data.opNorms || {}, auxStats: result.auxStats || data.auxStats || {} };
+    const status = result._status;
+    // Проверяем достижения и сохраняем ОДИН раз
+    const withAch = checkAchievements(workerId, updated);
+    const final = withAch !== updated ? withAch : updated;
+    if (withAch !== updated) {
+      const oldAch = (data.workers.find(w => w.id === workerId)?.achievements || []).length;
+      const newAch = (withAch.workers.find(w => w.id === workerId)?.achievements || []);
+      if (newAch.length > oldAch) {
+        const latest = newAch[newAch.length - 1];
+        const achInfo = ACHIEVEMENTS[latest];
+        if (achInfo) { vibrateOnAchievement(); addToast(`${achInfo.icon} Достижение: ${achInfo.title}!`, 'success'); }
+      }
+    }
+    await DB.save(final); onUpdate(final);
+    vibrateAction('finish');
+    setActiveOp(null); setShowDefForm(false); setDefNote(''); setDefectReasonId('');
+    setWeldParams({ seamNumber: '', electrode: '', result: 'ok' });
+    addToast(`Операция "${op.name}" завершена (${STATUS[status]?.label || status})`, 'info');
+    // Показать модал расхода материалов только если функция включена в настройках
+    if ((status === 'done' || status === 'on_check') && data.materials.length > 0
+        && data.settings?.materialTrackingEnabled) {
+      setPendingFinishOp(op); setShowMaterialModal(true);
+    }
+  }, [data, workerId, onUpdate, defNote, defectReasonId, weldParams, addToast]);
+
+  const saveMaterialConsumption = useCallback(async (consumptions) => {
+    if (consumptions.length === 0) {
+      // Записать факт пропуска как событие для аудита
+      const skipEvent = { id: uid(), type: 'material_skip', opId: pendingFinishOp?.id, workerId, ts: now() };
+      const d = { ...data, events: [...data.events, skipEvent] };
+      await DB.save(d); onUpdate(d);
+      setShowMaterialModal(false); setPendingFinishOp(null); return;
+    }
+    const updatedMaterials = data.materials.map(m => {
+      const used = consumptions.filter(c => c.materialId === m.id).reduce((s, c) => s + c.qty, 0);
+      return used > 0 ? { ...m, quantity: Math.max(0, m.quantity - used) } : m;
+    });
+    const d = { ...data, materials: updatedMaterials, materialConsumptions: [...(data.materialConsumptions || []), ...consumptions] };
+    await DB.save(d); onUpdate(d);
+    setShowMaterialModal(false); setPendingFinishOp(null);
+    addToast('Расход материалов записан', 'success');
+  }, [data, workerId, pendingFinishOp, onUpdate, addToast]);
+
+  const recordDowntime = useCallback(async () => {
+    if (!selectedDowntimeType) { addToast('Выберите причину простоя', 'error'); return; }
+    const ts = now(); const shift = getCurrentShift(data?.settings?.shifts); const duration = downtimeStartedAt ? ts - downtimeStartedAt : 0;
+    const newEvent = { id: uid(), type: 'downtime', workerId, opId: activeOp?.id || null, ts, downtimeTypeId: selectedDowntimeType, shift, startedAt: downtimeStartedAt || ts, duration, equipmentId: downtimeEquipmentId || undefined };
+    const updated = { ...data, events: [...data.events, newEvent] };
+    await DB.save(updated); onUpdate(updated);
+    setShowDowntimeModal(false); setSelectedDowntimeType(''); setDowntimeStartedAt(null); setDowntimeEquipmentId('');
+    addToast(`Простой зафиксирован (${fmtDur(duration)})`, 'success');
+  }, [data, workerId, activeOp, selectedDowntimeType, downtimeStartedAt, onUpdate, addToast]);
+
+  const active = activeOp ? data.ops.find(o => o.id === activeOp.id) : null;
+  const elapsed = active?.startedAt ? now() - active.startedAt : 0;
+  const qrOp = initialOpId ? data.ops.find(o => o.id === initialOpId) : null;
+  const canStartQr = qrOp && qrOp.status === 'pending' && !qrOp.workerIds?.length && !qrOp.archived;
+
+  // Кнопки действий — разделены по типу операции
+  const renderActionButtons = (op) => {
+    if (showDefForm) {
+      const source = defectFromPrev ? 'previous_stage' : 'current';
+      return h('div', null,
+        h('div', { style: { fontSize: 11, color: RD, fontWeight: 500, marginBottom: 8, textTransform: 'uppercase' } },
+          defectFromPrev ? '⚠ Брак с предыдущего участка' : '⚠ Брак текущего этапа'
+        ),
+        h('div', { style: { display: 'flex', gap: 6, marginBottom: 8 } },
+          h('button', { type: 'button', style: defectFromPrev ? rbtn({ flex: 1, fontSize: 11 }) : gbtn({ flex: 1, fontSize: 11 }), onClick: () => setDefectFromPrev(true) }, 'С предыдущего участка'),
+          h('button', { type: 'button', style: !defectFromPrev ? rbtn({ flex: 1, fontSize: 11 }) : gbtn({ flex: 1, fontSize: 11 }), onClick: () => setDefectFromPrev(false) }, 'Текущий этап')
+        ),
+        h('select', { style: { ...S.inp, width: '100%', marginBottom: 8 }, value: defectReasonId, onChange: e => setDefectReasonId(e.target.value) },
+          h('option', { value: '' }, '— выберите причину —'),
+          (data.defectReasons || []).map(r => h('option', { key: r.id, value: r.id }, r.name))
+        ),
+        h('textarea', { style: { ...S.inp, width: '100%', marginBottom: 8 }, rows: 2, placeholder: 'Опишите дефект...', value: defNote, onChange: e => setDefNote(e.target.value) }),
+        h('div', { style: { display: 'flex', gap: 6 } },
+          h('button', { type: 'button', style: rbtn({ flex: 1 }), onClick: () => doFinish(op, true, false, source) }, 'Зафиксировать брак'),
+          h('button', { type: 'button', style: { ...gbtn({ flex: 1 }), color: AM2, borderColor: AM4 }, onClick: () => doFinish(op, false, true, source) }, 'На переделку'),
+          h('button', { type: 'button', style: gbtn({ flex: 1 }), onClick: () => { setShowDefForm(false); setDefectFromPrev(false); } }, 'Отмена')
+        )
+      );
+    }
+    if (op.name.includes('свар')) {
+      return h('div', null,
+        h('div', { style: { display: 'flex', gap: 8, marginBottom: 8 } },
+          h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Номер шва', value: weldParams.seamNumber, onChange: e => setWeldParams(p => ({ ...p, seamNumber: e.target.value })) }),
+          h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Тип электрода', value: weldParams.electrode, onChange: e => setWeldParams(p => ({ ...p, electrode: e.target.value })) })
+        ),
+        h('div', { style: { display: 'flex', gap: 8, marginBottom: 8 } },
+          h('label', { style: { display: 'flex', alignItems: 'center', gap: 4 } },
+            h('input', { type: 'radio', name: `weldResult_worker_${op.id}`, value: 'ok', checked: weldParams.result === 'ok', onChange: e => setWeldParams(p => ({ ...p, result: e.target.value })) }), 'Принято'),
+          h('label', { style: { display: 'flex', alignItems: 'center', gap: 4 } },
+            h('input', { type: 'radio', name: `weldResult_worker_${op.id}`, value: 'fail', checked: weldParams.result === 'fail', onChange: e => setWeldParams(p => ({ ...p, result: e.target.value })) }), 'Брак')
+        ),
+        h('div', { className: 'action-btns', style: { display: 'flex', gap: 8 } },
+          h('button', { style: { ...abtn({ flex: 1 }), background: GN, color: GN2 }, onClick: () => doFinish(op) }, '✓ Завершить'),
+          h('button', { style: rbtn({ flex: 1 }), onClick: () => { setShowDefForm(true); setDefectFromPrev(true); } }, '⚠ Брак с пред. уч.'),
+          h('button', { style: { ...rbtn({ flex: 1 }), background: '#FFF0F0', color: RD2, borderColor: '#F09595' }, onClick: () => { setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
+          h('button', { style: gbtn({ flex: 1 }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
+        )
+      );
+    }
+    return h('div', { className: 'action-btns', style: { display: 'flex', gap: 8 } },
+      h('button', { style: { ...abtn({ flex: 1 }), background: GN, color: GN2 }, onClick: () => doFinish(op) }, '✓ Завершить'),
+      h('button', { style: rbtn({ flex: 1 }), onClick: () => { setShowDefForm(true); setDefectFromPrev(true); } }, '⚠ Брак с пред. уч.'),
+      h('button', { style: { ...rbtn({ flex: 1 }), background: '#FFF0F0', color: RD2, borderColor: '#F09595' }, onClick: () => { setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
+      h('button', { style: gbtn({ flex: 1 }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
+    );
+  };
+
+  const lvl = getWorkerLevel(allDone);
+  const prog = getLevelProgress(allDone);
+  const [levelUpMsg, setLevelUpMsg] = useState(null);
+  // Обнаружение повышения уровня
+  useEffect(() => {
+    const key = `worker_level_${workerId}`;
+    const prev = Number(localStorage.getItem(key)) || 0;
+    if (lvl > prev && prev > 0) {
+      setLevelUpMsg(`Поздравляем! Вы достигли уровня ${lvl} — ${getLevelTitle(lvl)}!`);
+      setTimeout(() => setLevelUpMsg(null), 8000);
+    }
+    localStorage.setItem(key, String(lvl));
+  }, [lvl, workerId]);
+  // Подсказка о ближайшем достижении
+  const achHint = useMemo(() => {
+    const s = calcWorkerStats(workerId, data, Date.now());
+    const remaining = [];
+    if (!worker?.achievements?.includes('ops_10') && s.doneCount >= 7) remaining.push(`${10 - s.doneCount} оп. до «Десятка»`);
+    if (!worker?.achievements?.includes('ops_50') && s.doneCount >= 40) remaining.push(`${50 - s.doneCount} оп. до «Профессионал»`);
+    if (!worker?.achievements?.includes('streak_5') && s.currentStreak >= 3) remaining.push(`${5 - s.currentStreak} до «Серия 5»`);
+    if (!worker?.achievements?.includes('thanks_5') && s.thanksReceived >= 3) remaining.push(`${5 - s.thanksReceived} до «Спасибо, коллега!»`);
+    return remaining[0] || null;
+  }, [data, workerId, worker]);
+  const ach = useMemo(() => worker?.achievements || [], [worker]);
+  const nextAch = useMemo(() => Object.entries(ACHIEVEMENTS).find(([id]) => !ach.includes(id)), [ach]);
+  const workerStats = useMemo(() => calcWorkerStats(workerId, data, Date.now()), [data, workerId]);
+  // Прогресс для каждого достижения
+  const achProgress = useMemo(() => {
+    const s = workerStats;
+    return {
+      first_op: { cur: s.doneCount, target: 1 }, ops_10: { cur: s.doneCount, target: 10 }, ops_50: { cur: s.doneCount, target: 50 },
+      ops_100: { cur: s.doneCount, target: 100 }, ops_500: { cur: s.doneCount, target: 500 },
+      quality_star: { cur: s.doneCount, target: 50, extra: `брак ${s.defectRate.toFixed(1)}%` },
+      weld_master: { cur: s.weldCount, target: 50 }, speed_demon: { cur: s.doneWithPlan, target: 10, extra: `${Math.round((1 - s.avgRatio) * 100)}% быстрее` },
+      no_downtime: { cur: s.downtimes30d === 0 ? 1 : 0, target: 1 }, streak_5: { cur: s.currentStreak, target: 5 }, streak_20: { cur: s.currentStreak, target: 20 },
+      multi_skill: { cur: s.uniqueOpTypes, target: 5 }, detective_10: { cur: s.detectedDefects, target: 10 }, thanks_5: { cur: s.thanksReceived, target: 5 },
+      golden_hands_100: { cur: s.defectCount === 0 ? s.doneCount : 0, target: 100 }, universal_2_3: { cur: s.uniqueSections, target: 3 },
+      weekend_5: { cur: s.weekendOps, target: 5 }, virtuoso_10: { cur: s.fastOps, target: 10 },
+      no_downtime_7: { cur: s.downtimes7d === 0 ? 1 : 0, target: 1 }, speed_streak_5: { cur: s.bestSpeedStreak, target: 5 }
+    };
+  }, [workerStats]);
+
+  // Пункт 4: Личные метрики рабочего
+  const myStats = useMemo(() => {
+    const todayStart = new Date().setHours(0, 0, 0, 0);
+    const period30 = now() - 30 * 86400000;
+    const myDone = data.ops.filter(op => op.workerIds?.includes(workerId) && op.status === 'done');
+    const myDone30 = myDone.filter(op => op.finishedAt >= period30);
+    const myDefect30 = data.ops.filter(op => op.workerIds?.includes(workerId) && op.status === 'defect' && op.finishedAt >= period30);
+    const total30 = myDone30.length + myDefect30.length;
+    const quality = total30 > 0 ? Math.round(myDone30.length / total30 * 100) : 100;
+    const todayOps = myDone.filter(op => op.finishedAt >= todayStart && op.startedAt && op.finishedAt);
+    const workedToday = todayOps.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0);
+    const activeTime = active?.startedAt ? now() - active.startedAt : 0;
+    const withPlan = myDone30.filter(op => op.plannedHours && op.startedAt && op.finishedAt);
+    const productivity = withPlan.length > 0 ? Math.round(withPlan.reduce((s, op) => s + op.plannedHours * 3600000, 0) / withPlan.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0) * 100) : null;
+    const downtimeHrs = Math.round(data.events.filter(e => e.workerId === workerId && e.type === 'downtime' && e.ts >= period30).reduce((s, e) => s + (e.duration || 0), 0) / 3600000 * 10) / 10;
+    // Благодарности
+    const allThanks = data.events.filter(e => e.type === 'thanks' && e.toWorkerId === workerId);
+    const thanksCount = allThanks.length;
+    const recentThanks = allThanks.sort((a, b) => b.ts - a.ts).slice(0, 5).map(t => {
+      const from = t.fromWorkerId === 'master' ? 'Начальник цеха' : data.workers.find(w => w.id === t.fromWorkerId)?.name || 'Коллега';
+      return { from, note: t.note || '', ts: t.ts };
+    });
+    // Новые благодарности (после последнего просмотра)
+    const lastSeenKey = `thanks_seen_${workerId}`;
+    const lastSeen = Number(localStorage.getItem(lastSeenKey)) || 0;
+    const newThanks = allThanks.filter(t => t.ts > lastSeen);
+    return { quality, workedToday: workedToday + activeTime, doneToday: doneToday.length, done30: myDone30.length, productivity, downtimeHrs, thanksCount, recentThanks, newThanks, lastSeenKey };
+  }, [data.ops, data.events, workerId, doneToday, active]);
+
+  // Отметить благодарности как просмотренные
+  useEffect(() => {
+    if (myStats.newThanks.length > 0) {
+      localStorage.setItem(myStats.lastSeenKey, String(now()));
+    }
+  }, [myStats.newThanks.length, myStats.lastSeenKey]);
+
+
+
+  const [workerTab, setWorkerTab] = useState('tasks');
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    try { return !localStorage.getItem(`onboarding_done_${workerId}`); } catch(e) { return false; }
+  });
+  const doneOnboarding = useCallback(() => {
+    try { localStorage.setItem(`onboarding_done_${workerId}`, '1'); } catch(e) {}
+    setShowOnboarding(false);
+  }, [workerId]);
+  const [showThanksHistory, setShowThanksHistory] = useState(false);
+  const [showAddOp, setShowAddOp] = useState(false);
+  const [addOpForm, setAddOpForm] = useState({ category: '', name: '', orderId: '', comment: '' });
+
+  // Категории вспомогательных работ
+  const AUX_CATEGORIES = [
+    { id: 'maintenance', label: '🔧 Обслуживание оборудования', names: ['Профилактика оборудования', 'Ремонт оборудования', 'Смазка механизмов', 'Замена расходников'] },
+    { id: 'cleaning', label: '🧹 Уборка / порядок', names: ['Уборка рабочего места', 'Уборка цеха', 'Уборка территории', 'Вынос отходов'] },
+    { id: 'logistics', label: '📦 Перемещение / логистика', names: ['Перемещение заготовок', 'Разгрузка материалов', 'Подготовка комплектующих', 'Складские работы'] },
+    { id: 'setup', label: '⚙ Наладка / подготовка', names: ['Наладка станка', 'Подготовка оснастки', 'Переналадка', 'Пробный запуск'] },
+    { id: 'other', label: '📝 Прочее', names: [] },
+  ];
+
+  // Доступные заказы (опционально — для привязки к заказу)
+  const availableOrders = useMemo(() => data.orders.filter(o => !o.archived).sort((a, b) => {
+    const prio = { critical: 0, high: 1, medium: 2, low: 3 };
+    return (prio[a.priority] || 4) - (prio[b.priority] || 4);
+  }), [data.orders]);
+
+  const selectedCategory = AUX_CATEGORIES.find(c => c.id === addOpForm.category);
+
+  const addWorkerOp = useCallback(async () => {
+    if (!addOpForm.name.trim()) { addToast('Введите или выберите вид работ', 'error'); return; }
+    const newOp = {
+      id: uid(), name: addOpForm.name.trim(),
+      orderId: addOpForm.orderId || null, // может быть без заказа
+      workerIds: [workerId], status: 'pending', createdAt: now(),
+      sectionId: sectionId || null, archived: false,
+      isAuxiliary: true, // помечаем как вспомогательная
+      auxCategory: addOpForm.category || 'other',
+      comment: addOpForm.comment.trim() ? `[${worker?.name || 'Рабочий'}]: ${addOpForm.comment.trim()}` : undefined,
+      addedByWorker: workerId
+    };
+    let d = { ...data, ops: [...data.ops, newOp] };
+    d = logAction(d, 'worker_add_aux_op', { opId: newOp.id, opName: newOp.name, category: newOp.auxCategory, workerId });
+    await DB.save(d); onUpdate(d);
+    setAddOpForm({ category: '', name: '', orderId: '', comment: '' }); setShowAddOp(false);
+    addToast(`Работа «${newOp.name}» добавлена`, 'success');
+  }, [data, addOpForm, workerId, sectionId, worker, onUpdate, addToast]);
+
+  return h('div', { style: { maxWidth: 440, margin: '0 auto', padding: '0 12px 80px' } },
+    // Онбординг — только при первом входе
+    showOnboarding && h(WorkerOnboarding, { worker, myOps, onDone: doneOnboarding }),
+    !showOnboarding && h('div', null,
+
+    // ── Уведомления (поверх обеих вкладок) ──────────────────────────────
+    myStats.newThanks.length > 0 && h('div', { style: { ...S.card, background: '#FFF8E1', border: '0.5px solid #FFC107', marginBottom: 12, padding: 12, marginTop: 12 } },
+      h('div', { style: { fontSize: 13, fontWeight: 500, color: '#F57F17', marginBottom: 4 } },
+        `🤝 Вы получили ${myStats.newThanks.length} ${myStats.newThanks.length === 1 ? 'благодарность' : 'благодарностей'}!`
+      ),
+      myStats.newThanks.map((t, i) => h('div', { key: i, style: { fontSize: 12, color: '#666' } },
+        `${t.from}${t.note ? ` — ${t.note}` : ''}`
+      ))
+    ),
+    levelUpMsg && h('div', { style: { ...S.card, background: '#E8F5E9', border: '0.5px solid #4CAF50', marginBottom: 12, padding: 12, textAlign: 'center' } },
+      h('div', { style: { fontSize: 24, marginBottom: 4 } }, '🎉'),
+      h('div', { style: { fontSize: 14, fontWeight: 500, color: '#2E7D32' } }, levelUpMsg)
+    ),
+
+    // ── Вкладки ──────────────────────────────────────────────────────────
+    h('div', { style: { display: 'flex', gap: 0, marginBottom: 16, marginTop: 8, borderBottom: '0.5px solid rgba(0,0,0,0.1)' } },
+      [['tasks', `Задания${myOps.length > 0 ? ` (${myOps.length})` : ''}`], ['profile', 'Мой профиль']].map(([id, label]) =>
+        h('button', { key: id, onClick: () => setWorkerTab(id), style: {
+          flex: 1, background: 'none', border: 'none',
+          borderBottom: workerTab === id ? `2.5px solid ${AM}` : '2.5px solid transparent',
+          color: workerTab === id ? AM4 : '#888',
+          fontWeight: workerTab === id ? 500 : 400,
+          fontSize: 14, padding: '10px 4px', cursor: 'pointer',
+          minHeight: 44, borderRadius: 0
+        }}, label)
+      )
+    ),
+
+    // ════════════════════════════════════════════
+    // ВКЛАДКА: ЗАДАНИЯ
+    // ════════════════════════════════════════════
+    workerTab === 'tasks' && h('div', null,
+
+      // Активная операция
+      active && h('div', { style: { background: AM3, border: `1.5px solid ${AM}`, borderRadius: 14, padding: 16, marginBottom: 20 } },
+        h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 } }, 'В работе сейчас'),
+        h('div', { style: { fontSize: 16, fontWeight: 500, color: AM2, marginBottom: 2 } }, active.name),
+        h('div', { style: { fontSize: 11, color: AM4, marginBottom: 10 } }, data.orders.find(o => o.id === active.orderId)?.number || ''),
+        // Таймер — вспомогательный, не доминирует
+        h(ElapsedTimer, { startedAt: active.startedAt, style: { fontSize: 24, fontWeight: 500, color: AM, marginBottom: 14, display: 'block' } }),
+        active.drawingUrl && h('a', { href: active.drawingUrl, target: '_blank', rel: 'noopener', style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: BL, textDecoration: 'none', padding: '6px 10px', background: 'rgba(255,255,255,0.8)', borderRadius: 6, marginBottom: 12 } }, '📐 Чертёж'),
+        // Чек-лист
+        active.checklist?.length > 0 && h('div', { style: { background: 'rgba(255,255,255,0.7)', borderRadius: 8, padding: '10px 12px', marginBottom: 14 } },
+          h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, fontWeight: 500 } },
+            `Чек-лист (${active.checklist.filter(c => c.checked).length}/${active.checklist.length})`
+          ),
+          active.checklist.map((item, idx) =>
+            h('label', { key: idx, style: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', cursor: 'pointer', fontSize: 14 } },
+              h('input', { type: 'checkbox', checked: item.checked || false, onChange: () => toggleCheckItem(active.id, idx), style: { width: 20, height: 20, accentColor: GN, flexShrink: 0 } }),
+              h('span', { style: { textDecoration: item.checked ? 'line-through' : 'none', color: item.checked ? '#888' : '#333' } }, item.text)
+            )
+          )
+        ),
+        // Комментарий
+        h('div', { style: { display: 'flex', gap: 6, marginBottom: 16 } },
+          h('input', { style: { ...S.inp, flex: 1, fontSize: 14 }, placeholder: 'Комментарий к операции...', value: opComment, onChange: e => setOpComment(e.target.value), onKeyDown: e => e.key === 'Enter' && saveComment(active.id) }),
+          opComment.trim() && h('button', { style: abtn({ padding: '8px 12px', fontSize: 13 }), onClick: () => saveComment(active.id) }, '💬')
+        ),
+        // ── КНОПКИ ДЕЙСТВИЙ — крупные с отступами ──
+        (active.checklist?.length > 0 && active.checklist.some(c => !c.checked))
+          ? h('div', { style: { textAlign: 'center', padding: '12px 0', color: '#888', fontSize: 13 } }, '⚠ Выполните все пункты чек-листа')
+          : showDefForm
+            ? h('div', null,
+                h('div', { style: { fontSize: 12, color: RD2, fontWeight: 500, marginBottom: 10, textTransform: 'uppercase' } },
+                  defectFromPrev ? '⚠ Брак с предыдущего участка' : '⚠ Брак текущего этапа'
+                ),
+                h('div', { style: { display: 'flex', gap: 8, marginBottom: 10 } },
+                  h('button', { style: defectFromPrev ? rbtn({ flex: 1, minHeight: 48, fontSize: 13 }) : gbtn({ flex: 1, minHeight: 48, fontSize: 13 }), onClick: () => setDefectFromPrev(true) }, 'С предыдущего участка'),
+                  h('button', { style: !defectFromPrev ? rbtn({ flex: 1, minHeight: 48, fontSize: 13 }) : gbtn({ flex: 1, minHeight: 48, fontSize: 13 }), onClick: () => setDefectFromPrev(false) }, 'Текущий этап')
+                ),
+                h('select', { style: { ...S.inp, marginBottom: 10 }, value: defectReasonId, onChange: e => setDefectReasonId(e.target.value) },
+                  h('option', { value: '' }, '— выберите причину —'),
+                  (data.defectReasons || []).map(r => h('option', { key: r.id, value: r.id }, r.name))
+                ),
+                h('textarea', { style: { ...S.inp, marginBottom: 10 }, rows: 2, placeholder: 'Опишите дефект...', value: defNote, onChange: e => setDefNote(e.target.value) }),
+                h('div', { style: { display: 'flex', gap: 8 } },
+                  h('button', { style: rbtn({ flex: 1, minHeight: 52, fontSize: 14 }), onClick: () => doFinish(active, true, false, defectFromPrev ? 'previous_stage' : 'current') }, 'Зафиксировать брак'),
+                  h('button', { style: { ...gbtn({ flex: 1, minHeight: 52, fontSize: 14 }), color: AM2, borderColor: AM4 }, onClick: () => doFinish(active, false, true, defectFromPrev ? 'previous_stage' : 'current') }, 'На переделку'),
+                  h('button', { style: gbtn({ minHeight: 52, padding: '8px 14px' }), onClick: () => { setShowDefForm(false); setDefectFromPrev(false); } }, 'Отмена')
+                )
+              )
+            : h('div', null,
+                // СТОП — самая крупная кнопка
+                h('button', { className: 'worker-btn worker-btn-stop', onClick: () => doFinish(active), style: { marginBottom: 12 } }, '■ Завершить операцию'),
+                // Брак — две средние кнопки рядом
+                h('div', { style: { display: 'flex', gap: 10, marginBottom: 12 } },
+                  h('button', { className: 'worker-btn-defect', onClick: () => { setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
+                  h('button', { className: 'worker-btn-defect', onClick: () => { setShowDefForm(true); setDefectFromPrev(true); } }, '⚠ Брак с уч.')
+                ),
+                // Простой — отдельная строка
+                h('button', { className: 'worker-btn-pause', onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Зафиксировать простой')
+              )
+      ),
+
+      // QR-операция
+      !active && canStartQr && h('div', { style: { ...S.card, border: `1.5px solid ${AM}`, background: AM3, marginBottom: 16 } },
+        h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', marginBottom: 6 } }, 'Назначено по QR-коду'),
+        h('div', { style: { fontSize: 15, fontWeight: 500, color: AM2, marginBottom: 4 } }, qrOp?.name),
+        h('div', { style: { fontSize: 11, color: AM4, marginBottom: 16 } }, data.orders.find(o => o.id === qrOp?.orderId)?.number || ''),
+        h('button', { className: 'worker-btn worker-btn-start', onClick: () => doStart(qrOp) }, '▶ Начать операцию')
+      ),
+
+      // Подсказка о достижении
+      achHint && !active && h('div', { style: { fontSize: 11, color: AM, textAlign: 'center', padding: '4px 0', marginBottom: 8 } }, `⭐ ${achHint}`),
+
+      // Список заданий
+      !active && myOps.length > 0 && h('div', null,
+        h('div', { style: { ...S.sec, marginBottom: 12 } }, `Задания (${myOps.length})`),
+        myOps.map(op => {
+          const order = data.orders.find(o => o.id === op.orderId);
+          const deadlineMs = order?.deadline ? new Date(order.deadline).getTime() : null;
+          const timeLeft = deadlineMs ? deadlineMs - now() : null;
+          const daysLeft = timeLeft ? Math.ceil(timeLeft / 86400000) : null;
+          const isUrgent  = daysLeft !== null && daysLeft <= 2;
+          const isOverdue = daysLeft !== null && daysLeft < 0;
+          const depsComplete = !op.dependsOn || op.dependsOn.length === 0 ||
+            op.dependsOn.every(depId => { const d = data.ops.find(x => x.id === depId); return d && d.status === 'done'; });
+
+          return h('div', { key: op.id, style: {
+            ...S.card, marginBottom: 14, opacity: depsComplete ? 1 : 0.6,
+            borderLeft: isOverdue ? `4px solid ${RD}` : isUrgent ? `4px solid ${AM}` : order?.priority === 'critical' ? `4px solid ${RD}` : 'none'
+          }},
+            h('div', { style: { marginBottom: 10 } },
+              h('div', { style: { fontSize: 15, fontWeight: 500, marginBottom: 2 } }, op.name),
+              h('div', { style: { fontSize: 11, color: AM4 } }, order?.number || '—'),
+              h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 } },
+                order?.priority && h('span', { style: { fontSize: 10, color: PRIORITY[order.priority]?.color } }, PRIORITY[order.priority].label),
+                daysLeft !== null && h('span', { style: { fontSize: 11, color: isOverdue ? RD : isUrgent ? AM : '#888', fontWeight: isUrgent ? 500 : 400 } },
+                  isOverdue ? `просрочено ${Math.abs(daysLeft)}д` : daysLeft === 0 ? 'сегодня!' : `${daysLeft}д до срока`
+                ),
+                !depsComplete && h('span', { style: { fontSize: 11, color: '#888' } }, '🔒 ожидает предыдущие')
+              )
+            ),
+            op.comment && h('div', { style: { fontSize: 12, color: '#666', background: '#f8f8f5', padding: '6px 10px', borderRadius: 6, marginBottom: 10 } }, `💬 ${op.comment}`),
+            op.drawingUrl && h('a', { href: op.drawingUrl, target: '_blank', rel: 'noopener', style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: BL, textDecoration: 'none', padding: '6px 10px', background: '#E3F2FD', borderRadius: 6, marginBottom: 10 } }, '📐 Чертёж'),
+            // СТАРТ — крупная кнопка с отступом сверху
+            op.status === 'pending' && depsComplete
+              ? h('button', { className: 'worker-btn worker-btn-start', onClick: () => {
+                  (async () => { if (await askConfirm({ message: 'Принять изделие в работу?', detail: 'Подтвердите что визуальный осмотр проведён', danger: false })) doStart(op); })();
+                }}, '▶ Принять и начать')
+              : op.status === 'pending' && !depsComplete
+                ? h('div', { style: { textAlign: 'center', padding: '12px 0', color: '#888', fontSize: 12 } }, 'Ожидание предыдущих этапов')
+                : null
+          );
+        })
+      ),
+
+      !active && myOps.length === 0 && h('div', { className: 'empty-state', style: { marginTop: 32 } },
+        h('div', { style: { fontSize: 32, marginBottom: 12 } }, '✓'),
+        h('div', { style: { fontSize: 15, fontWeight: 500, marginBottom: 4 } }, 'Нет активных заданий'),
+        h('div', { style: { fontSize: 13, color: '#aaa', marginBottom: 16 } }, 'Новые задания появятся здесь')
+      ),
+
+      // Кнопка «Записать доп. работы» — доступна когда нет активной операции
+      !active && h('div', { style: { marginTop: myOps.length > 0 ? 8 : 0, marginBottom: 16 } },
+        h('button', { style: { ...gbtn({ width: '100%', padding: '14px 16px', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }), borderStyle: 'dashed', borderWidth: '1.5px' }, onClick: () => setShowAddOp(true) }, '+ Записать доп. работы')
+      ),
+
+      // Модал записи вспомогательных работ
+      showAddOp && h('div', {
+        role: 'dialog', 'aria-modal': 'true',
+        style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300, padding: 16 }
+      },
+        h('div', { style: { background: '#fff', borderRadius: 14, padding: 20, width: 'min(420px, calc(100vw - 32px))', maxHeight: '85vh', overflowY: 'auto' } },
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 } },
+            h('div', { style: { fontSize: 16, fontWeight: 500 } }, '📝 Дополнительные работы'),
+            h('button', { style: { background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#888', padding: 4, minHeight: 'auto' }, onClick: () => setShowAddOp(false) }, '×')
+          ),
+          h('div', { style: { fontSize: 12, color: '#888', marginBottom: 16, lineHeight: 1.5 } },
+            'Запишите работы не входящие в основной маршрут: обслуживание, уборка, наладка, перемещение и другие вспомогательные задачи.'
+          ),
+          // Категория работ
+          h('div', { style: { marginBottom: 12 } },
+            h('label', { style: S.lbl }, 'Категория'),
+            h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
+              AUX_CATEGORIES.map(cat => h('button', {
+                key: cat.id,
+                style: addOpForm.category === cat.id
+                  ? abtn({ fontSize: 12, padding: '8px 12px' })
+                  : gbtn({ fontSize: 12, padding: '8px 12px' }),
+                onClick: () => setAddOpForm(p => ({ ...p, category: cat.id, name: '' }))
+              }, cat.label))
+            )
+          ),
+          // Вид работ — быстрый выбор из шаблонов категории или ввод вручную
+          addOpForm.category && h('div', { style: { marginBottom: 12 } },
+            h('label', { style: S.lbl }, 'Вид работ'),
+            selectedCategory?.names?.length > 0 && h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 } },
+              selectedCategory.names.map(n => h('button', {
+                key: n,
+                style: addOpForm.name === n
+                  ? { ...abtn({ fontSize: 12, padding: '6px 10px' }), background: GN, color: GN2 }
+                  : gbtn({ fontSize: 12, padding: '6px 10px' }),
+                onClick: () => setAddOpForm(p => ({ ...p, name: n }))
+              }, n))
+            ),
+            h('input', {
+              style: { ...S.inp, width: '100%' },
+              placeholder: addOpForm.category === 'other' ? 'Опишите выполняемую работу...' : 'Или введите свой вариант...',
+              value: selectedCategory?.names?.includes(addOpForm.name) ? '' : addOpForm.name,
+              onChange: e => setAddOpForm(p => ({ ...p, name: e.target.value })),
+              onKeyDown: e => e.key === 'Enter' && addWorkerOp()
+            })
+          ),
+          // Привязка к заказу (опционально)
+          addOpForm.category && h('div', { style: { marginBottom: 12 } },
+            h('label', { style: S.lbl }, 'Привязать к заказу (необязательно)'),
+            h('select', { style: { ...S.inp, width: '100%' }, value: addOpForm.orderId, onChange: e => setAddOpForm(p => ({ ...p, orderId: e.target.value })) },
+              h('option', { value: '' }, '— без привязки к заказу —'),
+              availableOrders.map(o => h('option', { key: o.id, value: o.id }, `${o.number} · ${o.product}`))
+            )
+          ),
+          // Комментарий
+          addOpForm.category && h('div', { style: { marginBottom: 16 } },
+            h('label', { style: S.lbl }, 'Комментарий (необязательно)'),
+            h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Описание, причина, примечание...', value: addOpForm.comment, onChange: e => setAddOpForm(p => ({ ...p, comment: e.target.value })), onKeyDown: e => e.key === 'Enter' && addWorkerOp() })
+          ),
+          // Кнопки
+          h('div', { style: { display: 'flex', gap: 8 } },
+            h('button', { style: gbtn({ flex: 1 }), onClick: () => { setShowAddOp(false); setAddOpForm({ category: '', name: '', orderId: '', comment: '' }); } }, 'Отмена'),
+            h('button', { style: abtn({ flex: 1 }), disabled: !addOpForm.name.trim(), onClick: addWorkerOp }, '+ Записать')
+          )
+        )
+      ),
+
+      // Выполненные (свёрнуто)
+      (() => {
+        const doneOps = data.ops.filter(o => o.workerIds?.includes(workerId) && (o.status === 'done' || o.status === 'defect' || o.status === 'on_check') && !o.archived)
+          .sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0));
+        if (!doneOps.length) return null;
+        return h('div', { style: { marginTop: 16 } },
+          h('button', { style: { background: 'none', border: 'none', fontSize: 13, color: AM, cursor: 'pointer', padding: '4px 0', fontWeight: 500, minHeight: 'auto' }, onClick: () => setShowHistory(v => !v) },
+            showHistory ? `▾ Скрыть выполненные (${doneOps.length})` : `▸ Выполненные операции (${doneOps.length})`
+          ),
+          showHistory && h('div', { style: { marginTop: 10 } },
+            doneOps.slice(0, 20).map(op => {
+              const order = data.orders.find(o => o.id === op.orderId);
+              const dur = op.startedAt && op.finishedAt ? fmtDur(op.finishedAt - op.startedAt) : '—';
+              const isExp = historyOp === op.id;
+              return h('div', { key: op.id, style: { ...S.card, marginBottom: 6, padding: 10, cursor: 'pointer', borderLeft: op.status === 'defect' ? `3px solid ${RD}` : op.status === 'on_check' ? `3px solid ${BL}` : `3px solid ${GN}` }, onClick: () => setHistoryOp(isExp ? null : op.id) },
+                h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                  h('div', null,
+                    h('div', { style: { fontSize: 13, fontWeight: 500 } }, op.name),
+                    h('div', { style: { fontSize: 11, color: '#888' } }, `${order?.number || '—'} · ${dur}`)
+                  ),
+                  h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } }, h(Badge, { st: op.status }), h('span', { style: { fontSize: 10, color: '#aaa' } }, isExp ? '▾' : '▸'))
+                ),
+                isExp && h('div', { style: { marginTop: 8, paddingTop: 8, borderTop: '0.5px solid rgba(0,0,0,0.06)', fontSize: 12 } },
+                  h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px' } },
+                    h('div', null, h('span', { style: { color: '#888' } }, 'Начало: '), op.startedAt ? new Date(op.startedAt).toLocaleTimeString() : '—'),
+                    h('div', null, h('span', { style: { color: '#888' } }, 'Длит.: '), dur),
+                    op.plannedHours && h('div', null, h('span', { style: { color: '#888' } }, 'План: '), `${op.plannedHours}ч`)
+                  ),
+                  op.defectNote && h('div', { style: { marginTop: 4, color: RD } }, h('span', { style: { color: '#888' } }, 'Дефект: '), op.defectNote),
+                  op.comment && h('div', { style: { marginTop: 4 } }, h('span', { style: { color: '#888' } }, 'Комментарий: '), op.comment)
+                )
+              );
+            })
+          )
+        );
+      })(),
+
+      // Модалки
+      showDowntimeModal && h('div', { role: 'dialog', 'aria-modal': 'true', style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60 } },
+        h('div', { className: 'modal-content', style: { background: '#fff', borderRadius: 14, padding: 20, width: 'min(380px, calc(100vw - 24px))', maxHeight: '85vh', overflowY: 'auto' } },
+          h('div', { style: { fontSize: 15, fontWeight: 500, marginBottom: 4, textAlign: 'center' } }, 'Фиксация простоя'),
+          h(ElapsedTimer, { startedAt: downtimeStartedAt, style: { fontSize: 28, fontWeight: 500, color: RD, textAlign: 'center', margin: '10px 0', display: 'block' } }),
+          h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 } },
+            data.downtimeTypes.map(dt => h('button', { key: dt.id, style: { padding: '14px 16px', fontSize: 14, fontWeight: selectedDowntimeType === dt.id ? 500 : 400, borderRadius: 10, border: selectedDowntimeType === dt.id ? `2px solid ${AM}` : '1px solid rgba(0,0,0,0.12)', background: selectedDowntimeType === dt.id ? AM3 : '#fff', color: selectedDowntimeType === dt.id ? AM2 : '#333', cursor: 'pointer', textAlign: 'left', minHeight: 52 }, onClick: () => setSelectedDowntimeType(dt.id) }, dt.name))
+          ),
+          data.equipment.length > 0 && h('div', { style: { marginBottom: 12 } },
+            h('div', { style: { fontSize: 12, color: '#888', marginBottom: 6 } }, 'Оборудование:'),
+            h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+              h('button', { style: { padding: '8px 12px', fontSize: 12, borderRadius: 8, border: !downtimeEquipmentId ? `2px solid ${AM}` : '1px solid rgba(0,0,0,0.12)', background: !downtimeEquipmentId ? AM3 : '#fff', color: !downtimeEquipmentId ? AM2 : '#666', cursor: 'pointer', minHeight: 40 }, onClick: () => setDowntimeEquipmentId('') }, 'Не связано'),
+              data.equipment.filter(eq => eq.status === 'active').map(eq => h('button', { key: eq.id, style: { padding: '8px 12px', fontSize: 12, borderRadius: 8, border: downtimeEquipmentId === eq.id ? `2px solid ${AM}` : '1px solid rgba(0,0,0,0.12)', background: downtimeEquipmentId === eq.id ? AM3 : '#fff', color: downtimeEquipmentId === eq.id ? AM2 : '#666', cursor: 'pointer', minHeight: 40 }, onClick: () => setDowntimeEquipmentId(eq.id) }, eq.name))
+            )
+          ),
+          h('div', { style: { display: 'flex', gap: 10, marginTop: 10 } },
+            h('button', { style: gbtn({ flex: 1, padding: '14px', fontSize: 14 }), onClick: () => { setShowDowntimeModal(false); setSelectedDowntimeType(''); setDowntimeStartedAt(null); setDowntimeEquipmentId(''); } }, 'Отмена'),
+            h('button', { style: rbtn({ flex: 1, padding: '14px', fontSize: 14, fontWeight: 500 }), onClick: recordDowntime, disabled: !selectedDowntimeType }, 'Завершить простой')
+          )
+        )
+      ),
+      showQRScanner && h(QRScannerModal, { onScan: (text) => {
+        setShowQRScanner(false);
+        try {
+          let opId = text.trim();
+          try { const url = new URL(text); opId = url.searchParams.get('opId') || opId; } catch(e) {}
+          if (!opId) { addToast('QR-код не содержит ID операции', 'error'); return; }
+          const op = data.ops.find(o => o.id === opId);
+          if (!op) { addToast('Операция не найдена', 'error'); return; }
+          if (op.status === 'done' || op.status === 'defect') { addToast('Операция уже завершена', 'info'); return; }
+          setActiveOp(op); addToast('Операция найдена: ' + op.name, 'success');
+        } catch(e) { addToast('Неверный QR-код', 'error'); }
+      }, onClose: () => setShowQRScanner(false) }),
+      showMaterialModal && h(MaterialConsumptionModal, { data, opId: pendingFinishOp?.id, onSave: saveMaterialConsumption, onSkip: () => { setShowMaterialModal(false); setPendingFinishOp(null); } }),
+
+      // Кнопка QR — фиксированная
+      h('div', { style: { position: 'fixed', bottom: 'calc(20px + env(safe-area-inset-bottom, 0px))', right: 20, zIndex: 40 } },
+        h('button', { style: { ...abtn({ padding: '0', fontSize: 20, borderRadius: '50%', width: 56, height: 56, display: 'flex', alignItems: 'center', justifyContent: 'center' }) }, onClick: () => setShowQRScanner(true), title: 'Сканировать QR-код' }, '📷')
+      )
+    ),
+
+    // ════════════════════════════════════════════
+    // ВКЛАДКА: МОЙ ПРОФИЛЬ
+    // ════════════════════════════════════════════
+    workerTab === 'profile' && h('div', null,
+      // Карточка сотрудника
+      h('div', { style: { ...S.card, display: 'flex', alignItems: 'center', gap: 14, padding: 16, marginBottom: 16 } },
+        h('div', { style: { width: 56, height: 56, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 500, color: AM2, flexShrink: 0, position: 'relative' } },
+          worker?.name?.charAt(0) || '?',
+          h('div', { style: { position: 'absolute', bottom: -4, right: -4, background: AM, color: '#fff', fontSize: 11, fontWeight: 500, borderRadius: '50%', width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, lvl)
+        ),
+        h('div', { style: { flex: 1 } },
+          h('div', { style: { fontSize: 16, fontWeight: 500, marginBottom: 2 } }, worker?.name || 'Сотрудник'),
+          h('div', { style: { fontSize: 12, color: '#888', marginBottom: 6 } },
+            [worker?.position, worker?.grade ? `разряд ${worker.grade}` : null].filter(Boolean).join(' · ') || getLevelTitle(lvl)
+          ),
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+            h('div', { style: { flex: 1, height: 6, background: '#eee', borderRadius: 3, overflow: 'hidden' } },
+              h('div', { style: { width: `${prog * 100}%`, height: 6, background: AM, borderRadius: 3 } })
+            ),
+            h('div', { style: { fontSize: 11, color: '#888', whiteSpace: 'nowrap' } }, `→ Ур.${lvl + 1}`)
+          )
+        )
+      ),
+
+      // KPI — 2×2 сетка
+      h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 } },
+        h(MC, { v: `${myStats.quality}%`, l: 'Качество / 30 дней', c: myStats.quality >= 95 ? GN : myStats.quality >= 80 ? AM : RD, fs: 28 }),
+        h(MC, { v: myStats.done30, l: 'Операций / 30 дней', c: AM, fs: 28 }),
+        h(MC, { v: fmtDur(myStats.workedToday), l: 'Отработано сегодня', c: AM2, fs: 22 }),
+        h(MC, { v: `🤝${myStats.thanksCount}`, l: 'Благодарности', c: myStats.thanksCount > 0 ? '#F57F17' : '#888', fs: 28, onClick: () => setShowThanksHistory(v => !v) })
+      ),
+
+      // История благодарностей
+      showThanksHistory && myStats.recentThanks.length > 0 && h('div', { style: { ...S.card, marginBottom: 16, padding: 12 } },
+        myStats.recentThanks.map((t, i) => h('div', { key: i, style: { display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', fontSize: 13 } },
+          h('div', null, h('span', { style: { fontWeight: 500 } }, `🤝 ${t.from}`), t.note && h('span', { style: { color: '#888', marginLeft: 6 } }, t.note)),
+          h('div', { style: { fontSize: 11, color: '#888' } }, new Date(t.ts).toLocaleDateString())
+        ))
+      ),
+
+      // Часы — личный табель
+      h(WorkerHoursBlock, { workerId, data }),
+
+      // Достижения
+      h('div', { style: { ...S.sec, marginBottom: 12 } }, 'Достижения'),
+      achHint && h('div', { style: { ...S.card, padding: '10px 14px', marginBottom: 12, background: AM3, border: `0.5px solid ${AM4}` } },
+        h('div', { style: { fontSize: 11, color: AM4, marginBottom: 3 } }, 'Следующее'),
+        h('div', { style: { fontSize: 13, fontWeight: 500, color: AM2 } }, `⭐ Осталось ${achHint}`)
+      ),
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+        Object.entries(ACHIEVEMENTS).slice(0, showAchievements ? undefined : 6).map(([id, a]) => {
+          const earned = ach.includes(id);
+          const pr = achProgress[id];
+          const pct = pr ? Math.min(100, Math.round(pr.cur / pr.target * 100)) : 0;
+          return h('div', { key: id, style: { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 10, background: earned ? AM3 : '#f8f8f5', border: `0.5px solid ${earned ? AM4 : 'rgba(0,0,0,0.06)'}` } },
+            h('span', { style: { fontSize: 22, opacity: earned ? 1 : 0.25, flexShrink: 0 } }, a.icon),
+            h('div', { style: { flex: 1 } },
+              h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 4 } },
+                h('span', { style: { fontSize: 13, fontWeight: 500, color: earned ? AM2 : '#888' } }, a.title),
+                earned ? h('span', { style: { fontSize: 12, color: GN } }, '✓') : pr && h('span', { style: { fontSize: 11, color: '#888' } }, `${pr.cur}/${pr.target}`)
+              ),
+              !earned && pr && h('div', { style: { height: 4, background: 'rgba(0,0,0,0.08)', borderRadius: 2, overflow: 'hidden' } },
+                h('div', { style: { height: 4, background: pct >= 80 ? GN : AM, borderRadius: 2, width: `${pct}%` } })
+              )
+            )
+          );
+        })
+      ),
+      Object.keys(ACHIEVEMENTS).length > 6 && h('button', { style: { background: 'none', border: 'none', fontSize: 13, color: AM, cursor: 'pointer', padding: '10px 0', width: '100%', minHeight: 'auto' }, onClick: () => setShowAchievements(v => !v) },
+        showAchievements ? '▾ Скрыть' : `▸ Показать все (${Object.keys(ACHIEVEMENTS).length})`
+      )
+    )
+  ),
+  confirmEl
+  );
+});
+

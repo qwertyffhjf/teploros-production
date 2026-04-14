@@ -1,47 +1,84 @@
-const CACHE_VERSION = 'teploros-v16';
+// teploros Service Worker v2 — модульная структура
+const CACHE_NAME = 'teploros-v2';
 const ASSETS = [
-  'https://unpkg.com/react@18.2.0/umd/react.production.min.js',
-  'https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.js',
-  'https://cdn.jsdelivr.net/npm/chart.js'
+  './',
+  './index.html',
+  './manifest.json',
+  './js/core.js',
+  './js/shared.js',
+  './js/analytics.js',
+  './js/timesheet.js',
+  './js/auxops.js',
+  './js/reference.js',
+  './js/quality.js',
+  './js/hr.js',
+  './js/chat.js',
+  './js/warehouse.js',
+  './js/master.js',
+  './js/worker.js',
+  './js/app.js',
+  // CDN (кешируются при первом запросе)
 ];
 
-self.addEventListener('install', e => {
-  e.waitUntil(
-    caches.open(CACHE_VERSION)
-      .then(cache => cache.addAll(ASSETS))
-      .then(() => self.skipWaiting())
+// Установка — кешируем все локальные файлы
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS))
   );
+  self.skipWaiting();
 });
 
-self.addEventListener('activate', e => {
-  e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_VERSION).map(k => caches.delete(k)))
-    ).then(() => self.clients.claim())
+// Активация — удаляем старые кеши
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then(names =>
+      Promise.all(names.filter(n => n !== CACHE_NAME).map(n => caches.delete(n)))
+    )
   );
+  self.clients.claim();
 });
 
-self.addEventListener('fetch', e => {
-  const url = new URL(e.request.url);
-  if (url.hostname.includes('firebase') || url.hostname.includes('googleapis')) return;
-  if (ASSETS.some(a => e.request.url.startsWith(a))) {
-    e.respondWith(caches.match(e.request).then(r => r || fetch(e.request).then(resp => {
-      const clone = resp.clone();
-      caches.open(CACHE_VERSION).then(c => c.put(e.request, clone));
-      return resp;
-    })));
+// Запросы — network-first для JS/HTML (всегда свежий код), cache-first для CDN
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+
+  // Firebase, Google Analytics — не кешируем
+  if (url.hostname.includes('firebasejs') || url.hostname.includes('firebase') ||
+      url.hostname.includes('googleapis') || url.hostname.includes('googletagmanager') ||
+      url.hostname.includes('google-analytics')) {
     return;
   }
-  e.respondWith(
-    fetch(e.request).then(resp => {
-      if (resp.ok) {
-        const clone = resp.clone();
-        caches.open(CACHE_VERSION).then(c => c.put(e.request, clone));
-      }
-      return resp;
-    }).catch(() => caches.match(e.request))
+
+  // Локальные файлы (JS, HTML) — network-first
+  if (url.origin === location.origin) {
+    event.respondWith(
+      fetch(event.request)
+        .then(response => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // CDN (Chart.js, XLSX, React, etc.) — cache-first
+  event.respondWith(
+    caches.match(event.request).then(cached => {
+      if (cached) return cached;
+      return fetch(event.request).then(response => {
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+        return response;
+      });
+    })
   );
+});
+
+// Обработка сообщений (SKIP_WAITING от update-banner)
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
