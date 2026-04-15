@@ -223,8 +223,11 @@ const LoadForecastWidget = memo(({ data }) => {
 const QRModal = memo(({ ops, order, worker, onClose }) => {
   const [index, setIndex] = useState(0);
   const [qrError, setQrError] = useState(false);
+  const [labelMode, setLabelMode] = useState('label'); // 'label' | 'qronly' | 'full'
   const op = ops[index];
   const ref = useRef(null);
+  const previewRef = useRef(null);
+
   useEffect(() => {
     if (!op) return;
     setQrError(false);
@@ -242,15 +245,74 @@ const QRModal = memo(({ ops, order, worker, onClose }) => {
     s.onerror = () => setQrError(true);
     document.head.appendChild(s);
   }, [op, index]);
+
+  // Генерация HTML этикетки
+  const buildLabelHtml = useCallback((targetOp, mode) => {
+    const qrEl = ref.current;
+    const qrHtml = qrEl ? qrEl.innerHTML : '';
+    if (mode === 'qronly') {
+      return '<div style="width:50mm;height:35mm;display:flex;align-items:center;justify-content:center;padding:1mm">' +
+        '<div style="width:32mm;height:32mm">' + qrHtml.replace(/140/g, '100%') + '</div></div>';
+    }
+    if (mode === 'full') {
+      return '<div style="padding:16px;text-align:center;font-family:system-ui,sans-serif">' +
+        '<div style="width:180px;height:180px;margin:0 auto 10px">' + qrHtml.replace(/140/g, '100%') + '</div>' +
+        '<div style="font-family:monospace;font-size:18px;font-weight:600;color:#BA7517;margin-bottom:4px">' + targetOp.id + '</div>' +
+        '<div style="font-size:14px;color:#333;margin-bottom:3px">' + targetOp.name + '</div>' +
+        '<div style="font-size:12px;color:#888">Заказ: ' + (order?.number || '—') + ' · ' + (order?.product || '') + '</div>' +
+        (worker ? '<div style="font-size:13px;color:#BA7517;margin-top:6px">' + worker.name + '</div>' : '') +
+        '</div>';
+    }
+    // label (50x35 с текстом)
+    return '<div style="width:50mm;height:35mm;display:flex;align-items:center;gap:2mm;padding:1mm;font-family:system-ui,sans-serif">' +
+      '<div style="width:28mm;height:28mm;flex-shrink:0">' + qrHtml.replace(/140/g, '100%') + '</div>' +
+      '<div style="font-size:7pt;line-height:1.3;overflow:hidden;text-align:left">' +
+      '<div style="font-family:monospace;font-weight:700;font-size:8pt;color:#333">' + targetOp.id + '</div>' +
+      '<div style="font-size:6.5pt;color:#555;margin-top:0.5mm">' + (targetOp.name || '').slice(0, 30) + '</div>' +
+      '<div style="font-size:6pt;color:#888;margin-top:0.5mm">' + (order?.number || '') + '</div>' +
+      '</div></div>';
+  }, [order, worker]);
+
+  // Печать (одна или пакетная)
+  const doPrint = useCallback((batch) => {
+    const isLabel = labelMode !== 'full';
+    const pageSize = isLabel ? '@page{size:50mm 35mm;margin:1mm}' : '@page{margin:10mm}';
+    const items = batch ? ops : [op];
+    // Для пакетной печати этикеток — генерируем QR для каждой операции отдельно
+    let bodyHtml = '';
+    if (batch && items.length > 1) {
+      // Для пакетной: берём текущий QR как шаблон, меняем только текстовые данные
+      items.forEach((item, i) => {
+        const singleHtml = buildLabelHtml(item, labelMode);
+        bodyHtml += (i > 0 ? '<div style="page-break-before:always"></div>' : '') + singleHtml;
+      });
+    } else {
+      bodyHtml = buildLabelHtml(op, labelMode);
+    }
+    const w = window.open('', '_blank', isLabel ? 'width=300,height=250' : 'width=400,height=500');
+    if (!w) return;
+    w.document.write('<!DOCTYPE html><html><head><style>' +
+      pageSize +
+      'body{margin:0;font-family:system-ui,sans-serif}' +
+      'svg,canvas,img{max-width:100%;height:auto}' +
+      '@media print{.no-print{display:none!important}}' +
+      '</style></head><body>' + bodyHtml +
+      '<div class="no-print" style="text-align:center;padding:12px">' +
+      '<button onclick="window.print();setTimeout(()=>window.close(),500)" style="padding:8px 24px;font-size:13px;border-radius:6px;border:none;background:#EF9F27;color:#412402;cursor:pointer;font-weight:500">Печать</button></div>' +
+      '</body></html>');
+    w.document.close();
+  }, [ops, op, labelMode, buildLabelHtml]);
+
   if (!op) return null;
   return h('div', {
     role: 'dialog', 'aria-modal': 'true', 'aria-label': 'QR-код операции',
     style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 },
     onKeyDown: (e) => e.key === 'Escape' && onClose()
   },
-    h('div', { style: { background: '#fff', border: '0.5px solid rgba(0,0,0,0.15)', borderRadius: 12, padding: 24, width: 'min(320px, calc(100vw - 32px))', textAlign: 'center', position: 'relative' } },
+    h('div', { style: { background: '#fff', border: '0.5px solid rgba(0,0,0,0.15)', borderRadius: 12, padding: 24, width: 'min(360px, calc(100vw - 32px))', textAlign: 'center', position: 'relative', maxHeight: '90vh', overflowY: 'auto' } },
       h('button', { type: 'button', onClick: onClose, 'aria-label': 'Закрыть', style: { position: 'absolute', top: 10, right: 12, background: 'transparent', border: 'none', color: '#888', cursor: 'pointer', fontSize: 18 } }, '×'),
       h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12 } }, 'QR-код операции'),
+      // QR
       h('div', { style: { background: '#fff', borderRadius: 8, padding: 12, display: 'inline-block', marginBottom: 10, border: '0.5px solid rgba(0,0,0,0.08)' } },
         h('div', { ref }),
         qrError && h('div', { style: { color: RD, fontSize: 11, padding: 8 } }, 'Не удалось загрузить библиотеку QR-кода')
@@ -258,32 +320,60 @@ const QRModal = memo(({ ops, order, worker, onClose }) => {
       worker && h('div', { style: { fontSize: 11, color: AM, marginTop: 8, fontWeight: 500 } }, `Исполнитель: ${worker.name}`),
       h('div', { style: { fontFamily: 'monospace', fontSize: 13, fontWeight: 500, color: AM, marginBottom: 4 } }, op.id),
       h('div', { style: { fontSize: 11, color: '#888', marginBottom: 4 } }, op.name),
-      h('div', { style: { fontSize: 10, color: '#aaa', marginBottom: 14 } }, `Заказ: ${order?.number || '—'} · ${order?.product || ''}`),
-      ops.length > 1 && h('div', { style: { display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 12 } },
+      h('div', { style: { fontSize: 10, color: '#aaa', marginBottom: 10 } }, `Заказ: ${order?.number || '—'} · ${order?.product || ''}`),
+      // Навигация
+      ops.length > 1 && h('div', { style: { display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 10 } },
         h('button', { type: 'button', style: gbtn({ padding: '4px 10px' }), onClick: () => setIndex(i => (i - 1 + ops.length) % ops.length) }, '←'),
         h('span', { style: { fontSize: 11, color: '#888' } }, `${index + 1} / ${ops.length}`),
         h('button', { type: 'button', style: gbtn({ padding: '4px 10px' }), onClick: () => setIndex(i => (i + 1) % ops.length) }, '→')
       ),
+      // Режим печати
+      h('div', { style: { display: 'flex', gap: 4, justifyContent: 'center', marginBottom: 12 } },
+        [['label', '🏷 Этикетка'], ['qronly', '⬜ Только QR'], ['full', '🖨 A4']].map(([m, l]) =>
+          h('button', { key: m, style: labelMode === m ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setLabelMode(m) }, l)
+        )
+      ),
+      // Предпросмотр этикетки
+      h('div', { style: { background: '#f8f8f5', borderRadius: 8, padding: 10, marginBottom: 12, border: '0.5px solid rgba(0,0,0,0.06)' } },
+        h('div', { style: { fontSize: 9, color: '#888', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' } },
+          labelMode === 'qronly' ? 'Предпросмотр · 50×35мм · только QR' :
+          labelMode === 'full' ? 'Предпросмотр · полный формат' :
+          'Предпросмотр · 50×35мм'),
+        h('div', { style: { display: 'inline-flex', border: '1px dashed #ccc', borderRadius: 4, background: '#fff', padding: 2 } },
+          labelMode === 'qronly'
+            ? h('div', { style: { width: 100, height: 70, display: 'flex', alignItems: 'center', justifyContent: 'center' } },
+                h('div', { style: { width: 60, height: 60, border: '2px solid ' + AM4, borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: AM4 } }, 'QR')
+              )
+            : labelMode === 'full'
+              ? h('div', { style: { width: 130, padding: 8, textAlign: 'center' } },
+                  h('div', { style: { width: 60, height: 60, border: '2px solid ' + AM4, borderRadius: 4, margin: '0 auto 4px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: AM4 } }, 'QR'),
+                  h('div', { style: { fontSize: 8, fontFamily: 'monospace', color: AM4, fontWeight: 600 } }, op.id),
+                  h('div', { style: { fontSize: 7, color: '#666' } }, (op.name || '').slice(0, 20)),
+                  h('div', { style: { fontSize: 6, color: '#aaa' } }, order?.number || '')
+                )
+              : h('div', { style: { width: 100, height: 70, display: 'flex', alignItems: 'center', gap: 4, padding: 3 } },
+                  h('div', { style: { width: 50, height: 50, border: '2px solid ' + AM4, borderRadius: 3, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, color: AM4 } }, 'QR'),
+                  h('div', { style: { fontSize: 7, lineHeight: 1.3, overflow: 'hidden' } },
+                    h('div', { style: { fontFamily: 'monospace', fontWeight: 600, fontSize: 8, color: '#333' } }, op.id),
+                    h('div', { style: { color: '#666', marginTop: 1 } }, (op.name || '').slice(0, 15)),
+                    h('div', { style: { color: '#aaa', marginTop: 1 } }, (order?.number || '').slice(0, 12))
+                  )
+                )
+        )
+      ),
+      // Кнопки
       h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
-        h('button', { type: 'button', style: gbtn({ flex: 1 }), onClick: () => {
-          // Открываем чистое окно только с QR-кодом для печати
-          const qrEl = ref.current;
-          const qrHtml = qrEl ? qrEl.innerHTML : '';
-          const printWin = window.open('', '_blank', 'width=400,height=500');
-          if (printWin) {
-            printWin.document.write(`<!DOCTYPE html><html><head><title>QR · ${op.id}</title><style>body{margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:system-ui,sans-serif;text-align:center}@media print{button{display:none!important}}</style></head><body><div style="margin-bottom:12px">${qrHtml}</div><div style="font-family:monospace;font-size:16px;font-weight:600;color:#BA7517;margin-bottom:4px">${op.id}</div><div style="font-size:13px;color:#666;margin-bottom:2px">${op.name}</div><div style="font-size:11px;color:#aaa">Заказ: ${order?.number || '—'} · ${order?.product || ''}</div>${worker ? '<div style="font-size:12px;color:#BA7517;margin-top:8px">'+worker.name+'</div>' : ''}<button onclick="window.print();setTimeout(()=>window.close(),500)" style="margin-top:20px;padding:10px 32px;font-size:14px;border-radius:8px;border:none;background:#EF9F27;color:#412402;cursor:pointer;font-weight:500">🖨 Печать</button></body></html>`);
-            printWin.document.close();
-          }
-        }}, '🖨 Печать'),
+        h('button', { type: 'button', style: abtn({ flex: 1 }), onClick: () => doPrint(false) },
+          labelMode === 'qronly' ? '⬜ Печать QR' : labelMode === 'full' ? '🖨 Печать A4' : '🏷 Печать этикетки'),
+        ops.length > 1 && h('button', { type: 'button', style: gbtn({ flex: 1 }), onClick: () => doPrint(true) }, `🏷 Все ${ops.length} шт`),
         navigator.share && h('button', { type: 'button', style: gbtn({ flex: 1 }), onClick: async () => {
-          // Web Share API — на мобильном можно отправить QR в мессенджер / на принтер
           const url = new URL(window.location.href);
           url.searchParams.set('opId', op.id);
           try {
             await navigator.share({ title: `QR · ${op.name}`, text: `Операция: ${op.name}\nЗаказ: ${order?.number || '—'}\nСсылка: ${url.toString()}`, url: url.toString() });
-          } catch(e) { /* отмена */ }
-        }}, '📤 Поделиться'),
-        h('button', { type: 'button', style: abtn({ flex: 1 }), onClick: () => { window.open('?opId=' + op.id, '_blank'); } }, 'Открыть как рабочий')
+          } catch(e) {}
+        }}, '📤'),
+        h('button', { type: 'button', style: gbtn({ flex: 1 }), onClick: () => { window.open('?opId=' + op.id, '_blank'); } }, '▶ Рабочий')
       )
     )
   );
