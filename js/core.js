@@ -292,7 +292,9 @@ const EMPTY_DATA = {
     adminPin: 'H_18DD8GP',
     masterKey: 'H_18DETNL',       // Мастер-ключ: сброс PIN (дефолт: 9999), сменить при первом запуске
     welcomeTitle: 'teploros', welcomeSubtitle: 'надежная техника',
-    welcomeLabel: 'Производственный учёт · НТ'
+    welcomeLabel: 'Производственный учёт · НТ',
+    labelWidth: 50,    // ширина этикетки мм
+    labelHeight: 35    // высота этикетки мм
   }
 };
 
@@ -669,30 +671,58 @@ const TabBar = memo(({ tabs, tab, setTab }) => h('div', {
   }, label))
 )));
 
-const vibrateOnAchievement = () => { try { if (navigator.vibrate) navigator.vibrate([100, 50, 200]); } catch(e) {} };
-// Вибрация + звуковой щелчок для iOS
+const vibrateOnAchievement = () => { try { if (navigator.vibrate) navigator.vibrate([100, 50, 200, 50, 100]); } catch(e) {} };
 const vibrateAction = (type = 'start') => {
   try {
     if (navigator.vibrate) {
-      if (type === 'start')  navigator.vibrate([40, 20, 80]);
-      if (type === 'finish') navigator.vibrate([30, 15, 30, 15, 80]);
-      if (type === 'error')  navigator.vibrate([80, 30, 80]);
+      if (type === 'start')  navigator.vibrate([100]);
+      if (type === 'finish') navigator.vibrate([100, 50, 100, 50, 200]);
+      if (type === 'error')  navigator.vibrate([300, 100, 300]);
+      if (type === 'scan')   navigator.vibrate([50, 30, 50]);
     } else {
-      // iOS fallback — короткий щелчок через AudioContext
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain); gain.connect(ctx.destination);
-      osc.frequency.value = type === 'error' ? 220 : 440;
+      osc.frequency.value = type === 'error' ? 220 : type === 'finish' ? 660 : 440;
       gain.gain.setValueAtTime(0.08, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
       osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.12);
+      osc.stop(ctx.currentTime + 0.15);
     }
   } catch(e) {}
 };
 
 // П.10+15: Логирование действий (мастер + история операции)
+// ==================== VoiceButton (голосовой ввод) ====================
+const VoiceButton = memo(({ onResult, style }) => {
+  const [listening, setListening] = useState(false);
+  const recRef = useRef(null);
+  const supported = typeof webkitSpeechRecognition !== 'undefined' || typeof SpeechRecognition !== 'undefined';
+  if (!supported) return null;
+  const toggle = () => {
+    if (listening && recRef.current) { recRef.current.stop(); return; }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const rec = new SR();
+    rec.lang = 'ru-RU'; rec.continuous = false; rec.interimResults = false;
+    rec.onresult = (e) => { const t = e.results[0]?.[0]?.transcript; if (t) onResult(t); };
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    recRef.current = rec;
+    rec.start();
+    setListening(true);
+    vibrateAction('scan');
+  };
+  return h('button', { type: 'button', 'aria-label': listening ? 'Остановить запись' : 'Голосовой ввод',
+    style: { background: listening ? RD : 'transparent', color: listening ? '#fff' : '#888',
+      border: listening ? 'none' : '0.5px solid rgba(0,0,0,0.15)', borderRadius: 8,
+      width: 36, height: 36, cursor: 'pointer', fontSize: 16, display: 'flex',
+      alignItems: 'center', justifyContent: 'center', flexShrink: 0, minHeight: 'auto',
+      animation: listening ? 'pulse 1s ease-in-out infinite' : 'none', ...style },
+    onClick: toggle
+  }, listening ? '⏹' : '🎤');
+});
+
 const logAction = (data, action, details) => {
   const entry = { id: uid(), type: 'action_log', action, details, ts: now(), shift: getCurrentShift(data?.settings?.shifts) };
   return { ...data, events: [...data.events, entry] };
