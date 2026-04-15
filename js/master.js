@@ -344,6 +344,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const pageSize = 20;
   const [fieldErrors, setFieldErrors] = useState({});
   const [depEditorOrderId, setDepEditorOrderId] = useState(null);
+  const [printOrderId, setPrintOrderId] = useState(null);
 
   const validate = () => {
     const errors = {};
@@ -389,12 +390,14 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
           if (reservations.length > 0) {
             const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps], materialReservations: [...(data.materialReservations || []), ...reservations] };
             await DB.save(d); onUpdate(d); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '' }); setFieldErrors({}); addToast('Заказ создан, материалы зарезервированы', 'success');
+            if (newOps.length > 0) setPrintOrderId(newOrder.id);
             return;
           }
         }
       }
       const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps] };
       await DB.save(d); onUpdate(d); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '' }); setFieldErrors({}); addToast('Заказ создан', 'success');
+      if (newOps.length > 0) setPrintOrderId(newOrder.id);
     }
   }, [form, editingId, data, createDefaultOps, onUpdate, addToast]);
 
@@ -440,6 +443,12 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
         await DB.save(d); onUpdate(d); addToast(`Добавлено заказов: ${items.length}`, 'success');
       }}),
     depEditorOrderId && h(DependencyEditor, { data, orderId: depEditorOrderId, onUpdate, addToast, onClose: () => setDepEditorOrderId(null) }),
+    printOrderId && (() => {
+      const pOrder = data.orders.find(o => o.id === printOrderId);
+      const pOps = data.ops.filter(o => o.orderId === printOrderId && !o.archived);
+      if (!pOrder || pOps.length === 0) return null;
+      return h(QRModal, { ops: pOps, order: pOrder, worker: null, onClose: () => setPrintOrderId(null) });
+    })(),
     h('div', { style: S.card },
       h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
         h('div', { style: { minWidth: 120 } }, h('input', { style: S.inp, placeholder: 'Номер', value: form.number, onChange: e => setForm(p => ({ ...p, number: e.target.value })) }), fieldErrors.number && h('div', { className: 'error-message' }, fieldErrors.number)),
