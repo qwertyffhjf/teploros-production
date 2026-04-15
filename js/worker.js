@@ -169,13 +169,14 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     }
     return false;
   }).sort((a,b) => {
+    const t = Date.now(); // кешируем один раз для всей сортировки
     const orderA = data.orders.find(ord => ord.id === a.orderId);
     const orderB = data.orders.find(ord => ord.id === b.orderId);
     const getCR = (op, order) => {
       if (!order?.deadline) return 999;
       const deadlineMs = new Date(order.deadline).getTime();
       const remaining = (op.plannedHours || 2) * 3600000;
-      const timeLeft = deadlineMs - now();
+      const timeLeft = deadlineMs - t;
       if (timeLeft <= 0) return -1;
       return timeLeft / remaining;
     };
@@ -331,6 +332,17 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     addToast(`Простой зафиксирован (${fmtDur(duration)})`, 'success');
   }, [data, workerId, activeOp, selectedDowntimeType, downtimeStartedAt, onUpdate, addToast]);
 
+  // Отмена вспомогательной операции (только свои, pending/in_progress)
+  const cancelAuxOp = useCallback(async (op) => {
+    if (!op.isAuxiliary || op.addedByWorker !== workerId) return;
+    if (op.status !== 'pending' && op.status !== 'in_progress') return;
+    const updated = { ...data, ops: data.ops.filter(o => o.id !== op.id) };
+    const withLog = logAction(updated, 'worker_cancel_aux_op', { opId: op.id, opName: op.name, workerId });
+    await DB.save(withLog); onUpdate(withLog);
+    if (activeOp?.id === op.id) setActiveOp(null);
+    addToast(`«${op.name}» отменена`, 'info');
+  }, [data, workerId, activeOp, onUpdate, addToast]);
+
   const active = activeOp ? data.ops.find(o => o.id === activeOp.id) : null;
   const elapsed = active?.startedAt ? now() - active.startedAt : 0;
   const qrOp = initialOpId ? data.ops.find(o => o.id === initialOpId) : null;
@@ -402,18 +414,18 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     localStorage.setItem(key, String(lvl));
   }, [lvl, workerId]);
   // Подсказка о ближайшем достижении
+  const workerStats = useMemo(() => calcWorkerStats(workerId, data, Date.now()), [data, workerId]);
   const achHint = useMemo(() => {
-    const s = calcWorkerStats(workerId, data, Date.now());
+    const s = workerStats;
     const remaining = [];
     if (!worker?.achievements?.includes('ops_10') && s.doneCount >= 7) remaining.push(`${10 - s.doneCount} оп. до «Десятка»`);
     if (!worker?.achievements?.includes('ops_50') && s.doneCount >= 40) remaining.push(`${50 - s.doneCount} оп. до «Профессионал»`);
     if (!worker?.achievements?.includes('streak_5') && s.currentStreak >= 3) remaining.push(`${5 - s.currentStreak} до «Серия 5»`);
     if (!worker?.achievements?.includes('thanks_5') && s.thanksReceived >= 3) remaining.push(`${5 - s.thanksReceived} до «Спасибо, коллега!»`);
     return remaining[0] || null;
-  }, [data, workerId, worker]);
+  }, [workerStats, worker]);
   const ach = useMemo(() => worker?.achievements || [], [worker]);
   const nextAch = useMemo(() => Object.entries(ACHIEVEMENTS).find(([id]) => !ach.includes(id)), [ach]);
-  const workerStats = useMemo(() => calcWorkerStats(workerId, data, Date.now()), [data, workerId]);
   // Прогресс для каждого достижения
   const achProgress = useMemo(() => {
     const s = workerStats;
@@ -480,14 +492,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const [showAddOp, setShowAddOp] = useState(false);
   const [addOpForm, setAddOpForm] = useState({ category: '', name: '', orderId: '', comment: '' });
 
-  // Категории вспомогательных работ
-  const AUX_CATEGORIES = [
-    { id: 'maintenance', label: '🔧 Обслуживание оборудования', names: ['Профилактика оборудования', 'Ремонт оборудования', 'Смазка механизмов', 'Замена расходников'] },
-    { id: 'cleaning', label: '🧹 Уборка / порядок', names: ['Уборка рабочего места', 'Уборка цеха', 'Уборка территории', 'Вынос отходов'] },
-    { id: 'logistics', label: '📦 Перемещение / логистика', names: ['Перемещение заготовок', 'Разгрузка материалов', 'Подготовка комплектующих', 'Складские работы'] },
-    { id: 'setup', label: '⚙ Наладка / подготовка', names: ['Наладка станка', 'Подготовка оснастки', 'Переналадка', 'Пробный запуск'] },
-    { id: 'other', label: '📝 Прочее', names: [] },
-  ];
+  // Категории из core.js (глобальные AUX_CATEGORIES)
 
   // Доступные заказы (опционально — для привязки к заказу)
   const availableOrders = useMemo(() => data.orders.filter(o => !o.archived).sort((a, b) => {
@@ -644,8 +649,16 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
             borderLeft: isOverdue ? `4px solid ${RD}` : isUrgent ? `4px solid ${AM}` : order?.priority === 'critical' ? `4px solid ${RD}` : 'none'
           }},
             h('div', { style: { marginBottom: 10 } },
-              h('div', { style: { fontSize: 15, fontWeight: 500, marginBottom: 2 } }, op.name),
-              h('div', { style: { fontSize: 11, color: AM4 } }, order?.number || '—'),
+              h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' } },
+                h('div', { style: { flex: 1 } },
+                  h('div', { style: { fontSize: 15, fontWeight: 500, marginBottom: 2 } }, op.name),
+                  h('div', { style: { fontSize: 11, color: AM4 } }, order?.number || '—')
+                ),
+                op.isAuxiliary && op.addedByWorker === workerId && (op.status === 'pending' || op.status === 'in_progress') &&
+                  h('button', { style: { background: 'none', border: 'none', fontSize: 16, color: '#bbb', cursor: 'pointer', padding: '2px 6px', minHeight: 'auto', lineHeight: 1 },
+                    onClick: (e) => { e.stopPropagation(); (async () => { if (await askConfirm({ message: 'Отменить эту работу?', detail: op.name, danger: true })) cancelAuxOp(op); })(); }
+                  }, '×')
+              ),
               h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 } },
                 order?.priority && h('span', { style: { fontSize: 10, color: PRIORITY[order.priority]?.color } }, PRIORITY[order.priority].label),
                 daysLeft !== null && h('span', { style: { fontSize: 11, color: isOverdue ? RD : isUrgent ? AM : '#888', fontWeight: isUrgent ? 500 : 400 } },
