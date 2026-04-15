@@ -1039,7 +1039,7 @@ function App() {
       setData(archiveCount > 0 ? updated : d);
       setLoading(false); setSynced(true);
     });
-    const unsub = DB.onSnapshot(newData => { if (!savingRef.current) setData(newData); });
+    const unsub = DB.onSnapshot(newData => { if (!savingRef.current && !DB._saving) setData(newData); });
     const params = new URLSearchParams(window.location.search);
     const opId = params.get('opId');
     if (opId) setInitialOpId(opId);
