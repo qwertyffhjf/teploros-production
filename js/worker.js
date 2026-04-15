@@ -258,13 +258,13 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const doStart = useCallback(async (op) => {
     // Вспомогательные операции — без проверки компетенций
     if (!op.isAuxiliary && worker?.competences && worker.competences.length > 0 && !worker.competences.includes(op.name)) {
-      addToast('У вас нет компетенции для этой операции', 'error');
+      addToast('У вас нет компетенции для этой операции', 'error'); vibrateAction('error');
       return;
     }
     // Блокировка двойного запуска: рабочий не может вести две операции одновременно
     const alreadyActive = data.ops.find(o => o.status === 'in_progress' && o.workerIds?.includes(workerId) && o.id !== op.id);
     if (alreadyActive) {
-      addToast(`Сначала завершите "${alreadyActive.name}"`, 'error');
+      addToast(`Сначала завершите "${alreadyActive.name}"`, 'error'); vibrateAction('error');
       return;
     }
     const result = buildStartUpdate(data, op, workerId);
@@ -582,6 +582,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
         // Комментарий
         h('div', { style: { display: 'flex', gap: 6, marginBottom: 16 } },
           h('input', { style: { ...S.inp, flex: 1, fontSize: 14 }, placeholder: 'Комментарий к операции...', value: opComment, onChange: e => setOpComment(e.target.value), onKeyDown: e => e.key === 'Enter' && saveComment(active.id) }),
+          h(VoiceButton, { onResult: (t) => setOpComment(prev => prev ? prev + ' ' + t : t) }),
           opComment.trim() && h('button', { style: abtn({ padding: '8px 12px', fontSize: 13 }), onClick: () => saveComment(active.id) }, '💬')
         ),
         // ── КНОПКИ ДЕЙСТВИЙ — крупные с отступами ──
@@ -730,13 +731,16 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
                 onClick: () => setAddOpForm(p => ({ ...p, name: n }))
               }, n))
             ),
-            h('input', {
-              style: { ...S.inp, width: '100%' },
-              placeholder: addOpForm.category === 'other' ? 'Опишите выполняемую работу...' : 'Или введите свой вариант...',
-              value: selectedCategory?.names?.includes(addOpForm.name) ? '' : addOpForm.name,
-              onChange: e => setAddOpForm(p => ({ ...p, name: e.target.value })),
-              onKeyDown: e => e.key === 'Enter' && addWorkerOp()
-            })
+            h('div', { style: { display: 'flex', gap: 6 } },
+              h('input', {
+                style: { ...S.inp, flex: 1 },
+                placeholder: addOpForm.category === 'other' ? 'Опишите выполняемую работу...' : 'Или введите свой вариант...',
+                value: selectedCategory?.names?.includes(addOpForm.name) ? '' : addOpForm.name,
+                onChange: e => setAddOpForm(p => ({ ...p, name: e.target.value })),
+                onKeyDown: e => e.key === 'Enter' && addWorkerOp()
+              }),
+              h(VoiceButton, { onResult: (text) => setAddOpForm(p => ({ ...p, name: text })) })
+            )
           ),
           // Привязка к заказу (опционально)
           addOpForm.category && h('div', { style: { marginBottom: 12 } },
@@ -749,7 +753,10 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
           // Комментарий
           addOpForm.category && h('div', { style: { marginBottom: 16 } },
             h('label', { style: S.lbl }, 'Комментарий (необязательно)'),
-            h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Описание, причина, примечание...', value: addOpForm.comment, onChange: e => setAddOpForm(p => ({ ...p, comment: e.target.value })), onKeyDown: e => e.key === 'Enter' && addWorkerOp() })
+            h('div', { style: { display: 'flex', gap: 6 } },
+              h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Описание, причина, примечание...', value: addOpForm.comment, onChange: e => setAddOpForm(p => ({ ...p, comment: e.target.value })), onKeyDown: e => e.key === 'Enter' && addWorkerOp() }),
+              h(VoiceButton, { onResult: (text) => setAddOpForm(p => ({ ...p, comment: p.comment ? p.comment + ' ' + text : text })) })
+            )
           ),
           // Кнопки
           h('div', { style: { display: 'flex', gap: 8 } },
