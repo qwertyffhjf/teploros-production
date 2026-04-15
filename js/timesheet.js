@@ -169,27 +169,95 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
   };
 
   const exportXlsx = useCallback(() => {
-    const wb = XLSX.utils.book_new();
-    const header = ['Сотрудник', ...days.map(d => d), 'Итого ч', 'Дней'];
-    const rows = [header];
-    showWorkers.forEach(w => {
-      const row = [w.name];
-      let totH = 0, totD = 0;
-      days.forEach(d => {
-        const dow = new Date(viewYear, viewMonth, d).getDay();
-        if (!isWorkday(viewYear, viewMonth, d, data.settings)) { row.push('В'); return; }
-        const val = getCellVal(w.id, d);
-        if (!val) { row.push(''); return; }
-        if (val.h != null) { totH += val.h; totD++; row.push(val.h); }
-        else row.push(val.code || '');
+    try {
+      const wb = XLSX.utils.book_new();
+      const orgName = data.settings?.welcomeTitle || 'teploros';
+      const orgSub = data.settings?.welcomeSubtitle || '';
+      const monthNames = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+      const lastDay = new Date(viewYear, viewMonth + 1, 0).getDate();
+
+      // Собираем данные через calcDayData (табель + операции + статусы)
+      const wData = showWorkers.map((w, idx) => {
+        let h1Days = 0, h1Hours = 0, h2Days = 0, h2Hours = 0;
+        const absences = {};
+        const dayCells = {};
+        for (let d = 1; d <= lastDay; d++) {
+          const dd = calcDayData(w.id, viewYear, viewMonth, d, data);
+          dayCells[d] = dd;
+          if (dd.code === 'В') continue;
+          if (dd.h > 0) {
+            if (d <= 15) { h1Days++; h1Hours += dd.h; } else { h2Days++; h2Hours += dd.h; }
+          }
+          if (dd.code && dd.code !== 'Я' && dd.code !== 'В') {
+            absences[dd.code] = (absences[dd.code] || 0) + 1;
+          }
+        }
+        const absPairs = Object.entries(absences).slice(0, 2);
+        return { w, idx: idx + 1, dayCells, h1Days, h1Hours: Math.round(h1Hours * 10) / 10, h2Days, h2Hours: Math.round(h2Hours * 10) / 10, totalDays: h1Days + h2Days, totalHours: Math.round((h1Hours + h2Hours) * 10) / 10, absPairs };
       });
-      rows.push([...row, totH, totD]);
-    });
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    XLSX.utils.book_append_sheet(wb, ws, `Табель ${viewMonth+1}.${viewYear}`);
-    XLSX.writeFile(wb, `tabeli_T13_${viewMonth+1}_${viewYear}.xlsx`);
-    addToast('Табель выгружен в Excel (Т-13)', 'success');
-  }, [showWorkers, days, viewYear, viewMonth, tsData, addToast]);
+
+      const rows = [];
+      // Шапка
+      rows.push([orgName + (orgSub ? ' · ' + orgSub : ''), '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Форма по ОКУД 0301008']);
+      rows.push([]);
+      rows.push(['', '', '', '', '', '', '', 'ТАБЕЛЬ УЧЁТА РАБОЧЕГО ВРЕМЕНИ']);
+      rows.push(['', '', '', '', '', '', '', 'за ' + monthNames[viewMonth] + ' ' + viewYear + ' г.', '', '', '', 'Номер: ' + (viewMonth + 1), '', 'Дата: ' + lastDay + '.' + String(viewMonth + 1).padStart(2, '0') + '.' + viewYear]);
+      rows.push([]);
+
+      // Заголовки
+      const hRow = ['№', 'ФИО', 'Должность', 'Таб.№'];
+      for (let d = 1; d <= 15; d++) hRow.push(d);
+      hRow.push('I пол.дн', 'I пол.ч');
+      for (let d = 16; d <= lastDay; d++) hRow.push(d);
+      hRow.push('II пол.дн', 'II пол.ч', 'Итого дн', 'Итого ч', 'Код', 'Дни', 'Код', 'Дни');
+      rows.push(hRow);
+
+      // Дни недели
+      const dowRow = ['', '', '', ''];
+      for (let d = 1; d <= 15; d++) dowRow.push(['вс','пн','вт','ср','чт','пт','сб'][new Date(viewYear, viewMonth, d).getDay()]);
+      dowRow.push('', '');
+      for (let d = 16; d <= lastDay; d++) dowRow.push(['вс','пн','вт','ср','чт','пт','сб'][new Date(viewYear, viewMonth, d).getDay()]);
+      rows.push(dowRow);
+
+      // Данные — на каждого сотрудника 2 строки: коды и часы
+      wData.forEach(wd => {
+        const { w, idx, dayCells, h1Days, h1Hours, h2Days, h2Hours, totalDays, totalHours, absPairs } = wd;
+        // Строка кодов
+        const codeRow = [idx, w.name, w.position || '', (w.id || '').slice(-3)];
+        for (let d = 1; d <= 15; d++) codeRow.push(dayCells[d]?.code || '');
+        codeRow.push(h1Days, h1Hours);
+        for (let d = 16; d <= lastDay; d++) codeRow.push(dayCells[d]?.code || '');
+        codeRow.push(h2Days, h2Hours, totalDays, totalHours);
+        codeRow.push(absPairs[0]?.[0] || '', absPairs[0]?.[1] || '', absPairs[1]?.[0] || '', absPairs[1]?.[1] || '');
+        rows.push(codeRow);
+        // Строка часов
+        const hourRow = ['', '', '', ''];
+        for (let d = 1; d <= 15; d++) hourRow.push(dayCells[d]?.h > 0 ? dayCells[d].h : '');
+        hourRow.push('', '');
+        for (let d = 16; d <= lastDay; d++) hourRow.push(dayCells[d]?.h > 0 ? dayCells[d].h : '');
+        rows.push(hourRow);
+      });
+
+      rows.push([]);
+      rows.push(['Ответственное лицо', '', '_______________', '', '/_______________/', '', '', '', 'Руководитель', '', '_______________', '', '/_______________/']);
+
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      // Ширины колонок
+      const cols = [{ wch: 4 }, { wch: 22 }, { wch: 12 }, { wch: 6 }];
+      for (let i = 0; i < 15; i++) cols.push({ wch: 4 });
+      cols.push({ wch: 6 }, { wch: 6 });
+      for (let d = 16; d <= lastDay; d++) cols.push({ wch: 4 });
+      cols.push({ wch: 6 }, { wch: 6 }, { wch: 7 }, { wch: 7 }, { wch: 5 }, { wch: 4 }, { wch: 5 }, { wch: 4 });
+      ws['!cols'] = cols;
+
+      XLSX.utils.book_append_sheet(wb, ws, 'T-13');
+      XLSX.writeFile(wb, 'T-13_' + String(viewMonth + 1).padStart(2, '0') + '_' + viewYear + '.xlsx');
+      addToast('Табель Т-13 выгружен', 'success');
+    } catch(e) {
+      console.error('Export T-13 error:', e);
+      addToast('Ошибка экспорта: ' + e.message, 'error');
+    }
+  }, [showWorkers, viewYear, viewMonth, data, addToast]);
 
   const doImport = useCallback(async () => {
     if (!pasteText.trim()) return;
