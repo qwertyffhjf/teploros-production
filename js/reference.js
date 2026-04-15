@@ -1078,6 +1078,8 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
   const [welcomeTitle, setWelcomeTitle] = useState(settings.welcomeTitle || 'teploros');
   const [welcomeSubtitle, setWelcomeSubtitle] = useState(settings.welcomeSubtitle || 'надежная техника');
   const [welcomeLabel, setWelcomeLabel] = useState(settings.welcomeLabel || 'Производственный учёт · НТ');
+  const [labelWidth, setLabelWidth] = useState(settings.labelWidth || 50);
+  const [labelHeight, setLabelHeight] = useState(settings.labelHeight || 35);
   const [editPins, setEditPins] = useState({});
 
   const savePins = useCallback(async () => {
@@ -1122,7 +1124,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
   }, [data, settings, masterPin, controllerPin, warehousePin, pdoPin, directorPin, hrPin, shopMasterPin, adminPin, masterKey, onUpdate, addToast]);
 
   const saveWelcome = useCallback(async () => {
-    const d = { ...data, settings: { ...settings, welcomeTitle: welcomeTitle.trim(), welcomeSubtitle: welcomeSubtitle.trim(), welcomeLabel: welcomeLabel.trim() } };
+    const d = { ...data, settings: { ...settings, welcomeTitle: welcomeTitle.trim(), welcomeSubtitle: welcomeSubtitle.trim(), welcomeLabel: welcomeLabel.trim(), labelWidth: parseInt(labelWidth) || 50, labelHeight: parseInt(labelHeight) || 35 } };
     await DB.save(d); onUpdate(d); addToast('Текст главной страницы обновлён', 'success');
   }, [data, settings, welcomeTitle, welcomeSubtitle, welcomeLabel, onUpdate, addToast]);
 
@@ -1218,6 +1220,15 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         h('div', { style: { fontSize:10, color:AM4, textTransform:'uppercase', letterSpacing:'0.15em', marginTop:8 } }, welcomeLabel)
       ),
       h('button', { style: abtn(), onClick: saveWelcome }, 'Сохранить текст')
+    ),
+    h('div', { style: S.card },
+      h('div', { style: S.sec }, 'Размер этикетки (мм)'),
+      h('div', { style: { display:'flex', gap:12, alignItems:'flex-end', marginBottom:8 } },
+        h('div', { style: { flex:1 } }, h('label', { style: S.lbl }, 'Ширина'), h('input', { type:'number', min:20, max:150, style: { ...S.inp, width:'100%' }, value: labelWidth, onChange: e => setLabelWidth(e.target.value) })),
+        h('div', { style: { flex:1 } }, h('label', { style: S.lbl }, 'Высота'), h('input', { type:'number', min:15, max:150, style: { ...S.inp, width:'100%' }, value: labelHeight, onChange: e => setLabelHeight(e.target.value) })),
+        h('button', { style: abtn({ height:36 }), onClick: saveWelcome }, 'Сохранить')
+      ),
+      h('div', { style: { fontSize:11, color:'#888' } }, 'По умолчанию: 50 × 35. Применяется при печати QR-этикеток.')
     ),
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Функции производства'),
