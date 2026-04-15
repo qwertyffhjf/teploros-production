@@ -319,6 +319,7 @@ const cleanStaleLocalStorageKeys = () => {
 const DB = {
   _saveTimer:   null,
   _saveResolve: null,   // resolve-функция текущего pending save Promise
+  _saving:      false,  // true пока идёт сохранение (от вызова до завершения записи) — блокирует onSnapshot
   _lastError:   null,
   _sizeWarning: null,
   _online:      true,    // текущий статус сети
@@ -371,6 +372,7 @@ const DB = {
 
   // ── Сохранение ────────────────────────────────────────────────────────────
   async save(data) {
+    DB._saving = true; // Блокируем onSnapshot немедленно
     try {
       let toSave = { ...data };
 
@@ -445,6 +447,7 @@ const DB = {
           if (!DB._online) {
             DB._enqueue(toSave);
             resolve();
+            setTimeout(() => { DB._saving = false; }, 500);
             return;
           }
           try {
@@ -498,9 +501,10 @@ const DB = {
             DB._enqueue(toSave);
           }
           resolve();
+          setTimeout(() => { DB._saving = false; }, 500);
         }, 800); // Уменьшаем debounce: 800ms вместо 1000ms — быстрее сохраняет
       });
-    } catch(e) { console.error(e); DB._lastError = e.message; }
+    } catch(e) { console.error(e); DB._lastError = e.message; DB._saving = false; }
   },
 
   // ── Офлайн-очередь ────────────────────────────────────────────────────────
