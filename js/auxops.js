@@ -2,7 +2,7 @@
 // Автоматически извлечено из монолита
 
 // ==================== AuxOpsViewer (Доп. работы — сводка для мастера) ====================
-const AUX_CAT_LABELS = { maintenance: '🔧 Обслуживание', cleaning: '🧹 Уборка', logistics: '📦 Логистика', setup: '⚙ Наладка', other: '📝 Прочее' };
+// AUX_CAT_LABELS определён в core.js
 
 const AuxOpsViewer = memo(({ data, onUpdate, addToast }) => {
   const [period, setPeriod] = useState(7);
@@ -31,8 +31,21 @@ const AuxOpsViewer = memo(({ data, onUpdate, addToast }) => {
         doneCount++;
       }
     });
-    return { total: auxOps.length, byCat, byWorker, totalHours: Math.round(totalMs / 3600000 * 10) / 10, doneCount };
-  }, [auxOps, data.workers]);
+    // % от общего рабочего времени за тот же период
+    const allDoneMs = data.ops.filter(o => o.status === 'done' && o.startedAt && o.finishedAt &&
+      (o.finishedAt >= periodStart)).reduce((s, o) => s + (o.finishedAt - o.startedAt), 0);
+    const pctOfTotal = allDoneMs > 0 ? Math.round(totalMs / allDoneMs * 1000) / 10 : 0;
+    // Среднее время на задачу по категориям
+    const avgByCat = {};
+    Object.keys(byCat).forEach(cat => {
+      const catOps = auxOps.filter(o => (o.auxCategory || 'other') === cat && o.status === 'done' && o.startedAt && o.finishedAt);
+      if (catOps.length > 0) {
+        const catMs = catOps.reduce((s, o) => s + (o.finishedAt - o.startedAt), 0);
+        avgByCat[cat] = Math.round(catMs / catOps.length / 60000);
+      }
+    });
+    return { total: auxOps.length, byCat, byWorker, totalHours: Math.round(totalMs / 3600000 * 10) / 10, doneCount, pctOfTotal, avgByCat };
+  }, [auxOps, data.workers, data.ops, periodStart]);
 
   // Тренд по месяцам из auxStats (агрегированные данные)
   const trend = useMemo(() => {
@@ -104,6 +117,7 @@ const AuxOpsViewer = memo(({ data, onUpdate, addToast }) => {
       h(MC, { v: stats.total, l: 'Записей' }),
       h(MC, { v: stats.doneCount, l: 'Выполнено', c: GN }),
       h(MC, { v: `${stats.totalHours}ч`, l: 'Трудозатраты', c: AM }),
+      h(MC, { v: `${stats.pctOfTotal}%`, l: '% от общего', c: stats.pctOfTotal > 20 ? RD : stats.pctOfTotal > 10 ? AM : GN }),
       h(MC, { v: Object.keys(stats.byWorker).length, l: 'Сотрудников' })
     ),
     // Тренд по месяцам (из auxStats)
@@ -132,7 +146,10 @@ const AuxOpsViewer = memo(({ data, onUpdate, addToast }) => {
       Object.entries(stats.byCat).sort((a, b) => b[1] - a[1]).map(([cat, cnt]) =>
         h('div', { key: cat, style: { display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', fontSize: 13 } },
           h('span', null, AUX_CAT_LABELS[cat] || cat),
-          h('span', { style: { fontWeight: 500, color: AM } }, cnt)
+          h('div', { style: { display: 'flex', gap: 12, alignItems: 'center' } },
+            stats.avgByCat[cat] && h('span', { style: { fontSize: 11, color: '#888' } }, '~' + stats.avgByCat[cat] + ' мин'),
+            h('span', { style: { fontWeight: 500, color: AM } }, cnt)
+          )
         )
       )
     ),
