@@ -156,6 +156,18 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
       ),
       h('input', { type: 'search', placeholder: '🔎 поиск', value: searchQuery, onChange: e => setSearchQuery(e.target.value),
         style: { ...S.inp, flex: '1 1 140px', maxWidth: 200, fontSize: 12, padding: '6px 10px' } }),
+      canModerate && h('button', {
+        title: 'Очистить системные сообщения',
+        style: gbtn({ fontSize: 11, padding: '4px 10px' }),
+        onClick: async () => {
+          const systemMsgs = (data.messages || []).filter(m => m.senderId === 'system');
+          if (systemMsgs.length === 0) { addToast('Нет системных сообщений', 'info'); return; }
+          if (!confirm(`Удалить ${systemMsgs.length} системных сообщений (достижения, благодарности)?`)) return;
+          const d = { ...data, messages: (data.messages || []).filter(m => m.senderId !== 'system') };
+          await DB.save(d); onUpdate(d);
+          addToast(`Удалено ${systemMsgs.length} системных сообщений`, 'success');
+        }
+      }, '🧹 Системные'),
       onBack && h('button', { style: gbtn({ fontSize: 11, padding: '4px 12px' }), onClick: onBack }, '← Назад')
     ),
 
@@ -182,10 +194,11 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
             m.senderRole === 'master' && h('span', { style: { fontSize: 9, padding: '1px 4px', background: AM3, color: AM2, borderRadius: 4 } }, 'мастер'),
             m.orderNumber && h('span', { style: { fontSize: 9, color: AM } }, `📋 ${m.orderNumber}`),
             m.opName && h('span', { style: { fontSize: 9, color: '#666' } }, `→ ${m.opName}`),
-            (canModerate || m.senderId === myId) && m.senderId !== 'system' &&
+            (canModerate || (m.senderId === myId && m.senderId !== 'system')) &&
               h('button', { title: 'Удалить сообщение', style: { background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 12, padding: '0 2px', lineHeight: 1, marginLeft: 2 }, onClick: async () => {
                 if (canModerate && m.senderId !== myId) {
-                  if (!confirm(`Удалить сообщение от ${m.senderName}?`)) return;
+                  const who = m.senderId === 'system' ? 'системное сообщение' : `от ${m.senderName}`;
+                  if (!confirm(`Удалить ${who}?`)) return;
                 }
                 deleteMessage(m.id);
               } }, '×')
