@@ -336,7 +336,7 @@ const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) =
 
 const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [form, setForm] = useState({ number: '', product: '',
- qty: '', deadline: '', priority: 'medium', bomId: '' });
+ qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' });
   const { ask: askConfirm, confirmEl } = useConfirm();
   const [editingId, setEditingId] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -345,6 +345,8 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [fieldErrors, setFieldErrors] = useState({});
   const [depEditorOrderId, setDepEditorOrderId] = useState(null);
   const [printOrderId, setPrintOrderId] = useState(null);
+  const [filterType, setFilterType] = useState('');
+  const productTypes = data.settings?.productTypes || [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }];
 
   const validate = () => {
     const errors = {};
@@ -368,7 +370,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     if (editingId) {
       const updatedOrders = data.orders.map(o => o.id === editingId ? { ...o, ...form, qty: Number(form.qty), priority: form.priority } : o);
       const d = { ...data, orders: updatedOrders };
-      await DB.save(d); onUpdate(d); setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '' }); setFieldErrors({}); addToast('Заказ обновлён', 'success');
+      await DB.save(d); onUpdate(d); setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({}); addToast('Заказ обновлён', 'success');
     } else {
       const newOrder = { id: uid(), ...form, qty: Number(form.qty), createdAt: now(), archived: false };
       const newOps = createDefaultOps(newOrder.id);
@@ -389,14 +391,14 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
           }));
           if (reservations.length > 0) {
             const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps], materialReservations: [...(data.materialReservations || []), ...reservations] };
-            await DB.save(d); onUpdate(d); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '' }); setFieldErrors({}); addToast('Заказ создан, материалы зарезервированы', 'success');
+            await DB.save(d); onUpdate(d); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({}); addToast('Заказ создан, материалы зарезервированы', 'success');
             if (newOps.length > 0) setPrintOrderId(newOrder.id);
             return;
           }
         }
       }
       const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps] };
-      await DB.save(d); onUpdate(d); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '' }); setFieldErrors({}); addToast('Заказ создан', 'success');
+      await DB.save(d); onUpdate(d); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({}); addToast('Заказ создан', 'success');
       if (newOps.length > 0) setPrintOrderId(newOrder.id);
     }
   }, [form, editingId, data, createDefaultOps, onUpdate, addToast]);
@@ -414,9 +416,9 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     await DB.save(d); onUpdate(d); addToast('Заказ восстановлен', 'success');
   }, [data, onUpdate, addToast]);
 
-  const edit = useCallback(ord => { setForm({ number: ord.number, product: ord.product, qty: String(ord.qty), deadline: ord.deadline || '', priority: ord.priority || 'medium', bomId: '' }); setEditingId(ord.id); }, []);
+  const edit = useCallback(ord => { setForm({ number: ord.number, product: ord.product, qty: String(ord.qty), deadline: ord.deadline || '', priority: ord.priority || 'medium', bomId: '', productType: ord.productType || '' }); setEditingId(ord.id); }, []);
 
-  const ordersToShow = useMemo(() => data.orders.filter(o => showArchived ? true : !o.archived).sort((a,b) => { const priorityOrder = { critical:0, high:1, medium:2, low:3 }; return (priorityOrder[a.priority]||4) - (priorityOrder[b.priority]||4) || (b.createdAt||0) - (a.createdAt||0); }), [data.orders, showArchived]);
+  const ordersToShow = useMemo(() => data.orders.filter(o => (showArchived ? true : !o.archived) && (!filterType || o.productType === filterType)).sort((a,b) => { const priorityOrder = { critical:0, high:1, medium:2, low:3 }; return (priorityOrder[a.priority]||4) - (priorityOrder[b.priority]||4) || (b.createdAt||0) - (a.createdAt||0); }), [data.orders, showArchived, filterType]);
   const paginated = useMemo(() => { const start = (page-1)*pageSize; return ordersToShow.slice(start, start+pageSize); }, [ordersToShow, page]);
   useEffect(() => { setPage(1); }, [showArchived]);
 
@@ -456,9 +458,10 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
         h('div', { style: { minWidth: 70 } }, h('input', { type: 'number', style: { ...S.inp, width: '100%' }, placeholder: 'Кол-во', value: form.qty, onChange: e => setForm(p => ({ ...p, qty: e.target.value })) }), fieldErrors.qty && h('div', { className: 'error-message' }, fieldErrors.qty)),
         h('div', { style: { minWidth: 140 } }, h('input', { type: 'date', style: { ...S.inp, width: '100%' }, value: form.deadline, onChange: e => setForm(p => ({ ...p, deadline: e.target.value })) }), fieldErrors.deadline && h('div', { className: 'error-message' }, fieldErrors.deadline)),
         h('div', { style: { minWidth: 120 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.priority, onChange: e => setForm(p => ({ ...p, priority: e.target.value })) }, h('option', { value: 'low' }, 'Низкий'), h('option', { value: 'medium' }, 'Средний'), h('option', { value: 'high' }, 'Высокий'), h('option', { value: 'critical' }, 'Критический'))),
+        h('div', { style: { minWidth: 100 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.productType, onChange: e => setForm(p => ({ ...p, productType: e.target.value })) }, h('option', { value: '' }, 'Тип'), productTypes.map(pt => h('option', { key: pt.id, value: pt.id }, pt.label)))),
         h('div', { style: { minWidth: 140 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.bomId, onChange: e => setForm(p => ({ ...p, bomId: e.target.value })) }, h('option', { value: '' }, '— без BOM —'), data.bomTemplates.map(b => h('option', { key: b.id, value: b.id }, b.productName)))),
         h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, editingId ? '✓' : '+'),
-        editingId && h('button', { type: 'button', style: gbtn(), onClick: () => { setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '' }); setFieldErrors({}); } }, 'Отмена')
+        editingId && h('button', { type: 'button', style: gbtn(), onClick: () => { setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({}); } }, 'Отмена')
       ),
       // Проверка остатков при выборе BOM
       form.bomId && form.qty && (() => {
@@ -478,15 +481,19 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
         );
       })()
     ),
-    h('div', { style: { display: 'flex', justifyContent: 'flex-end', marginBottom: 12 } },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 8, flexWrap: 'wrap' } },
+      h('div', { style: { display: 'flex', gap: 4 } },
+        h('button', { style: !filterType ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setFilterType('') }, 'Все'),
+        productTypes.map(pt => h('button', { key: pt.id, style: filterType === pt.id ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setFilterType(pt.id) }, pt.label))
+      ),
       h('label', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 } },
-        h('input', { type: 'checkbox', checked: showArchived, onChange: e => setShowArchived(e.target.checked) }), 'Показать архивные'
+        h('input', { type: 'checkbox', checked: showArchived, onChange: e => setShowArchived(e.target.checked) }), 'Архивные'
       )
     ),
     paginated.length === 0
       ? h('div', { style: { ...S.card, textAlign: 'center' } }, 'Заказов нет')
       : h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null, ['Номер','Изделие','Кол-во','Дата отгрузки','Приоритет','Операций','Материалы','Статус',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
+          h('thead', null, h('tr', null, ['Номер','Изделие','Тип','Кол-во','Дата отгрузки','Приоритет','Операций','Материалы','Статус',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
           h('tbody', null, paginated.map(ord => {
             const ops = data.ops.filter(o => o.orderId === ord.id);
             const done = ops.filter(o => o.status === 'done').length;
@@ -503,6 +510,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
                 nearDeadline && h('span', { style: { marginLeft: 6, color: RD } }, '⏳')
               ),
               h('td', { style: S.td }, ord.product),
+              h('td', { style: { ...S.td, fontSize: 11 } }, (productTypes.find(pt => pt.id === ord.productType)?.label) || '—'),
               h('td', { style: S.td }, ord.qty),
               h('td', { style: { ...S.td, color: nearDeadline ? RD : '#888' } }, ord.deadline || '—'),
               h('td', { style: { ...S.td, color: PRIORITY[ord.priority]?.color || '#888' } }, PRIORITY[ord.priority]?.label || '—'),
