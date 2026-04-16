@@ -1237,6 +1237,68 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         h('span', { style: { fontSize:11, color:'#888' } }, 'Скачать все данные в JSON — для безопасности')
       )
     ),
+    (() => {
+      const sizeBytes = JSON.stringify(data).length;
+      const sizeKb = Math.round(sizeBytes / 1024);
+      const limitKb = 1024;
+      const pct = Math.round(sizeBytes / (limitKb * 1024) * 100);
+      const pctColor = pct < 50 ? GN : pct < 80 ? AM : RD;
+      const counts = {
+        'Заказы': (data.orders || []).length,
+        'Операции': (data.ops || []).length,
+        'События': (data.events || []).length,
+        'Материалы': (data.materials || []).length,
+        'Рекламации': (data.reclamations || []).length,
+        'Сообщения': (data.messages || []).length,
+        'Сотрудники': (data.workers || []).length,
+      };
+      const cleanOldEvents = async () => {
+        if (!(await askConfirm({ message: 'Удалить события старше 90 дней?', detail: 'Это действие нельзя отменить', danger: true }))) return;
+        const cutoff = Date.now() - 90 * 86400000;
+        const kept = (data.events || []).filter(e => (e.ts || 0) >= cutoff);
+        const removed = (data.events || []).length - kept.length;
+        if (removed === 0) { addToast('Нечего удалять', 'info'); return; }
+        const d = { ...data, events: kept };
+        await DB.save(d); onUpdate(d);
+        addToast(`Удалено ${removed} событий`, 'success');
+      };
+      const cleanArchived = async () => {
+        const archived = (data.orders || []).filter(o => o.archived);
+        if (archived.length === 0) { addToast('Нет архивных заказов', 'info'); return; }
+        if (!(await askConfirm({ message: `Удалить ${archived.length} архивных заказов?`, detail: 'Вместе с операциями этих заказов. Нельзя отменить', danger: true }))) return;
+        const archivedIds = new Set(archived.map(o => o.id));
+        const d = { ...data,
+          orders: (data.orders || []).filter(o => !o.archived),
+          ops: (data.ops || []).filter(o => !archivedIds.has(o.orderId))
+        };
+        await DB.save(d); onUpdate(d);
+        addToast(`Удалено ${archived.length} заказов`, 'success');
+      };
+      return h('div', { style: S.card },
+        h('div', { style: S.sec }, 'Служебное · диагностика данных'),
+        h('div', { style: { marginBottom: 12 } },
+          h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:4 } },
+            h('span', { style: { fontSize: 12, color: '#666' } }, `Занято: ${sizeKb} КБ из ${limitKb} КБ`),
+            h('span', { style: { fontSize: 14, fontWeight: 500, color: pctColor } }, `${pct}%`)
+          ),
+          h('div', { style: { height: 8, background: '#eee', borderRadius: 4, overflow:'hidden' } },
+            h('div', { style: { height: '100%', width: `${Math.min(pct, 100)}%`, background: pctColor, transition: 'width 0.3s' } })
+          )
+        ),
+        h('div', { style: { display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(110px, 1fr))', gap:8, marginBottom:12 } },
+          Object.entries(counts).map(([k, v]) =>
+            h('div', { key: k, style: { background: '#f8f8f5', borderRadius: 6, padding: '6px 10px' } },
+              h('div', { style: { fontSize: 10, color: '#888' } }, k),
+              h('div', { style: { fontSize: 16, fontWeight: 500 } }, v)
+            )
+          )
+        ),
+        h('div', { style: { display:'flex', gap:8, flexWrap:'wrap' } },
+          h('button', { style: gbtn({ fontSize: 12 }), onClick: cleanOldEvents }, '🧹 Очистить события > 90 дней'),
+          h('button', { style: gbtn({ fontSize: 12 }), onClick: cleanArchived }, '🗑 Удалить архивные заказы')
+        )
+      );
+    })(),
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Функции производства'),
       h('label', { style: { display:'flex', alignItems:'center', gap: 12, cursor:'pointer', padding: '8px 0' } },
