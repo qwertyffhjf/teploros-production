@@ -713,6 +713,38 @@ const BackupButton = memo(({ data, style }) => {
   }, '💾 Резервная копия');
 });
 
+// ==================== RestoreButton (восстановление из JSON) ====================
+const RestoreButton = memo(({ onRestore, style }) => {
+  const inputRef = useRef(null);
+  const handleFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target.result);
+        if (!parsed || typeof parsed !== 'object') throw new Error('Неверный формат файла');
+        // Базовая валидация структуры
+        const required = ['orders', 'ops', 'workers'];
+        const missing = required.filter(k => !Array.isArray(parsed[k]));
+        if (missing.length > 0) throw new Error('В файле нет обязательных полей: ' + missing.join(', '));
+        onRestore(parsed, file.name);
+      } catch(err) {
+        alert('Ошибка загрузки: ' + err.message);
+      }
+      e.target.value = ''; // сбросить input чтобы можно было загрузить тот же файл снова
+    };
+    reader.readAsText(file);
+  };
+  return h('div', { style: { display: 'inline-block' } },
+    h('input', { ref: inputRef, type: 'file', accept: '.json,application/json', onChange: handleFile, style: { display: 'none' } }),
+    h('button', { type: 'button', onClick: () => inputRef.current?.click(),
+      style: { background: 'transparent', border: '0.5px solid rgba(0,0,0,0.15)', borderRadius: 8,
+        padding: '8px 14px', fontSize: 13, cursor: 'pointer', color: '#555', ...style }
+    }, '📥 Загрузить из файла')
+  );
+});
+
 // ==================== OfflineIndicator (баннер связи) ====================
 const OfflineIndicator = memo(() => {
   const [offline, setOffline] = useState(false);
