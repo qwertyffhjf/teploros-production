@@ -126,7 +126,10 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
   const myDuels = useMemo(() => activeDuels.filter(d => d.challengerId === myId || d.opponentId === myId), [activeDuels, myId]);
 
   const messages = useMemo(() => (data.messages || []).slice().sort((a, b) => a.timestamp - b.timestamp), [data.messages]);
-  const pinnedMessages = useMemo(() => messages.filter(m => m.pinned), [messages]);
+  const pinnedMessages = useMemo(() => {
+    const msgIds = new Set(messages.map(m => m.id));
+    return messages.filter(m => m.pinned && msgIds.has(m.id));
+  }, [messages]);
   const regularMessages = useMemo(() => {
     const base = messages.filter(m => !m.pinned);
     if (!searchQuery.trim()) return base;
@@ -174,9 +177,17 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
     // Закреплённые объявления
     pinnedMessages.length > 0 && h('div', { style: { marginBottom: 8 } },
       pinnedMessages.slice(-3).map(m => h('div', { key: m.id, style: { padding: '8px 12px', background: AM3, borderLeft: `3px solid ${AM}`, borderRadius: '0 8px 8px 0', marginBottom: 4, fontSize: 12 } },
-        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-          h('div', null, h('span', { style: { fontWeight: 500, color: AM2 } }, '📌 '), m.text),
-          h('div', { style: { fontSize: 9, color: AM4, whiteSpace: 'nowrap', marginLeft: 8 } }, new Date(m.timestamp).toLocaleDateString())
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 } },
+          h('div', { style: { flex: 1 } }, h('span', { style: { fontWeight: 500, color: AM2 } }, '📌 '), m.text),
+          h('div', { style: { display: 'flex', gap: 4, alignItems: 'center' } },
+            h('span', { style: { fontSize: 9, color: AM4, whiteSpace: 'nowrap' } }, new Date(m.timestamp).toLocaleDateString()),
+            canModerate && h('button', { title: 'Открепить', style: { background: 'none', border: 'none', cursor: 'pointer', color: AM4, fontSize: 11, padding: '0 2px' },
+              onClick: async () => {
+                const d = { ...data, messages: data.messages.map(msg => msg.id === m.id ? { ...msg, pinned: false } : msg) };
+                await DB.save(d); onUpdate(d);
+              }
+            }, '✕')
+          )
         )
       ))
     ),
@@ -304,7 +315,27 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
     })(),
 
     // Панель ввода
-    h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
+    (() => {
+      // Подсказки @упоминаний
+      const mentionMatch = newMessage.match(/@([a-zA-Zа-яА-ЯёЁ]*)$/);
+      const mentionQuery = mentionMatch ? mentionMatch[1].toLowerCase() : '';
+      const mentionSuggestions = mentionMatch ? data.workers.filter(w => !w.archived && w.name.toLowerCase().includes(mentionQuery)).slice(0, 5) : [];
+
+      return h('div', { style: { position: 'relative' } },
+        // Выпадающий список @
+        mentionSuggestions.length > 0 && h('div', { style: { position: 'absolute', bottom: '100%', left: 0, right: 0, background: '#fff', border: '0.5px solid rgba(0,0,0,0.15)', borderRadius: 8, boxShadow: '0 -4px 12px rgba(0,0,0,0.1)', marginBottom: 4, overflow: 'hidden', zIndex: 10 } },
+          mentionSuggestions.map(w => h('div', { key: w.id, style: { padding: '8px 12px', cursor: 'pointer', fontSize: 13, borderBottom: '0.5px solid rgba(0,0,0,0.05)' },
+            onMouseDown: (e) => {
+              e.preventDefault();
+              const firstName = w.name.split(' ')[0];
+              setNewMessage(prev => prev.replace(/@[a-zA-Zа-яА-ЯёЁ]*$/, '@' + firstName + ' '));
+            }
+          },
+            h('span', { style: { fontWeight: 500 } }, w.name),
+            w.position && h('span', { style: { fontSize: 11, color: '#888', marginLeft: 8 } }, w.position)
+          ))
+        ),
+        h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
       // Кнопки инструментов
       h('div', { style: { display: 'flex', gap: 4 } },
         h('button', { type: 'button', title: 'Быстрые действия', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: showQuickActions ? AM3 : 'transparent' }, onClick: () => { setShowQuickActions(v => !v); setShowThanks(false); } }, '⚡'),
@@ -314,9 +345,13 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
         activeOp && h('button', { type: 'button', title: 'Привязать к текущей операции', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: contextOp ? AM3 : 'transparent' }, onClick: () => setContextOp(contextOp ? '' : activeOp.id) }, '📋'),
         isMaster && h('button', { type: 'button', title: 'Закрепить как объявление', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: isAnnouncement ? AM3 : 'transparent' }, onClick: () => setIsAnnouncement(v => !v) }, '📌')
       ),
-      h('input', { style: { ...S.inp, flex: 1, minWidth: 120 }, placeholder: isAnnouncement ? 'Объявление для всех...' : 'Сообщение (@имя для упоминания)...', value: newMessage, onChange: e => setNewMessage(e.target.value), onKeyDown: e => e.key === 'Enter' && !e.shiftKey && sendMessage(newMessage) }),
+      h('input', { style: { ...S.inp, flex: 1, minWidth: 120 }, placeholder: isAnnouncement ? 'Объявление для всех...' : 'Сообщение (@имя для упоминания)...', value: newMessage, onChange: e => setNewMessage(e.target.value), onKeyDown: e => {
+        if (e.key === 'Enter' && !e.shiftKey) sendMessage(newMessage);
+      } }),
       h('button', { style: abtn({ padding: '10px 16px' }), onClick: () => sendMessage(newMessage) }, '→')
-    ),
+        )
+      );
+    })(),
 
     // Каталог сотрудников
     showPeople && h('div', { style: { ...S.card, marginTop: 8, padding: 10, maxHeight: 300, overflowY: 'auto' } },
