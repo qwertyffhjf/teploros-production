@@ -1232,11 +1232,49 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
     ),
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Резервное копирование'),
-      h('div', { style: { display:'flex', gap:12, alignItems:'center', marginBottom:8 } },
+      h('div', { style: { display:'flex', gap:12, alignItems:'center', flexWrap:'wrap', marginBottom:8 } },
         h(BackupButton, { data }),
-        h('span', { style: { fontSize:11, color:'#888' } }, 'Скачать все данные в JSON — для безопасности')
-      )
+        h(RestoreButton, { onRestore: async (parsed, fileName) => {
+          // Мастер-ключ для восстановления
+          const masterKey = prompt('Введите мастер-ключ для восстановления данных:');
+          if (!masterKey) return;
+          if (!pinMatch(masterKey, data.settings?.masterKey)) {
+            addToast('Неверный мастер-ключ', 'error');
+            return;
+          }
+          const counts = `${parsed.orders?.length || 0} заказов · ${parsed.ops?.length || 0} операций · ${parsed.workers?.length || 0} сотрудников`;
+          if (!(await askConfirm({ message: `Восстановить данные из "${fileName}"?`, detail: counts + '. Текущие данные будут заменены. Отменить нельзя.', danger: true }))) return;
+          const withLog = logAction(parsed, 'data_restore', { fileName, counts });
+          await DB.save(withLog); onUpdate(withLog);
+          addToast('Данные восстановлены из резервной копии', 'success');
+        }})
+      ),
+      h('div', { style: { fontSize:11, color:'#888' } }, 'Сохраните резервную копию перед чисткой или восстановлением. Восстановление требует мастер-ключ.')
     ),
+    (() => {
+      // Журнал действий админа — последние 20 записей
+      const adminActions = (data.events || [])
+        .filter(e => e.type === 'action' && ['data_restore', 'worker_archive', 'order_archive', 'cleanup_events', 'cleanup_archived'].includes(e.action))
+        .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+        .slice(0, 20);
+      if (adminActions.length === 0) return null;
+      const labels = {
+        data_restore: '📥 Восстановление из копии',
+        worker_archive: '👤 Архивация сотрудника',
+        order_archive: '📦 Архивация заказа',
+        cleanup_events: '🧹 Очистка событий',
+        cleanup_archived: '🗑 Удаление архива'
+      };
+      return h('div', { style: S.card },
+        h('div', { style: S.sec }, `Журнал действий админа · последние ${adminActions.length}`),
+        h('div', { style: { maxHeight: 240, overflowY: 'auto' } },
+          adminActions.map(e => h('div', { key: e.id, style: { fontSize: 11, padding: '5px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', display: 'flex', justifyContent: 'space-between', gap: 12 } },
+            h('span', null, labels[e.action] || e.action, e.details?.counts ? ` · ${e.details.counts}` : e.details?.fileName ? ` · ${e.details.fileName}` : ''),
+            h('span', { style: { color: '#888', whiteSpace: 'nowrap' } }, new Date(e.ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }))
+          ))
+        )
+      );
+    })(),
     (() => {
       const sizeBytes = JSON.stringify(data).length;
       const sizeKb = Math.round(sizeBytes / 1024);
@@ -1258,7 +1296,8 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         const kept = (data.events || []).filter(e => (e.ts || 0) >= cutoff);
         const removed = (data.events || []).length - kept.length;
         if (removed === 0) { addToast('Нечего удалять', 'info'); return; }
-        const d = { ...data, events: kept };
+        let d = { ...data, events: kept };
+        d = logAction(d, 'cleanup_events', { counts: `${removed} событий` });
         await DB.save(d); onUpdate(d);
         addToast(`Удалено ${removed} событий`, 'success');
       };
@@ -1267,10 +1306,11 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         if (archived.length === 0) { addToast('Нет архивных заказов', 'info'); return; }
         if (!(await askConfirm({ message: `Удалить ${archived.length} архивных заказов?`, detail: 'Вместе с операциями этих заказов. Нельзя отменить', danger: true }))) return;
         const archivedIds = new Set(archived.map(o => o.id));
-        const d = { ...data,
+        let d = { ...data,
           orders: (data.orders || []).filter(o => !o.archived),
           ops: (data.ops || []).filter(o => !archivedIds.has(o.orderId))
         };
+        d = logAction(d, 'cleanup_archived', { counts: `${archived.length} заказов` });
         await DB.save(d); onUpdate(d);
         addToast(`Удалено ${archived.length} заказов`, 'success');
       };
