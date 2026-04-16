@@ -1231,6 +1231,13 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
       h('div', { style: { fontSize:11, color:'#888' } }, 'По умолчанию: 50 × 35. Применяется при печати QR-этикеток.')
     ),
     h('div', { style: S.card },
+      h('div', { style: S.sec }, 'Резервное копирование'),
+      h('div', { style: { display:'flex', gap:12, alignItems:'center', marginBottom:8 } },
+        h(BackupButton, { data }),
+        h('span', { style: { fontSize:11, color:'#888' } }, 'Скачать все данные в JSON — для безопасности')
+      )
+    ),
+    h('div', { style: S.card },
       h('div', { style: S.sec }, 'Функции производства'),
       h('label', { style: { display:'flex', alignItems:'center', gap: 12, cursor:'pointer', padding: '8px 0' } },
         h('input', { type:'checkbox',
