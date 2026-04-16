@@ -1,3 +1,4 @@
+// teploros · app.js
 // Автоматически извлечено из монолита
 
 // ==================== Таблица лидеров ====================
@@ -1154,7 +1155,6 @@ function App() {
   );
 
   return h('div', null,
-    h(OfflineIndicator, null),
     h('div', { style: { display:'flex', gap:12, padding:'10px 0', borderBottom:'0.5px solid rgba(0,0,0,0.08)', alignItems:'center', flexWrap:'wrap' } },
       h('button', { style: gbtn({ fontSize:11 }), onClick: goBack }, '← Выход'),
       h('div', { style: { fontSize:12, color:'#888' } },
