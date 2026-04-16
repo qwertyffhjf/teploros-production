@@ -294,7 +294,8 @@ const EMPTY_DATA = {
     welcomeTitle: 'teploros', welcomeSubtitle: 'надежная техника',
     welcomeLabel: 'Производственный учёт · НТ',
     labelWidth: 50,    // ширина этикетки мм
-    labelHeight: 35    // высота этикетки мм
+    labelHeight: 35,    // высота этикетки мм
+    productTypes: [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }]
   }
 };
 
