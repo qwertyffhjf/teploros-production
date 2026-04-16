@@ -13,6 +13,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
   const [isAnnouncement, setIsAnnouncement] = useState(false);
   const [viewProfileId, setViewProfileId] = useState(null);
   const [showPeople, setShowPeople] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const messagesEndRef = useRef(null);
 
   const deleteMessage = useCallback(async (msgId) => {
@@ -23,13 +24,16 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
   const scrollToBottom = () => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); };
   useEffect(scrollToBottom, [data.messages]);
 
-  // П.4: Счётчик непрочитанных
+  // Непрочитанные: считаем входящие (не мои) после последнего просмотра
   const lastReadKey = `chat_lastRead_${currentUser.id || 'anon'}`;
+  const lastReadTs = parseInt(localStorage.getItem(lastReadKey) || '0');
   useEffect(() => { localStorage.setItem(lastReadKey, String(now())); }, [data.messages?.length, lastReadKey]);
 
   const myId = currentUser.id || 'system';
   const isMaster = currentUser.role === 'master';
   const isWarehouse = currentUser.role === 'warehouse';
+  // Модерация: мастер, завсклад, админ, руководитель, начальник цеха
+  const canModerate = ['master', 'warehouse', 'admin', 'director', 'pdo'].includes(currentUser.role);
 
   // Текущая операция рабочего (для контекста)
   const activeOp = useMemo(() => {
@@ -41,6 +45,14 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
     if (!text?.trim()) return;
     const opData = contextOp ? data.ops.find(o => o.id === contextOp) : activeOp;
     const orderData = opData ? data.orders.find(o => o.id === opData.orderId) : null;
+    // Парсим @упоминания: ищем по имени (первое слово или полное имя)
+    const mentionedIds = [];
+    const mentionMatches = text.match(/@([a-zA-Zа-яА-ЯёЁ]+(?:\s[a-zA-Zа-яА-ЯёЁ]+)?)/g) || [];
+    mentionMatches.forEach(m => {
+      const name = m.slice(1).trim().toLowerCase();
+      const worker = data.workers.find(w => !w.archived && (w.name.toLowerCase() === name || w.name.toLowerCase().split(' ')[0] === name));
+      if (worker && !mentionedIds.includes(worker.id)) mentionedIds.push(worker.id);
+    });
     const message = {
       id: uid(), senderId: myId,
       senderName: currentUser.name || 'Система',
@@ -51,6 +63,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
       opId: opData?.id || undefined,
       opName: opData?.name || undefined,
       orderNumber: orderData?.number || undefined,
+      mentions: mentionedIds.length > 0 ? mentionedIds : undefined,
       ...extra
     };
     const updatedMessages = [...(data.messages || []), message].slice(-200);
@@ -62,6 +75,11 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
       const notif = { id: uid(), type: 'chat_alert', alertType: type, senderId: myId, senderName: currentUser.name, text: text.trim(), opName: opData?.name, orderNumber: orderData?.number, targets: notifTargets, ts: now(), read: false };
       updated = { ...updated, events: [...updated.events, notif] };
     }
+    // Уведомления для упомянутых @
+    mentionedIds.forEach(wid => {
+      const mentionNotif = { id: uid(), type: 'chat_mention', senderId: myId, senderName: currentUser.name, text: text.trim(), targetWorkerId: wid, ts: now(), read: false };
+      updated = { ...updated, events: [...updated.events, mentionNotif] };
+    });
     await DB.save(updated); onUpdate(updated);
     setNewMessage(''); setContextOp(''); setIsAnnouncement(false); setShowQuickActions(false);
   }, [data, myId, currentUser, contextOp, activeOp, isAnnouncement, isMaster, isWarehouse, onUpdate]);
@@ -109,7 +127,13 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
 
   const messages = useMemo(() => (data.messages || []).slice().sort((a, b) => a.timestamp - b.timestamp), [data.messages]);
   const pinnedMessages = useMemo(() => messages.filter(m => m.pinned), [messages]);
-  const regularMessages = useMemo(() => messages.filter(m => !m.pinned), [messages]);
+  const regularMessages = useMemo(() => {
+    const base = messages.filter(m => !m.pinned);
+    if (!searchQuery.trim()) return base;
+    const q = searchQuery.toLowerCase();
+    return base.filter(m => (m.text || '').toLowerCase().includes(q) || (m.senderName || '').toLowerCase().includes(q));
+  }, [messages, searchQuery]);
+  const unreadCount = useMemo(() => messages.filter(m => m.senderId !== myId && m.timestamp > lastReadTs).length, [messages, myId, lastReadTs]);
 
   // Стили сообщений по типу
   const typeStyles = {
@@ -125,8 +149,13 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
 
   return h('div', { style: { ...S.card, height: '100%', minHeight: 500, display: 'flex', flexDirection: 'column', padding: 12 } },
     // Шапка с кнопкой назад
-    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 } },
-      h('div', { style: S.sec }, '💬 Чат производства'),
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 8, flexWrap: 'wrap' } },
+      h('div', { style: { ...S.sec, display: 'flex', alignItems: 'center', gap: 6 } },
+        '💬 Чат производства',
+        unreadCount > 0 && h('span', { style: { background: RD, color: '#fff', borderRadius: 10, padding: '1px 7px', fontSize: 10, fontWeight: 500 } }, unreadCount)
+      ),
+      h('input', { type: 'search', placeholder: '🔎 поиск', value: searchQuery, onChange: e => setSearchQuery(e.target.value),
+        style: { ...S.inp, flex: '1 1 140px', maxWidth: 200, fontSize: 12, padding: '6px 10px' } }),
       onBack && h('button', { style: gbtn({ fontSize: 11, padding: '4px 12px' }), onClick: onBack }, '← Назад')
     ),
 
@@ -146,22 +175,34 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
       regularMessages.map(m => {
         const ts = typeStyles[m.type];
         const isMe = m.senderId === myId;
-        return h('div', { key: m.id, style: { marginBottom: 10, display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start' } },
+        const isUnread = !isMe && m.timestamp > lastReadTs;
+        return h('div', { key: m.id, style: { marginBottom: 10, display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', paddingLeft: isUnread ? 8 : 0, borderLeft: isUnread ? `3px solid ${AM}` : 'none' } },
           h('div', { style: { fontSize: 10, color: '#888', marginBottom: 2, display: 'flex', gap: 6, alignItems: 'center' } },
             h('span', { style: { fontWeight: 500, cursor: m.senderId !== 'system' ? 'pointer' : 'default', color: m.senderId !== 'system' ? AM : '#888' }, onClick: () => { const w = data.workers.find(w => w.id === m.senderId); if (w) setViewProfileId(w.id); } }, m.senderName),
             m.senderRole === 'master' && h('span', { style: { fontSize: 9, padding: '1px 4px', background: AM3, color: AM2, borderRadius: 4 } }, 'мастер'),
             m.orderNumber && h('span', { style: { fontSize: 9, color: AM } }, `📋 ${m.orderNumber}`),
             m.opName && h('span', { style: { fontSize: 9, color: '#666' } }, `→ ${m.opName}`),
-            (isMaster || m.senderId === myId) && m.senderId !== 'system' &&
-              h('button', { title: 'Удалить сообщение', style: { background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 12, padding: '0 2px', lineHeight: 1, marginLeft: 2 }, onClick: () => deleteMessage(m.id) }, '×')
+            (canModerate || m.senderId === myId) && m.senderId !== 'system' &&
+              h('button', { title: 'Удалить сообщение', style: { background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 12, padding: '0 2px', lineHeight: 1, marginLeft: 2 }, onClick: async () => {
+                if (canModerate && m.senderId !== myId) {
+                  if (!confirm(`Удалить сообщение от ${m.senderName}?`)) return;
+                }
+                deleteMessage(m.id);
+              } }, '×')
           ),
           h('div', { style: {
             background: ts ? ts.bg : isMe ? AM3 : '#fff',
-            border: ts ? `1px solid ${ts.border}` : '0.5px solid rgba(0,0,0,0.1)',
+            border: ts ? `1px solid ${ts.border}` : (m.mentions?.includes(myId) ? `1.5px solid ${AM}` : '0.5px solid rgba(0,0,0,0.1)'),
             borderRadius: 12, padding: '8px 14px', maxWidth: '85%', fontSize: 13
           }},
             ts && h('span', { style: { marginRight: 6 } }, ts.icon),
-            m.text
+            m.mentions?.includes(myId) && h('span', { style: { background: AM, color: '#fff', fontSize: 9, padding: '1px 5px', borderRadius: 4, marginRight: 6, fontWeight: 500 } }, 'ВАМ'),
+            // Рендерим текст с подсветкой @упоминаний
+            m.text.split(/(@[a-zA-Zа-яА-ЯёЁ]+(?:\s[a-zA-Zа-яА-ЯёЁ]+)?)/g).map((part, i) =>
+              part.startsWith('@')
+                ? h('span', { key: i, style: { color: AM, fontWeight: 500 } }, part)
+                : part
+            )
           ),
           h('div', { style: { fontSize: 9, color: '#aaa', marginTop: 2 } }, new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
         );
@@ -260,7 +301,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
         activeOp && h('button', { type: 'button', title: 'Привязать к текущей операции', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: contextOp ? AM3 : 'transparent' }, onClick: () => setContextOp(contextOp ? '' : activeOp.id) }, '📋'),
         isMaster && h('button', { type: 'button', title: 'Закрепить как объявление', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: isAnnouncement ? AM3 : 'transparent' }, onClick: () => setIsAnnouncement(v => !v) }, '📌')
       ),
-      h('input', { style: { ...S.inp, flex: 1, minWidth: 120 }, placeholder: isAnnouncement ? 'Объявление для всех...' : 'Сообщение...', value: newMessage, onChange: e => setNewMessage(e.target.value), onKeyDown: e => e.key === 'Enter' && !e.shiftKey && sendMessage(newMessage) }),
+      h('input', { style: { ...S.inp, flex: 1, minWidth: 120 }, placeholder: isAnnouncement ? 'Объявление для всех...' : 'Сообщение (@имя для упоминания)...', value: newMessage, onChange: e => setNewMessage(e.target.value), onKeyDown: e => e.key === 'Enter' && !e.shiftKey && sendMessage(newMessage) }),
       h('button', { style: abtn({ padding: '10px 16px' }), onClick: () => sendMessage(newMessage) }, '→')
     ),
 
