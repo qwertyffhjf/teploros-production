@@ -1,4 +1,5 @@
-// teploros · app.js
+// Временная заглушка для OfflineIndicator
+const OfflineIndicator = () => null;// teploros · app.js
 // Автоматически извлечено из монолита
 
 // ==================== Таблица лидеров ====================
