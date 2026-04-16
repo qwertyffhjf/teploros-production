@@ -694,6 +694,44 @@ const vibrateAction = (type = 'start') => {
 };
 
 // П.10+15: Логирование действий (мастер + история операции)
+// ==================== BackupButton (резервная копия в JSON) ====================
+const BackupButton = memo(({ data, style }) => {
+  const exportJson = () => {
+    try {
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const ts = new Date().toISOString().slice(0, 16).replace(':', '-');
+      a.href = url; a.download = `teploros_backup_${ts}.json`;
+      document.body.appendChild(a); a.click();
+      setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 100);
+    } catch(e) { alert('Ошибка экспорта: ' + e.message); }
+  };
+  return h('button', { type: 'button', onClick: exportJson,
+    style: { background: 'transparent', border: '0.5px solid rgba(0,0,0,0.15)', borderRadius: 8,
+      padding: '8px 14px', fontSize: 13, cursor: 'pointer', color: '#555', ...style }
+  }, '💾 Резервная копия');
+});
+
+// ==================== OfflineIndicator (баннер связи) ====================
+const OfflineIndicator = memo(() => {
+  const [offline, setOffline] = useState(false);
+  useEffect(() => {
+    // Показываем баннер только если реально нет сети браузера
+    const update = () => setOffline(!navigator.onLine);
+    update();
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update); };
+  }, []);
+  if (!offline) return null;
+  return h('div', {
+    style: { position: 'fixed', top: 0, left: 0, right: 0, zIndex: 999,
+      background: RD, color: '#fff', textAlign: 'center',
+      padding: '6px 12px', fontSize: 12, fontWeight: 500 }
+  }, '⚡ Нет связи — изменения сохранятся при восстановлении');
+});
+
 // ==================== VoiceButton (голосовой ввод) ====================
 const VoiceButton = memo(({ onResult, style }) => {
   const [listening, setListening] = useState(false);
