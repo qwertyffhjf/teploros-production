@@ -449,7 +449,7 @@ const DB = {
           DB._saveResolve = null;
           if (!DB._online) {
             DB._enqueue(toSave);
-            resolve();
+            resolve({ ...toSave, _version: newVersion });
             setTimeout(() => { DB._saving = false; }, 500);
             return;
           }
@@ -503,7 +503,7 @@ const DB = {
             DB._online = false;
             DB._enqueue(toSave);
           }
-          resolve();
+          resolve({ ...toSave, _version: newVersion });
           setTimeout(() => { DB._saving = false; }, 500);
         }, 800); // Уменьшаем debounce: 800ms вместо 1000ms — быстрее сохраняет
       });
@@ -591,7 +591,11 @@ const migrateWorkerIds = (ops) => {
 const migrateData = (d) => {
   if (d.ops) d = { ...d, ops: migrateWorkerIds(d.ops) };
   if (!d.productionStages || d.productionStages.length === 0) {
-    d = { ...d, productionStages: OPERATION_STAGES.map(name => ({ id: uid(), name })) };
+    d = { ...d, productionStages: OPERATION_STAGES.map(name => ({ id: uid(), name, productType: 'boiler' })) };
+  }
+  // Миграция: пометить этапы без типа как 'boiler'
+  if (d.productionStages?.some(s => !s.productType)) {
+    d = { ...d, productionStages: d.productionStages.map(s => s.productType ? s : { ...s, productType: 'boiler' }) };
   }
   return d;
 };
