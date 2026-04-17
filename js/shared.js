@@ -421,8 +421,7 @@ const MasterOnboarding = memo(({ data, onDone }) => {
 // ==================== WorkerCardModal ====================
 const WorkerCardModal = memo(({ worker, data, onClose }) => {
   const [period, setPeriod] = useState(30);
-  const nowTime = useMemo(() => now(), []);
-  const startDate = nowTime - period * 86400000;
+  const startDate = useMemo(() => now() - period * 86400000, [period]);
   const opsDone = data.ops.filter(op => op.workerIds?.includes(worker.id) && op.status === 'done' && op.finishedAt >= startDate);
   const opsDefect = data.ops.filter(op => op.workerIds?.includes(worker.id) && op.status === 'defect' && op.finishedAt >= startDate);
   const opsInProgress = data.ops.filter(op => op.workerIds?.includes(worker.id) && op.status === 'in_progress');
