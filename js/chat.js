@@ -356,7 +356,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
     // Каталог сотрудников
     showPeople && h('div', { style: { ...S.card, marginTop: 8, padding: 10, maxHeight: 300, overflowY: 'auto' } },
       h('div', { style: S.sec }, 'Сотрудники производства'),
-      data.workers.filter(w => !w.archived).map(w => {
+      useMemo(() => data.workers.filter(w => !w.archived).map(w => {
         const s = calcWorkerStats(w.id, data, Date.now());
         const lvl = getWorkerLevel(s.doneCount);
         return h('div', { key: w.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', cursor: 'pointer' }, onClick: () => { setViewProfileId(w.id); setShowPeople(false); } },
@@ -373,7 +373,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
           ),
           w.id !== myId && h('button', { style: gbtn({ fontSize: 10, padding: '3px 8px' }), onClick: (e) => { e.stopPropagation(); sendThanks(w.id); setShowPeople(false); } }, '🤝')
         );
-      })
+      }), [data, myId, showPeople])
     ),
 
     // Просмотр профиля сотрудника
