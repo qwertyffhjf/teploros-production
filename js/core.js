@@ -91,31 +91,66 @@ const getLevelTitle = (level) => {
 
 const calcWorkerStats = (workerId, data, nowTime) => {
   const t = nowTime || Date.now();
-  const allOps = data.ops.filter(op => op.workerIds?.includes(workerId));
-  const doneOps = allOps.filter(op => op.status === 'done');
-  const defectOps = allOps.filter(op => op.status === 'defect');
-  const doneCount = doneOps.length;
-  const defectCount = defectOps.length;
-  const total = doneCount + defectCount;
-  const defectRate = total > 0 ? (defectCount / total * 100) : 0;
-  const weldCount = doneOps.filter(op => op.name && op.name.toLowerCase().includes('свар')).length;
-  const withPlan = doneOps.filter(op => op.plannedHours && op.startedAt && op.finishedAt);
-  const doneWithPlan = withPlan.length;
-  const avgRatio = doneWithPlan > 0 ? withPlan.reduce((s, op) => s + ((op.finishedAt - op.startedAt) / (op.plannedHours * 3600000)), 0) / doneWithPlan : 1;
   const d30 = t - 30 * 86400000;
   const d7 = t - 7 * 86400000;
-  const downtimes30d = data.events.filter(e => e.workerId === workerId && e.type === 'downtime' && e.ts >= d30).length;
-  const downtimes7d  = data.events.filter(e => e.workerId === workerId && e.type === 'downtime' && e.ts >= d7).length;
-  const doneCount7d  = doneOps.filter(op => op.finishedAt && op.finishedAt >= d7).length;
+  
+  // Один проход по ops
+  let doneCount = 0, defectCount = 0, weldCount = 0, doneWithPlan = 0, detectedDefects = 0, doneCount7d = 0, weekendOps = 0, fastOps = 0;
+  let sumRatio = 0;
+  const doneOps = [], defectOps = [], withPlan = [];
+  
+  for (const op of data.ops) {
+    if (!op.workerIds?.includes(workerId)) continue;
+    
+    if (op.status === 'done') {
+      doneOps.push(op);
+      doneCount++;
+      if (op.finishedAt >= d7) doneCount7d++;
+      if (op.name?.toLowerCase().includes('свар')) weldCount++;
+      if (op.plannedHours && op.startedAt && op.finishedAt) {
+        withPlan.push(op);
+        doneWithPlan++;
+        const actual = op.finishedAt - op.startedAt;
+        const planned = op.plannedHours * 3600000;
+        sumRatio += actual / planned;
+        if (actual < planned * 0.5) fastOps++;
+      }
+      if (op.finishedAt) {
+        const d = new Date(op.finishedAt);
+        if (d.getDay() === 0 || d.getDay() === 6) weekendOps++;
+      }
+    } else if (op.status === 'defect') {
+      defectOps.push(op);
+      defectCount++;
+    }
+    
+    if (op.defectSource === 'previous_stage') detectedDefects++;
+  }
+  
+  const total = doneCount + defectCount;
+  const defectRate = total > 0 ? (defectCount / total * 100) : 0;
+  const avgRatio = doneWithPlan > 0 ? sumRatio / doneWithPlan : 1;
+  
+  // События (фильтруем только нужные)
+  let downtimes30d = 0, downtimes7d = 0, thanksReceived = 0;
+  for (const e of data.events) {
+    if (e.workerId === workerId && e.type === 'downtime') {
+      if (e.ts >= d30) downtimes30d++;
+      if (e.ts >= d7) downtimes7d++;
+    }
+    if (e.type === 'thanks' && e.toWorkerId === workerId) thanksReceived++;
+  }
+  
+  // Стреки (нужны отсортированные ops)
   const sorted = [...doneOps, ...defectOps].sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0));
   let currentStreak = 0;
   for (const op of sorted) { if (op.status === 'done') currentStreak++; else break; }
+  
+  // Уникальные значения
   const uniqueOpTypes = new Set(doneOps.map(op => op.name)).size;
-  const detectedDefects = allOps.filter(op => op.defectSource === 'previous_stage').length;
-  const thanksReceived = data.events.filter(e => e.type === 'thanks' && e.toWorkerId === workerId).length;
   const uniqueSections = new Set(doneOps.map(op => op.sectionId).filter(id => id)).size;
-  const weekendOps = doneOps.filter(op => { if (!op.finishedAt) return false; const d = new Date(op.finishedAt); const day = d.getDay(); return day === 0 || day === 6; }).length;
-  const fastOps = withPlan.filter(op => { const actual = op.finishedAt - op.startedAt; const planned = op.plannedHours * 3600000; return actual < planned * 0.5; }).length;
+  
+  // Лучший стрик скорости
   const withPlanSorted = [...withPlan].sort((a, b) => a.finishedAt - b.finishedAt);
   let bestSpeedStreak = 0, currentSpeedStreak = 0;
   for (const op of withPlanSorted) {
@@ -124,6 +159,7 @@ const calcWorkerStats = (workerId, data, nowTime) => {
     if (actual < planned * 0.8) { currentSpeedStreak++; if (currentSpeedStreak > bestSpeedStreak) bestSpeedStreak = currentSpeedStreak; }
     else currentSpeedStreak = 0;
   }
+  
   return { doneCount, defectCount, defectRate, weldCount, doneWithPlan, avgRatio, downtimes30d, downtimes7d, doneCount7d, currentStreak, uniqueOpTypes, detectedDefects, thanksReceived, uniqueSections, weekendOps, fastOps, bestSpeedStreak };
 };
 
