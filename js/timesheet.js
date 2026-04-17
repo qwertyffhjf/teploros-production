@@ -107,7 +107,7 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
 
   const dim = new Date(viewYear, viewMonth + 1, 0).getDate();
   const days = Array.from({ length: dim }, (_, i) => i + 1);
-  const activeWorkers = useMemo(() => data.workers.filter(w => !w.archived), [data.workers]);
+  const activeWorkers = useMemo(() => data.workers.filter(w => !w.archived).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ru')), [data.workers]);
   const showWorkers = selWorker ? activeWorkers.filter(w => w.id === selWorker) : activeWorkers;
 
   // Читаем сохранённые значения табеля из data.timesheet[YYYY-MM][workerId][day]
