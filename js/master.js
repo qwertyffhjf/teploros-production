@@ -12,6 +12,8 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
   const [page, setPage] = useState(1);
   const pageSize = 20;
   const [fieldErrors, setFieldErrors] = useState({});
+  const [opsFilterType, setOpsFilterType] = useState('');
+  const opsProductTypes = data.settings?.productTypes || [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }];
 
   const autoAssign = useCallback(() => {
     if (!form.name) { addToast('Сначала выберите операцию', 'error'); return; }
@@ -77,13 +79,18 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
 
   const opsToShow = useMemo(() => {
     let filtered = data.ops.filter(o => showArchived ? true : !o.archived);
+    // Фильтр по типу продукции (через заказ)
+    if (opsFilterType) {
+      const typeOrderIds = new Set(data.orders.filter(o => o.productType === opsFilterType).map(o => o.id));
+      filtered = filtered.filter(o => typeOrderIds.has(o.orderId));
+    }
     if (filt === 'active') filtered = filtered.filter(o => o.status === 'in_progress');
     else if (filt === 'pending') filtered = filtered.filter(o => o.status === 'pending');
     else if (filt === 'issues') filtered = filtered.filter(o => o.status === 'defect' || o.status === 'rework');
     else if (filt === 'on_check') filtered = filtered.filter(o => o.status === 'on_check');
     else if (filt !== 'all') filtered = filtered.filter(o => o.orderId === filt);
     return filtered;
-  }, [data.ops, filt, showArchived]);
+  }, [data.ops, data.orders, filt, showArchived, opsFilterType]);
 
   const paginated = useMemo(() => { const start = (page-1)*pageSize; return opsToShow.slice(start, start+pageSize); }, [opsToShow, page]);
   useEffect(() => { setPage(1); }, [filt, showArchived]);
@@ -140,6 +147,11 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
         h('div', { style: { minWidth: 140 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Ссылка на чертёж', value: form.drawingUrl, onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value })) })),
         h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, '+')
       )
+    ),
+    // Фильтр по типу продукции
+    h('div', { style: { display: 'flex', gap: 4, marginBottom: 8 } },
+      h('button', { style: !opsFilterType ? abtn({ fontSize: 11, padding: '4px 12px' }) : gbtn({ fontSize: 11, padding: '4px 12px' }), onClick: () => setOpsFilterType('') }, 'Все'),
+      opsProductTypes.map(pt => h('button', { key: pt.id, style: opsFilterType === pt.id ? abtn({ fontSize: 11, padding: '4px 12px' }) : gbtn({ fontSize: 11, padding: '4px 12px' }), onClick: () => setOpsFilterType(pt.id) }, pt.label))
     ),
     h('div', { style: { display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' } },
       [['all','Все'],['pending','Ожидают'],['active','В работе'],['on_check','На контроле'],['issues','Проблемы']].map(([id,l]) => h('button', { key: id, style: filt === id ? abtn() : gbtn(), onClick: () => setFilt(id) }, l)),
@@ -360,8 +372,8 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     return Object.keys(errors).length === 0;
   };
 
-  const createDefaultOps = useCallback((orderId) => {
-    const stages = data.productionStages || [];
+  const createDefaultOps = useCallback((orderId, productType) => {
+    const stages = (data.productionStages || []).filter(s => !productType || s.productType === productType);
     return stages.map(stage => ({ id: uid(), orderId, name: stage.name, workerIds: [], status: 'pending', createdAt: now(), plannedHours: undefined, archived: false, sectionId: null, equipmentId: null, plannedStartDate: undefined, requiresQC: stage.name.includes('свар') || stage.name.includes('Опресовка') }));
   }, [data.productionStages]);
 
@@ -373,7 +385,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       await DB.save(d); onUpdate(d); setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({}); addToast('Заказ обновлён', 'success');
     } else {
       const newOrder = { id: uid(), ...form, qty: Number(form.qty), createdAt: now(), archived: false };
-      const newOps = createDefaultOps(newOrder.id);
+      const newOps = createDefaultOps(newOrder.id, form.productType);
       // BOM: предупреждение о дефиците (не блокирует создание)
       if (form.bomId) {
         const bom = data.bomTemplates.find(b => b.id === form.bomId);
@@ -459,7 +471,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
         h('div', { style: { minWidth: 140 } }, h('input', { type: 'date', style: { ...S.inp, width: '100%' }, value: form.deadline, onChange: e => setForm(p => ({ ...p, deadline: e.target.value })) }), fieldErrors.deadline && h('div', { className: 'error-message' }, fieldErrors.deadline)),
         h('div', { style: { minWidth: 120 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.priority, onChange: e => setForm(p => ({ ...p, priority: e.target.value })) }, h('option', { value: 'low' }, 'Низкий'), h('option', { value: 'medium' }, 'Средний'), h('option', { value: 'high' }, 'Высокий'), h('option', { value: 'critical' }, 'Критический'))),
         h('div', { style: { minWidth: 100 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.productType, onChange: e => setForm(p => ({ ...p, productType: e.target.value })) }, h('option', { value: '' }, 'Тип'), productTypes.map(pt => h('option', { key: pt.id, value: pt.id }, pt.label)))),
-        h('div', { style: { minWidth: 140 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.bomId, onChange: e => setForm(p => ({ ...p, bomId: e.target.value })) }, h('option', { value: '' }, '— без BOM —'), data.bomTemplates.map(b => h('option', { key: b.id, value: b.id }, b.productName)))),
+        h('div', { style: { minWidth: 140 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.bomId, onChange: e => setForm(p => ({ ...p, bomId: e.target.value })) }, h('option', { value: '' }, '— без BOM —'), data.bomTemplates.filter(b => !form.productType || b.productType === form.productType || !b.productType).map(b => h('option', { key: b.id, value: b.id }, b.productName)))),
         h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, editingId ? '✓' : '+'),
         editingId && h('button', { type: 'button', style: gbtn(), onClick: () => { setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({}); } }, 'Отмена')
       ),
