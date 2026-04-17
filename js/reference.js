@@ -517,16 +517,17 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
 
 // ==================== MasterBOM ====================
 const MasterBOM = memo(({ data, onUpdate, addToast }) => {
-  const [form, setForm] = useState({ productName: '' });
+  const [form, setForm] = useState({ productName: '', productType: '' });
   const { ask: askConfirm, confirmEl } = useConfirm();
   const [editingId, setEditingId] = useState(null);
   const [matForm, setMatForm] = useState({ bomId: '', materialId: '', qty: '' });
+  const productTypes = data.settings?.productTypes || [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }];
 
   const add = useCallback(async () => {
     if (!form.productName.trim()) { addToast('Введите название изделия', 'error'); return; }
-    const bom = { id: uid(), productName: form.productName.trim(), materials: [] };
+    const bom = { id: uid(), productName: form.productName.trim(), materials: [], productType: form.productType || undefined };
     const d = { ...data, bomTemplates: [...data.bomTemplates, bom] };
-    await DB.save(d); onUpdate(d); setForm({ productName: '' }); addToast('Спецификация создана', 'success');
+    await DB.save(d); onUpdate(d); setForm({ productName: '', productType: '' }); addToast('Спецификация создана', 'success');
   }, [data, form, onUpdate, addToast]);
 
   const del = useCallback(async (id) => {
@@ -630,6 +631,7 @@ const MasterBOM = memo(({ data, onUpdate, addToast }) => {
         }}),
       h('div', { style: { display: 'flex', gap: 8 } },
         h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Название изделия (Котёл КВ-100...)', value: form.productName, onChange: e => setForm(p => ({ ...p, productName: e.target.value })), onKeyDown: e => e.key === 'Enter' && add() }),
+        h('select', { style: { ...S.inp, width: 120 }, value: form.productType, onChange: e => setForm(p => ({ ...p, productType: e.target.value })) }, h('option', { value: '' }, 'Тип'), productTypes.map(pt => h('option', { key: pt.id, value: pt.id }, pt.label))),
         h('button', { style: abtn(), onClick: add }, '+ Создать')
       )
     ),
@@ -805,62 +807,71 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
   const [newName, setNewName] = useState('');
   const [editingChecklist, setEditingChecklist] = useState(null);
   const [newCheckItem, setNewCheckItem] = useState('');
+  const [stageType, setStageType] = useState('boiler');
   const { ask: askConfirm, confirmEl } = useConfirm();
+  const productTypes = data.settings?.productTypes || [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }];
+  const allStages = data.productionStages || [];
+  const typeStages = allStages.filter(s => s.productType === stageType);
+
   const addStage = async () => {
     if (!newName.trim()) return;
-    const newStage = { id: uid(), name: newName.trim(), checklist: [] };
-    const d = { ...data, productionStages: [...(data.productionStages || []), newStage] };
+    const newStage = { id: uid(), name: newName.trim(), checklist: [], productType: stageType };
+    const d = { ...data, productionStages: [...allStages, newStage] };
     await DB.save(d); onUpdate(d); setNewName(''); addToast('Этап добавлен', 'success');
   };
   const deleteStage = async (id) => {
     if (!(await askConfirm({ message: 'Удалить этап?' }))) return;
-    const d = { ...data, productionStages: (data.productionStages || []).filter(s => s.id !== id) };
+    const d = { ...data, productionStages: allStages.filter(s => s.id !== id) };
     await DB.save(d); onUpdate(d); addToast('Этап удалён', 'info');
   };
   const moveUp = (index) => {
     if (index === 0) return;
-    const n = [...(data.productionStages || [])];
-    [n[index-1], n[index]] = [n[index], n[index-1]];
-    const d = { ...data, productionStages: n }; DB.save(d).then(() => onUpdate(d));
+    const n = [...typeStages]; [n[index-1], n[index]] = [n[index], n[index-1]];
+    const other = allStages.filter(s => s.productType !== stageType);
+    const d = { ...data, productionStages: [...other, ...n] }; DB.save(d).then(() => onUpdate(d));
   };
   const moveDown = (index) => {
-    const stages = data.productionStages || [];
-    if (index === stages.length-1) return;
-    const n = [...stages]; [n[index], n[index+1]] = [n[index+1], n[index]];
-    const d = { ...data, productionStages: n }; DB.save(d).then(() => onUpdate(d));
+    if (index === typeStages.length-1) return;
+    const n = [...typeStages]; [n[index], n[index+1]] = [n[index+1], n[index]];
+    const other = allStages.filter(s => s.productType !== stageType);
+    const d = { ...data, productionStages: [...other, ...n] }; DB.save(d).then(() => onUpdate(d));
   };
   const addCheckItem = async (stageId) => {
     if (!newCheckItem.trim()) return;
-    const d = { ...data, productionStages: (data.productionStages || []).map(s => s.id === stageId ? { ...s, checklist: [...(s.checklist || []), newCheckItem.trim()] } : s) };
+    const d = { ...data, productionStages: allStages.map(s => s.id === stageId ? { ...s, checklist: [...(s.checklist || []), newCheckItem.trim()] } : s) };
     await DB.save(d); onUpdate(d); setNewCheckItem('');
   };
   const removeCheckItem = async (stageId, idx) => {
-    const d = { ...data, productionStages: (data.productionStages || []).map(s => s.id === stageId ? { ...s, checklist: (s.checklist || []).filter((_, i) => i !== idx) } : s) };
+    const d = { ...data, productionStages: allStages.map(s => s.id === stageId ? { ...s, checklist: (s.checklist || []).filter((_, i) => i !== idx) } : s) };
     await DB.save(d); onUpdate(d);
   };
   return h('div', null,
     confirmEl,
+    // Вкладки типов продукции
+    h('div', { style: { display: 'flex', gap: 4, marginBottom: 12 } },
+      productTypes.map(pt => h('button', { key: pt.id, style: stageType === pt.id ? abtn({ fontSize: 12, padding: '6px 14px' }) : gbtn({ fontSize: 12, padding: '6px 14px' }), onClick: () => setStageType(pt.id) }, pt.label + ` (${allStages.filter(s => s.productType === pt.id).length})`))
+    ),
     h(PasteImportWidget, { addToast, hint: 'Вставить этапы из Excel',
       columns: [{ key: 'name', label: 'Название этапа', required: true }],
       onImport: async (rows) => {
-        const existing = new Set((data.productionStages||[]).map(s=>s.name.toLowerCase()));
-        const items = rows.filter(r=>r.name&&!existing.has(r.name.toLowerCase())).map(r=>({id:uid(),name:r.name,checklist:[]}));
+        const existing = new Set(allStages.map(s=>s.name.toLowerCase()));
+        const items = rows.filter(r=>r.name&&!existing.has(r.name.toLowerCase())).map(r=>({id:uid(),name:r.name,checklist:[],productType:stageType}));
         if(!items.length){addToast('Все этапы уже существуют','info');return;}
-        const d={...data,productionStages:[...(data.productionStages||[]),...items]};
+        const d={...data,productionStages:[...allStages,...items]};
         await DB.save(d);onUpdate(d);addToast(`Добавлено: ${items.length}`,'success');
       }}),
     h('div', { style: S.card },
-      h('div', { style: S.sec }, 'Добавить этап производства'),
+      h('div', { style: S.sec }, `Добавить этап · ${productTypes.find(p => p.id === stageType)?.label || stageType}`),
       h('div', { style: { display: 'flex', gap: 8 } },
         h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Название этапа', value: newName, onChange: e => setNewName(e.target.value), onKeyDown: e => e.key === 'Enter' && addStage() }),
         h('button', { style: abtn(), onClick: addStage }, '+ Добавить')
       )
     ),
     h('div', { style: S.card },
-      h('div', { style: S.sec }, 'Список этапов'),
-      (data.productionStages || []).length === 0
-        ? h('div', { style: { padding: 16, textAlign: 'center' } }, 'Нет этапов.')
-        : (data.productionStages || []).map((stage, index) =>
+      h('div', { style: S.sec }, `Этапы · ${productTypes.find(p => p.id === stageType)?.label || stageType} (${typeStages.length})`),
+      typeStages.length === 0
+        ? h('div', { style: { padding: 16, textAlign: 'center', color: '#888' } }, 'Нет этапов для этого типа продукции. Добавьте выше.')
+        : typeStages.map((stage, index) =>
             h('div', { key: stage.id, style: { padding: '8px 0', borderBottom: '0.5px solid #eee' } },
               h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
                 h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
@@ -1254,7 +1265,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
     (() => {
       // Журнал действий админа — последние 20 записей
       const adminActions = (data.events || [])
-        .filter(e => e.type === 'action' && ['data_restore', 'worker_archive', 'order_archive', 'cleanup_events', 'cleanup_archived'].includes(e.action))
+        .filter(e => e.type === 'action' && ['data_restore', 'worker_archive', 'order_archive', 'cleanup_events', 'cleanup_archived', 'cleanup_messages'].includes(e.action))
         .sort((a, b) => (b.ts || 0) - (a.ts || 0))
         .slice(0, 20);
       if (adminActions.length === 0) return null;
@@ -1263,6 +1274,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         worker_archive: '👤 Архивация сотрудника',
         order_archive: '📦 Архивация заказа',
         cleanup_events: '🧹 Очистка событий',
+        cleanup_messages: '💬 Очистка сообщений',
         cleanup_archived: '🗑 Удаление архива'
       };
       return h('div', { style: S.card },
@@ -1291,20 +1303,45 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         'Сотрудники': (data.workers || []).length,
       };
       const cleanOldEvents = async () => {
-        if (!(await askConfirm({ message: 'Удалить события старше 90 дней?', detail: 'Это действие нельзя отменить', danger: true }))) return;
-        const cutoff = Date.now() - 90 * 86400000;
+        const daysStr = document.getElementById('cleanup-events-days')?.value || '90';
+        const days = parseInt(daysStr);
+        const cutoff = Date.now() - days * 86400000;
         const kept = (data.events || []).filter(e => (e.ts || 0) >= cutoff);
         const removed = (data.events || []).length - kept.length;
         if (removed === 0) { addToast('Нечего удалять', 'info'); return; }
+        // Двойное подтверждение для >100 записей
+        if (!(await askConfirm({ message: `Удалить ${removed} событий старше ${days} дней?`, detail: 'Это действие нельзя отменить', danger: true }))) return;
+        if (removed > 100) {
+          if (!(await askConfirm({ message: `Подтвердите: удалить ${removed} записей?`, detail: 'Большое количество. Сохраните резервную копию перед удалением', danger: true }))) return;
+        }
         let d = { ...data, events: kept };
-        d = logAction(d, 'cleanup_events', { counts: `${removed} событий` });
+        d = logAction(d, 'cleanup_events', { counts: `${removed} событий`, days });
         await DB.save(d); onUpdate(d);
         addToast(`Удалено ${removed} событий`, 'success');
+      };
+      const cleanOldMessages = async () => {
+        const daysStr = document.getElementById('cleanup-msg-days')?.value || '30';
+        const days = parseInt(daysStr);
+        const cutoff = Date.now() - days * 86400000;
+        const kept = (data.messages || []).filter(m => (m.ts || 0) >= cutoff);
+        const removed = (data.messages || []).length - kept.length;
+        if (removed === 0) { addToast('Нечего удалять', 'info'); return; }
+        if (!(await askConfirm({ message: `Удалить ${removed} сообщений старше ${days} дней?`, danger: true }))) return;
+        if (removed > 100) {
+          if (!(await askConfirm({ message: `Подтвердите: удалить ${removed} сообщений?`, detail: 'Большое количество', danger: true }))) return;
+        }
+        let d = { ...data, messages: kept };
+        d = logAction(d, 'cleanup_messages', { counts: `${removed} сообщений`, days });
+        await DB.save(d); onUpdate(d);
+        addToast(`Удалено ${removed} сообщений`, 'success');
       };
       const cleanArchived = async () => {
         const archived = (data.orders || []).filter(o => o.archived);
         if (archived.length === 0) { addToast('Нет архивных заказов', 'info'); return; }
         if (!(await askConfirm({ message: `Удалить ${archived.length} архивных заказов?`, detail: 'Вместе с операциями этих заказов. Нельзя отменить', danger: true }))) return;
+        if (archived.length > 100) {
+          if (!(await askConfirm({ message: `Подтвердите: удалить ${archived.length} заказов?`, detail: 'Большое количество', danger: true }))) return;
+        }
         const archivedIds = new Set(archived.map(o => o.id));
         let d = { ...data,
           orders: (data.orders || []).filter(o => !o.archived),
@@ -1314,6 +1351,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         await DB.save(d); onUpdate(d);
         addToast(`Удалено ${archived.length} заказов`, 'success');
       };
+      const periodOpts = [7, 30, 60, 90, 180];
       return h('div', { style: S.card },
         h('div', { style: S.sec }, 'Служебное · диагностика данных'),
         h('div', { style: { marginBottom: 12 } },
@@ -1333,8 +1371,28 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
             )
           )
         ),
-        h('div', { style: { display:'flex', gap:8, flexWrap:'wrap' } },
-          h('button', { style: gbtn({ fontSize: 12 }), onClick: cleanOldEvents }, '🧹 Очистить события > 90 дней'),
+        // Очистка событий
+        h('div', { style: { background: '#f8f8f5', borderRadius: 6, padding: 10, marginBottom: 8 } },
+          h('div', { style: { fontSize: 11, color: '#888', marginBottom: 6 } }, 'Удалить события старше:'),
+          h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+            h('select', { id: 'cleanup-events-days', defaultValue: '90', style: { ...S.inp, width: 100 } },
+              periodOpts.map(d => h('option', { key: d, value: d }, `${d} дней`))
+            ),
+            h('button', { style: gbtn({ fontSize: 12 }), onClick: cleanOldEvents }, '🧹 Очистить')
+          )
+        ),
+        // Очистка сообщений
+        h('div', { style: { background: '#f8f8f5', borderRadius: 6, padding: 10, marginBottom: 8 } },
+          h('div', { style: { fontSize: 11, color: '#888', marginBottom: 6 } }, 'Удалить сообщения чата старше:'),
+          h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+            h('select', { id: 'cleanup-msg-days', defaultValue: '30', style: { ...S.inp, width: 100 } },
+              periodOpts.map(d => h('option', { key: d, value: d }, `${d} дней`))
+            ),
+            h('button', { style: gbtn({ fontSize: 12 }), onClick: cleanOldMessages }, '💬 Очистить')
+          )
+        ),
+        // Архивные заказы
+        h('div', { style: { display: 'flex', gap: 8 } },
           h('button', { style: gbtn({ fontSize: 12 }), onClick: cleanArchived }, '🗑 Удалить архивные заказы')
         )
       );
