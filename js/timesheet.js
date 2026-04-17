@@ -129,7 +129,9 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
       }
     };
     const d = { ...data, timesheet: newTs };
-    const saved = await DB.save(d); if (saved) onUpdate(saved);
+    const saved = await DB.save(d); 
+    console.log('🔴 DB.save result:', saved, 'conflict?', saved === null, 'data version:', data._version);
+    if (saved) { onUpdate(saved); } else { console.log('❌ Save failed!'); }
   }, [data, viewYear, viewMonth, onUpdate]);
 
   const openPopup = useCallback((workerId, day) => {
@@ -425,19 +427,19 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
         h('div', { style:{ display:'flex', gap:4, marginBottom:8, flexWrap:'wrap' } },
           [8,7,6,4].map(v => h('button', { key:v,
             style:{ padding:'4px 8px', borderRadius:6, fontSize:12, fontWeight:500, background:GN3, color:GN2, border:`0.5px solid ${GN}`, cursor:'pointer' },
-            onClick: () => setPopupVal(String(v))
+            onClick: () => { console.log('✓ Quick button clicked:', v); setPopupVal(String(v)); }
           }, `${v}ч`))
         ),
         h('div', { style:{ fontSize:11, color:'#888', marginBottom:6 } }, 'Отсутствие / особые случаи:'),
         h('div', { style:{ display:'flex', flexDirection:'column', gap:4, marginBottom:10 } },
           CODES.map(code => h('button', { key:code,
             style:{ padding:'5px 10px', borderRadius:6, fontSize:11, fontWeight:400, cursor:'pointer', background:'#f5f5f2', color:'#333', border:'0.5px solid rgba(0,0,0,0.1)', textAlign:'left' },
-            onClick: () => setCode(code)
+            onClick: () => { console.log('✓ Code button clicked:', code); setCode(code); }
           }, CODE_LABELS[code])),
-          h('button', { style:{ padding:'5px 10px', borderRadius:6, fontSize:11, cursor:'pointer', background:'none', color:'#aaa', border:'0.5px solid rgba(0,0,0,0.08)', textAlign:'left' }, onClick: () => setCode('') }, '× очистить ячейку')
+          h('button', { style:{ padding:'5px 10px', borderRadius:6, fontSize:11, cursor:'pointer', background:'none', color:'#aaa', border:'0.5px solid rgba(0,0,0,0.08)', textAlign:'left' }, onClick: () => { console.log('✓ Clear button clicked'); setCode(''); } }, '× очистить ячейку')
         ),
         h('div', { style:{ display:'flex', gap:6 } },
-          h('button', { style: abtn({ flex:1, fontSize:13 }), onClick: saveCell }, 'Сохранить'),
+          h('button', { style: abtn({ flex:1, fontSize:13 }), onClick: () => { console.log('✓ Save button clicked'); saveCell(); } }, 'Сохранить'),
           h('button', { style: gbtn({ fontSize:13 }), onClick: () => { setActiveCell(null); setPopupVal(''); } }, '✕')
         )
       )
