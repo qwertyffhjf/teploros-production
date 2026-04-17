@@ -408,44 +408,39 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
         )
       ),
 
-  const TimeSheetPopup = ({ activeCell, viewYear, viewMonth, data, popupVal, setPopupVal, saveCell, setCode, setActiveCell, inputRef }) => {
-  if (!activeCell) return null;
-  const workerName = data.workers.find(w => w.id === activeCell.workerId)?.name || '?';
-  return h('div', {
-    style:{ position:'absolute', top:40, left:'50%', transform:'translateX(-50%)', background:'#fff', border:`1.5px solid ${AM}`, borderRadius:12, padding:14, zIndex:50, width:260, boxShadow:'0 4px 20px rgba(0,0,0,0.15)' }
-  },
-    h('div', { style:{ fontSize:11, color:'#888', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6, display:'flex', alignItems:'center', gap:6 } },
-      `${workerName} · ${activeCell.day} ${MONTHS_RU[viewMonth].toLowerCase()}`,
-      (() => { const dow = new Date(viewYear, viewMonth, activeCell.day).getDay(); return (dow===0||dow===6) ? h('span', { style:{ background:'#FCEBEB', color:RD2, fontSize:10, padding:'1px 6px', borderRadius:4 } }, 'выходной') : null; })()
-    ),
-    h('input', { ref: inputRef, type:'number', min:0, max:24, step:0.5,
-      style:{ ...S.inp, fontSize:22, fontWeight:500, textAlign:'center', marginBottom:8 },
-      placeholder:'ч', value: popupVal,
-      onChange: e => setPopupVal(e.target.value)
-    }),
-    h('div', { style:{ display:'flex', gap:4, marginBottom:8, flexWrap:'wrap' } },
-      [8,7,6,4].map(v => h('button', { key:v,
-        style:{ padding:'4px 8px', borderRadius:6, fontSize:12, fontWeight:500, background:GN3, color:GN2, border:`0.5px solid ${GN}`, cursor:'pointer' },
-        onClick: () => setPopupVal(String(v))
-      }, `${v}ч`))
-    ),
-    h('div', { style:{ fontSize:11, color:'#888', marginBottom:6 } }, 'Отсутствие / особые случаи:'),
-    h('div', { style:{ display:'flex', flexDirection:'column', gap:4, marginBottom:10 } },
-      CODES.map(code => h('button', { key:code,
-        style:{ padding:'5px 10px', borderRadius:6, fontSize:11, fontWeight:400, cursor:'pointer', background:'#f5f5f2', color:'#333', border:'0.5px solid rgba(0,0,0,0.1)', textAlign:'left' },
-        onClick: () => setCode(code)
-      }, CODE_LABELS[code])),
-      h('button', { style:{ padding:'5px 10px', borderRadius:6, fontSize:11, cursor:'pointer', background:'none', color:'#aaa', border:'0.5px solid rgba(0,0,0,0.08)', textAlign:'left' }, onClick: () => setCode('') }, '× очистить ячейку')
-    ),
-    h('div', { style:{ display:'flex', gap:6 } },
-      h('button', { style: abtn({ flex:1, fontSize:13 }), onClick: saveCell }, 'Сохранить'),
-      h('button', { style: gbtn({ fontSize:13 }), onClick: () => { setActiveCell(null); setPopupVal(''); } }, '✕')
-    )
-  );
-};
+
+      // Попап ввода
+      activeCell && h('div', {
+        style:{ position:'absolute', top:40, left:'50%', transform:'translateX(-50%)', background:'#fff', border:`1.5px solid ${AM}`, borderRadius:12, padding:14, zIndex:50, width:260, boxShadow:'0 4px 20px rgba(0,0,0,0.15)' }
+      },
+        h('div', { style:{ fontSize:11, color:'#888', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6, display:'flex', alignItems:'center', gap:6 } },
+          `${workerName} · ${activeCell.day} ${MONTHS_RU[viewMonth].toLowerCase()}`,
+          (() => { const dow = new Date(viewYear, viewMonth, activeCell.day).getDay(); return (dow===0||dow===6) ? h('span', { style:{ background:'#FCEBEB', color:RD2, fontSize:10, padding:'1px 6px', borderRadius:4 } }, 'выходной') : null; })()
+        ),
+        h('input', { ref: inputRef, type:'number', min:0, max:24, step:0.5,
+          style:{ ...S.inp, fontSize:22, fontWeight:500, textAlign:'center', marginBottom:8 },
+          placeholder:'ч', value: popupVal,
+          onChange: e => setPopupVal(e.target.value)
+        }),
+        h('div', { style:{ display:'flex', gap:4, marginBottom:8, flexWrap:'wrap' } },
+          [8,7,6,4].map(v => h('button', { key:v,
+            style:{ padding:'4px 8px', borderRadius:6, fontSize:12, fontWeight:500, background:GN3, color:GN2, border:`0.5px solid ${GN}`, cursor:'pointer' },
+            onClick: () => setPopupVal(String(v))
+          }, `${v}ч`))
+        ),
+        h('div', { style:{ fontSize:11, color:'#888', marginBottom:6 } }, 'Отсутствие / особые случаи:'),
+        h('div', { style:{ display:'flex', flexDirection:'column', gap:4, marginBottom:10 } },
+          CODES.map(code => h('button', { key:code,
+            style:{ padding:'5px 10px', borderRadius:6, fontSize:11, fontWeight:400, cursor:'pointer', background:'#f5f5f2', color:'#333', border:'0.5px solid rgba(0,0,0,0.1)', textAlign:'left' },
+            onClick: () => setCode(code)
+          }, CODE_LABELS[code])),
+          h('button', { style:{ padding:'5px 10px', borderRadius:6, fontSize:11, cursor:'pointer', background:'none', color:'#aaa', border:'0.5px solid rgba(0,0,0,0.08)', textAlign:'left' }, onClick: () => setCode('') }, '× очистить ячейку')
+        ),
+        h('div', { style:{ display:'flex', gap:6 } },
+          h('button', { style: abtn({ flex:1, fontSize:13 }), onClick: saveCell }, 'Сохранить'),
+          h('button', { style: gbtn({ fontSize:13 }), onClick: () => { setActiveCell(null); setPopupVal(''); } }, '✕')
+        )
+      )
     )
   );
 });
-
-
-
