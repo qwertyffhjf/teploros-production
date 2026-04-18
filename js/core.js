@@ -218,6 +218,69 @@ const scoreWorkerForOp = (worker, opName, data) => {
   };
 };
 
+// 💰 Себестоимость заказа: материалы + рабочая сила
+const calcOrderCost = (data, orderId) => {
+  const order = data.orders.find(o => o.id === orderId);
+  if (!order) return { error: 'Заказ не найден' };
+  
+  // Материалы: материал.цена × количество
+  let materialCost = 0;
+  (order.materialList || []).forEach(m => {
+    const material = data.materials?.find(mat => mat.id === m.materialId);
+    if (material && m.qty) {
+      materialCost += (material.unitPrice || 0) * m.qty;
+    }
+  });
+  
+  // Рабочая сила: сумма (часы × ставка) по каждому сотруднику
+  let laborCost = 0;
+  const ops = data.ops.filter(op => op.orderId === orderId && !op.archived && op.status === 'done');
+  const workerHours = {}; // workerId -> часы
+  
+  ops.forEach(op => {
+    if (op.workerIds) {
+      const opHours = op.finishedAt && op.startedAt ? (op.finishedAt - op.startedAt) / 3600000 : (op.plannedHours || 0);
+      op.workerIds.forEach(wid => {
+        workerHours[wid] = (workerHours[wid] || 0) + opHours;
+      });
+    }
+  });
+  
+  Object.entries(workerHours).forEach(([wid, hours]) => {
+    const worker = data.workers?.find(w => w.id === wid);
+    if (worker) {
+      const rate = worker.hourlyRate || 200; // дефолт 200 руб/час
+      laborCost += hours * rate;
+    }
+  });
+  
+  const totalCost = materialCost + laborCost;
+  const profit = (order.price || 0) - totalCost;
+  const margin = order.price > 0 ? Math.round((profit / order.price) * 100) : 0;
+  
+  return { orderId, materialCost: Math.round(materialCost), laborCost: Math.round(laborCost), totalCost: Math.round(totalCost), price: order.price, profit: Math.round(profit), margin, opsCount: ops.length, workerCount: Object.keys(workerHours).length };
+};
+
+// 📊 Отчёт себестоимости: все заказы с рентабельностью
+const getCostReport = (data) => {
+  const orders = data.orders.filter(o => !o.archived && o.status === 'done');
+  return orders.map(order => calcOrderCost(data, order.id))
+    .filter(r => !r.error)
+    .sort((a, b) => b.margin - a.margin)
+    .slice(0, 50);
+};
+
+// 🔧 Установить ставку сотрудника (руб/час)
+const setWorkerRate = async (data, workerId, hourlyRate, onUpdate) => {
+  const worker = data.workers.find(w => w.id === workerId);
+  if (!worker) return false;
+  
+  const d = { ...data, workers: data.workers.map(w => w.id === workerId ? { ...w, hourlyRate } : w) };
+  await DB.save(d);
+  onUpdate(d);
+  return true;
+};
+
 const autoAssignWorker = (data, opName) => {
   const anyHasCompetences = data.workers.some(w => !w.archived && w.competences?.length > 0);
   const candidates = data.workers.filter(w =>
