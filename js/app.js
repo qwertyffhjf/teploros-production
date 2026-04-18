@@ -1172,9 +1172,12 @@ function App() {
       effectiveRole !== 'dashboard' && (() => {
         const chatLastRead = Number(localStorage.getItem(`chat_lastRead_${currentUser.id || 'anon'}`)) || 0;
         const unread = (data.messages || []).filter(m => m.timestamp > chatLastRead && m.senderId !== (currentUser.id || 'system')).length;
+        // 🔴 Бейдж для @упоминаний — красный если есть новые упоминания текущего пользователя
+        const myMentions = (data.messages || []).filter(m => m.mentions?.includes(currentUser.id) && m.timestamp > chatLastRead).length;
         return h('button', { style: showChat ? abtn({ fontSize:11 }) : gbtn({ fontSize:11, position: 'relative' }), onClick: () => setShowChat(!showChat) },
           showChat ? '💬 Чат (скрыть)' : '💬 Чат',
-          !showChat && unread > 0 && h('span', { style: { position: 'absolute', top: -4, right: -4, background: RD, color: '#fff', borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 500 } }, unread > 9 ? '9+' : unread)
+          !showChat && myMentions > 0 && h('span', { style: { position: 'absolute', top: -8, right: -8, background: '#E24B4A', color: '#fff', borderRadius: '50%', width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600, border: '2px solid var(--card)' } }, '!'),
+          !showChat && unread > 0 && myMentions === 0 && h('span', { style: { position: 'absolute', top: -4, right: -4, background: RD, color: '#fff', borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 500 } }, unread > 9 ? '9+' : unread)
         );
       })(),
       h('div', { style: { marginLeft:'auto', fontSize:10, display:'flex', alignItems:'center', gap:8 } },
