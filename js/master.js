@@ -89,7 +89,19 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
     const op = data.ops.find(o => o.id === opId);
     const invalidWorkers = data.workers.filter(w => workerIds.includes(w.id) && w.competences && w.competences.length > 0 && !w.competences.includes(op.name));
     if (invalidWorkers.length > 0) { addToast(`У следующих сотрудников нет компетенции: ${invalidWorkers.map(w => w.name).join(', ')}`, 'error'); return; }
-    const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, workerIds } : o) };
+    
+    // 📊 Пересчитываем workerQty при изменении рабочих
+    const workerQty = {};
+    const qty = op.qty || 1;
+    if (workerIds.length > 0) {
+      const qtyPerWorker = Math.floor(qty / workerIds.length);
+      const remainder = qty % workerIds.length;
+      workerIds.forEach((wid, i) => {
+        workerQty[wid] = qtyPerWorker + (i < remainder ? 1 : 0);
+      });
+    }
+    
+    const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, workerIds, workerQty } : o) };
     await DB.save(d); onUpdate(d); addToast('Исполнители изменены', 'info');
   }, [data, onUpdate, addToast]);
 
@@ -149,9 +161,30 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
         h('div', { style: { flex: 1, minWidth: 160 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })) }, h('option', { value: '' }, '— операция —'), stagesList.map(stage => h('option', { key: stage, value: stage }, stage))), fieldErrors.name && h('div', { className: 'error-message' }, fieldErrors.name)),
         h('div', { style: { minWidth: 200 } },
           h('div', { style: { fontSize: 10, color: '#888', marginBottom: 4 } }, 'Исполнители'),
-          h('div', { className: 'checkbox-group' }, data.workers.filter(w => !w.archived && (w.status || 'working') === 'working' && (!w.competences || w.competences.length === 0 || (form.name && w.competences.includes(form.name)))).map(w =>
-            h('label', { key: w.id }, h('input', { type: 'checkbox', checked: form.workerIds.includes(w.id), onChange: e => { if (e.target.checked) setForm(p => ({ ...p, workerIds: [...p.workerIds, w.id] })); else setForm(p => ({ ...p, workerIds: p.workerIds.filter(id => id !== w.id) })); } }), ' ', w.name)
-          )),
+          h('div', { className: 'checkbox-group', style: { display: 'flex', flexDirection: 'column', gap: 6 } }, data.workers.filter(w => !w.archived && (w.status || 'working') === 'working' && (!w.competences || w.competences.length === 0 || (form.name && w.competences.includes(form.name)))).map(w => {
+            const isSelected = form.workerIds.includes(w.id);
+            return h('span', { key: w.id, 
+              style: { 
+                padding: '6px 10px', 
+                borderRadius: 6, 
+                cursor: 'pointer', 
+                background: isSelected ? AM3 : '#f5f5f5',
+                color: isSelected ? AM2 : '#666',
+                fontSize: 13,
+                fontWeight: isSelected ? 500 : 400,
+                border: isSelected ? `1.5px solid ${AM}` : '1px solid #ddd',
+                userSelect: 'none',
+                transition: 'all 0.2s'
+              }, 
+              onClick: () => {
+                if (isSelected) {
+                  setForm(p => ({ ...p, workerIds: p.workerIds.filter(id => id !== w.id) }));
+                } else {
+                  setForm(p => ({ ...p, workerIds: [...p.workerIds, w.id] }));
+                }
+              }
+            }, isSelected ? '✓ ' : '', w.name);
+          })),
           h('button', { style: gbtn({ marginTop: 4, fontSize: 11, padding: '4px 8px' }), onClick: autoAssign }, '🤖 Подобрать')
         ),
         h('div', { style: { minWidth: 80 } },
@@ -214,11 +247,11 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
                   })
                 ),
                 !op.archived && h('details', { style: { fontSize: 10 } },
-                  h('summary', { style: { cursor: 'pointer', color: AM, userSelect: 'none', padding: '2px 0' } }, '+ назначить'),
-                  h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, padding: '4px 0', maxHeight: 120, overflowY: 'auto' } },
+                  h('summary', { style: { cursor: 'pointer', color: AM, userSelect: 'none', padding: '2px 0', fontWeight: 500 } }, '➕ Добавить'),
+                  h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 0', maxHeight: 120, overflowY: 'auto' } },
                     data.workers.filter(w => !w.archived && (w.status || 'working') === 'working' && (!w.competences || w.competences.length === 0 || w.competences.includes(op.name)) && !(op.workerIds || []).includes(w.id))
-                      .map(w => h('label', { key: w.id, style: { display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '3px 4px', borderRadius: 4, fontSize: 11 }, onClick: () => assignWorkers(op.id, [...(op.workerIds || []), w.id]) },
-                        h('span', { style: { color: GN } }, '+'), w.name
+                      .map(w => h('div', { key: w.id, style: { padding: '4px 8px', borderRadius: 4, cursor: 'pointer', background: '#f5f5f5', fontSize: 11, userSelect: 'none', transition: 'all 0.2s', border: '1px solid #ddd' }, onClick: () => assignWorkers(op.id, [...(op.workerIds || []), w.id]) },
+                        h('span', { style: { color: GN, fontWeight: 500, marginRight: 4 } }, '+'), w.name
                       ))
                   )
                 )
@@ -486,7 +519,9 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     printOrderId && (() => {
       const pOrder = data.orders.find(o => o.id === printOrderId);
       const pOps = data.ops.filter(o => o.orderId === printOrderId && !o.archived);
-      if (!pOrder || pOps.length === 0) return null;
+      // 🔧 Показываем QR только если есть хотя бы одна операция с назначенными рабочими
+      const hasAssignedWorkers = pOps.some(op => op.workerIds && op.workerIds.length > 0);
+      if (!pOrder || pOps.length === 0 || !hasAssignedWorkers) return null;
       return h(QRModal, { ops: pOps, order: pOrder, worker: null, onClose: () => setPrintOrderId(null) });
     })(),
     h('div', { style: S.card },
