@@ -5,7 +5,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
   const stagesList = useMemo(() => (data.productionStages || []).map(s => s.name)
 , [data.productionStages]);
   const { ask: askConfirm, confirmEl } = useConfirm();
-  const [form, setForm] = useState({ orderId: '', name: '', workerIds: [], plannedHours: '', sectionId: '', equipmentId: '', plannedStartDate: '', drawingUrl: '' });
+  const [form, setForm] = useState({ orderId: '', name: '', qty: '', workerIds: [], workerQtyForm: {}, plannedHours: '', sectionId: '', equipmentId: '', plannedStartDate: '', drawingUrl: '' });
   const [filt, setFilt] = useState('all');
   const [editingId, setEditingId] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -32,7 +32,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
     return Object.keys(errors).length === 0;
   };
 
-  const resetForm = () => { setForm({ orderId: '', name: '', workerIds: [], plannedHours: '', sectionId: '', equipmentId: '', plannedStartDate: '', drawingUrl: '' }); setFieldErrors({}); setEditingId(null); };
+  const resetForm = () => { setForm({ orderId: '', name: '', qty: '', workerIds: [], workerQtyForm: {}, plannedHours: '', sectionId: '', equipmentId: '', plannedStartDate: '', drawingUrl: '' }); setFieldErrors({}); setEditingId(null); };
 
   const addOrUpdate = useCallback(async () => {
     if (!validate()) return;
@@ -42,11 +42,32 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
       if (invalid.length > 0) { addToast(`У ${invalid.map(w => w.name).join(', ')} нет допуска к «${form.name}»`, 'error'); return; }
     }
     if (editingId) {
-      const updatedOps = data.ops.map(o => o.id === editingId ? { ...o, orderId: form.orderId, name: form.name.trim(), workerIds: form.workerIds, plannedHours: form.plannedHours ? Number(form.plannedHours) : undefined, sectionId: form.sectionId || null, equipmentId: form.equipmentId || null, plannedStartDate: form.plannedStartDate ? new Date(form.plannedStartDate).getTime() : undefined, drawingUrl: form.drawingUrl.trim() || undefined } : o);
+      const qty = form.qty ? Number(form.qty) : undefined;
+      const workerQty = {};
+      if (qty && form.workerIds.length > 0) {
+        const qtyPerWorker = Math.floor(qty / form.workerIds.length);
+        const remainder = qty % form.workerIds.length;
+        form.workerIds.forEach((wid, i) => {
+          workerQty[wid] = qtyPerWorker + (i < remainder ? 1 : 0);
+        });
+      }
+      const updatedOps = data.ops.map(o => o.id === editingId ? { ...o, orderId: form.orderId, name: form.name.trim(), qty, workerIds: form.workerIds, workerQty, plannedHours: form.plannedHours ? Number(form.plannedHours) : undefined, sectionId: form.sectionId || null, equipmentId: form.equipmentId || null, plannedStartDate: form.plannedStartDate ? new Date(form.plannedStartDate).getTime() : undefined, drawingUrl: form.drawingUrl.trim() || undefined } : o);
       const d = { ...data, ops: updatedOps };
       await DB.save(d); onUpdate(d); resetForm(); addToast('Операция обновлена', 'success');
     } else {
-      const op = { id: uid(), orderId: form.orderId, name: form.name.trim(), workerIds: form.workerIds, status: 'pending', createdAt: now(), plannedHours: form.plannedHours ? Number(form.plannedHours) : undefined, archived: false, sectionId: form.sectionId || null, equipmentId: form.equipmentId || null, plannedStartDate: form.plannedStartDate ? new Date(form.plannedStartDate).getTime() : undefined, drawingUrl: form.drawingUrl.trim() || undefined, requiresQC: form.name.includes('свар') || form.name.includes('Опресовка') };
+      // 📊 Рассчитываем workerQty: если есть qty и рабочие, распределяем поровну
+      const qty = form.qty ? Number(form.qty) : undefined;
+      const workerQty = {};
+      if (qty && form.workerIds.length > 0) {
+        // Берём распределение из формы или делим поровну
+        const qtyPerWorker = Math.floor(qty / form.workerIds.length);
+        const remainder = qty % form.workerIds.length;
+        form.workerIds.forEach((wid, i) => {
+          workerQty[wid] = qtyPerWorker + (i < remainder ? 1 : 0);
+        });
+      }
+      
+      const op = { id: uid(), orderId: form.orderId, name: form.name.trim(), qty, workerIds: form.workerIds, workerQty, status: 'pending', createdAt: now(), plannedHours: form.plannedHours ? Number(form.plannedHours) : undefined, archived: false, sectionId: form.sectionId || null, equipmentId: form.equipmentId || null, plannedStartDate: form.plannedStartDate ? new Date(form.plannedStartDate).getTime() : undefined, drawingUrl: form.drawingUrl.trim() || undefined, requiresQC: form.name.includes('свар') || form.name.includes('Опресовка') };
       const d = { ...data, ops: [...data.ops, op] };
       await DB.save(d); onUpdate(d); resetForm(); addToast('Операция добавлена', 'success');
     }
@@ -73,7 +94,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
   }, [data, onUpdate, addToast]);
 
   const edit = useCallback(op => {
-    setForm({ orderId: op.orderId, name: op.name, workerIds: op.workerIds || [], plannedHours: op.plannedHours || '', sectionId: op.sectionId || '', equipmentId: op.equipmentId || '', plannedStartDate: op.plannedStartDate ? new Date(op.plannedStartDate).toISOString().slice(0,16) : '', drawingUrl: op.drawingUrl || '' });
+    setForm({ orderId: op.orderId, name: op.name, qty: op.qty || '', workerIds: op.workerIds || [], workerQtyForm: op.workerQty || {}, plannedHours: op.plannedHours || '', sectionId: op.sectionId || '', equipmentId: op.equipmentId || '', plannedStartDate: op.plannedStartDate ? new Date(op.plannedStartDate).toISOString().slice(0,16) : '', drawingUrl: op.drawingUrl || '' });
     setEditingId(op.id);
   }, []);
 
@@ -133,6 +154,9 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
           )),
           h('button', { style: gbtn({ marginTop: 4, fontSize: 11, padding: '4px 8px' }), onClick: autoAssign }, '🤖 Подобрать')
         ),
+        h('div', { style: { minWidth: 80 } },
+          h('input', { type: 'number', min: 1, style: { ...S.inp, width: '100%' }, placeholder: 'Кол-во шт', value: form.qty, onChange: e => setForm(p => ({ ...p, qty: e.target.value })) })
+        ),
         h('div', { style: { minWidth: 100 } },
           h('input', { type: 'number', step: '0.1', style: { ...S.inp, width: '100%' }, placeholder: 'План, ч', value: form.plannedHours, onChange: e => setForm(p => ({ ...p, plannedHours: e.target.value })) }),
           (() => {
@@ -163,7 +187,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
     paginated.length === 0
       ? h('div', { style: { ...S.card, textAlign: 'center' } }, 'Нет операций')
       : h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null, ['ID','Операция','Заказ','Исполнители','Участок','Оборуд.','План, ч','План. старт','Чертёж','Статус','Время',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
+          h('thead', null, h('tr', null, ['ID','Операция','Заказ','Кол-во','Исполнители','Участок','Оборуд.','План, ч','План. старт','Чертёж','Статус','Время',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
           h('tbody', null, paginated.map(op => {
             const ord = data.orders.find(o => o.id === op.orderId);
             const section = data.sections.find(s => s.id === op.sectionId);
@@ -177,6 +201,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
                   ? h('span', { style: { color: AM, fontWeight: 500, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => onOrderClick(ord.id), title: 'Открыть карточку заказа' }, ord.number)
                   : h('span', { style: { color: AM } }, ord?.number || '—')
               ),
+              h('td', { style: { ...S.td, fontSize: 11, textAlign: 'center', fontWeight: 500 } }, op.qty ? `${op.qty} шт` : '—'),
               h('td', { style: { ...S.td, minWidth: 120 } },
                 (op.workerIds || []).length > 0 && h('div', { style: { display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 4 } },
                   (op.workerIds || []).map(wid => {
