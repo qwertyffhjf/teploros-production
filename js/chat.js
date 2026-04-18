@@ -29,6 +29,29 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
   const lastReadTs = parseInt(localStorage.getItem(lastReadKey) || '0');
   useEffect(() => { localStorage.setItem(lastReadKey, String(now())); }, [data.messages?.length, lastReadKey]);
 
+  // 🔔 Звук и вибро при @упоминании текущего пользователя
+  useEffect(() => {
+    const lastMsg = data.messages?.[data.messages.length - 1];
+    if (lastMsg && lastMsg.mentions?.includes(currentUser.id) && lastMsg.senderId !== currentUser.id) {
+      // Вибро (если поддерживается)
+      if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+      // Звук (Web Audio API или простой beep)
+      try {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        oscillator.frequency.value = 800;
+        oscillator.type = 'sine';
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+        oscillator.start(audioContext.currentTime);
+        oscillator.stop(audioContext.currentTime + 0.1);
+      } catch(e) {}
+    }
+  }, [data.messages?.length, currentUser.id]);
+
   const myId = currentUser.id || 'system';
   const isMaster = currentUser.role === 'master';
   const isWarehouse = currentUser.role === 'warehouse';
