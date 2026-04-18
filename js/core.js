@@ -685,7 +685,9 @@ const DB = {
     } catch(e) {
       return { error: e.message };
     }
-  }  // ── Realtime listener ─────────────────────────────────────────────────────
+  },
+
+  // ── Realtime listener ─────────────────────────────────────────────────────
   onSnapshot(callback) {
     return DOC_REF.onSnapshot(
       snap => {
