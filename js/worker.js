@@ -36,6 +36,9 @@ const WorkerOnboarding = memo(({ worker, myOps, onDone }) => {
     myOps.length > 0
       ? myOps.slice(0, 3).map((op, i) => h('div', { key: op.id, style: { ...{ background: '#fff', border: '0.5px solid rgba(0,0,0,0.1)', borderRadius: 10, padding: '10px 14px', marginBottom: 8 } } },
           h('div', { style: { fontSize: 14, fontWeight: 500 } }, op.name),
+          op.qty && h('div', { style: { fontSize: 12, color: AM, marginTop: 2, fontWeight: 500 } }, 
+            `${op.workerQty?.[currentUser.id] || '—'} из ${op.qty} шт`
+          ),
           h('div', { style: { fontSize: 11, color: AM4, marginTop: 2 } }, '↑ Нажмите чтобы начать')
         ))
       : h('div', { style: { background: '#f8f8f5', borderRadius: 10, padding: '20px', textAlign: 'center', color: '#888', fontSize: 13, marginBottom: 12 } },
@@ -563,6 +566,9 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       active && h('div', { style: { background: AM3, border: `1.5px solid ${AM}`, borderRadius: 14, padding: 16, marginBottom: 20 } },
         h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 } }, 'В работе сейчас'),
         h('div', { style: { fontSize: 16, fontWeight: 500, color: AM2, marginBottom: 2 } }, active.name),
+        active.qty && h('div', { style: { fontSize: 13, color: AM4, fontWeight: 500, marginBottom: 4 } }, 
+          `📦 Ваша доля: ${active.workerQty?.[workerId] || '—'} из ${active.qty} шт`
+        ),
         h('div', { style: { fontSize: 11, color: AM4, marginBottom: 10 } }, data.orders.find(o => o.id === active.orderId)?.number || ''),
         // Таймер — вспомогательный, не доминирует
         h(ElapsedTimer, { startedAt: active.startedAt, style: { fontSize: 24, fontWeight: 500, color: AM, marginBottom: 14, display: 'block' } }),
