@@ -706,6 +706,24 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
           h('div', { style: { fontSize: 12, color: '#888', marginBottom: 16, lineHeight: 1.5 } },
             'Запишите работы не входящие в основной маршрут: обслуживание, уборка, наладка, перемещение и другие вспомогательные задачи.'
           ),
+          // 🚀 Быстрый старт: последние 5 вспомогательных работ этого рабочего
+          (() => {
+            const lastAuxWorks = data.ops
+              .filter(o => o.isAuxiliary && o.addedByWorker === workerId && !o.archived)
+              .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+              .slice(0, 5);
+            if (lastAuxWorks.length === 0) return null;
+            return h('div', { style: { marginBottom: 12, padding: 12, background: '#F5F5F2', borderRadius: 8, border: '0.5px solid rgba(0,0,0,0.08)' } },
+              h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase', marginBottom: 8, fontWeight: 500 } }, '⚡ Последние работы'),
+              h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+                lastAuxWorks.map(op => h('button', {
+                  key: op.id,
+                  style: { ...gbtn({ fontSize: 11, padding: '6px 10px', textAlign: 'left', width: '100%' }), borderColor: '#999' },
+                  onClick: () => setAddOpForm({ category: op.auxCategory || 'other', name: op.name, orderId: op.orderId || '', comment: '' })
+                }, `${op.name}${op.orderId ? ` · ${data.orders.find(o => o.id === op.orderId)?.number || ''}` : ''}`))
+              )
+            );
+          })(),
           // Категория работ
           h('div', { style: { marginBottom: 12 } },
             h('label', { style: S.lbl }, 'Категория'),
