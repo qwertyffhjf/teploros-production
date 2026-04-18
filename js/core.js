@@ -94,18 +94,21 @@ const calcWorkerStats = (workerId, data, nowTime) => {
   const d30 = t - 30 * 86400000;
   const d7 = t - 7 * 86400000;
   
-  // Один проход по ops
-  let doneCount = 0, defectCount = 0, weldCount = 0, doneWithPlan = 0, detectedDefects = 0, doneCount7d = 0, weekendOps = 0, fastOps = 0;
+  // 📊 Один проход по ops: теперь считаем ПО QTY, не по операциям
+  let doneQty = 0, defectQty = 0, weldCount = 0, doneWithPlan = 0, detectedDefects = 0, doneQty7d = 0, weekendOps = 0, fastOps = 0;
   let sumRatio = 0;
   const doneOps = [], defectOps = [], withPlan = [];
   
   for (const op of data.ops) {
     if (!op.workerIds?.includes(workerId)) continue;
     
+    // 🔑 Количество для этого рабочего (если не распределена операция, считаем 1 шт)
+    const workerQtyForOp = op.workerQty?.[workerId] || (op.qty ? 1 : 1);
+    
     if (op.status === 'done') {
       doneOps.push(op);
-      doneCount++;
-      if (op.finishedAt >= d7) doneCount7d++;
+      doneQty += workerQtyForOp;  // ← МЕНЯЕМ: добавляем qty, а не +1
+      if (op.finishedAt >= d7) doneQty7d += workerQtyForOp;
       if (op.name?.toLowerCase().includes('свар')) weldCount++;
       if (op.plannedHours && op.startedAt && op.finishedAt) {
         withPlan.push(op);
@@ -121,14 +124,14 @@ const calcWorkerStats = (workerId, data, nowTime) => {
       }
     } else if (op.status === 'defect') {
       defectOps.push(op);
-      defectCount++;
+      defectQty += workerQtyForOp;  // ← МЕНЯЕМ: добавляем qty дефектных
     }
     
     if (op.defectSource === 'previous_stage') detectedDefects++;
   }
   
-  const total = doneCount + defectCount;
-  const defectRate = total > 0 ? (defectCount / total * 100) : 0;
+  const total = doneQty + defectQty;  // ← МЕНЯЕМ: total по qty
+  const defectRate = total > 0 ? (defectQty / total * 100) : 0;  // ← МЕНЯЕМ: процент по qty
   const avgRatio = doneWithPlan > 0 ? sumRatio / doneWithPlan : 1;
   
   // События (фильтруем только нужные)
@@ -160,7 +163,7 @@ const calcWorkerStats = (workerId, data, nowTime) => {
     else currentSpeedStreak = 0;
   }
   
-  return { doneCount, defectCount, defectRate, weldCount, doneWithPlan, avgRatio, downtimes30d, downtimes7d, doneCount7d, currentStreak, uniqueOpTypes, detectedDefects, thanksReceived, uniqueSections, weekendOps, fastOps, bestSpeedStreak };
+  return { doneCount: doneQty, defectCount: defectQty, defectRate, weldCount, doneWithPlan, avgRatio, downtimes30d, downtimes7d, doneCount7d: doneQty7d, currentStreak, uniqueOpTypes, detectedDefects, thanksReceived, uniqueSections, weekendOps, fastOps, bestSpeedStreak };
 };
 
 const checkAchievements = (workerId, data) => {
