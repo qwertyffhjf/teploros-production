@@ -1073,6 +1073,109 @@ const ArchiveViewer = memo(({ data }) => {
   );
 });
 
+// ==================== Storage Monitor ====================
+const StorageMonitor = memo(({ data, addToast }) => {
+  const [showAnalysis, setShowAnalysis] = useState(false);
+  
+  // Вычисляем размер БД
+  const getPayloadSize = (obj) => JSON.stringify(obj).length;
+  const payloadSize = useMemo(() => getPayloadSize(data), [data]);
+  const sizeKb = Math.round(payloadSize / 1024);
+  const sizeMb = (sizeKb / 1024).toFixed(2);
+  const percentFilled = Math.round(sizeKb / 1024 * 100); // 1MB = 1024KB
+  const isCritical = percentFilled > 80;
+  
+  // Топ объектов по размеру
+  const getTopObjects = useMemo(() => {
+    const items = [
+      { name: 'orders', size: getPayloadSize(data.orders || []) },
+      { name: 'ops', size: getPayloadSize(data.ops || []) },
+      { name: 'events', size: getPayloadSize(data.events || []) },
+      { name: 'messages', size: getPayloadSize(data.messages || []) },
+      { name: 'workers', size: getPayloadSize(data.workers || []) },
+      { name: 'materials', size: getPayloadSize(data.materials || []) },
+      { name: 'materialConsumptions', size: getPayloadSize(data.materialConsumptions || []) },
+      { name: 'reclamations', size: getPayloadSize(data.reclamations || []) },
+      { name: 'timesheet', size: getPayloadSize(data.timesheet || {}) },
+    ].sort((a, b) => b.size - a.size).slice(0, 5);
+    return items;
+  }, [data]);
+  
+  // Проверка целостности
+  const checkIntegrity = useMemo(() => {
+    const issues = [];
+    
+    // Заказы без operations
+    (data.orders || []).forEach(o => {
+      if (!o.id) issues.push(`❌ Заказ без ID`);
+      if (!Array.isArray(o.operationIds)) issues.push(`⚠️ Заказ ${o.id}: operationIds не массив`);
+    });
+    
+    // Operations без заказа
+    (data.ops || []).forEach(op => {
+      const orderExists = data.orders?.find(o => o.id === op.orderId);
+      if (!orderExists) issues.push(`⚠️ Операция ${op.id}: заказ ${op.orderId} не найден`);
+    });
+    
+    // Workers без ID
+    (data.workers || []).forEach(w => {
+      if (!w.id) issues.push(`❌ Worker без ID: ${w.name}`);
+    });
+    
+    return issues.length > 0 ? issues.slice(0, 10) : ['✅ Целостность OK'];
+  }, [data]);
+  
+  // Дубликаты
+  const findDuplicates = useMemo(() => {
+    const dupMap = {};
+    (data.events || []).forEach(e => {
+      const key = `${e.type}:${e.workerId}:${e.ts}`;
+      dupMap[key] = (dupMap[key] || 0) + 1;
+    });
+    return Object.entries(dupMap).filter(([k, v]) => v > 1).slice(0, 5);
+  }, [data]);
+  
+  return h('div', null,
+    h('div', { style: S.card },
+      h('div', { style: { display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 } },
+        h('div', { style: S.sec }, '💾 Мониторинг хранилища'),
+        h('button', { style: gbtn({ fontSize:11, padding:'4px 12px' }), onClick: () => setShowAnalysis(v => !v) }, showAnalysis ? '▼ Закрыть' : '▶ Анализ')
+      ),
+      h('div', { style: { display:'flex', gap:16, marginBottom:12, flexWrap:'wrap' } },
+        h('div', null,
+          h('div', { style: { fontSize:10, color:'#888', textTransform:'uppercase', marginBottom:4 } }, 'Размер БД'),
+          h('div', { style: { fontSize:20, fontWeight:700, color: isCritical ? '#d32f2f' : AM } }, `${sizeMb} МБ`),
+          h('div', { style: { fontSize:10, color:'#888' } }, `${percentFilled}% заполнено`)
+        ),
+        h('div', { style: { flex:1, minWidth:150 } },
+          h('div', { style: { fontSize:10, color:'#888', textTransform:'uppercase', marginBottom:4 } }, 'Прогресс'),
+          h('div', { style: { height:8, background:'#f0f0f0', borderRadius:4, overflow:'hidden' } },
+            h('div', { style: { height:'100%', background: isCritical ? '#d32f2f' : AM, width:`${Math.min(percentFilled, 100)}%`, transition:'width 0.3s' } })
+          ),
+          isCritical && h('div', { style: { fontSize:11, color:'#d32f2f', marginTop:4, fontWeight:500 } }, '⚠️ Критичное заполнение! Старые данные будут архивированы.')
+        )
+      ),
+      showAnalysis && h('div', null,
+        h('div', { style: { marginBottom:12, padding:10, background:'#f8f8f5', borderRadius:8 } },
+          h('div', { style: { fontSize:12, fontWeight:500, marginBottom:8, color:'#333' } }, 'Топ объектов по размеру:'),
+          getTopObjects.map(item => h('div', { key:item.name, style: { fontSize:11, display:'flex', justifyContent:'space-between', padding:'4px 0', borderBottom:'0.5px solid rgba(0,0,0,0.05)' } },
+            h('span', null, item.name),
+            h('span', { style: { fontWeight:500, color:AM } }, `${Math.round(item.size / 1024)} КБ`)
+          ))
+        ),
+        h('div', { style: { marginBottom:12, padding:10, background:'#fef8f5', borderRadius:8 } },
+          h('div', { style: { fontSize:12, fontWeight:500, marginBottom:8, color:'#333' } }, 'Целостность данных:'),
+          checkIntegrity.map((issue, i) => h('div', { key:i, style: { fontSize:11, padding:'3px 0', color: issue.startsWith('✅') ? '#2e7d32' : '#d32f2f', fontFamily:'monospace', wordBreak:'break-word' } }, issue))
+        ),
+        findDuplicates.length > 0 && h('div', { style: { padding:10, background:'#fff3e0', borderRadius:8 } },
+          h('div', { style: { fontSize:12, fontWeight:500, marginBottom:8, color:'#333' } }, `⚠️ Найдено ${findDuplicates.length} дубликатов событий:`),
+          findDuplicates.map(([key, count], i) => h('div', { key:i, style: { fontSize:10, padding:'2px 0', color:'#e65100' } }, `${key}: ${count}x`))
+        )
+      )
+    )
+  );
+});
+
 const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
   const settings = data.settings || EMPTY_DATA.settings;
   // PIN-поля — всегда вводим новый, не показываем хеш
@@ -1241,6 +1344,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
       ),
       h('div', { style: { fontSize:11, color:'#888' } }, 'По умолчанию: 50 × 35. Применяется при печати QR-этикеток.')
     ),
+    h(StorageMonitor, { data, addToast }),
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Резервное копирование'),
       h('div', { style: { display:'flex', gap:12, alignItems:'center', flexWrap:'wrap', marginBottom:8 } },
