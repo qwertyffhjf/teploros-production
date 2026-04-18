@@ -1,6 +1,76 @@
 // teploros · analytics.js
 // Автоматически извлечено из монолита
 
+// ==================== ANALYTICS HELPERS ====================
+// 📊 OEE (Overall Equipment Effectiveness) = Availability × Performance × Quality
+const calcOEE = (data, workerId, period = 30) => {
+  const t = now();
+  const since = t - period * 86400000;
+  
+  // Доступность: время работы / планируемое время
+  const allOps = data.ops.filter(op => op.workerIds?.includes(workerId) && op.finishedAt >= since);
+  const downtimes = data.events.filter(e => e.workerId === workerId && e.type === 'downtime' && e.ts >= since);
+  const downtimeMs = downtimes.reduce((s, e) => s + (e.durationMs || 0), 0);
+  const totalMs = allOps.reduce((s, op) => s + (op.finishedAt - op.startedAt || 0), 0);
+  const availability = totalMs > 0 ? Math.min(100, (1 - downtimeMs / (totalMs + downtimeMs)) * 100) : 0;
+  
+  // Производительность: фактическое время / плановое время
+  const withPlan = allOps.filter(op => op.plannedHours && op.startedAt && op.finishedAt);
+  let performance = 100;
+  if (withPlan.length > 0) {
+    const avgRatio = withPlan.reduce((s, op) => s + (op.finishedAt - op.startedAt) / (op.plannedHours * 3600000), 0) / withPlan.length;
+    performance = Math.min(100, 100 / (avgRatio || 1));
+  }
+  
+  // Качество: годные / всего
+  const doneCount = allOps.filter(op => op.status === 'done').length;
+  const defectCount = allOps.filter(op => op.status === 'defect').length;
+  const quality = (doneCount + defectCount) > 0 ? (doneCount / (doneCount + defectCount)) * 100 : 100;
+  
+  // OEE = A × P × Q / 10000
+  const oee = (availability * performance * quality) / 10000;
+  
+  return { oee: Math.round(oee), availability: Math.round(availability), performance: Math.round(performance), quality: Math.round(quality) };
+};
+
+// 📈 План/факт по операциям за период
+const calcPlanFact = (data, period = 30) => {
+  const t = now();
+  const since = t - period * 86400000;
+  const ops = data.ops.filter(op => op.finishedAt >= since && op.status === 'done');
+  
+  let plannedHours = 0, actualHours = 0;
+  ops.forEach(op => {
+    if (op.plannedHours) plannedHours += op.plannedHours;
+    if (op.startedAt && op.finishedAt) actualHours += (op.finishedAt - op.startedAt) / 3600000;
+  });
+  
+  const ratio = plannedHours > 0 ? (actualHours / plannedHours) : 1;
+  return { plannedHours: Math.round(plannedHours * 10) / 10, actualHours: Math.round(actualHours * 10) / 10, ratio: Math.round(ratio * 100) / 100, opsCount: ops.length };
+};
+
+// 🔮 Прогноз сроков: если темп сохранится, когда закончится заказ
+const calcForecast = (data, orderId) => {
+  const order = data.orders.find(o => o.id === orderId);
+  if (!order) return null;
+  
+  const ops = data.ops.filter(op => op.orderId === orderId && !op.archived);
+  const doneOps = ops.filter(op => op.status === 'done');
+  const pendingOps = ops.filter(op => op.status === 'pending' || op.status === 'in_progress');
+  
+  if (doneOps.length === 0 || pendingOps.length === 0) return null;
+  
+  // Средняя скорость: часы на одну операцию
+  const avgHours = doneOps.reduce((s, op) => s + (op.plannedHours || op.finishedAt - op.startedAt) / 3600000, 0) / doneOps.length;
+  const remainingHours = pendingOps.length * avgHours;
+  
+  // Прогноз: сегодня + оставшиеся часы
+  const forecastMs = remainingHours * 3600000;
+  const forecastDate = new Date(now() + forecastMs);
+  
+  return { forecastDate, remainingHours: Math.round(remainingHours * 10) / 10, daysLeft: Math.ceil(remainingHours / 8) };
+};
+
 // ==================== MasterJournal ====================
 const MasterJournal = memo(({ data }) => {
   const sortedEvents = useMemo(() => [...data.events].sort((a,b) => b.ts - a.ts).slice(0, 200), [data.events]);
