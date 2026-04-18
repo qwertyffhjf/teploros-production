@@ -297,6 +297,9 @@ const pinMatch = (input, stored) => {
 };
 
 // ==================== Firebase ====================
+// ⚠️ SECURITY: Перед использованием в production примени Security Rules!
+// Смотри FIREBASE_SECURITY_RULES.txt в корне проекта.
+// Сейчас БД открыта — любой может читать/писать. После Rules будет закрыто.
 firebase.initializeApp({
   apiKey: "AIzaSyAR4Hvt4I80tbQKI2HLTKM8rbLSas2QFDw",
   authDomain: "teploros-11774.firebaseapp.com",
@@ -638,16 +641,16 @@ const migrateData = (d) => {
 
 // ==================== Стили и кнопки ====================
 const S = {
-  card: { background: '#fff', border: '0.5px solid rgba(0,0,0,0.1)', borderRadius: 12, padding: 16, marginBottom: 12 },
-  th: { textAlign: 'left', padding: '7px 10px', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#888', borderBottom: '0.5px solid rgba(0,0,0,0.08)', fontWeight: 400 },
-  td: { padding: '9px 10px', fontSize: 12, borderBottom: '0.5px solid rgba(0,0,0,0.06)', color: '#1a1a18', verticalAlign: 'middle' },
-  inp: { background: '#fff', border: '0.5px solid rgba(0,0,0,0.22)', borderRadius: 8, padding: '7px 10px', fontSize: 13, outline: 'none' },
-  lbl: { fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4, display: 'block' },
-  sec: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10, fontWeight: 500 }
+  card: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 12, padding: 16, marginBottom: 12 },
+  th: { textAlign: 'left', padding: '8px 10px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--muted)', borderBottom: '0.5px solid var(--border-soft)', fontWeight: 500, minHeight: 40 },
+  td: { padding: '10px 10px', fontSize: 13, borderBottom: '0.5px solid var(--border-soft)', color: 'var(--fg)', verticalAlign: 'middle', minHeight: 40 },
+  inp: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '10px 12px', fontSize: 16, outline: 'none', minHeight: 44 },
+  lbl: { fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6, display: 'block', fontWeight: 500 },
+  sec: { fontSize: 12, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12, fontWeight: 600 }
 };
-const abtn = (e) => ({ padding: '8px 14px', background: AM, color: AM2, border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 500, ...e });
-const gbtn = (e) => ({ padding: '8px 14px', background: 'transparent', color: '#666', border: '0.5px solid rgba(0,0,0,0.2)', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 500, ...e });
-const rbtn = (e) => ({ padding: '8px 14px', background: RD3, color: RD2, border: `0.5px solid ${RD}`, borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 500, ...e });
+const abtn = (e) => ({ padding: '10px 16px', background: AM, color: AM2, border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e });
+const gbtn = (e) => ({ padding: '10px 16px', background: 'transparent', color: 'var(--fg)', border: '0.5px solid var(--border)', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e });
+const rbtn = (e) => ({ padding: '10px 16px', background: RD3, color: RD2, border: `0.5px solid ${RD}`, borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e });
 
 // ==================== useConfirm (заменяет все confirm()) ====================
 const useConfirm = () => {
