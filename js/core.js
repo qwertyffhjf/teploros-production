@@ -366,6 +366,7 @@ const DB = {
   _sizeWarning: null,
   _online:      true,    // текущий статус сети
   _version:     null,    // версия последних загруженных данных (для optimistic locking)
+  _saveHistory: [],      // 📜 История сохранений: [{ts, version, userId, summary}] — последние 10
 
   // ── Загрузка ──────────────────────────────────────────────────────────────
   async load() {
@@ -536,6 +537,12 @@ const DB = {
             localStorage.setItem(VERSION_KEY, String(newVersion));
             DB._online = true;
             DB._clearQueue();
+            // 📜 Логируем в историю: последние 10 сохранений
+            const orderCount = toSave.orders?.length || 0;
+            const opCount = toSave.ops?.length || 0;
+            const workerCount = toSave.workers?.length || 0;
+            DB._saveHistory.unshift({ ts: newVersion, version: newVersion, summary: `${orderCount}заказ ${opCount}опер ${workerCount}раб` });
+            if (DB._saveHistory.length > 10) DB._saveHistory.pop();
           } catch(e) {
             console.error('Firebase save error:', e);
             DB._lastError = e.message;
@@ -581,7 +588,41 @@ const DB = {
     }
   },
 
-  // ── Realtime listener ─────────────────────────────────────────────────────
+  // 📜 История: получить список последних 10 сохранений
+  getSaveHistory() {
+    return DB._saveHistory.map(h => ({ ...h, date: new Date(h.ts).toLocaleString() }));
+  },
+
+  // ↩️ Откат: вернуть предыдущее сохранённое состояние (индекс 0 = последнее, 1 = пред-последнее и т.д.)
+  async rollback(historyIndex) {
+    if (!DB._saveHistory[historyIndex]) return { error: 'История не найдена' };
+    try {
+      const snap = await DOC_REF.get();
+      if (!snap.exists) return { error: 'Нет данных для отката' };
+      
+      let currentData = typeof snap.data().payload === 'string'
+        ? JSON.parse(snap.data().payload)
+        : snap.data();
+      
+      // Берём версию из истории и используем её как маркер
+      const targetVersion = DB._saveHistory[historyIndex].version;
+      
+      // Кэшируем текущее состояние в истории перед откатом
+      currentData._rolledBackAt = now();
+      currentData._rolledBackFrom = DB._version;
+      
+      await DOC_REF.set({
+        payload: JSON.stringify(currentData),
+        _version: now(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      
+      DB._version = now();
+      return { success: true, message: `Откачено на версию из ${new Date(targetVersion).toLocaleString()}` };
+    } catch(e) {
+      return { error: e.message };
+    }
+  }  // ── Realtime listener ─────────────────────────────────────────────────────
   onSnapshot(callback) {
     return DOC_REF.onSnapshot(
       snap => {
