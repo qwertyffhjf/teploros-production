@@ -141,11 +141,11 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
         const d = { ...data, ops: newOps };
         await DB.save(d); onUpdate(d); addToast(`Добавлено операций: ${added}`, 'success');
       }}),
-    // Форма создания — только для новых операций
-    !editingId && h('div', { style: S.card },
-      h('div', { style: S.sec }, 'Создать операцию'),
+    // Форма создания/редактирования операции
+    h('div', { style: S.card },
+      h('div', { style: S.sec }, editingId ? '📝 Редактировать операцию' : 'Создать операцию'),
       h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
-        h('div', { style: { minWidth: 150 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.orderId, onChange: e => setForm(p => ({ ...p, orderId: e.target.value })) }, h('option', { value: '' }, '— заказ —'), data.orders.map(o => h('option', { key: o.id, value: o.id }, o.number))), fieldErrors.orderId && h('div', { className: 'error-message' }, fieldErrors.orderId)),
+        !editingId && h('div', { style: { minWidth: 150 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.orderId, onChange: e => setForm(p => ({ ...p, orderId: e.target.value })) }, h('option', { value: '' }, '— заказ —'), data.orders.map(o => h('option', { key: o.id, value: o.id }, o.number))), fieldErrors.orderId && h('div', { className: 'error-message' }, fieldErrors.orderId)),
         h('div', { style: { flex: 1, minWidth: 160 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })) }, h('option', { value: '' }, '— операция —'), stagesList.map(stage => h('option', { key: stage, value: stage }, stage))), fieldErrors.name && h('div', { className: 'error-message' }, fieldErrors.name)),
         h('div', { style: { minWidth: 200 } },
           h('div', { style: { fontSize: 10, color: '#888', marginBottom: 4 } }, 'Исполнители'),
@@ -169,7 +169,8 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
           })()
         ),
         h('div', { style: { minWidth: 140 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Ссылка на чертёж', value: form.drawingUrl, onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value })) })),
-        h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, '+')
+        h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, editingId ? '✓' : '+'),
+        editingId && h('button', { type: 'button', style: gbtn(), onClick: () => resetForm() }, 'Отмена')
       )
     ),
     // Фильтр по типу продукции
@@ -397,9 +398,9 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     return Object.keys(errors).length === 0;
   };
 
-  const createDefaultOps = useCallback((orderId, productType) => {
+  const createDefaultOps = useCallback((orderId, productType, orderQty) => {
     const stages = (data.productionStages || []).filter(s => !productType || s.productType === productType);
-    return stages.map(stage => ({ id: uid(), orderId, name: stage.name, workerIds: [], status: 'pending', createdAt: now(), plannedHours: undefined, archived: false, sectionId: null, equipmentId: null, plannedStartDate: undefined, requiresQC: stage.name.includes('свар') || stage.name.includes('Опресовка') }));
+    return stages.map(stage => ({ id: uid(), orderId, name: stage.name, qty: orderQty, workerIds: [], workerQty: {}, status: 'pending', createdAt: now(), plannedHours: undefined, archived: false, sectionId: null, equipmentId: null, plannedStartDate: undefined, requiresQC: stage.name.includes('свар') || stage.name.includes('Опресовка') }));
   }, [data.productionStages]);
 
   const addOrUpdate = useCallback(async () => {
@@ -410,7 +411,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       await DB.save(d); onUpdate(d); setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({}); addToast('Заказ обновлён', 'success');
     } else {
       const newOrder = { id: uid(), ...form, qty: Number(form.qty), createdAt: now(), archived: false };
-      const newOps = createDefaultOps(newOrder.id, form.productType);
+      const newOps = createDefaultOps(newOrder.id, form.productType, Number(form.qty));
       // BOM: предупреждение о дефиците (не блокирует создание)
       if (form.bomId) {
         const bom = data.bomTemplates.find(b => b.id === form.bomId);
