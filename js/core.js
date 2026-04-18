@@ -219,7 +219,7 @@ const scoreWorkerForOp = (worker, opName, data) => {
 };
 
 // 💰 Себестоимость заказа: материалы + рабочая сила
-const calcOrderCost = (data, orderId) => {
+const calcOrderCostDetail = (data, orderId) => {
   const order = data.orders.find(o => o.id === orderId);
   if (!order) return { error: 'Заказ не найден' };
   
@@ -264,7 +264,7 @@ const calcOrderCost = (data, orderId) => {
 // 📊 Отчёт себестоимости: все заказы с рентабельностью
 const getCostReport = (data) => {
   const orders = data.orders.filter(o => !o.archived && o.status === 'done');
-  return orders.map(order => calcOrderCost(data, order.id))
+  return orders.map(order => calcOrderCostDetail(data, order.id))
     .filter(r => !r.error)
     .sort((a, b) => b.margin - a.margin)
     .slice(0, 50);
