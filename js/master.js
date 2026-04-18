@@ -839,6 +839,50 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
 
 
 
+// ==================== CostAnalytics: себестоимость заказов ====================
+const CostAnalytics = memo(({ data, onUpdate, addToast }) => {
+  const [showRates, setShowRates] = useState(false);
+  
+  // 💰 Отчёт по себестоимости всех заказов
+  const costReport = useMemo(() => getCostReport(data), [data.orders?.length, data.ops?.length, data.workers?.length]);
+  
+  return h('div', null,
+    h('div', { style: S.card },
+      h('div', { style: S.sec }, '💰 Рентабельность заказов'),
+      h('div', { style: { display:'flex', gap:8, marginBottom:12 } },
+        h('button', { style: gbtn({ fontSize:11, padding:'6px 10px' }), onClick: () => setShowRates(v => !v) }, showRates ? '▼ Ставки' : '▶ Ставки сотрудников')
+      ),
+      // 📋 Таблица себестоимости
+      h('div', { className:'table-responsive' }, h('table', { style: { width:'100%', borderCollapse:'collapse', fontSize:11 } },
+        h('thead', null, h('tr', null,
+          ['Заказ','Цена','Материал','Рабсила','Себест','Прибыль','Маржа'].map((h, i) => h('th', { key:i, style: S.th }, h))
+        )),
+        h('tbody', null, costReport.map(r => h('tr', { key:r.orderId },
+          h('td', { style: S.td }, data.orders?.find(o => o.id === r.orderId)?.number || '—'),
+          h('td', { style: S.td }, `${r.price} ₽`),
+          h('td', { style: S.td }, `${r.materialCost} ₽`),
+          h('td', { style: S.td }, `${r.laborCost} ₽`),
+          h('td', { style: S.td }, `${r.totalCost} ₽`),
+          h('td', { style: { ...S.td, color: r.profit >= 0 ? GN : RD, fontWeight:500 } }, `${r.profit} ₽`),
+          h('td', { style: { ...S.td, background: r.margin >= 20 ? '#E8F5E9' : r.margin >= 0 ? '#FFF8E1' : '#FFF0F0', fontWeight:500 } }, `${r.margin}%`)
+        )))
+      )),
+      // 📊 Ставки сотрудников (редактируемо)
+      showRates && h('div', { style: { marginTop:16, padding:12, background:'#f8f8f5', borderRadius:8 } },
+        h('div', { style: { fontSize:12, fontWeight:500, marginBottom:12 } }, 'Установить часовую ставку (руб/час):'),
+        data.workers?.filter(w => !w.archived).map(w => h('div', { key:w.id, style: { display:'flex', gap:8, marginBottom:8, alignItems:'center' } },
+          h('div', { style: { flex:1, fontSize:12 } }, w.name),
+          h('input', { type:'number', min:100, max:5000, step:50, style: { ...S.inp, width:80, fontSize:12 }, value: w.hourlyRate || 200, onChange: e => {
+            const newRate = parseInt(e.target.value);
+            if (newRate > 0) setWorkerRate(data, w.id, newRate, onUpdate).then(() => addToast(`Ставка ${w.name}: ${newRate} ₽/ч`, 'success'));
+          } }),
+          h('span', { style: { fontSize:11, color:'#888' } }, '₽/ч')
+        ))
+      )
+    )
+  );
+});
+
 // ==================== QRScreen ====================
 const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
   const op = data.ops.find(o => o.id === opId);
