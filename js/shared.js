@@ -98,13 +98,18 @@ const calcOrderCost = (order, data, hourlyRate = 500) => {
   const doneOps = ops.filter(op => op.status === 'done' && op.startedAt && op.finishedAt);
   const laborHours = doneOps.reduce((s, op) => s + (op.finishedAt - op.startedAt) / 3600000, 0);
   const laborCost = laborHours * hourlyRate;
+  
+  // 📊 Отслеживаем qty вместо просто операций
+  const totalQty = ops.reduce((s, op) => s + (op.qty || 1), 0);
+  const doneQty = doneOps.reduce((s, op) => s + (op.qty || 1), 0);
+  
   const materialCost = (data.materialConsumptions || [])
     .filter(mc => ops.some(op => op.id === mc.opId))
     .reduce((s, mc) => {
       const mat = data.materials.find(m => m.id === mc.materialId);
       return s + (mc.qty * (mat?.unitCost || 0));
     }, 0);
-  return { laborHours: Math.round(laborHours * 10) / 10, laborCost: Math.round(laborCost), materialCost: Math.round(materialCost), totalCost: Math.round(laborCost + materialCost), opsTotal: ops.length, opsDone: doneOps.length };
+  return { laborHours: Math.round(laborHours * 10) / 10, laborCost: Math.round(laborCost), materialCost: Math.round(materialCost), totalCost: Math.round(laborCost + materialCost), opsTotal: ops.length, opsDone: doneOps.length, qtyTotal: totalQty, qtyDone: doneQty, qtyProgress: totalQty > 0 ? Math.round(doneQty / totalQty * 100) : 0 };
 };
 
 // ==================== PDF Паспорт изделия ====================
