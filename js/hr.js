@@ -36,7 +36,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
     if (!(await askConfirm({ message: 'Архивировать сотрудника?', detail: 'История операций сохранится.' }))) return;
     const name = data.workers.find(w => w.id === id)?.name;
     let d = { ...data,
-      workers: data.workers.map(w => w.id === id ? { ...w, archived: true, status: 'absent' } : w),
+      workers: data.workers.map(w => w.id === id ? { ...w, archived: true, status: 'absent', dismissedAt: Date.now() } : w),
       ops: data.ops.map(o => (o.status === 'pending' && o.workerIds?.includes(id)) ? { ...o, workerIds: o.workerIds.filter(wid => wid !== id) } : o)
     };
     d = logAction(d, 'worker_archive', { workerId: id, workerName: name });
@@ -92,7 +92,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
   }, [workersEnriched, search, statusFilter, showArchivedWorkers]);
 
   const restoreWorker = useCallback(async id => {
-    let d = { ...data, workers: data.workers.map(w => w.id === id ? { ...w, archived: false, status: 'working' } : w) };
+    let d = { ...data, workers: data.workers.map(w => w.id === id ? { ...w, archived: false, status: 'working', dismissedAt: null } : w) };
     d = logAction(d, 'worker_restore', { workerId: id, workerName: data.workers.find(w => w.id === id)?.name });
     await DB.save(d); onUpdate(d); addToast('Сотрудник восстановлен', 'success');
   }, [data, onUpdate, addToast]);
