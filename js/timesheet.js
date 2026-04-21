@@ -96,13 +96,15 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
 
   const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
   const DOW = ['вс','пн','вт','ср','чт','пт','сб'];
-  const CODES = ['Б','ОТ','ОЗ','К','НН'];
+  const CODES = ['Б','ОТ','ОЗ','К','НН','У','СД'];
   const CODE_LABELS = {
     'Б':  'Б — больничный (нетрудоспособность)',
     'ОТ': 'ОТ — очередной отпуск',
     'ОЗ': 'ОЗ — отпуск за свой счёт',
     'К':  'К — служебная командировка',
     'НН': 'НН — неявка по невыясненной причине',
+    'У':  'У — уволен',
+    'СД': 'СД — сдельная оплата труда',
   };
 
   const dim = new Date(viewYear, viewMonth + 1, 0).getDate();
@@ -164,6 +166,8 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
     if (val.code === 'ОЗ') return { bg: '#FFF3E0', cl: '#E65100', lbl: 'ОЗ' };
     if (val.code === 'К')  return { bg: '#E8F5E9', cl: '#2E7D32', lbl: 'К' };
     if (val.code === 'НН') return { bg: '#F1EFE8', cl: '#888',   lbl: 'НН' };
+    if (val.code === 'У')  return { bg: '#E0E0E0', cl: '#444',   lbl: 'У' };
+    if (val.code === 'СД') return { bg: '#EDE7F6', cl: '#4527A0', lbl: 'СД' };
     if (val.h >= 8) return { bg: GN3, cl: GN2, lbl: val.h };
     if (val.h > 0)  return { bg: AM3, cl: AM2, lbl: val.h };
     return { bg: 'var(--color-background-secondary)', cl: '#bbb', lbl: '·' };
@@ -340,6 +344,8 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
         ['#FFF3E0', '#E65100', 'ОЗ — отпуск за свой счёт'],
         ['#E8F5E9', '#2E7D32', 'К — командировка'],
         ['#F1EFE8', '#888',    'НН — неявка невыясненная'],
+        ['#E0E0E0', '#444',    'У — уволен'],
+        ['#EDE7F6', '#4527A0', 'СД — сдельная оплата'],
         ['rgba(226,75,74,0.08)', 'rgba(226,75,74,0.5)', 'В — выходной/праздник'],
       ].map(([bg, cl, l]) =>
         h('div', { key:l, style:{ display:'flex', alignItems:'center', gap:4, fontSize:11, color:'#555' } },
