@@ -109,14 +109,39 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
 
   const dim = new Date(viewYear, viewMonth + 1, 0).getDate();
   const days = Array.from({ length: dim }, (_, i) => i + 1);
-  const activeWorkers = useMemo(() => data.workers.filter(w => !w.archived).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ru')), [data.workers]);
+  
+  // Показываем: активных + уволенных В МЕСЯЦЕ ПРОСМОТРА
+  const monthStart = new Date(viewYear, viewMonth, 1).getTime();
+  const monthEnd = new Date(viewYear, viewMonth + 1, 0, 23, 59, 59).getTime();
+  
+  const activeWorkers = useMemo(() => data.workers.filter(w => {
+    if (!w.archived) return true;
+    // Уволенный — показываем только в месяц увольнения
+    if (w.dismissedAt) {
+      return w.dismissedAt >= monthStart && w.dismissedAt <= monthEnd;
+    }
+    return false;
+  }).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ru')), [data.workers, viewYear, viewMonth]);
+  
   const showWorkers = selWorker ? activeWorkers.filter(w => w.id === selWorker) : activeWorkers;
 
   // Читаем сохранённые значения табеля из data.timesheet[YYYY-MM][workerId][day]
   const tsKey = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}`;
   const tsData = (data.timesheet || {})[tsKey] || {};
 
-  const getCellVal = (workerId, day) => tsData[workerId]?.[day] || null;
+  const getCellVal = (workerId, day) => {
+    // Если сотрудник уволен — после даты увольнения автоматически "У"
+    const worker = data.workers.find(w => w.id === workerId);
+    if (worker?.dismissedAt) {
+      const dismissDay = new Date(worker.dismissedAt).getDate();
+      const dismissMonth = new Date(worker.dismissedAt).getMonth();
+      const dismissYear = new Date(worker.dismissedAt).getFullYear();
+      if (viewYear === dismissYear && viewMonth === dismissMonth && day > dismissDay) {
+        return { code: 'У' };
+      }
+    }
+    return tsData[workerId]?.[day] || null;
+  };
 
   const setCellVal = useCallback(async (workerId, day, val) => {
     const key = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}`;
@@ -373,23 +398,28 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
           h('tbody', null,
             showWorkers.map(w => {
               let totH = 0;
+              const isDismissed = !!w.dismissedAt;
+              const dismissDay = isDismissed ? new Date(w.dismissedAt).getDate() : 999;
               return h('tr', { key:w.id },
-                h('td', { style:{ ...S.td, position:'sticky', left:0, zIndex:1, background:'var(--color-background-primary)', boxShadow:'2px 0 4px rgba(0,0,0,0.04)', padding:'6px 10px', fontWeight:500 } }, w.name),
+                h('td', { style:{ ...S.td, position:'sticky', left:0, zIndex:1, background:'var(--color-background-primary)', boxShadow:'2px 0 4px rgba(0,0,0,0.04)', padding:'6px 10px', fontWeight:500, color: isDismissed ? '#999' : undefined } }, 
+                  w.name, 
+                  isDismissed && h('span', { style: { fontSize: 9, color: '#999', marginLeft: 4 } }, '(ув.)')
+                ),
                 days.map(d => {
                   const isWe = !isWorkday(viewYear, viewMonth, d, data.settings);
                   const val = getCellVal(w.id, d);
+                  const isAfterDismissal = isDismissed && d > dismissDay;
                   const { bg, cl, lbl } = cellStyle(val);
                   if (val?.h) totH += val.h;
                   const isActive = activeCell?.workerId === w.id && activeCell?.day === d;
-                  // Выходные: если нет данных — точка, если есть — показываем как обычно
-                  const weBg = val ? bg : 'transparent';
-                  const weCl = val ? cl : '#ddd';
-                  const weLbl = val ? lbl : '·';
-                  return h('td', { key:d, style:{ ...S.td, padding:2, background: isWe && !val ? 'rgba(226,75,74,0.04)' : undefined } },
+                  const weBg = isAfterDismissal ? '#E0E0E0' : (val ? bg : 'transparent');
+                  const weCl = isAfterDismissal ? '#444' : (val ? cl : '#ddd');
+                  const weLbl = isAfterDismissal ? 'У' : (val ? lbl : '·');
+                  return h('td', { key:d, style:{ ...S.td, padding:2, background: isWe && !val && !isAfterDismissal ? 'rgba(226,75,74,0.04)' : undefined } },
                     h('span', {
-                      style:{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:28, height:24, borderRadius:4, fontSize:11, fontWeight:500, cursor:'pointer', background:weBg, color:weCl, outline: isActive ? `2px solid ${AM}` : 'none' },
-                      onClick: () => openPopup(w.id, d),
-                      title: isWe ? 'Выходной — нажмите чтобы внести часы (работа в выходной)' : undefined
+                      style:{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:28, height:24, borderRadius:4, fontSize:11, fontWeight:500, cursor: isAfterDismissal ? 'default' : 'pointer', background:weBg, color:weCl, outline: isActive ? `2px solid ${AM}` : 'none', opacity: isAfterDismissal ? 0.6 : 1 },
+                      onClick: isAfterDismissal ? undefined : () => openPopup(w.id, d),
+                      title: isAfterDismissal ? 'Сотрудник уволен' : (isWe ? 'Выходной — нажмите чтобы внести часы (работа в выходной)' : undefined)
                     }, weLbl)
                   );
                 }),
