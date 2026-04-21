@@ -94,21 +94,18 @@ const calcWorkerStats = (workerId, data, nowTime) => {
   const d30 = t - 30 * 86400000;
   const d7 = t - 7 * 86400000;
   
-  // 📊 Один проход по ops: теперь считаем ПО QTY, не по операциям
-  let doneQty = 0, defectQty = 0, weldCount = 0, doneWithPlan = 0, detectedDefects = 0, doneQty7d = 0, weekendOps = 0, fastOps = 0;
+  // Один проход по ops
+  let doneCount = 0, defectCount = 0, weldCount = 0, doneWithPlan = 0, detectedDefects = 0, doneCount7d = 0, weekendOps = 0, fastOps = 0;
   let sumRatio = 0;
   const doneOps = [], defectOps = [], withPlan = [];
   
   for (const op of data.ops) {
     if (!op.workerIds?.includes(workerId)) continue;
     
-    // 🔑 Количество для этого рабочего (если не распределена операция, считаем 1 шт)
-    const workerQtyForOp = op.workerQty?.[workerId] || (op.qty ? 1 : 1);
-    
     if (op.status === 'done') {
       doneOps.push(op);
-      doneQty += workerQtyForOp;  // ← МЕНЯЕМ: добавляем qty, а не +1
-      if (op.finishedAt >= d7) doneQty7d += workerQtyForOp;
+      doneCount++;
+      if (op.finishedAt >= d7) doneCount7d++;
       if (op.name?.toLowerCase().includes('свар')) weldCount++;
       if (op.plannedHours && op.startedAt && op.finishedAt) {
         withPlan.push(op);
@@ -124,14 +121,14 @@ const calcWorkerStats = (workerId, data, nowTime) => {
       }
     } else if (op.status === 'defect') {
       defectOps.push(op);
-      defectQty += workerQtyForOp;  // ← МЕНЯЕМ: добавляем qty дефектных
+      defectCount++;
     }
     
     if (op.defectSource === 'previous_stage') detectedDefects++;
   }
   
-  const total = doneQty + defectQty;  // ← МЕНЯЕМ: total по qty
-  const defectRate = total > 0 ? (defectQty / total * 100) : 0;  // ← МЕНЯЕМ: процент по qty
+  const total = doneCount + defectCount;
+  const defectRate = total > 0 ? (defectCount / total * 100) : 0;
   const avgRatio = doneWithPlan > 0 ? sumRatio / doneWithPlan : 1;
   
   // События (фильтруем только нужные)
@@ -384,7 +381,7 @@ const EMPTY_DATA = {
   vacations: [],      // плановые отпуска: [{id, workerId, startDate, endDate, approved, note}]
   opNorms: {},        // нормы операций: {opName: {planned: N, samples: N, totalMs: N}}
   auxStats: {},       // агрегация вспомогательных работ: {"YYYY-MM": {total, totalMs, byCategory:{cat:{count,ms}}, byWorker:{wid:{count,ms}}}}
-  messages: [], reclamations: [], duels: [], materialReservations: [],
+  messages: [], reclamations: [], duels: [], materialReservations: [], defects: [],
   settings: {
     // Единый PIN-вход: все роли входят по PIN (хеши DJB2, дефолтные значения: 0000, 1111, 2222, 3333, 4444, 5555, 6666, 7777)
     masterPin: 'H_18D7OAL',
@@ -566,7 +563,7 @@ const DB = {
               const remoteVersion = snap.data().updatedAt?.toMillis?.() || snap.data()._version || 0;
               const localVersion  = Number(localStorage.getItem(VERSION_KEY)) || 0;
               if (remoteVersion > localVersion && remoteVersion !== newVersion) {
-                console.warn('Conflict detected: remote version is newer');
+                console.log('📝 Conflict detected: remote version is newer — merging changes');
                 // ── Мержим вместо перезаписи: берём удалённые данные как базу, накладываем наши изменения ──
                 try {
                   const remoteData = typeof snap.data().payload === 'string' ? JSON.parse(snap.data().payload) : snap.data();
