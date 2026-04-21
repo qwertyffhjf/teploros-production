@@ -160,7 +160,7 @@ const calcWorkerStats = (workerId, data, nowTime) => {
     else currentSpeedStreak = 0;
   }
   
-  return { doneCount: doneQty, defectCount: defectQty, defectRate, weldCount, doneWithPlan, avgRatio, downtimes30d, downtimes7d, doneCount7d: doneQty7d, currentStreak, uniqueOpTypes, detectedDefects, thanksReceived, uniqueSections, weekendOps, fastOps, bestSpeedStreak };
+  return { doneCount, defectCount, defectRate, weldCount, doneWithPlan, avgRatio, downtimes30d, downtimes7d, doneCount7d, currentStreak, uniqueOpTypes, detectedDefects, thanksReceived, uniqueSections, weekendOps, fastOps, bestSpeedStreak };
 };
 
 const checkAchievements = (workerId, data) => {
