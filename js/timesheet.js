@@ -185,7 +185,7 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
   }, [activeCell, setCellVal]);
 
   const cellStyle = (val) => {
-    if (!val) return { bg: 'var(--color-background-secondary)', cl: '#bbb', lbl: '·' };
+    if (!val) return { bg: '#f8f8f5', cl: '#bbb', lbl: '·' };
     if (val.code === 'Б')  return { bg: '#FCEBEB', cl: '#791F1F', lbl: 'Б' };
     if (val.code === 'ОТ') return { bg: '#E6F1FB', cl: '#0C447C', lbl: 'ОТ' };
     if (val.code === 'ОЗ') return { bg: '#FFF3E0', cl: '#E65100', lbl: 'ОЗ' };
@@ -195,7 +195,7 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
     if (val.code === 'СД') return { bg: '#EDE7F6', cl: '#4527A0', lbl: 'СД' };
     if (val.h >= 8) return { bg: GN3, cl: GN2, lbl: val.h };
     if (val.h > 0)  return { bg: AM3, cl: AM2, lbl: val.h };
-    return { bg: 'var(--color-background-secondary)', cl: '#bbb', lbl: '·' };
+    return { bg: '#f8f8f5', cl: '#bbb', lbl: '·' };
   };
 
   const exportXlsx = useCallback(() => {
@@ -385,15 +385,15 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
       h('div', { style:{ ...S.card, padding:0, overflow:'auto', maxHeight:'65vh' } },
         h('table', { style:{ borderCollapse:'collapse', width:'100%', fontSize:11 } },
           h('thead', null, h('tr', null,
-            h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'var(--color-background-secondary)', minWidth:160, textAlign:'left', padding:'6px 10px' } }, 'Сотрудник'),
+            h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'#f8f8f5', minWidth:160, textAlign:'left', padding:'6px 10px' } }, 'Сотрудник'),
             days.map(d => {
               const dow = new Date(viewYear, viewMonth, d).getDay();
               const isWe = !isWorkday(viewYear, viewMonth, d, data.settings);
-              return h('th', { key:d, style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'var(--color-background-secondary)', minWidth:32, color: isWe ? RD : undefined } },
+              return h('th', { key:d, style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:32, color: isWe ? RD : undefined } },
                 d, h('br'), h('span', { style:{ fontSize:9, fontWeight:400 } }, DOW[dow])
               );
             }),
-            h('th', { style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'var(--color-background-secondary)', minWidth:48 } }, 'Итого')
+            h('th', { style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:48 } }, 'Итого')
           )),
           h('tbody', null,
             showWorkers.map(w => {
@@ -401,7 +401,7 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
               const isDismissed = !!w.dismissedAt;
               const dismissDay = isDismissed ? new Date(w.dismissedAt).getDate() : 999;
               return h('tr', { key:w.id },
-                h('td', { style:{ ...S.td, position:'sticky', left:0, zIndex:1, background:'var(--color-background-primary)', boxShadow:'2px 0 4px rgba(0,0,0,0.04)', padding:'6px 10px', fontWeight:500, color: isDismissed ? '#999' : undefined } }, 
+                h('td', { style:{ ...S.td, position:'sticky', left:0, zIndex:1, background:'#fff', boxShadow:'2px 0 4px rgba(0,0,0,0.04)', padding:'6px 10px', fontWeight:500, color: isDismissed ? '#999' : undefined } }, 
                   w.name, 
                   isDismissed && h('span', { style: { fontSize: 9, color: '#999', marginLeft: 4 } }, '(ув.)')
                 ),
@@ -423,19 +423,19 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
                     }, weLbl)
                   );
                 }),
-                h('td', { style:{ ...S.td, fontWeight:500, background:'var(--color-background-secondary)', padding:'4px 6px' } }, totH > 0 ? `${Math.round(totH*10)/10}ч` : '')
+                h('td', { style:{ ...S.td, fontWeight:500, background:'#f8f8f5', padding:'4px 6px' } }, totH > 0 ? `${Math.round(totH*10)/10}ч` : '')
               );
             }),
             // Итоговая строка — всегда показывается
             h('tr', null,
-              h('td', { style:{ ...S.td, position:'sticky', left:0, background:'var(--color-background-secondary)', fontWeight:500, fontSize:10, color:'var(--color-text-tertiary)', padding:'4px 10px' } }, 'Итого чел·ч'),
+              h('td', { style:{ ...S.td, position:'sticky', left:0, background:'#f8f8f5', fontWeight:500, fontSize:10, color:'#888', padding:'4px 10px' } }, 'Итого чел·ч'),
               days.map(d => {
                 let sum = 0;
                 showWorkers.forEach(w => { const v = getCellVal(w.id, d); if (v?.h) sum += v.h; });
                 const isWe = !isWorkday(viewYear, viewMonth, d, data.settings);
-                return h('td', { key:d, style:{ ...S.td, background: isWe ? 'rgba(226,75,74,0.04)' : 'var(--color-background-secondary)', fontSize:10, fontWeight:500, color: sum > 0 ? AM2 : 'var(--color-text-tertiary)' } }, sum > 0 ? Math.round(sum*10)/10 : '');
+                return h('td', { key:d, style:{ ...S.td, background: isWe ? 'rgba(226,75,74,0.04)' : '#f8f8f5', fontSize:10, fontWeight:500, color: sum > 0 ? AM2 : '#888' } }, sum > 0 ? Math.round(sum*10)/10 : '');
               }),
-              h('td', { style:{ ...S.td, background:'var(--color-background-secondary)', fontWeight:500, fontSize:10, color:AM2, padding:'4px 6px' } }, (() => {
+              h('td', { style:{ ...S.td, background:'#f8f8f5', fontWeight:500, fontSize:10, color:AM2, padding:'4px 6px' } }, (() => {
                 let total = 0;
                 days.forEach(d => showWorkers.forEach(w => { const v = getCellVal(w.id, d); if (v?.h) total += v.h; }));
                 return total > 0 ? `${Math.round(total*10)/10}ч` : '';
