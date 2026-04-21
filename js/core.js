@@ -747,16 +747,16 @@ const migrateData = (d) => {
 
 // ==================== Стили и кнопки ====================
 const S = {
-  card: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 12, padding: 16, marginBottom: 12 },
-  th: { textAlign: 'left', padding: '8px 10px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--muted)', borderBottom: '0.5px solid var(--border-soft)', fontWeight: 500, minHeight: 40 },
+  card: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 12, padding: 16, marginBottom: 12, boxShadow: 'var(--card-shadow,0 1px 3px rgba(0,0,0,.06))' },
+  th: { textAlign: 'left', padding: '8px 10px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--muted)', borderBottom: '0.5px solid var(--border-soft)', fontWeight: 600, minHeight: 40 },
   td: { padding: '10px 10px', fontSize: 13, borderBottom: '0.5px solid var(--border-soft)', color: 'var(--fg)', verticalAlign: 'middle', minHeight: 40 },
-  inp: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '10px 12px', fontSize: 16, outline: 'none', minHeight: 44 },
-  lbl: { fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6, display: 'block', fontWeight: 500 },
-  sec: { fontSize: 12, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12, fontWeight: 600 }
+  inp: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '10px 12px', fontSize: 16, outline: 'none', minHeight: 44, transition: 'border-color .15s,box-shadow .15s' },
+  lbl: { fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6, display: 'block', fontWeight: 600 },
+  sec: { fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12, fontWeight: 700 }
 };
-const abtn = (e) => ({ padding: '10px 16px', background: AM, color: AM2, border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e });
-const gbtn = (e) => ({ padding: '10px 16px', background: 'transparent', color: 'var(--fg)', border: '0.5px solid var(--border)', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e });
-const rbtn = (e) => ({ padding: '10px 16px', background: RD3, color: RD2, border: `0.5px solid ${RD}`, borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e });
+const abtn = (e) => ({ padding: '10px 16px', background: AM, color: AM2, border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, boxShadow: `0 1px 0 ${AM4},0 2px 8px rgba(239,159,39,.25)`, transition: 'box-shadow .12s,transform .1s', letterSpacing: '.01em', ...e });
+const gbtn = (e) => ({ padding: '10px 16px', background: 'var(--card)', color: 'var(--fg)', border: '0.5px solid var(--border)', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, boxShadow: 'var(--card-shadow,0 1px 3px rgba(0,0,0,.06))', transition: 'box-shadow .12s,transform .1s', ...e });
+const rbtn = (e) => ({ padding: '10px 16px', background: RD3, color: RD2, border: `0.5px solid ${RD}`, borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, boxShadow: '0 1px 4px rgba(226,75,74,.15)', transition: 'box-shadow .12s,transform .1s', ...e });
 
 // ==================== useConfirm (заменяет все confirm()) ====================
 const useConfirm = () => {
@@ -767,11 +767,11 @@ const useConfirm = () => {
   const answer = useCallback((yes) => { if (cfg) { cfg.resolve(yes); setCfg(null); } }, [cfg]);
   const confirmEl = cfg ? h('div', {
     role: 'dialog', 'aria-modal': 'true',
-    style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 400, padding: 16 }
+    style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 400, padding: 16, backdropFilter: 'blur(4px)' }
   },
-    h('div', { style: { background: '#fff', borderRadius: 12, padding: 24, width: 'min(360px,100%)', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' } },
-      h('div', { style: { fontSize: 15, fontWeight: 500, marginBottom: cfg.detail ? 6 : 20, lineHeight: 1.4 } }, cfg.msg),
-      cfg.detail && h('div', { style: { fontSize: 12, color: '#888', marginBottom: 20, lineHeight: 1.5 } }, cfg.detail),
+    h('div', { style: { background: 'var(--card)', borderRadius: 14, padding: 24, width: 'min(360px,100%)', boxShadow: '0 16px 48px rgba(0,0,0,0.25)', border: '0.5px solid var(--border-soft)' } },
+      h('div', { style: { fontSize: 15, fontWeight: 600, marginBottom: cfg.detail ? 6 : 20, lineHeight: 1.4 } }, cfg.msg),
+      cfg.detail && h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 20, lineHeight: 1.5 } }, cfg.detail),
       h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
         h('button', { style: gbtn({ minWidth: 80 }), onClick: () => answer(false) }, 'Отмена'),
         h('button', { style: cfg.danger ? rbtn({ minWidth: 80 }) : abtn({ minWidth: 80 }), onClick: () => answer(true) }, 'Подтвердить')
@@ -783,7 +783,7 @@ const useConfirm = () => {
 
 const Badge = memo(({ st }) => {
   const s = STATUS[st] || STATUS.pending;
-  return h('span', { style: { display: 'inline-block', padding: '2px 8px', fontSize: 10, borderRadius: 8, fontWeight: 500, background: s.bg, color: s.cl, border: `0.5px solid ${s.br}` } }, s.label);
+  return h('span', { style: { display: 'inline-flex', alignItems: 'center', padding: '3px 9px', fontSize: 10, borderRadius: 8, fontWeight: 600, background: s.bg, color: s.cl, border: `0.5px solid ${s.br}`, letterSpacing: '.02em', lineHeight: 1.4 } }, s.label);
 });
 
 const Toast = memo(({ message, onClose }) => {
@@ -802,21 +802,39 @@ const ElapsedTimer = memo(({ startedAt, style }) => {
 });
 
 // ==================== Общие компоненты: MC (MetricCard), TabBar ====================
-// MC — карточка метрики (KPI). Использование: h(MC, { v: '42', l: 'Заказов', c: GN, onClick: fn })
-const MC = memo(({ v, l, c, onClick, fs }) => h('div', {
-  style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0, cursor: onClick ? 'pointer' : 'default' },
+// MC — карточка метрики (KPI). Использование: h(MC, { v: '42', l: 'Заказов', c: GN, onClick: fn, trend: '+3' })
+const MC = memo(({ v, l, c, onClick, fs, trend }) => h('div', {
+  style: { ...S.card, textAlign: 'center', padding: '12px 8px', marginBottom: 0, cursor: onClick ? 'pointer' : 'default', position: 'relative', overflow: 'hidden' },
   onClick
-}, h('div', { style: { fontSize: fs || 24, fontWeight: 500, color: c || 'inherit' } }, v),
-   h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase', marginTop: 2 } }, l)
+},
+  // subtle color tint background
+  c && h('div', { style: { position: 'absolute', inset: 0, background: c, opacity: .06, pointerEvents: 'none' } }),
+  h('div', { style: { fontSize: fs || 26, fontWeight: 500, color: c || 'inherit', lineHeight: 1, position: 'relative' } }, v),
+  h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', marginTop: 4, letterSpacing: '.04em', position: 'relative' } }, l),
+  trend && h('div', { style: { fontSize: 9, color: c || 'var(--muted)', marginTop: 3, fontWeight: 500, position: 'relative' } }, trend)
 ));
 
 // TabBar — горизонтальные вкладки. Использование: h(TabBar, { tabs: [['id','Label']], tab, setTab })
 const TabBar = memo(({ tabs, tab, setTab }) => h('div', {
-  style: { display: 'flex', gap: 4, marginBottom: 14, overflowX: 'auto', borderBottom: '0.5px solid rgba(0,0,0,0.08)', paddingBottom: 8 }
-}, h('div', { className: 'tabs-scroll', style: { display: 'flex', gap: 4 } },
+  style: { display: 'flex', gap: 0, marginBottom: 14, overflowX: 'auto', borderBottom: '0.5px solid var(--border-soft)', scrollbarWidth: 'none' }
+}, h('div', { className: 'tabs-scroll', style: { display: 'flex', gap: 0 } },
   tabs.map(([id, label]) => h('button', {
     key: id,
-    style: tab === id ? abtn({ fontSize: 12 }) : gbtn({ fontSize: 12 }),
+    style: {
+      background: 'none',
+      border: 'none',
+      boxShadow: 'none',
+      borderBottom: tab === id ? `2px solid ${AM}` : '2px solid transparent',
+      color: tab === id ? AM : 'var(--muted)',
+      fontWeight: tab === id ? 600 : 400,
+      fontSize: 13,
+      padding: '8px 14px',
+      cursor: 'pointer',
+      flexShrink: 0,
+      transition: 'color .15s,border-color .15s',
+      minHeight: 'auto',
+      borderRadius: 0,
+    },
     onClick: () => setTab(id)
   }, label))
 )));
