@@ -549,10 +549,10 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
         h('button', { key: id, onClick: () => setWorkerTab(id), style: {
           flex: 1, background: 'none', border: 'none',
           borderBottom: workerTab === id ? `2.5px solid ${AM}` : '2.5px solid transparent',
-          color: workerTab === id ? AM4 : '#888',
-          fontWeight: workerTab === id ? 500 : 400,
+          color: workerTab === id ? AM : 'var(--muted)',
+          fontWeight: workerTab === id ? 600 : 400,
           fontSize: 14, padding: '10px 4px', cursor: 'pointer',
-          minHeight: 44, borderRadius: 0
+          minHeight: 44, borderRadius: 0, transition: 'color .15s,border-color .15s'
         }}, label)
       )
     ),
@@ -563,15 +563,14 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     workerTab === 'tasks' && h('div', null,
 
       // Активная операция
-      active && h('div', { style: { background: AM3, border: `1.5px solid ${AM}`, borderRadius: 14, padding: 16, marginBottom: 20 } },
-        h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 } }, 'В работе сейчас'),
-        h('div', { style: { fontSize: 16, fontWeight: 500, color: AM2, marginBottom: 2 } }, active.name),
+      active && h('div', { style: { background: AM3, border: `1.5px solid ${AM4}`, borderRadius: 16, padding: 16, marginBottom: 20, boxShadow: `0 2px 0 ${AM4}, 0 4px 24px rgba(239,159,39,.2)` } },
+        h('div', { style: { fontSize: 9, color: AM4, textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 8, fontWeight: 700 } }, '▶ В работе сейчас'),
+        h('div', { style: { fontSize: 18, fontWeight: 600, color: AM2, marginBottom: 2, lineHeight: 1.3 } }, active.name),
         active.qty && h('div', { style: { fontSize: 13, color: AM4, fontWeight: 500, marginBottom: 4 } }, 
           `📦 Ваша доля: ${active.workerQty?.[workerId] || '—'} из ${active.qty} шт`
         ),
-        h('div', { style: { fontSize: 11, color: AM4, marginBottom: 10 } }, data.orders.find(o => o.id === active.orderId)?.number || ''),
-        // Таймер — вспомогательный, не доминирует
-        h(ElapsedTimer, { startedAt: active.startedAt, style: { fontSize: 24, fontWeight: 500, color: AM, marginBottom: 14, display: 'block' } }),
+        h('div', { style: { fontSize: 12, color: AM4, marginBottom: 14, opacity: .8 } }, data.orders.find(o => o.id === active.orderId)?.number || ''),
+        h(ElapsedTimer, { startedAt: active.startedAt, style: { fontSize: 36, fontWeight: 600, color: AM2, marginBottom: 14, display: 'block', fontFamily: 'monospace', letterSpacing: '-0.02em' } }),
         active.drawingUrl && h('a', { href: active.drawingUrl, target: '_blank', rel: 'noopener', style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: BL, textDecoration: 'none', padding: '6px 10px', background: 'rgba(255,255,255,0.8)', borderRadius: 6, marginBottom: 12 } }, '📐 Чертёж'),
         // Чек-лист
         active.checklist?.length > 0 && h('div', { style: { background: 'rgba(255,255,255,0.7)', borderRadius: 8, padding: '10px 12px', marginBottom: 14 } },
