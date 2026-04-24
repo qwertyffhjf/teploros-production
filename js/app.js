@@ -145,15 +145,13 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
   );
 
   return h('div', { style: { minHeight: 480, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 12 } },
-    h('div', { style: { textAlign: 'center', marginBottom: 20 } },
-      // Logo mark
-      h('div', { style: { width: 56, height: 56, background: AM, borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 700, color: AM2, margin: '0 auto 16px', boxShadow: `0 2px 0 ${AM4},0 6px 24px rgba(239,159,39,.35)` } }, 'НТ'),
-      h('div', { style: { fontSize: 34, fontWeight: 700, color: AM, lineHeight: 1.1, letterSpacing: '-0.02em' } }, settings.welcomeTitle || 'teploros'),
-      h('div', { style: { fontSize: 12, color: 'var(--muted)', letterSpacing: '0.18em', textTransform: 'uppercase', marginTop: 6 } }, settings.welcomeSubtitle || 'надежная техника')
+    h('div', { style: { textAlign: 'center', marginBottom: 16 } },
+      h('div', { style: { fontSize: 32, fontWeight: 700, color: AM, lineHeight: 1.2 } }, settings.welcomeTitle || 'teploros'),
+      h('div', { style: { fontSize: 14, color: '#888', letterSpacing: '0.15em', textTransform: 'uppercase' } }, settings.welcomeSubtitle || 'надежная техника')
     ),
     h('div', { style: { textAlign: 'center', marginBottom: 20 } },
-      h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.15em', fontWeight: 600 } }, settings.welcomeLabel || 'Производственный учёт · НТ'),
-      h('div', { style: { fontSize: 20, fontWeight: 500, marginTop: 4 } }, 'Вход в систему')
+      h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.15em' } }, settings.welcomeLabel || 'Производственный учёт · НТ'),
+      h('div', { style: { fontSize: 22, fontWeight: 500 } }, 'Вход в систему')
     ),
     // Кнопки выбора роли
     h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 } },
@@ -229,7 +227,14 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
 // ==================== Dashboard (Цеховое табло) ====================
 const Dashboard = memo(({ data, addToast, onOrderClick }) => {
   const [, setTick] = useState(0);
+  const [onlineUsers, setOnlineUsers] = useState([]);
   useEffect(() => { const t = setInterval(() => setTick(n => n + 1), 15000); return () => clearInterval(t); }, []);
+  useEffect(() => {
+    const fetchOnline = () => Presence.getOnline().then(users => setOnlineUsers(users)).catch(() => {});
+    fetchOnline();
+    const t = setInterval(fetchOnline, 30000);
+    return () => clearInterval(t);
+  }, []);
 
   // Реальные данные
   const activeOps = useMemo(() => data.ops.filter(o => o.status === 'in_progress' && !o.archived), [data.ops]);
@@ -271,7 +276,7 @@ const Dashboard = memo(({ data, addToast, onOrderClick }) => {
   }, [data.ops, data.workers]);
 
   const qualityToday = doneToday.length + defectsToday.length > 0 ? Math.round(doneToday.length / (doneToday.length + defectsToday.length) * 100) : 100;
-  const mc = (color) => ({ ...S.card, textAlign: 'center', padding: '12px 8px', marginBottom: 0, position: 'relative', overflow: 'hidden' });
+  const mc = (color) => ({ ...S.card, textAlign: 'center', padding: '12px 8px', marginBottom: 0 });
 
   const exportToExcel = useCallback(() => {
     const wb = XLSX.utils.book_new();
@@ -283,31 +288,51 @@ const Dashboard = memo(({ data, addToast, onOrderClick }) => {
 
   return h('div', { style: { padding: '0 0 24px' } },
     // Заголовок с часами
-    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 } },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } },
       h('div', null,
-        h('div', { style: { fontSize: 20, fontWeight: 700, letterSpacing: '-0.01em' } }, 'Цеховое табло'),
-        h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 2 } }, new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' }))
+        h('div', { style: { fontSize: 18, fontWeight: 500 } }, 'Цеховое табло'),
+        h('div', { style: { fontSize: 11, color: '#888' } }, new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' }))
       ),
-      h('div', { style: { textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 } },
-        h('div', { style: { fontSize: 30, fontWeight: 600, fontFamily: 'monospace', color: AM, letterSpacing: '-0.02em', lineHeight: 1 } }, new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
-        h('button', { style: gbtn({ fontSize: 10, padding: '3px 10px', minHeight: 28 }), onClick: exportToExcel }, 'Скачать Excel')
+      h('div', { style: { textAlign: 'right' } },
+        h('div', { style: { fontSize: 28, fontWeight: 500, fontFamily: 'monospace', color: AM } }, new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+        h('button', { style: gbtn({ fontSize: 10, padding: '3px 8px' }), onClick: exportToExcel }, '📥 Excel')
       )
     ),
 
     // Блок 1: Ключевые метрики дня
     h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 8, marginBottom: 12 } },
-      h(MC, { v: doneToday.length, l: 'Выполнено', c: GN }),
-      h(MC, { v: activeOps.length, l: 'В работе', c: AM }),
-      h(MC, { v: defectsToday.length, l: 'Брак', c: defectsToday.length > 0 ? RD : GN }),
-      h(MC, { v: `${qualityToday}%`, l: 'Качество', c: qualityToday >= 95 ? GN : qualityToday >= 80 ? AM : RD }),
-      h(MC, { v: `${totalDowntimeMin}м`, l: 'Простои', c: totalDowntimeMin > 60 ? RD : AM }),
-      h(MC, { v: `${busyWorkers.size}/${activeWorkers.length}`, l: 'Загрузка', c: freeWorkers.length > 0 ? GN : AM })
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: GN } }, doneToday.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Выполнено')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: AM } }, activeOps.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'В работе')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: defectsToday.length > 0 ? RD : GN } }, defectsToday.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Брак')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: qualityToday >= 95 ? GN : qualityToday >= 80 ? AM : RD } }, `${qualityToday}%`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Качество')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: totalDowntimeMin > 60 ? RD : AM } }, `${totalDowntimeMin}м`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Простои')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: freeWorkers.length > 0 ? GN : AM } }, `${busyWorkers.size}/${activeWorkers.length}`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Загрузка')),
+      h('div', { style: { ...mc(), cursor: 'default', position: 'relative' }, title: onlineUsers.map(u => u.userName).join(', ') || 'Никого нет онлайн' },
+        h('div', { style: { fontSize: 32, fontWeight: 500, color: onlineUsers.length > 0 ? GN : '#ccc' } }, onlineUsers.length),
+        h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Онлайн'),
+        onlineUsers.length > 0 && h('div', { style: { position: 'absolute', bottom: 4, left: 0, right: 0, fontSize: 9, color: '#aaa', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '0 4px' } }, onlineUsers.map(u => u.userName).join(', '))
+      )
     ),
 
     // Блок 2: Алерты (критические)
-    (criticalMaterials.length > 0 || defectOps.length > 0 || ordersProgress.some(o => o.daysLeft !== null && o.daysLeft <= 2 && o.pct < 100)) && h('div', { style: { ...S.card, background: RD3, border: `0.5px solid ${RD}`, marginBottom: 12, padding: 10, boxShadow: `0 2px 8px rgba(226,75,74,.15)` } },
-      h('div', { style: { fontSize: 10, color: RD, textTransform: 'uppercase', fontWeight: 700, letterSpacing: '.06em', marginBottom: 6 } }, '⚠ Требует внимания'),
-      defectOps.length > 0 && h('div', { style: { fontSize: 12, color: RD2, marginBottom: 4 } }, `${defectOps.length} операций с браком/на переделке`),
+    (criticalMaterials.length > 0 || defectOps.length > 0 || ordersProgress.some(o => o.daysLeft !== null && o.daysLeft <= 2 && o.pct < 100)) && h('div', { style: { ...S.card, background: RD3, border: `0.5px solid ${RD}`, marginBottom: 12, padding: 10 } },
+      h('div', { style: { fontSize: 10, color: RD, textTransform: 'uppercase', fontWeight: 500, marginBottom: 6 } }, '⚠ Требует внимания'),
+      defectOps.length > 0 && h('div', { style: { marginBottom: 4 } },
+        h('div', { style: { fontSize: 11, color: RD, fontWeight: 500, marginBottom: 4 } }, `⚠ ${defectOps.length} операций с браком/на переделке:`),
+        defectOps.slice(0, 5).map(op => {
+          const order = data.orders.find(o => o.id === op.orderId);
+          const workers = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name?.split(' ')[0]).filter(Boolean).join(', ');
+          return h('div', { key: op.id,
+            style: { fontSize: 11, color: RD2, padding: '4px 8px', background: 'rgba(220,38,38,0.08)', borderRadius: 4, marginBottom: 3, cursor: 'pointer', display: 'flex', justifyContent: 'space-between' },
+            onClick: () => onTabChange && onTabChange('ops'),
+            title: 'Нажмите чтобы перейти к операциям'
+          },
+            h('span', null, `${order?.number || '?'} — ${op.name}`),
+            h('span', { style: { color: '#888', fontSize: 10 } }, op.status === 'rework' ? '🔧 переделка' : '✗ брак', workers ? ` · ${workers}` : '')
+          );
+        }),
+        defectOps.length > 5 && h('div', { style: { fontSize: 10, color: RD, marginTop: 2 } }, `+${defectOps.length - 5} ещё...`)
+      ),
       criticalMaterials.map(m => h('div', { key: m.id, style: { fontSize: 12, color: RD2, marginBottom: 2 } }, `Материал: ${m.name} — ${m.quantity} ${m.unit} (мин: ${m.minStock})`)),
       ordersProgress.filter(o => o.daysLeft !== null && o.daysLeft <= 2 && o.pct < 100).map(o => h('div', { key: o.id, style: { fontSize: 12, color: RD2, marginBottom: 2 } }, `Срок: ${o.number} — ${o.daysLeft <= 0 ? 'ПРОСРОЧЕН' : `${o.daysLeft} дн.`} (${o.pct}%)`))
     ),
@@ -970,7 +995,7 @@ const HRScreen = memo(({ data, onUpdate, addToast }) => {
     ),
     h(TabBar, { tabs: TABS, tab, setTab }),
     tab === 'workers'      && h(MasterWorkers,         { data, onUpdate, addToast }),
-    tab === 'time'         && h(MasterTimeTracking,    { data, onUpdate, addToast }),
+    tab === 'time'         && h(MasterTimeTracking,    { data, onUpdate, addToast, onWorkerClick: (wid) => setTab('workers') }),
     tab === 'instructions' && h(InstructionsTracker,   { data, onUpdate, addToast }),
     tab === 'vacations'    && h(VacationPlanner,       { data, onUpdate, addToast }),
     tab === 'kpi'          && h(KPIReport,             { data }),
@@ -1001,7 +1026,7 @@ const AdminScreen = memo(({ data, onUpdate, addToast }) => {
     tab === 'bom'           && h(MasterBOM,              { data, onUpdate, addToast }),
     tab === 'sections'      && h(MasterSections,         { data, onUpdate, addToast }),
     tab === 'workers'       && h(MasterWorkers,          { data, onUpdate, addToast }),
-    tab === 'time'          && h(MasterTimeTracking,     { data, onUpdate, addToast }),
+    tab === 'time'          && h(MasterTimeTracking,     { data, onUpdate, addToast, onWorkerClick: (wid) => setTab('workers') }),
     tab === 'admin'         && h(MasterAdmin,            { data, onUpdate, addToast })
   );
 });
@@ -1138,6 +1163,10 @@ function App() {
         setRole(r);
         setWorkerId(wid);
         setSectionId(sid);
+        // Запускаем presence tracking
+        const userName = wid ? (appData?.workers?.find(w => w.id === wid)?.name || r) : r;
+        const presenceId = wid || r;
+        Presence.start(presenceId, userName);
         // chat, chat_master, chat_controller — всё это режим чата
         if (r === 'chat' || r === 'chat_master' || r === 'chat_controller') setShowChat(true);
       },
@@ -1157,50 +1186,49 @@ function App() {
   );
 
   return h('div', null,
-    h('div', { style: { display:'flex', gap:0, padding:'0 0 0 0', borderBottom:'0.5px solid rgba(0,0,0,0.1)', alignItems:'center', flexWrap:'nowrap', background:'#111110', position:'sticky', top:0, zIndex:50, overflow:'hidden' } },
-      // Logo
-      h('div', { style: { display:'flex', alignItems:'center', gap:8, padding:'0 16px', borderRight:'0.5px solid rgba(255,255,255,0.08)', height:48, flexShrink:0 } },
-        h('div', { style: { width:26, height:26, background:AM, borderRadius:6, display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:700, color:AM2 } }, 'НТ'),
-        h('span', { style: { fontSize:13, fontWeight:600, color:AM, letterSpacing:'-0.01em' } }, 'teploros')
-      ),
-      // Role label
-      h('div', { style: { fontSize:12, color:'#555', padding:'0 14px', height:48, display:'flex', alignItems:'center', borderRight:'0.5px solid rgba(255,255,255,0.06)', flexShrink:0 } },
-        effectiveRole === 'master'      ? '🔑 Нач. цеха' :
-        effectiveRole === 'controller'  ? '🔍 Контролёр' :
-        effectiveRole === 'warehouse'   ? '📦 Склад' :
-        effectiveRole === 'dashboard'   ? '📊 Дашборд' :
-        effectiveRole === 'pdo'         ? '📋 ПДО' :
-        effectiveRole === 'director'    ? '👔 Руководитель' :
-        effectiveRole === 'hr'          ? '👥 HR' :
-        effectiveRole === 'shop_master' ? '🔧 См. мастер' :
-        effectiveRole === 'admin'       ? '⚙ Админ' :
+    h('div', { style: { display:'flex', gap:12, padding:'10px 0', borderBottom:'0.5px solid rgba(0,0,0,0.08)', alignItems:'center', flexWrap:'wrap' } },
+      h('button', { style: gbtn({ fontSize:11 }), onClick: goBack }, '← Выход'),
+      h('div', { style: { fontSize:12, color:'#888' } },
+        effectiveRole === 'master'      ? 'Начальник цеха' :
+        effectiveRole === 'controller'  ? 'Контролёр'     :
+        effectiveRole === 'warehouse'   ? 'Склад'          :
+        effectiveRole === 'dashboard'   ? 'Дашборд'        :
+        effectiveRole === 'pdo'         ? 'ПДО'            :
+        effectiveRole === 'director'    ? 'Руководитель'   :
+        effectiveRole === 'hr'          ? 'HR'             :
+        effectiveRole === 'shop_master' ? 'Сменный мастер' :
+        effectiveRole === 'admin'       ? 'Администратор'  :
         currentUser.name
       ),
-      h('div', { style: { flex:1 } }),
-      // Chat button
       effectiveRole !== 'dashboard' && (() => {
         const chatLastRead = Number(localStorage.getItem(`chat_lastRead_${currentUser.id || 'anon'}`)) || 0;
         const unread = (data.messages || []).filter(m => m.timestamp > chatLastRead && m.senderId !== (currentUser.id || 'system')).length;
+        // 🔴 Бейдж для @упоминаний — красный если есть новые упоминания текущего пользователя
         const myMentions = (data.messages || []).filter(m => m.mentions?.includes(currentUser.id) && m.timestamp > chatLastRead).length;
-        return h('button', { style: showChat ? abtn({ fontSize:11, padding:'6px 12px', minHeight:36 }) : gbtn({ fontSize:11, padding:'6px 12px', minHeight:36, position: 'relative', background:'transparent', color:'#aaa', border:'none', boxShadow:'none' }), onClick: () => setShowChat(!showChat) },
+        return h('button', { style: showChat ? abtn({ fontSize:11 }) : gbtn({ fontSize:11, position: 'relative' }), onClick: () => setShowChat(!showChat) },
           showChat ? '💬 Чат (скрыть)' : '💬 Чат',
-          !showChat && myMentions > 0 && h('span', { style: { position: 'absolute', top: -4, right: -4, background: '#E24B4A', color: '#fff', borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 600, border: '2px solid #111110' } }, '!'),
+          !showChat && myMentions > 0 && h('span', { style: { position: 'absolute', top: -8, right: -8, background: '#E24B4A', color: '#fff', borderRadius: '50%', width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600, border: '2px solid var(--card)' } }, '!'),
           !showChat && unread > 0 && myMentions === 0 && h('span', { style: { position: 'absolute', top: -4, right: -4, background: RD, color: '#fff', borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 500 } }, unread > 9 ? '9+' : unread)
         );
       })(),
-      h('div', { style: { display:'flex', alignItems:'center', gap:6, padding:'0 12px', height:48 } },
-        isSaving && h('div', { style: { display:'flex', alignItems:'center', gap:4, color: AM, fontWeight:500, fontSize:10 } },
+      h('div', { style: { marginLeft:'auto', fontSize:10, display:'flex', alignItems:'center', gap:8 } },
+        isSaving && h('div', { style: { display:'flex', alignItems:'center', gap:4, color: AM4, fontWeight:500 } },
           h('span', { style: {
-            width: 6, height: 6, borderRadius: '50%', background: AM,
+            width: 8, height: 8, borderRadius: '50%', background: AM,
             display: 'inline-block', animation: 'pulse 1s ease-in-out infinite'
           }}),
           'Сохранение...'
         ),
-        !isSaving && h('div', { style: { display:'flex', alignItems:'center', gap:4, color: synced ? GN : '#555', fontSize:10 } },
-          h('span', { style: { width:5, height:5, borderRadius:'50%', background: synced ? GN : '#444', display:'inline-block' } }),
-          synced ? 'Online' : 'Offline'
+        h('div', { style: { display:'flex', alignItems:'center', gap:4, color: synced ? GN : '#888' } },
+          h('span', { style: { width:6, height:6, borderRadius:'50%', background: synced ? GN : '#ccc', display:'inline-block' } }),
+          synced ? 'Firebase' : 'Оффлайн'
         ),
-        h('button', { style: { background:'none', border:'.5px solid rgba(255,255,255,.12)', borderRadius:6, color:'#666', fontSize:11, padding:'5px 10px', cursor:'pointer', minHeight:'auto', marginLeft:4 }, onClick: goBack }, '← Выход')
+        DB._sizeWarning && h('div', { style: { display:'flex', alignItems:'center', gap:3, color: AM4, fontSize: 9 } },
+          `💾 ${DB._sizeWarning} КБ`
+        ),
+        !synced && localStorage.getItem(QUEUE_KEY) && h('div', { style: { display:'flex', alignItems:'center', gap:3, color: AM4, fontSize: 9, fontWeight:500 } },
+          '📤 Офлайн-очередь'
+        )
       )
     ),
     showChat
