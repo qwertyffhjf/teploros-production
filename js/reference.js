@@ -1406,14 +1406,14 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         'Сообщения': (data.messages || []).length,
         'Сотрудники': (data.workers || []).length,
       };
+      let cleanupEventsDays = 90;
+      let cleanupMsgDays = 30;
       const cleanOldEvents = async () => {
-        const daysStr = document.getElementById('cleanup-events-days')?.value || '90';
-        const days = parseInt(daysStr);
+        const days = cleanupEventsDays;
         const cutoff = Date.now() - days * 86400000;
         const kept = (data.events || []).filter(e => (e.ts || 0) >= cutoff);
         const removed = (data.events || []).length - kept.length;
         if (removed === 0) { addToast('Нечего удалять', 'info'); return; }
-        // Двойное подтверждение для >100 записей
         if (!(await askConfirm({ message: `Удалить ${removed} событий старше ${days} дней?`, detail: 'Это действие нельзя отменить', danger: true }))) return;
         if (removed > 100) {
           if (!(await askConfirm({ message: `Подтвердите: удалить ${removed} записей?`, detail: 'Большое количество. Сохраните резервную копию перед удалением', danger: true }))) return;
@@ -1424,8 +1424,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         addToast(`Удалено ${removed} событий`, 'success');
       };
       const cleanOldMessages = async () => {
-        const daysStr = document.getElementById('cleanup-msg-days')?.value || '30';
-        const days = parseInt(daysStr);
+        const days = cleanupMsgDays;
         const cutoff = Date.now() - days * 86400000;
         const kept = (data.messages || []).filter(m => (m.ts || 0) >= cutoff);
         const removed = (data.messages || []).length - kept.length;
@@ -1479,7 +1478,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         h('div', { style: { background: '#f8f8f5', borderRadius: 6, padding: 10, marginBottom: 8 } },
           h('div', { style: { fontSize: 11, color: '#888', marginBottom: 6 } }, 'Удалить события старше:'),
           h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
-            h('select', { id: 'cleanup-events-days', defaultValue: '90', style: { ...S.inp, width: 100 } },
+            h('select', { defaultValue: '90', style: { ...S.inp, width: 100 }, onChange: e => { cleanupEventsDays = parseInt(e.target.value); } },
               periodOpts.map(d => h('option', { key: d, value: d }, `${d} дней`))
             ),
             h('button', { style: gbtn({ fontSize: 12 }), onClick: cleanOldEvents }, '🧹 Очистить')
@@ -1489,7 +1488,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         h('div', { style: { background: '#f8f8f5', borderRadius: 6, padding: 10, marginBottom: 8 } },
           h('div', { style: { fontSize: 11, color: '#888', marginBottom: 6 } }, 'Удалить сообщения чата старше:'),
           h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
-            h('select', { id: 'cleanup-msg-days', defaultValue: '30', style: { ...S.inp, width: 100 } },
+            h('select', { defaultValue: '30', style: { ...S.inp, width: 100 }, onChange: e => { cleanupMsgDays = parseInt(e.target.value); } },
               periodOpts.map(d => h('option', { key: d, value: d }, `${d} дней`))
             ),
             h('button', { style: gbtn({ fontSize: 12 }), onClick: cleanOldMessages }, '💬 Очистить')
