@@ -910,6 +910,7 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
 // ==================== MasterDefectReasons ====================
 const MasterDefectReasons = memo(({ data, onUpdate, addToast }) => {
   const [newName, setNewName] = useState('');
+  const { confirmEl, askConfirm } = useConfirm();
   const add = useCallback(async () => {
     if (!newName.trim()) return;
     if (data.defectReasons.some(r => r.name.toLowerCase() === newName.trim().toLowerCase())) { addToast('Такая причина уже существует', 'error'); return; }
