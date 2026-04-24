@@ -43,6 +43,7 @@ const Leaderboard = memo(({ data }) => {
 
 // ==================== LoginScreen (единый PIN-вход, мастер-ключ для сброса PIN) ====================
 const LoginScreen = ({ data, onLogin, onResetPin }) => {
+  const onCheckCount = useMemo(() => (data?.ops || []).filter(o => o.status === 'on_check' && !o.archived).length, [data]);
   const [role, setRole] = useState('worker');
   const [pin, setPin] = useState('');
   const [showPin, setShowPin] = useState(false);
@@ -160,11 +161,11 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
         [
           ['worker',      '👷 Сотрудник'],
           ['shop_master', '🔧 Сменный мастер'],
-          ['controller',  '🔍 Контролёр'],
+          ['controller',  onCheckCount > 0 ? `🔍 Контролёр 🔴${onCheckCount}` : '🔍 Контролёр'],
           ['warehouse',   '📦 Склад'],
         ].map(([r, label]) => h('button', {
           key: r,
-          style: role === r ? abtn({ minWidth: 110, fontSize: 12 }) : gbtn({ minWidth: 110, fontSize: 12 }),
+          style: role === r ? abtn({ minWidth: 110, fontSize: 12 }) : r === 'controller' && onCheckCount > 0 ? { ...gbtn({ minWidth: 110, fontSize: 12 }), borderColor: RD, color: RD, fontWeight: 600 } : gbtn({ minWidth: 110, fontSize: 12 }),
           onClick: () => { setRole(r); setLoginError(''); setPin(''); }
         }, label))
       ),
@@ -1116,6 +1117,59 @@ function App() {
     }, 3000);
     return () => clearInterval(check);
   }, []);
+
+  // ==================== ВАРИАНТ А + Б: Уведомления ОТК ====================
+  const prevOnCheckIds = useRef(new Set());
+  useEffect(() => {
+    const currentOnCheck = new Set(data.ops.filter(o => o.status === 'on_check' && !o.archived).map(o => o.id));
+    // Найти новые операции которые только что перешли в on_check
+    const newOps = [...currentOnCheck].filter(id => !prevOnCheckIds.current.has(id));
+    if (newOps.length > 0 && prevOnCheckIds.current.size > 0) { // size > 0 чтобы не срабатывать при первой загрузке
+      newOps.forEach(opId => {
+        const op = data.ops.find(o => o.id === opId);
+        const order = data.orders.find(o => o.id === op?.orderId);
+        const msg = `🔍 На контроль: ${op?.name || '?'} · ${order?.number || '?'}`;
+
+        // А: Звук уведомления
+        try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.frequency.setValueAtTime(880, ctx.currentTime);
+          osc.frequency.setValueAtTime(660, ctx.currentTime + 0.1);
+          gain.gain.setValueAtTime(0.3, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + 0.4);
+        } catch(e) {}
+
+        // А: Toast уведомление в интерфейсе
+        setToasts(prev => [...prev, { id: Date.now() + Math.random(), message: msg, type: 'info' }]);
+
+        // Б: Web Push уведомление (если разрешено)
+        if ('Notification' in window && Notification.permission === 'granted') {
+          try {
+            new Notification('ОТК — Новая операция на контроле', {
+              body: `${op?.name || '?'} · Заказ ${order?.number || '?'}`,
+              icon: '/teploros-production/icon-192.png',
+              badge: '/teploros-production/icon-192.png',
+              tag: `qc-${opId}`,
+              requireInteraction: true // уведомление не исчезает само
+            });
+          } catch(e) {}
+        }
+
+        // Б: Если Push не разрешён — запросить разрешение
+        if ('Notification' in window && Notification.permission === 'default') {
+          Notification.requestPermission().then(p => {
+            if (p === 'granted') addToast('✓ Push-уведомления ОТК включены', 'success');
+          });
+        }
+      });
+    }
+    prevOnCheckIds.current = currentOnCheck;
+  }, [data.ops]);
 
   const goBack = () => { setRole(null); setWorkerId(null); setSectionId(null); setInitialOpId(null); setShowChat(false); window.history.replaceState({}, '', window.location.pathname); };
   const addToast = useCallback((message, type = 'info') => { const id = Date.now() + Math.random(); setToasts(prev => [...prev, { id, message, type }]); }, []);
