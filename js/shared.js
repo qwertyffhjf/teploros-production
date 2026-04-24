@@ -99,17 +99,13 @@ const calcOrderCost = (order, data, hourlyRate = 500) => {
   const laborHours = doneOps.reduce((s, op) => s + (op.finishedAt - op.startedAt) / 3600000, 0);
   const laborCost = laborHours * hourlyRate;
   
-  // 📊 Отслеживаем qty вместо просто операций
-  const totalQty = ops.reduce((s, op) => s + (op.qty || 1), 0);
-  const doneQty = doneOps.reduce((s, op) => s + (op.qty || 1), 0);
-  
   const materialCost = (data.materialConsumptions || [])
     .filter(mc => ops.some(op => op.id === mc.opId))
     .reduce((s, mc) => {
       const mat = data.materials.find(m => m.id === mc.materialId);
       return s + (mc.qty * (mat?.unitCost || 0));
     }, 0);
-  return { laborHours: Math.round(laborHours * 10) / 10, laborCost: Math.round(laborCost), materialCost: Math.round(materialCost), totalCost: Math.round(laborCost + materialCost), opsTotal: ops.length, opsDone: doneOps.length, qtyTotal: totalQty, qtyDone: doneQty, qtyProgress: totalQty > 0 ? Math.round(doneQty / totalQty * 100) : 0 };
+  return { laborHours: Math.round(laborHours * 10) / 10, laborCost: Math.round(laborCost), materialCost: Math.round(materialCost), totalCost: Math.round(laborCost + materialCost), opsTotal: ops.length, opsDone: doneOps.length };
 };
 
 // ==================== PDF Паспорт изделия ====================
@@ -423,6 +419,20 @@ const MasterOnboarding = memo(({ data, onDone }) => {
   );
 });
 
+// ==================== WN: Кликабельное имя сотрудника ====================
+// Использование: h(WN, { worker: data.workers.find(w => w.id === wid), onWorkerClick })
+// или: h(WN, { workerId: wid, data, onWorkerClick })
+const WN = memo(({ worker, workerId, data, onWorkerClick, style = {} }) => {
+  const w = worker || (data && data.workers.find(x => x.id === workerId));
+  if (!w) return h('span', { style: { color: '#888', ...style } }, '—');
+  if (!onWorkerClick) return h('span', { style }, w.name);
+  return h('span', {
+    style: { color: AM2, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted', fontWeight: 500, ...style },
+    onClick: (e) => { e.stopPropagation(); onWorkerClick(w.id); },
+    title: `Открыть карточку: ${w.name}`
+  }, w.name);
+});
+
 // ==================== WorkerCardModal ====================
 const WorkerCardModal = memo(({ worker, data, onClose }) => {
   const [period, setPeriod] = useState(30);
@@ -478,6 +488,34 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
           )
         )
       ),
+      // Контакты и кадровые данные
+      (worker.phone || worker.email || worker.hireDate || worker.dismissedAt || worker.emergencyContact || worker.medicalExamNextDate || (worker.licences && worker.licences.length > 0)) && h('div', { style: { ...S.card, marginBottom: 16, padding: '10px 14px' } },
+        h('div', { style: { fontSize: 11, fontWeight: 500, color: '#888', marginBottom: 8, textTransform: 'uppercase' } }, 'Кадровые данные'),
+        h('div', { style: { display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12, marginBottom: (worker.medicalExamNextDate || (worker.licences && worker.licences.length > 0)) ? 8 : 0 } },
+          worker.phone && h('a', { href: `tel:${worker.phone}`, style: { color: AM2, textDecoration: 'none', fontWeight: 500 } }, `📞 ${worker.phone}`),
+          worker.email && h('a', { href: `mailto:${worker.email}`, style: { color: AM2, textDecoration: 'none' } }, `✉ ${worker.email}`),
+          worker.hireDate && h('span', { style: { color: '#555' } }, `📅 Принят: ${new Date(worker.hireDate).toLocaleDateString('ru')}`),
+          worker.dismissedAt && h('span', { style: { color: RD2, fontWeight: 500 } }, `🚪 Уволен: ${new Date(worker.dismissedAt).toLocaleDateString('ru')}`),
+          worker.emergencyContact && h('span', { style: { color: RD2 } }, `🆘 ${worker.emergencyContact}`)
+        ),
+        // Медосмотр
+        worker.medicalExamNextDate && (() => {
+          const daysLeft = Math.ceil((new Date(worker.medicalExamNextDate).getTime() - Date.now()) / 86400000);
+          const color = daysLeft < 0 ? RD : daysLeft < 30 ? AM : GN;
+          const bg = daysLeft < 0 ? RD3 : daysLeft < 30 ? AM3 : GN3;
+          return h('span', { style: { display: 'inline-block', padding: '3px 10px', fontSize: 11, borderRadius: 6, background: bg, color, marginRight: 6, marginBottom: 4 } },
+            `🏥 Медосмотр: ${daysLeft < 0 ? `просрочен ${Math.abs(daysLeft)} дн.` : `через ${daysLeft} дн. (${new Date(worker.medicalExamNextDate).toLocaleDateString('ru')})`}`
+          );
+        })(),
+        // Допуски/удостоверения
+        (worker.licences || []).map(lic => {
+          const expiredLic = lic.expiryDate && new Date(lic.expiryDate).getTime() < Date.now();
+          const expiringSoon = lic.expiryDate && !expiredLic && Math.ceil((new Date(lic.expiryDate).getTime() - Date.now()) / 86400000) < 30;
+          return h('span', { key: lic.name, style: { display: 'inline-block', padding: '3px 10px', fontSize: 11, borderRadius: 6, marginRight: 4, marginBottom: 4, background: expiredLic ? RD3 : expiringSoon ? AM3 : GN3, color: expiredLic ? RD2 : expiringSoon ? AM2 : GN2 } },
+            `🎖 ${lic.name}${lic.expiryDate ? ` · до ${new Date(lic.expiryDate).toLocaleDateString('ru')}` : ''}`
+          );
+        })
+      ),
       h('div', { style: { display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' } },
         h('span', { style: { fontSize: 12, color: '#888' } }, 'Период:'),
         [7,30,90].map(d => h('button', { key: d, style: period === d ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setPeriod(d) }, `${d} дней`))
@@ -488,6 +526,23 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
         h(MC, { v: `${defectRate}%`, l: 'Брак', c: Number(defectRate) > 5 ? RD : GN }),
         h(MC, { v: `${opsInProgress.length}/${opsPending.length}`, l: 'В работе / Ожидает', c: BL })
       ),
+      // Часы из табеля за текущий месяц
+      (() => {
+        const now = new Date();
+        const yr = now.getFullYear(), mo = now.getMonth();
+        const tsData = data.timesheet?.[worker.id] || {};
+        const dim = new Date(yr, mo + 1, 0).getDate();
+        let totalHours = 0;
+        for (let d = 1; d <= dim; d++) {
+          const cell = tsData[d];
+          if (cell?.h) totalHours += cell.h;
+        }
+        const monthName = now.toLocaleString('ru', { month: 'long', year: 'numeric' });
+        return totalHours > 0 && h('div', { style: { ...S.card, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px' } },
+          h('div', { style: { fontSize: 22, fontWeight: 600, color: GN } }, `${Math.round(totalHours * 10) / 10}ч`),
+          h('div', { style: { fontSize: 12, color: '#888' } }, `Отработано по табелю — ${monthName}`)
+        );
+      })(),
       h('div', { style: { ...S.card, marginBottom: 16 } },
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 } },
           h('div', { style: { fontSize: 28, fontWeight: 500, color: AM } }, `${level}`),
