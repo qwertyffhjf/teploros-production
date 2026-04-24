@@ -379,6 +379,14 @@ const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) =
         ),
         h('button', { style: gbtn({ fontSize: 14, padding: '4px 12px' }), onClick: onClose }, '×')
       ),
+      // Легенда
+      h('div', { style: { display: 'flex', gap: 12, marginBottom: 12, padding: '8px 12px', background: '#f8f8f5', borderRadius: 6, fontSize: 11, flexWrap: 'wrap' } },
+        h('span', { style: { fontWeight: 500, color: '#666' } }, 'Как пользоваться:'),
+        h('span', null, '✓ — строка зависит от колонки (ждёт её завершения)'),
+        h('span', null, '— — сама операция'),
+        h('span', null, '⇉ — параллельные (независимые)'),
+        h('span', null, '↓ — после предыдущей')
+      ),
       // Быстрые действия
       h('div', { style: { display: 'flex', gap: 8, marginBottom: 12 } },
         h('button', { style: gbtn({ fontSize: 11 }), onClick: setAllSequential }, '↓ Все последовательно'),
@@ -426,12 +434,140 @@ const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) =
   );
 });
 
+// ==================== DepsScreen: Зависимости операций ====================
+const DepsScreen = memo(({ data, onUpdate, addToast }) => {
+  const [selOrderId, setSelOrderId] = useState('');
+  const activeOrders = useMemo(() => data.orders.filter(o => !o.archived), [data.orders]);
+  const selectedOrder = selOrderId ? data.orders.find(o => o.id === selOrderId) : null;
+
+  return h('div', { style: { padding: '12px 0 80px' } },
+    // Легенда использования
+    h('div', { style: { ...S.card, marginBottom: 12, padding: '10px 14px', background: '#E3F2FD', border: '0.5px solid #90CAF9' } },
+      h('div', { style: { fontWeight: 500, fontSize: 12, color: '#1565C0', marginBottom: 6 } }, 'ℹ Как использовать взаимосвязи операций'),
+      h('div', { style: { fontSize: 11, color: '#1976D2', lineHeight: 1.6 } },
+        h('div', null, '✓ в ячейке — строка ЖДЁТ завершения колонки (зависит от неё)'),
+        h('div', null, '⇉ синий фон — операция параллельная (начинается сразу)'),
+        h('div', null, '↓ — операция последовательная (после другой)'),
+        h('div', null, '🔴/🟡/🟢 цвет колонки — покрытие сотрудниками'),
+        h('div', null, '← Установите зависимости чтобы система показывала правильный порядок на Гант-диаграмме и в Канбан')
+      )
+    ),
+    // Выбор заказа
+    h('div', { style: { ...S.card, marginBottom: 12 } },
+      h('div', { style: S.sec }, 'Выберите заказ'),
+      h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+        activeOrders.map(o => {
+          const ops = data.ops.filter(op => op.orderId === o.id && !op.archived);
+          const hasDeps = ops.some(op => op.dependsOn?.length > 0);
+          return h('button', { key: o.id,
+            style: selOrderId === o.id ? abtn({ fontSize: 12 }) : gbtn({ fontSize: 12 }),
+            onClick: () => setSelOrderId(selOrderId === o.id ? '' : o.id)
+          },
+            o.number,
+            h('span', { style: { fontSize: 10, marginLeft: 4, opacity: 0.7 } }, `${ops.length} оп.`),
+            hasDeps && h('span', { style: { fontSize: 10, marginLeft: 4, color: GN } }, '🔗')
+          );
+        })
+      )
+    ),
+    // Редактор зависимостей
+    selectedOrder
+      ? h(DependencyEditorInline, { data, orderId: selOrderId, onUpdate, addToast })
+      : h('div', { style: { ...S.card, textAlign: 'center', color: '#888', padding: 24, fontSize: 13 } },
+          '← Выберите заказ для настройки зависимостей операций'
+        )
+  );
+});
+
+// Inline версия DependencyEditor (без модального окна)
+const DependencyEditorInline = memo(({ data, orderId, onUpdate, addToast }) => {
+  const order = data.orders.find(o => o.id === orderId);
+  const ops = useMemo(() => data.ops.filter(op => op.orderId === orderId && !op.archived), [data.ops, orderId]);
+
+  const toggleDep = useCallback(async (opId, depId) => {
+    const op = ops.find(o => o.id === opId);
+    if (!op) return;
+    const deps = op.dependsOn || [];
+    const newDeps = deps.includes(depId) ? deps.filter(d => d !== depId) : [...deps, depId];
+    const checkCycle = (target, visited = new Set()) => {
+      if (visited.has(target)) return true;
+      visited.add(target);
+      const t = ops.find(o => o.id === target);
+      return (t?.dependsOn || []).some(d => d === opId || checkCycle(d, visited));
+    };
+    if (!deps.includes(depId) && checkCycle(depId)) { addToast('Нельзя: циклическая зависимость', 'error'); return; }
+    const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, dependsOn: newDeps.length > 0 ? newDeps : undefined } : o) };
+    await DB.save(d); onUpdate(d);
+  }, [data, ops, onUpdate, addToast, orderId]);
+
+  const setAllSequential = useCallback(async () => {
+    const updated = data.ops.map(o => {
+      const idx = ops.findIndex(s => s.id === o.id);
+      if (idx <= 0 || o.orderId !== orderId) return { ...o, dependsOn: o.orderId === orderId ? undefined : o.dependsOn };
+      return { ...o, dependsOn: [ops[idx - 1].id] };
+    });
+    const d = { ...data, ops: updated };
+    await DB.save(d); onUpdate(d); addToast('Все последовательно', 'success');
+  }, [data, ops, orderId, onUpdate, addToast]);
+
+  const setAllParallel = useCallback(async () => {
+    const d = { ...data, ops: data.ops.map(o => o.orderId === orderId ? { ...o, dependsOn: undefined } : o) };
+    await DB.save(d); onUpdate(d); addToast('Все параллельно', 'success');
+  }, [data, orderId, onUpdate, addToast]);
+
+  return h('div', { style: S.card },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } },
+      h('div', { style: { fontSize: 14, fontWeight: 500 } }, `Зависимости: ${order?.number}`),
+      h('div', { style: { display: 'flex', gap: 8 } },
+        h('button', { style: gbtn({ fontSize: 11 }), onClick: setAllSequential }, '↓ Все последовательно'),
+        h('button', { style: gbtn({ fontSize: 11 }), onClick: setAllParallel }, '⇉ Все параллельно')
+      )
+    ),
+    h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 11 } },
+      h('thead', null, h('tr', null,
+        h('th', { style: { ...S.th, position: 'sticky', left: 0, background: '#f8f8f5', zIndex: 1 } }, 'Операция ↓ зависит от →'),
+        ops.map(op => h('th', { key: op.id, style: { ...S.th, writingMode: 'vertical-lr', minWidth: 30, maxWidth: 40, height: 80, padding: '4px 2px' } }, op.name.length > 10 ? op.name.slice(0, 10) + '…' : op.name))
+      )),
+      h('tbody', null, ops.map(op => h('tr', { key: op.id },
+        h('td', { style: { ...S.td, fontWeight: 500, position: 'sticky', left: 0, background: '#fff', zIndex: 1, minWidth: 120 } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 4 } },
+            h(Badge, { st: op.status }),
+            h('span', null, op.name.length > 14 ? op.name.slice(0, 14) + '…' : op.name)
+          )
+        ),
+        ops.map(depOp => {
+          const isSelf = op.id === depOp.id;
+          const isDep = (op.dependsOn || []).includes(depOp.id);
+          return h('td', { key: depOp.id, style: { ...S.td, textAlign: 'center', padding: 2, cursor: isSelf ? 'default' : 'pointer', background: isSelf ? '#f0f0f0' : isDep ? GN3 : 'transparent' },
+            onClick: isSelf ? undefined : () => toggleDep(op.id, depOp.id)
+          }, isSelf ? '—' : isDep ? h('span', { style: { color: GN, fontWeight: 500, fontSize: 14 } }, '✓') : '');
+        })
+      )))
+    )),
+    h('div', { style: { marginTop: 16 } },
+      h('div', { style: S.sec }, 'Последовательность'),
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+        ops.map(op => {
+          const deps = (op.dependsOn || []).map(depId => ops.find(o => o.id === depId)?.name).filter(Boolean);
+          return h('div', { key: op.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 8, background: deps.length === 0 ? '#E3F2FD' : '#f8f8f5', fontSize: 12 } },
+            h('span', { style: { fontSize: 14 } }, deps.length === 0 ? '⇉' : '↓'),
+            h('span', { style: { fontWeight: 500 } }, op.name),
+            h(Badge, { st: op.status }),
+            deps.length > 0 && h('span', { style: { color: '#888', fontSize: 10 } }, `после: ${deps.join(', ')}`)
+          );
+        })
+      )
+    )
+  );
+});
+
 const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [form, setForm] = useState({ number: '', product: '',
  qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' });
   const { ask: askConfirm, confirmEl } = useConfirm();
   const [editingId, setEditingId] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [showShipped, setShowShipped] = useState(true);
   const [page, setPage] = useState(1);
   const pageSize = 20;
   const [fieldErrors, setFieldErrors] = useState({});
@@ -495,6 +631,18 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     }
   }, [form, editingId, data, createDefaultOps, onUpdate, addToast]);
 
+  const shipOrder = useCallback(async id => {
+    const order = data.orders.find(o => o.id === id);
+    const ops = data.ops.filter(op => op.orderId === id && !op.archived);
+    const allDone = ops.length > 0 && ops.every(op => op.status === 'done' || op.status === 'defect');
+    if (!allDone) {
+      if (!(await askConfirm({ message: `Отгрузить заказ ${order?.number}?`, detail: 'Не все операции завершены. Отгрузить всё равно?', danger: false }))) return;
+    }
+    let d = { ...data, orders: data.orders.map(o => o.id === id ? { ...o, shipped: true, shippedAt: Date.now() } : o) };
+    d = logAction(d, 'order_shipped', { orderId: id, orderNumber: order?.number });
+    await DB.save(d); onUpdate(d); addToast(`Заказ ${order?.number} отгружен ✓`, 'success');
+  }, [data, onUpdate, addToast]);
+
   const del = useCallback(async id => {
     if (!(await askConfirm({ message: 'Переместить заказ в архив?', danger: false }))) return;
     let d = { ...data, orders: data.orders.map(o => o.id === id ? { ...o, archived: true } : o) };
@@ -510,7 +658,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 
   const edit = useCallback(ord => { setForm({ number: ord.number, product: ord.product, qty: String(ord.qty), deadline: ord.deadline || '', priority: ord.priority || 'medium', bomId: '', productType: ord.productType || '' }); setEditingId(ord.id); }, []);
 
-  const ordersToShow = useMemo(() => data.orders.filter(o => (showArchived ? true : !o.archived) && (!filterType || o.productType === filterType)).sort((a,b) => { const priorityOrder = { critical:0, high:1, medium:2, low:3 }; return (priorityOrder[a.priority]||4) - (priorityOrder[b.priority]||4) || (b.createdAt||0) - (a.createdAt||0); }), [data.orders, showArchived, filterType]);
+  const ordersToShow = useMemo(() => data.orders.filter(o => (showArchived ? true : !o.archived) && (!o.shipped || showShipped) && (!filterType || o.productType === filterType)).sort((a,b) => { const priorityOrder = { critical:0, high:1, medium:2, low:3 }; return (priorityOrder[a.priority]||4) - (priorityOrder[b.priority]||4) || (b.createdAt||0) - (a.createdAt||0); }), [data.orders, showArchived, showShipped, filterType]);
   const paginated = useMemo(() => { const start = (page-1)*pageSize; return ordersToShow.slice(start, start+pageSize); }, [ordersToShow, page]);
   useEffect(() => { setPage(1); }, [showArchived]);
 
@@ -582,6 +730,9 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       ),
       h('label', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 } },
         h('input', { type: 'checkbox', checked: showArchived, onChange: e => setShowArchived(e.target.checked) }), 'Архивные'
+      ),
+      h('label', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 } },
+        h('input', { type: 'checkbox', checked: showShipped, onChange: e => setShowShipped(e.target.checked) }), 'Отгружен'
       )
     ),
     paginated.length === 0
@@ -610,7 +761,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
               h('td', { style: { ...S.td, color: PRIORITY[ord.priority]?.color || '#888' } }, PRIORITY[ord.priority]?.label || '—'),
               h('td', { style: S.td }, `${done}/${ops.length}`, def > 0 && h('span', { style: { marginLeft: 4, color: RD } }, `⚠ ${def}`)),
               h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 11 } }, matConsumption.length > 0 ? `${matCost.toLocaleString()}₽` : '—'),
-              h('td', { style: S.td }, h(Badge, { st })),
+              h('td', { style: S.td }, h(Badge, { st: ord.shipped ? 'shipped' : st })),
               h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
                 !ord.archived ? [
                   h('button', { key: 'edit', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Редактировать', onClick: () => edit(ord) }, '✎'),
@@ -618,6 +769,8 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
                   h('button', { key: 'passport', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Паспорт PDF', onClick: () => generateFullPassport(ord, data) }, '📄'),
                   h('button', { key: 'route', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Маршрутный лист PDF', onClick: () => generateRouteSheet(ord, data) }, '📋'),
                   h('button', { key: 'deps', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Зависимости операций', onClick: () => setDepEditorOrderId(ord.id) }, '🔗'),
+                  !ord.shipped && h('button', { key: 'ship', style: { ...gbtn({ fontSize: 11, padding: '4px 8px' }), color: GN2, borderColor: GN }, 'aria-label': 'Отгрузить заказ', onClick: () => shipOrder(ord.id) }, '🚚'),
+                  ord.shipped && h('span', { key: 'shipped', style: { fontSize: 10, padding: '3px 6px', background: GN3, color: GN2, borderRadius: 4, fontWeight: 500 } }, `✓ Отгружен${ord.shippedAt ? ' ' + new Date(ord.shippedAt).toLocaleDateString('ru') : ''}`)
                 ] : h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Восстановить', onClick: () => restore(ord.id) }, '↩ Восстановить')
               ))
             );
@@ -809,7 +962,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
 
   // Конфигурация вкладок по ролям
   const ALL_GROUPS = {
-    production: { label: '⚙ Производство', tabs: [['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['orders','Заказы'],['plan','План']] },
+    production: { label: '⚙ Производство', tabs: [['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['deps','Зависимости'],['orders','Заказы'],['plan','План']] },
     reference:  { label: '📋 Справочники', tabs: [['workers','Сотрудники'],['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],['materials','Материалы'],['equipment','Оборудование'],['bom','Спецификации'],['sections','Участки']] },
     analytics:  { label: '📊 Аналитика',   tabs: [['reports','Отчёты'],['analytics','Аналитика'],['qms','Качество'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['auxops','Доп. работы'],['journal','Журнал'],['notifications','Уведомления']] },
     system:     { label: '🔧 Система',      tabs: [['time','Учёт времени'],['admin','Управление']] }
@@ -897,6 +1050,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
     tab === 'kanban' && h(MasterKanban, { data, onUpdate, addToast }),
     tab === 'gantt' && h(GanttChart, { data }),
     tab === 'calendar' && h(ResourceCalendar, { data, onUpdate, addToast }),
+    tab === 'deps' && h(DepsScreen, { data, onUpdate, addToast }),
     tab === 'orders' && h(MasterOrders, { data, onUpdate, addToast, onOrderClick }),
     tab === 'workers' && h(MasterWorkers, { data, onUpdate, addToast }),
     tab === 'stages' && h(MasterProductionStages, { data, onUpdate, addToast }),
