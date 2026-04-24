@@ -339,6 +339,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
         )))
       ))
     )
+  );
 });
 
 // ==================== InstructionsTracker (ОТ) ====================
