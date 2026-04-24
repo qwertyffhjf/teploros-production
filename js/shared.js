@@ -464,6 +464,23 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
   const level = getWorkerLevel(allDone);
   const progress = getLevelProgress(allDone);
 
+  // Статус из табеля текущего дня
+  const today = new Date();
+  const todayCell = data.timesheet?.[worker.id]?.[today.getDate()];
+  const tsStatus = (() => {
+    if (!todayCell) return null;
+    if (todayCell.code === 'ОТ') return { label: 'В отпуске', bg: '#E6F1FB', cl: '#0C447C', br: '#90CAF9' };
+    if (todayCell.code === 'Б')  return { label: 'Больничный', bg: '#FCEBEB', cl: '#791F1F', br: '#F48FB1' };
+    if (todayCell.code === 'ОЗ') return { label: 'Отпуск за свой счёт', bg: '#FFF3E0', cl: '#E65100', br: '#FFB74D' };
+    if (todayCell.code === 'К')  return { label: 'Командировка', bg: '#F3E5F5', cl: '#6A1B9A', br: '#CE93D8' };
+    if (todayCell.code === 'НН') return { label: 'Неявка', bg: '#F1EFE8', cl: '#888', br: '#ccc' };
+    if (todayCell.code === 'У')  return { label: 'Уволен', bg: '#E0E0E0', cl: '#444', br: '#bbb' };
+    if (todayCell.code === 'СД') return { label: 'Сдельная', bg: '#EDE7F6', cl: '#4527A0', br: '#B39DDB' };
+    if (todayCell.h > 0) return { label: `На смене · ${todayCell.h}ч`, bg: GN3, cl: GN2, br: GN };
+    return null;
+  })();
+  const displayStatus = tsStatus || WORKER_STATUS[worker.status] || WORKER_STATUS.working;
+
   useEffect(() => {
     const handleKey = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', handleKey);
@@ -477,13 +494,13 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
     h('div', { className: 'modal-content', style: { background: '#fff', borderRadius: 12, padding: 24, width: 'min(680px, calc(100vw - 32px))', maxHeight: '85vh', overflowY: 'auto' } },
       h('button', { onClick: onClose, 'aria-label': 'Закрыть', style: { float: 'right', background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#888' } }, '×'),
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 14, marginBottom: 20 } },
-        h('div', { style: { width: 52, height: 52, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 500, color: AM2 } }, worker.name?.charAt(0) || '?'),
+        h('div', { style: { width: 52, height: 52, borderRadius: '50%', background: displayStatus.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 500, color: displayStatus.cl, border: '1px solid ' + displayStatus.br } }, worker.name?.charAt(0) || '?'),
         h('div', null,
           h('div', { style: { fontSize: 18, fontWeight: 500 } }, worker.name),
           h('div', { style: { fontSize: 12, color: '#888' } }, [worker.position, worker.grade ? `${worker.grade} разряд` : null, worker.tabNumber ? `Таб. ${worker.tabNumber}` : null, section?.name].filter(Boolean).join(' · ') || '—'),
           h('div', { style: { marginTop: 4 } },
-            h('span', { style: { display: 'inline-block', padding: '2px 10px', fontSize: 10, borderRadius: 8, fontWeight: 500, background: (WORKER_STATUS[worker.status] || WORKER_STATUS.working).bg, color: (WORKER_STATUS[worker.status] || WORKER_STATUS.working).cl, border: '0.5px solid ' + (WORKER_STATUS[worker.status] || WORKER_STATUS.working).br } },
-              (WORKER_STATUS[worker.status] || WORKER_STATUS.working).label
+            h('span', { style: { display: 'inline-block', padding: '2px 10px', fontSize: 10, borderRadius: 8, fontWeight: 500, background: displayStatus.bg, color: displayStatus.cl, border: '0.5px solid ' + displayStatus.br } },
+              displayStatus.label
             )
           )
         )
