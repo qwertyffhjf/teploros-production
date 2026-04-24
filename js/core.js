@@ -27,6 +27,7 @@ const STATUS = {
   done: { label: 'Выполнено', bg: GN3, cl: GN2, br: GN },
   defect: { label: 'Брак', bg: RD3, cl: RD2, br: RD },
   rework: { label: 'Переделка', bg: '#FAEEDA', cl: AM2, br: AM4 },
+  shipped: { label: 'Отгружен', bg: '#E8F5E9', cl: '#1B5E20', br: '#4CAF50' },
 };
 
 const OPERATION_STAGES = [
