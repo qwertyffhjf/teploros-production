@@ -21,6 +21,27 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   }, [data, onUpdate, addToast, rejectModal, rejectNote]);
 
   return h('div', null,
+    // Панель уведомлений ОТК
+    h('div', { style: { ...S.card, marginBottom: 8, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: pendingQC.length > 0 ? 'rgba(2,119,189,0.07)' : '#f8f8f5', border: pendingQC.length > 0 ? '1px solid #90CAF9' : '0.5px solid #eee' } },
+      h('div', null,
+        h('div', { style: { fontWeight: 600, fontSize: 13, color: pendingQC.length > 0 ? '#0277BD' : '#888' } },
+          pendingQC.length > 0 ? `🔍 На контроле: ${pendingQC.length} операций` : '✓ Нет операций на контроле'
+        ),
+        pendingQC.length > 0 && h('div', { style: { fontSize: 11, color: '#888', marginTop: 2 } },
+          pendingQC.map(op => data.orders.find(o => o.id === op.orderId)?.number).filter(Boolean).join(', ')
+        )
+      ),
+      // Кнопка включения Push-уведомлений
+      'Notification' in window && h('button', {
+        style: Notification.permission === 'granted'
+          ? { ...gbtn({ fontSize: 11 }), color: GN2, borderColor: GN }
+          : gbtn({ fontSize: 11 }),
+        onClick: () => Notification.requestPermission().then(p => {
+          if (p === 'granted') addToast('✓ Push-уведомления включены! Теперь уведомления придут даже при закрытой вкладке', 'success');
+          else addToast('Push-уведомления отклонены браузером', 'error');
+        })
+      }, Notification.permission === 'granted' ? '🔔 Push включён' : '🔕 Включить Push')
+    ),
     h(SectionAnalytics, { section: 'quality', data }),
     // Модалка отклонения — вместо prompt()
     rejectModal && h('div', { role: 'dialog', 'aria-modal': 'true', style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 } },
