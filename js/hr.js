@@ -305,22 +305,38 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
         ? h('div', { style: { ...S.card, textAlign:'center', padding:32 } }, 'Сотрудники не найдены')
         : filtered.map(w => {
             const ws = WORKER_STATUS[w.status] || WORKER_STATUS.working;
+            // Плашка статуса берёт данные из табеля текущего дня
+            const today = new Date();
+            const todayCell = data.timesheet?.[w.id]?.[today.getDate()];
+            const tsStatus = (() => {
+              if (!todayCell) return null;
+              if (todayCell.code === 'ОТ') return { label: 'Отпуск', bg: '#E6F1FB', cl: '#0C447C', br: '#90CAF9' };
+              if (todayCell.code === 'Б')  return { label: 'Больничный', bg: '#FCEBEB', cl: '#791F1F', br: '#F48FB1' };
+              if (todayCell.code === 'ОЗ') return { label: 'ОЗ', bg: '#FFF3E0', cl: '#E65100', br: '#FFB74D' };
+              if (todayCell.code === 'К')  return { label: 'Командировка', bg: '#F3E5F5', cl: '#6A1B9A', br: '#CE93D8' };
+              if (todayCell.code === 'НН') return { label: 'Неявка', bg: '#F1EFE8', cl: '#888', br: '#ccc' };
+              if (todayCell.code === 'У')  return { label: 'Уволен', bg: '#E0E0E0', cl: '#444', br: '#bbb' };
+              if (todayCell.code === 'СД') return { label: 'Сдельная', bg: '#EDE7F6', cl: '#4527A0', br: '#B39DDB' };
+              if (todayCell.h > 0) return { label: `На смене ${todayCell.h}ч`, bg: GN3, cl: GN2, br: GN };
+              return null;
+            })();
+            const displayStatus = tsStatus || ws;
             if (editingWorker === w.id) return h('div', { key: w.id, style: { ...S.card, marginBottom:10, padding:16, border: `1px solid ${AM}` } }, renderWorkerForm(true));
             return h('div', { key: w.id, id: `worker-card-${w.id}`, style: { ...S.card, marginBottom:10, padding:16 } },
               h('div', { style: { display:'flex', alignItems:'flex-start', gap:14 } },
-                h('div', { style: { width:44, height:44, borderRadius:'50%', background: ws.bg, display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, fontWeight:500, color: ws.cl, flexShrink:0, border:'0.5px solid '+ws.br } }, w.name?.charAt(0) || '?'),
+                h('div', { style: { width:44, height:44, borderRadius:'50%', background: displayStatus.bg, display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, fontWeight:500, color: displayStatus.cl, flexShrink:0, border:'0.5px solid '+displayStatus.br } }, w.name?.charAt(0) || '?'),
                 h('div', { style: { flex:1, minWidth:0 } },
                   h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:8 } },
                     h('div', null,
                       h('div', { style: { display:'flex', alignItems:'center', gap:8 } },
-                        h('div', { style: { fontSize:15, fontWeight:500 } }, w.name),
+                        h('div', { style: { fontSize:15, fontWeight:500, cursor:'pointer', color: AM2, textDecoration:'underline', textDecorationStyle:'dotted' }, onClick: () => setCardWorker(w) }, w.name),
                         h('span', { style: { display:'inline-block', padding:'1px 8px', fontSize:10, borderRadius:8, background:AM3, color:AM2, fontWeight:500 } }, `Ур. ${w.level} · ${getLevelTitle(w.level)}`),
                         h('button', { style: gbtn({ fontSize:11, padding:'2px 6px' }), 'aria-label': `Поблагодарить ${w.name}`, onClick: () => setThanksModal({ id: w.id, name: w.name }) }, '👏')
                       ),
                       h('div', { style: { fontSize:12, color:'#888' } }, [w.position, w.grade ? `${w.grade} разр.` : null, w.tabNumber ? `Таб. ${w.tabNumber}` : null, w.sectionName].filter(Boolean).join(' · ') || '—')
                     ),
                     h('div', { style: { display:'flex', gap:6, alignItems:'center' } },
-                      h('span', { style: { display:'inline-block', padding:'3px 10px', fontSize:10, borderRadius:8, fontWeight:500, background: ws.bg, color: ws.cl, border:'0.5px solid '+ws.br } }, ws.label),
+                      h('span', { style: { display:'inline-block', padding:'3px 10px', fontSize:10, borderRadius:8, fontWeight:500, background: displayStatus.bg, color: displayStatus.cl, border:'0.5px solid '+displayStatus.br } }, displayStatus.label),
                       w.checkinTime && h('span', { style: { fontSize:11, color:'#888' } }, `с ${w.checkinTime}`)
                     )
                   ),
@@ -383,9 +399,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
                     })
                   ),
                   h('div', { style: { display:'flex', gap:6, alignItems:'center', flexWrap:'wrap' } },
-                    h('button', { style: gbtn({ fontSize:11, padding:'4px 10px' }), onClick: () => setCardWorker(w) }, '📊 Подробнее'),
                     !w.archived && h('button', { style: gbtn({ fontSize:11, padding:'4px 10px' }), onClick: () => edit(w) }, '✎ Редактировать'),
-                    !w.archived && h('select', { style: { ...S.inp, fontSize:11, padding:'4px 6px' }, 'aria-label': 'Статус сотрудника', value: w.status || 'working', onChange: e => updateStatus(w.id, e.target.value) }, Object.entries(WORKER_STATUS).map(([k,v]) => h('option', { key: k, value: k }, v.label))),
                     !w.archived
                       ? h('div', { style: { display: 'flex', gap: 4, marginLeft: 'auto' } },
                           h('button', { style: rbtn({ fontSize:11, padding:'4px 8px' }), onClick: () => del(w.id) }, '📦 Архив'),
