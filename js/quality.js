@@ -1,7 +1,7 @@
 // teploros · quality.js
 // Автоматически извлечено из монолита
 
-const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
+const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorkerClick }) => {
   const pendingQC = useMemo(() => data.ops.filter(o => o.status === 'on_check' && !o.archived), [data.ops]);
   const [rejectModal, setRejectModal] = useState(null); // { op } | null
   const [rejectNote, setRejectNote] = useState('');
@@ -65,7 +65,7 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
             )),
             h('tbody', null, pendingQC.map(op => {
               const order = data.orders.find(o => o.id === op.orderId);
-              const workerNames = op.workerIds?.map(id => data.workers.find(w => w.id === id)?.name).filter(Boolean).join(', ') || '—';
+              const workerIds = op.workerIds || [];
               return h('tr', { key: op.id },
                 h('td', { style: S.td },
                   onOrderClick && order
@@ -73,7 +73,12 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
                     : order?.number || '—'
                 ),
                 h('td', { style: S.td }, op.name),
-                h('td', { style: S.td }, workerNames),
+                h('td', { style: S.td },
+                  workerIds.length === 0 ? '—' :
+                  h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
+                    workerIds.map(wid => h(WN, { key: wid, workerId: wid, data, onWorkerClick }))
+                  )
+                ),
                 h('td', { style: S.td }, op.weldParams ? `Шов: ${op.weldParams.seamNumber}, Электрод: ${op.weldParams.electrode}` : '—'),
                 h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
                   h('button', { style: abtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Принять операцию', onClick: () => acceptOp(op) }, 'Принять'),
@@ -89,7 +94,7 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 
 
 // ==================== MasterReclamations ====================
-const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
+const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
   const [form, setForm] = useState({ orderId: '', description: '', severity: 'minor', detectedDate: '', operationName: '', defectSource: 'external' });
   const [showForm, setShowForm] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
@@ -201,7 +206,9 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
           (d8.team || []).map(wid => {
             const w = wid === 'master' ? { name: 'Начальник цеха' } : data.workers.find(w => w.id === wid);
             return h('span', { key: wid, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: AM3, borderRadius: 6, fontSize: 11, color: AM2 } },
-              w?.name || wid,
+              wid !== 'master'
+                ? h(WN, { workerId: wid, data, onWorkerClick, style: { color: AM2 } })
+                : (w?.name || wid),
               h('span', { style: { cursor: 'pointer', fontWeight: 500, marginLeft: 2 }, onClick: () => saveD8(rec.id, 'team', (d8.team || []).filter(id => id !== wid)) }, '×')
             );
           })
@@ -241,7 +248,10 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
       lbl('Описание проблемы'),
       h('div', { style: { background: '#f8f8f5', borderRadius: 8, padding: '10px 12px', fontSize: 12, lineHeight: 1.6, marginBottom: 8 } }, rec.description || '—'),
       (workerNames.length > 0 || defectReason) && h('div', { style: { background: RD3, borderRadius: 8, padding: '10px 12px', marginBottom: 8, fontSize: 12 } },
-        workerNames.length > 0 && h('div', null, h('span', { style: { color: '#888' } }, 'Исполнитель: '), h('span', { style: { fontWeight: 500, color: RD2 } }, workerNames.join(', '))),
+        workerNames.length > 0 && h('div', { style: { display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' } },
+          h('span', { style: { color: '#888' } }, 'Исполнитель: '),
+          ...(linkedOp?.workerIds || []).map(wid => h(WN, { key: wid, workerId: wid, data, onWorkerClick, style: { fontWeight: 500, color: RD2 } }))
+        ),
         defectReason && h('div', null, h('span', { style: { color: '#888' } }, 'Причина: '), defectReason),
         rec.defectNote && h('div', null, h('span', { style: { color: '#888' } }, 'Описание: '), rec.defectNote)
       ),
@@ -302,8 +312,10 @@ const MasterReclamations = memo(({ data, onUpdate, addToast }) => {
         lbl('Команда расследования'),
         h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
           (d8.team || []).map(wid => {
-            const w = wid === 'master' ? { name: 'Начальник цеха' } : data.workers.find(w => w.id === wid);
-            return h('span', { key: wid, style: { padding: '4px 10px', background: GN3, color: GN2, borderRadius: 6, fontSize: 11 } }, w?.name || wid);
+            const w = wid === 'master' ? null : data.workers.find(w => w.id === wid);
+            return w
+              ? h(WN, { key: wid, worker: w, onWorkerClick, style: { padding: '4px 10px', background: GN3, color: GN2, borderRadius: 6, fontSize: 11, display: 'inline-block' } })
+              : h('span', { key: wid, style: { padding: '4px 10px', background: GN3, color: GN2, borderRadius: 6, fontSize: 11 } }, 'Начальник цеха');
           })
         )
       ),
