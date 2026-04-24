@@ -72,7 +72,7 @@ const calcForecast = (data, orderId) => {
 };
 
 // ==================== MasterJournal ====================
-const MasterJournal = memo(({ data }) => {
+const MasterJournal = memo(({ data, onWorkerClick }) => {
   const sortedEvents = useMemo(() => [...data.events].sort((a,b) => b.ts - a.ts).slice(0, 200), [data.events]);
   return h('div', { style: { ...S.card, maxHeight: 500, overflowY: 'auto' } },
     h('div', { style: S.sec }, 'Журнал событий (последние 200)'),
@@ -86,7 +86,7 @@ const MasterJournal = memo(({ data }) => {
             return h('tr', { key: e.id },
               h('td', { style: S.td }, new Date(e.ts).toLocaleString()),
               h('td', { style: S.td }, e.type),
-              h('td', { style: S.td }, worker?.name || '—'),
+              h('td', { style: S.td }, worker ? h(WN, { worker, onWorkerClick }) : '—'),
               h('td', { style: S.td }, op?.name || '—'),
               h('td', { style: S.td }, e.shift || '—'),
               h('td', { style: S.td }, e.note || (e.downtimeTypeId ? data.downtimeTypes.find(dt => dt.id === e.downtimeTypeId)?.name : ''))
@@ -408,7 +408,7 @@ const SectionAnalytics = memo(({ section, data }) => {
 
 
 // ==================== KPI-отчёт для премирования ====================
-const KPIReport = memo(({ data }) => {
+const KPIReport = memo(({ data, onWorkerClick }) => {
   const [period, setPeriod] = useState(30);
   const periodStart = useMemo(() => now() - period * 86400000, [period]);
 
@@ -490,7 +490,7 @@ const KPIReport = memo(({ data }) => {
       h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
         h('thead', null, h('tr', null, ['Сотрудник', 'Ур.', 'Операций', 'Качество', 'Произв.', 'Универс.', 'Простои', 'KPI', 'Грейд'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
         h('tbody', null, workerKPIs.map((w, i) => h('tr', { key: w.id, style: { background: i === 0 ? '#FFFDE7' : 'transparent' } },
-          h('td', { style: { ...S.td, fontWeight: 500 } }, w.name, i === 0 && h('span', { style: { marginLeft: 4 } }, '🏆')),
+          h('td', { style: { ...S.td, fontWeight: 500 } }, h(WN, { worker: w, onWorkerClick }), i === 0 && h('span', { style: { marginLeft: 4 } }, '🏆')),
           h('td', { style: { ...S.td, textAlign: 'center' } }, h('span', { style: { padding: '2px 6px', fontSize: 10, borderRadius: 6, background: AM3, color: AM2 } }, `${w.level}`)),
           h('td', { style: { ...S.td, textAlign: 'center' } }, w.doneCount, w.defectCount > 0 && h('span', { style: { color: RD, marginLeft: 4, fontSize: 10 } }, `−${w.defectCount}`)),
           h('td', { style: { ...S.td, textAlign: 'center', color: w.quality >= 95 ? GN : w.quality >= 80 ? AM : RD, fontWeight: 500 } }, `${w.quality}%`),
@@ -599,7 +599,7 @@ const AssignmentRecommendations = memo(({ data, onUpdate, addToast }) => {
 
 
 // ==================== AnalyticsDashboard (Волна 1: Lead Time, Такт, Нормы, Парето, Тренды) ====================
-const AnalyticsDashboard = memo(({ data }) => {
+const AnalyticsDashboard = memo(({ data, onWorkerClick }) => {
   const [period, setPeriod] = useState(30);
   const periodStart = useMemo(() => now() - period * 86400000, [period]);
   const chartRef1 = useRef(null); const canvasRef1 = useRef(null);
