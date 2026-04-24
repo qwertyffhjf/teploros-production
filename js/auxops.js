@@ -4,7 +4,7 @@
 // ==================== AuxOpsViewer (Доп. работы — сводка для мастера) ====================
 // AUX_CAT_LABELS определён в core.js
 
-const AuxOpsViewer = memo(({ data, onUpdate, addToast }) => {
+const AuxOpsViewer = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
   const [period, setPeriod] = useState(7);
   const periodStart = useMemo(() => now() - period * 86400000, [period]);
   const { canvasRef: trendRef, draw: drawTrend } = useChartRef();
@@ -176,7 +176,12 @@ const AuxOpsViewer = memo(({ data, onUpdate, addToast }) => {
               h('td', { style: S.td }, op.createdAt ? new Date(op.createdAt).toLocaleDateString() : '—'),
               h('td', { style: { ...S.td, fontSize: 11 } }, AUX_CAT_LABELS[op.auxCategory] || '📝'),
               h('td', { style: { ...S.td, fontWeight: 500 } }, op.name),
-              h('td', { style: S.td }, workers || '—'),
+              h('td', { style: S.td }, (op.workerIds || []).length > 0
+                ? h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
+                    (op.workerIds || []).map(wid => h(WN, { key: wid, workerId: wid, data, onWorkerClick, style: { fontSize: 11 } }))
+                  )
+                : '—'
+              ),
               h('td', { style: { ...S.td, color: AM } }, order?.number || '—'),
               h('td', { style: S.td }, h(Badge, { st: op.status })),
               h('td', { style: { ...S.td, fontFamily: 'monospace' } }, dur)
