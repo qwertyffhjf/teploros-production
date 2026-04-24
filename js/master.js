@@ -1,7 +1,7 @@
 // teploros · master.js
 // Автоматически извлечено из монолита
 
-const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) => {
+const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWorkerClick }) => {
   const stagesList = useMemo(() => (data.productionStages || []).map(s => s.name)
 , [data.productionStages]);
   const { ask: askConfirm, confirmEl } = useConfirm();
@@ -262,7 +262,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick }) =>
                   (op.workerIds || []).map(wid => {
                     const w = data.workers.find(w => w.id === wid);
                     return w ? h('span', { key: wid, style: { display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', fontSize: 10, background: AM3, color: AM2, borderRadius: 6 } },
-                      w.name.split(' ')[0],
+                      h(WN, { workerId: wid, data, onWorkerClick, style: { fontSize: 11 } }),
                       !op.archived && h('span', { style: { cursor: 'pointer', fontWeight: 500, marginLeft: 2 }, onClick: () => assignWorkers(op.id, (op.workerIds || []).filter(id => id !== wid)) }, '×')
                     ) : null;
                   })
@@ -824,7 +824,7 @@ const GanttChart = memo(({ data }) => {
 });
 
 // ==================== ResourceCalendar ====================
-const ResourceCalendar = memo(({ data, onUpdate, addToast }) => {
+const ResourceCalendar = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
   const [startDate, setStartDate] = useState(() => { const d = new Date(); d.setDate(d.getDate() - d.getDay() + 1); return d; });
   const [daysCount] = useState(14);
   const [showModal, setShowModal] = useState(null);
@@ -851,7 +851,7 @@ const ResourceCalendar = memo(({ data, onUpdate, addToast }) => {
       h('tbody', null, data.workers.filter(w => !w.archived).map(w => {
         const availabilities = (data.workerAvailabilities || []).filter(a => a.workerId === w.id);
         return h('tr', { key: w.id },
-          h('td', { style: { fontWeight:500 } }, w.name,
+          h('td', { style: { fontWeight:500 } }, h(WN, { worker: w, onWorkerClick }),
             h('div', { style: { fontSize:10, color:'#888' } }, availabilities.map(a => `${a.type === 'vacation' ? 'Отпуск' : 'Больничный'} ${new Date(a.startDate).toLocaleDateString()}–${new Date(a.endDate).toLocaleDateString()}`).join(', ')),
             h('button', { style: gbtn({ fontSize:10, padding:'2px 6px', marginTop:4 }), 'aria-label': `Добавить отсутствие для ${w.name}`, onClick: () => setShowModal({ workerId: w.id }) }, '+')
           ),
@@ -957,7 +957,7 @@ const MasterKanban = memo(({ data, onUpdate, addToast }) => {
 
 
 // ==================== MasterScreen ====================
-const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, role }) => {
+const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, onWorkerClick, role }) => {
   const [qrOpData, setQrOpData] = useState(null);
 
   // Конфигурация вкладок по ролям
@@ -1044,12 +1044,12 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
         );
       })(),
       h(LoadForecastWidget, { data }),
-      h(MasterOps, { data: filteredData, onUpdate, onShowQR: (op, worker) => setQrOpData({ op, worker }), addToast, onOrderClick })
+      h(MasterOps, { data: filteredData, onUpdate, onShowQR: (op, worker) => setQrOpData({ op, worker }), addToast, onOrderClick, onWorkerClick })
     ),
     tab === 'recommend' && h(AssignmentRecommendations, { data, onUpdate, addToast }),
     tab === 'kanban' && h(MasterKanban, { data, onUpdate, addToast }),
     tab === 'gantt' && h(GanttChart, { data }),
-    tab === 'calendar' && h(ResourceCalendar, { data, onUpdate, addToast }),
+    tab === 'calendar' && h(ResourceCalendar, { data, onUpdate, addToast, onWorkerClick }),
     tab === 'deps' && h(DepsScreen, { data, onUpdate, addToast }),
     tab === 'orders' && h(MasterOrders, { data, onUpdate, addToast, onOrderClick }),
     tab === 'workers' && h(MasterWorkers, { data, onUpdate, addToast }),
@@ -1059,24 +1059,24 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
     tab === 'materials' && h(MasterMaterials, { data, onUpdate, addToast }),
     tab === 'equipment' && h(MasterEquipment, { data, onUpdate, addToast }),
     tab === 'bom' && h(MasterBOM, { data, onUpdate, addToast }),
-    tab === 'time' && h(MasterTimeTracking, { data, onUpdate, addToast, onWorkerClick: (wid) => { setTab('workers'); setTimeout(() => { const el = document.getElementById(`worker-card-${wid}`); el?.scrollIntoView({ behavior:'smooth', block:'center' }); }, 200); } }),
-    tab === 'journal' && h(MasterJournal, { data }),
+    tab === 'time' && h(MasterTimeTracking, { data, onUpdate, addToast, onWorkerClick }),
+    tab === 'journal' && h(MasterJournal, { data, onWorkerClick }),
     tab === 'sections' && h(MasterSections, { data, onUpdate, addToast }),
-    tab === 'plan' && h(MasterTodayPlan, { data }),
+    tab === 'plan' && h(MasterTodayPlan, { data, onWorkerClick }),
     tab === 'notifications' && h(MasterNotifications, { data }),
     tab === 'reports' && h(ReportsBuilder, { data }),
-    tab === 'analytics' && h(AnalyticsDashboard, { data }),
-    tab === 'qms' && h(QMSScreen, { data, onUpdate, addToast }),
-    tab === 'kpi' && h(KPIReport, { data }),
-    tab === 'reclamations' && h(MasterReclamations, { data, onUpdate, addToast }),
-    tab === 'auxops' && h(AuxOpsViewer, { data, onUpdate, addToast }),
+    tab === 'analytics' && h(AnalyticsDashboard, { data, onWorkerClick }),
+    tab === 'qms' && h(QMSScreen, { data, onUpdate, addToast, onWorkerClick }),
+    tab === 'kpi' && h(KPIReport, { data, onWorkerClick }),
+    tab === 'reclamations' && h(MasterReclamations, { data, onUpdate, addToast, onWorkerClick }),
+    tab === 'auxops' && h(AuxOpsViewer, { data, onUpdate, addToast, onWorkerClick }),
     tab === 'admin' && h(MasterAdmin, { data, onUpdate, addToast })
   );
 });
 
 
 // ==================== QMSScreen: Управление качеством ====================
-const QMSScreen = memo(({ data, onUpdate, addToast }) => {
+const QMSScreen = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
   const [filterStatus, setFilterStatus] = useState('open');
   const [filterStage, setFilterStage] = useState('');
   const [investigatingDefectId, setInvestigatingDefectId] = useState(null);
@@ -1222,8 +1222,9 @@ const QMSScreen = memo(({ data, onUpdate, addToast }) => {
                 h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 8 } },
                   h('div', null,
                     h('div', { style: { fontWeight: 500, fontSize: 12 } }, d.defectType),
-                    h('div', { style: { fontSize: 11, color: '#888', marginTop: 2 } },
-                      `${order?.number || '?'} → ${d.operationName} → ${worker?.name || '?'}`
+                    h('div', { style: { fontSize: 11, color: '#888', marginTop: 2, display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' } },
+                      h('span', null, `${order?.number || '?'} → ${d.operationName} →`),
+                      h(WN, { workerId: d.workerId, data, onWorkerClick })
                     )
                   ),
                   h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 3, background: d.status === 'resolved' ? GN3 : d.status === 'investigating' ? '#FFE0B2' : '#FFF3CD', color: d.status === 'resolved' ? GN2 : d.status === 'investigating' ? '#E65100' : '#856404' } },
