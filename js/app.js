@@ -1047,6 +1047,7 @@ function App() {
   const [showChat, setShowChat] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [selectedOrderId, setSelectedOrderId] = useState(null);
+  const [selectedWorkerId, setSelectedWorkerId] = useState(null);
   const savingRef = useRef(false);
 
   useEffect(() => {
@@ -1288,18 +1289,23 @@ function App() {
     showChat
       ? h(ChatScreen, { data, onUpdate: save, addToast, currentUser, onBack: () => setShowChat(false) })
       : h('div', null,
-          effectiveRole === 'master'      && h(MasterScreen,   { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId, role: 'master' }),
-          effectiveRole === 'pdo'         && h(PDOScreen,       { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId }),
-          effectiveRole === 'director'    && h(DirectorScreen,  { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId }),
-          effectiveRole === 'hr'          && h(HRScreen,        { data, onUpdate: save, addToast }),
-          effectiveRole === 'shop_master' && h(ShopMasterScreen,{ data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId }),
+          effectiveRole === 'master'      && h(MasterScreen,   { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId, role: 'master' }),
+          effectiveRole === 'pdo'         && h(PDOScreen,       { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }),
+          effectiveRole === 'director'    && h(DirectorScreen,  { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }),
+          effectiveRole === 'hr'          && h(HRScreen,        { data, onUpdate: save, addToast, onWorkerClick: setSelectedWorkerId }),
+          effectiveRole === 'shop_master' && h(ShopMasterScreen,{ data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }),
           effectiveRole === 'admin'       && h(AdminScreen,     { data, onUpdate: save, addToast }),
-          effectiveRole === 'controller'  && h(ControllerScreen, { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId }),
+          effectiveRole === 'controller'  && h(ControllerScreen, { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }),
           effectiveRole === 'worker' && workerId && h(WorkerScreen, { data, workerId, sectionId, onUpdate: save, initialOpId: null, addToast }),
           effectiveRole === 'warehouse' && h(WarehouseScreen, { data, onUpdate: save, addToast }),
-          effectiveRole === 'dashboard' && h(Dashboard, { data, addToast, onOrderClick: setSelectedOrderId })
+          effectiveRole === 'dashboard' && h(Dashboard, { data, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId })
         ),
     selectedOrderId && h(OrderDetailModal, { orderId: selectedOrderId, data, onClose: () => setSelectedOrderId(null) }),
+    // 🌍 Глобальная карточка сотрудника — открывается из любого места системы
+    selectedWorkerId && (() => {
+      const worker = data.workers.find(w => w.id === selectedWorkerId);
+      return worker ? h(WorkerCardModal, { worker, data, onClose: () => setSelectedWorkerId(null) }) : null;
+    })(),
     h('div', { 'aria-live': 'polite' }, toasts.map(t => h(Toast, { key: t.id, message: t.message, onClose: () => removeToast(t.id) }))),
     h(InstallPromptBanner)
   );
