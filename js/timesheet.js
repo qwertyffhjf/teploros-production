@@ -82,7 +82,7 @@ const calcDayData = (workerId, year, month, day, data) => {
   return { type: 'abs', code: 'НН', h: 0, src: 'нет данных' };
 };
 
-const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
+const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
   const today = new Date();
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [viewYear,  setViewYear]  = useState(today.getFullYear());
@@ -401,8 +401,8 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast }) => {
               const isDismissed = !!w.dismissedAt;
               const dismissDay = isDismissed ? new Date(w.dismissedAt).getDate() : 999;
               return h('tr', { key:w.id },
-                h('td', { style:{ ...S.td, position:'sticky', left:0, zIndex:1, background:'#fff', boxShadow:'2px 0 4px rgba(0,0,0,0.04)', padding:'6px 10px', fontWeight:500, color: isDismissed ? '#999' : undefined } }, 
-                  w.name, 
+                h('td', { style:{ ...S.td, position:'sticky', left:0, zIndex:1, background:'#fff', boxShadow:'2px 0 4px rgba(0,0,0,0.04)', padding:'6px 10px', fontWeight:500, color: isDismissed ? '#999' : undefined } },
+                  h(WN, { worker: w, onWorkerClick, style: { color: isDismissed ? '#999' : undefined } }),
                   isDismissed && h('span', { style: { fontSize: 9, color: '#999', marginLeft: 4 } }, '(ув.)')
                 ),
                 days.map(d => {
