@@ -2,13 +2,15 @@
 // Автоматически извлечено из монолита
 
 // ==================== MasterWorkers ====================
-const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
+const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [sectionFilter, setSectionFilter] = useState('');
+  const [positionFilter, setPositionFilter] = useState('');
   const [viewMode, setViewMode] = useState('list');
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingWorker, setEditingWorker] = useState(null);
-  const [cardWorker, setCardWorker] = useState(null);
+  const [cardWorker, setCardWorker] = useState(() => focusWorkerId ? data.workers.find(w => w.id === focusWorkerId) || null : null);
   const [thanksModal, setThanksModal] = useState(null);
   const { ask: askConfirm, confirmEl } = useConfirm();
   const [thanksNote, setThanksNote] = useState('');
@@ -88,8 +90,10 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
     let list = workersEnriched.filter(w => showArchivedWorkers ? w.archived : !w.archived);
     if (search) list = list.filter(w => w.name.toLowerCase().includes(search.toLowerCase()));
     if (statusFilter !== 'all') list = list.filter(w => (w.status || 'working') === statusFilter);
+    if (sectionFilter) list = list.filter(w => w.sectionId === sectionFilter);
+    if (positionFilter) list = list.filter(w => w.position === positionFilter);
     return list.sort((a,b) => a.name.localeCompare(b.name));
-  }, [workersEnriched, search, statusFilter, showArchivedWorkers]);
+  }, [workersEnriched, search, statusFilter, sectionFilter, positionFilter, showArchivedWorkers]);
 
   const restoreWorker = useCallback(async id => {
     let d = { ...data, workers: data.workers.map(w => w.id === id ? { ...w, archived: false, status: 'working', dismissedAt: null } : w) };
@@ -164,6 +168,18 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
     h('div', { style: { display:'flex', gap:8, marginBottom:16, alignItems:'center', flexWrap:'wrap' } },
       h('input', { style: { ...S.inp, flex:1, minWidth:180 }, placeholder:'Поиск по имени...', value: search, onChange: e => setSearch(e.target.value) }),
       h('div', { style: { display:'flex', gap:4, flexWrap:'wrap' } }, [['all','Все'],['working','На смене'],['absent','Отсутствуют'],['sick','Больничный'],['vacation','Отпуск']].map(([id,label]) => h('button', { key: id, style: statusFilter === id ? abtn({ fontSize:11, padding:'5px 10px' }) : gbtn({ fontSize:11, padding:'5px 10px' }), onClick: () => setStatusFilter(id) }, label))),
+      h('select', { style: { ...S.inp, minWidth: 130 }, value: sectionFilter, onChange: e => setSectionFilter(e.target.value) },
+        h('option', { value: '' }, '— все участки —'),
+        (data.sections || []).map(s => h('option', { key: s.id, value: s.id }, s.name))
+      ),
+      (() => {
+        const positions = [...new Set(data.workers.filter(w => w.position).map(w => w.position))].sort();
+        return h('select', { style: { ...S.inp, minWidth: 130 }, value: positionFilter, onChange: e => setPositionFilter(e.target.value) },
+          h('option', { value: '' }, '— все должности —'),
+          positions.map(p => h('option', { key: p, value: p }, p))
+        );
+      })(),
+      (sectionFilter || positionFilter) && h('button', { style: gbtn({ fontSize: 11, padding: '5px 8px' }), onClick: () => { setSectionFilter(''); setPositionFilter(''); } }, '✕ Сбросить'),
       h('label', { style: { display:'flex', alignItems:'center', gap:4, fontSize:12, cursor:'pointer', whiteSpace:'nowrap' } },
         h('input', { type:'checkbox', checked: showArchivedWorkers, onChange: e => setShowArchivedWorkers(e.target.checked) }),
         `Архив (${archivedCount})`
@@ -198,7 +214,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
         : filtered.map(w => {
             const ws = WORKER_STATUS[w.status] || WORKER_STATUS.working;
             if (editingWorker === w.id) return h('div', { key: w.id, style: { ...S.card, marginBottom:10, padding:16, border: `1px solid ${AM}` } }, renderWorkerForm(true));
-            return h('div', { key: w.id, style: { ...S.card, marginBottom:10, padding:16 } },
+            return h('div', { key: w.id, id: `worker-card-${w.id}`, style: { ...S.card, marginBottom:10, padding:16 } },
               h('div', { style: { display:'flex', alignItems:'flex-start', gap:14 } },
                 h('div', { style: { width:44, height:44, borderRadius:'50%', background: ws.bg, display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, fontWeight:500, color: ws.cl, flexShrink:0, border:'0.5px solid '+ws.br } }, w.name?.charAt(0) || '?'),
                 h('div', { style: { flex:1, minWidth:0 } },
@@ -227,6 +243,17 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
                     h('div', { style: { textAlign:'center', padding:'6px 4px', background:'#f8f8f5', borderRadius:8 } }, h('div', { style: { fontSize:16, fontWeight:500, color: w.defectRate > 5 ? RD : GN } }, `${w.defectRate.toFixed(1)}%`), h('div', { style: { fontSize:10, color:'#888' } }, 'брак')),
                     h('div', { style: { textAlign:'center', padding:'6px 4px', background:'#f8f8f5', borderRadius:8 } }, h('div', { style: { fontSize:16, fontWeight:500, color:BL } }, w.opsActive), h('div', { style: { fontSize:10, color:'#888' } }, 'в работе'))
                   ),
+                  // Часы из табеля за текущий месяц
+                  (() => {
+                    const now = new Date();
+                    const ym = `${now.getFullYear()}-${String(now.getMonth()).padStart(2,'0')}`;
+                    const tsMonth = data.timesheet?.[w.id] || {};
+                    const totalH = Object.values(tsMonth).reduce((s, cell) => s + (cell?.h || 0), 0);
+                    return totalH > 0 ? h('div', { style: { marginBottom: 8, padding: '6px 10px', background: GN3, borderRadius: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                      h('span', { style: { fontSize: 11, color: GN2 } }, `📋 Табель ${now.toLocaleString('ru', { month: 'long' })}`),
+                      h('span', { style: { fontSize: 13, fontWeight: 600, color: GN2 } }, `${Math.round(totalH * 10) / 10} ч`)
+                    ) : null;
+                  })(),
                   w.achievements && w.achievements.length > 0 && h('div', { style: { marginBottom:8 } },
                     h('div', { style: { fontSize:10, color:'#888', marginBottom:4 } }, `Достижения (${w.achievements.length})`),
                     h('div', { style: { display:'flex', gap:4, flexWrap:'wrap' } }, w.achievements.slice(0,6).map(achId => { const a = ACHIEVEMENTS[achId]; return a ? h('span', { key: achId, title: `${a.title}: ${a.desc}`, style: { padding:'2px 8px', fontSize:11, background:'#f8f8f5', borderRadius:8, cursor:'default' } }, `${a.icon} ${a.title}`) : null; }), w.achievements.length > 6 && h('span', { style: { fontSize:11, color:'#888', padding:'2px 4px' } }, `+${w.achievements.length-6}`))
@@ -272,6 +299,15 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
           h('span', null, '🔴 0 чел — критично'), h('span', null, '🟡 1-2 чел — риск'), h('span', null, '🟢 3+ чел — норма')
         )
       ),
+      // Легенда уровней — ВВЕРХУ
+      h('div', { style: { display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap', fontSize: 11 } },
+        h('span', { style: { fontWeight: 500, color: '#666', marginRight: 4 } }, 'Уровни:'),
+        h('span', { style: { padding: '2px 8px', borderRadius: 4, background: '#f5f5f2', color: '#ccc', fontSize: 11 } }, '— нет допуска'),
+        h('span', { style: { padding: '2px 8px', borderRadius: 4, background: '#FFF8E1', color: '#F57F17', fontSize: 11 } }, 'Нов. — новичок'),
+        h('span', { style: { padding: '2px 8px', borderRadius: 4, background: AM3, color: AM2, fontSize: 11 } }, 'Ком. — компетентен'),
+        h('span', { style: { padding: '2px 8px', borderRadius: 4, background: GN3, color: GN2, fontSize: 11 } }, 'Эксп. — эксперт'),
+        h('span', { style: { color: '#aaa', fontSize: 10, alignSelf: 'center' } }, '· Нажмите ячейку для переключения')
+      ),
       // Матрица с уровнями
       h('div', { style: { ...S.card, padding: 0, overflow: 'auto', maxHeight: '70vh' } }, h('table', { style: { borderCollapse:'collapse', width:'100%', fontSize:12 } },
         h('thead', null, h('tr', null,
@@ -301,10 +337,8 @@ const MasterWorkers = memo(({ data, onUpdate, addToast }) => {
             );
           })
         )))
-      )),
-      h('div', { style: { fontSize: 10, color: '#888', marginTop: 6 } }, 'Нажмите на ячейку для переключения: — → Новичок → Компетентен → Эксперт → —')
+      ))
     )
-  );
 });
 
 // ==================== InstructionsTracker (ОТ) ====================
