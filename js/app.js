@@ -237,8 +237,41 @@ const Dashboard = memo(({ data, addToast, onOrderClick }) => {
     return () => clearInterval(t);
   }, []);
 
-  // Реальные данные
-  const activeOps = useMemo(() => data.ops.filter(o => o.status === 'in_progress' && !o.archived), [data.ops]);
+  // Проверка сроков: удостоверения, медосмотр, инструктажи
+  const expiryIssues = useMemo(() => {
+    const issues = [];
+    const today = new Date();
+    data.workers.forEach(w => {
+      if (w.archived) return;
+      
+      // Удостоверения
+      (w.licences || []).forEach(lic => {
+        if (lic.expiryDate && new Date(lic.expiryDate) < today) {
+          issues.push({ worker: w, type: 'licence', detail: lic.name });
+        }
+      });
+      
+      // Медосмотр
+      if (w.medicalExamNextDate && new Date(w.medicalExamNextDate) < today) {
+        issues.push({ worker: w, type: 'medical' });
+      }
+      
+      // Инструктажи (повторный ежегодно)
+      if (w.instructions && w.instructions.length > 0) {
+        const lastRepeat = w.instructions
+          .filter(i => i.type === 'repeat')
+          .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+        if (lastRepeat) {
+          const nextDue = new Date(lastRepeat.date);
+          nextDue.setFullYear(nextDue.getFullYear() + 1);
+          if (nextDue < today) {
+            issues.push({ worker: w, type: 'instruction' });
+          }
+        }
+      }
+    });
+    return issues;
+  }, [data.workers]);
   const pendingOps = useMemo(() => data.ops.filter(o => o.status === 'pending' && !o.archived), [data.ops]);
   const onCheckOps = useMemo(() => data.ops.filter(o => o.status === 'on_check' && !o.archived), [data.ops]);
   const defectOps = useMemo(() => data.ops.filter(o => (o.status === 'defect' || o.status === 'rework') && !o.archived), [data.ops]);
@@ -312,6 +345,12 @@ const Dashboard = memo(({ data, addToast, onOrderClick }) => {
         h('div', { style: { fontSize: 32, fontWeight: 500, color: onlineUsers.length > 0 ? GN : '#ccc' } }, onlineUsers.length),
         h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Онлайн'),
         onlineUsers.length > 0 && h('div', { style: { position: 'absolute', bottom: 4, left: 0, right: 0, fontSize: 9, color: '#aaa', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '0 4px' } }, onlineUsers.map(u => u.userName).join(', '))
+      ),
+      // Проверка сроков
+      expiryIssues.length > 0 && h('div', { style: { ...mc(), position: 'relative' }, title: expiryIssues.map(i => `${i.worker.name}: ${i.type === 'licence' ? i.detail : i.type === 'medical' ? 'медосмотр' : 'инструктаж'}`).join(', ') },
+        h('div', { style: { fontSize: 28, fontWeight: 600, color: RD2 } }, '⚠'),
+        h('div', { style: { fontSize: 9, color: RD, textTransform: 'uppercase', fontWeight: 600 } }, 'Сроки'),
+        h('div', { style: { position: 'absolute', top: -8, right: -8, width: 24, height: 24, borderRadius: '50%', background: RD, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600 } }, expiryIssues.length)
       )
     ),
 
