@@ -400,10 +400,55 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
               let totH = 0;
               const isDismissed = !!w.dismissedAt;
               const dismissDay = isDismissed ? new Date(w.dismissedAt).getDate() : 999;
+              
+              // Проверка сроков: удостоверения, медосмотр, инструктажи
+              const checkExpiry = () => {
+                const today = new Date();
+                const issues = [];
+                
+                // Проверка удостоверений
+                (w.licences || []).forEach(lic => {
+                  if (lic.expiryDate) {
+                    const expDate = new Date(lic.expiryDate);
+                    if (expDate < today) issues.push('expired_licence');
+                  }
+                });
+                
+                // Проверка медосмотра
+                if (w.medicalExamNextDate) {
+                  const medDate = new Date(w.medicalExamNextDate);
+                  if (medDate < today) issues.push('expired_medical');
+                }
+                
+                // Проверка инструктажей (если есть данные)
+                if (w.instructions && w.instructions.length > 0) {
+                  const lastInstructions = {};
+                  w.instructions.forEach(ins => {
+                    if (!lastInstructions[ins.type] || new Date(ins.date) > new Date(lastInstructions[ins.type].date)) {
+                      lastInstructions[ins.type] = ins;
+                    }
+                  });
+                  
+                  // Повторный инструктаж должен быть ежегодно
+                  const repeatInstructions = lastInstructions['repeat'];
+                  if (repeatInstructions) {
+                    const insDate = new Date(repeatInstructions.date);
+                    const nextYear = new Date(insDate);
+                    nextYear.setFullYear(nextYear.getFullYear() + 1);
+                    if (nextYear < today) issues.push('expired_instruction');
+                  }
+                }
+                
+                return issues;
+              };
+              
+              const expiryIssues = checkExpiry();
+              const hasIssues = expiryIssues.length > 0;
               return h('tr', { key:w.id },
-                h('td', { style:{ ...S.td, position:'sticky', left:0, zIndex:1, background:'#fff', boxShadow:'2px 0 4px rgba(0,0,0,0.04)', padding:'6px 10px', fontWeight:500, color: isDismissed ? '#999' : undefined } },
-                  h(WN, { worker: w, onWorkerClick, style: { color: isDismissed ? '#999' : undefined } }),
-                  isDismissed && h('span', { style: { fontSize: 9, color: '#999', marginLeft: 4 } }, '(ув.)')
+                h('td', { style:{ ...S.td, position:'sticky', left:0, zIndex:1, background: hasIssues ? RD3 : '#fff', boxShadow:'2px 0 4px rgba(0,0,0,0.04)', padding:'6px 10px', fontWeight:500, color: hasIssues ? RD2 : (isDismissed ? '#999' : undefined) } },
+                  h(WN, { worker: w, onWorkerClick, style: { color: hasIssues ? RD2 : (isDismissed ? '#999' : undefined), fontWeight: hasIssues ? 600 : 500 } }),
+                  hasIssues && h('span', { style: { fontSize: 8, marginLeft: 4, color: RD2, fontWeight: 600 } }, '⚠'),
+                  isDismissed && h('span', { style: { fontSize: 9, color: isDismissed && !hasIssues ? '#999' : RD2, marginLeft: 4 } }, '(ув.)')
                 ),
                 days.map(d => {
                   const isWe = !isWorkday(viewYear, viewMonth, d, data.settings);
