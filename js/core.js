@@ -409,6 +409,7 @@ const EMPTY_DATA = {
   opNorms: {},        // нормы операций: {opName: {planned: N, samples: N, totalMs: N}}
   auxStats: {},       // агрегация вспомогательных работ: {"YYYY-MM": {total, totalMs, byCategory:{cat:{count,ms}}, byWorker:{wid:{count,ms}}}}
   messages: [], reclamations: [], duels: [], materialReservations: [], defects: [],
+  materialDeliveries: [],  // поставки материалов: [{id, orderId, materialId, stageName, requiredQty, deliveredQty, unit, status, confirmedAt, confirmedBy}]
   settings: {
     // Единый PIN-вход: все роли входят по PIN (хеши DJB2, дефолтные значения: 0000, 1111, 2222, 3333, 4444, 5555, 6666, 7777)
     masterPin: 'H_18D7OAL',
@@ -447,6 +448,133 @@ const cleanStaleLocalStorageKeys = () => {
     });
   } catch(e) {}
 };
+
+
+// ==================== ReceiveDeliveryScreen ====================
+// Показывается при открытии ?receive=deliveryId (QR-код на материале)
+const ReceiveDeliveryScreen = memo(({ deliveryId, data, onUpdate, currentUserId, addToast, onClose }) => {
+  const delivery = (data.materialDeliveries || []).find(d => d.id === deliveryId);
+  const [qty, setQty] = useState('');
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  // Инициализируем qty когда нашли delivery
+  useEffect(() => {
+    if (delivery) setQty(String(delivery.requiredQty - (delivery.deliveredQty || 0)));
+  }, [delivery?.id]);
+
+  const mat   = delivery ? data.materials?.find(m => m.id === delivery.materialId) : null;
+  const order = delivery ? data.orders?.find(o => o.id === delivery.orderId) : null;
+
+  const handleConfirm = async (isPartial) => {
+    if (!delivery) return;
+    const qtyNum = Number(qty);
+    if (!qtyNum || qtyNum <= 0) { addToast('Укажите количество', 'error'); return; }
+    setSaving(true);
+    try {
+      const alreadyDelivered = delivery.deliveredQty || 0;
+      const totalDelivered = alreadyDelivered + qtyNum;
+      const status = isPartial || totalDelivered < delivery.requiredQty ? 'partial' : 'confirmed';
+
+      const updDeliveries = (data.materialDeliveries || []).map(d =>
+        d.id === delivery.id ? { ...d, status, deliveredQty: totalDelivered, confirmedAt: now(), confirmedBy: currentUserId, note } : d
+      );
+      const updMaterials = (data.materials || []).map(m =>
+        m.id === delivery.materialId ? { ...m, quantity: (m.quantity || 0) + qtyNum } : m
+      );
+      const event = { id: uid(), type: 'material_receive', materialId: delivery.materialId, orderId: delivery.orderId, deliveryId: delivery.id, qty: qtyNum, ts: now(), confirmedBy: currentUserId, note };
+      const d = { ...data, materialDeliveries: updDeliveries, materials: updMaterials, events: [...data.events, event] };
+      await DB.save(d); onUpdate(d);
+      addToast(status === 'confirmed' ? '✅ Поставка подтверждена!' : '⚡ Частичная поставка принята', 'success');
+      onClose();
+    } catch(e) {
+      addToast('Ошибка сохранения', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return h('div', {
+    style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300, padding: 16 }
+  },
+    h('div', { style: { background: '#fff', borderRadius: 16, padding: 28, width: 'min(400px, 100%)', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' } },
+
+      !delivery
+        ? h('div', { style: { textAlign: 'center', padding: 24 } },
+            h('div', { style: { fontSize: 40, marginBottom: 12 } }, '❌'),
+            h('div', { style: { fontSize: 16, fontWeight: 500, color: RD2, marginBottom: 8 } }, 'Поставка не найдена'),
+            h('div', { style: { fontSize: 13, color: '#888', marginBottom: 20 } }, `ID: ${deliveryId}`),
+            h('button', { style: gbtn({ width: '100%' }), onClick: onClose }, 'Закрыть')
+          )
+
+        : delivery.status === 'confirmed'
+          ? h('div', { style: { textAlign: 'center', padding: 24 } },
+              h('div', { style: { fontSize: 40, marginBottom: 12 } }, '✅'),
+              h('div', { style: { fontSize: 16, fontWeight: 500, color: GN2, marginBottom: 8 } }, 'Поставка уже подтверждена'),
+              h('div', { style: { fontSize: 13, color: '#888', marginBottom: 4 } }, mat?.name),
+              h('div', { style: { fontSize: 13, color: '#888', marginBottom: 20 } }, `Заказ: ${order?.number || delivery.orderId}`),
+              h('button', { style: gbtn({ width: '100%' }), onClick: onClose }, 'Закрыть')
+            )
+
+          : h('div', null,
+              // Шапка
+              h('div', { style: { textAlign: 'center', marginBottom: 20 } },
+                h('div', { style: { fontSize: 32, marginBottom: 8 } }, '📦'),
+                h('div', { style: { fontSize: 18, fontWeight: 500, color: '#1a1a1a', marginBottom: 4 } }, 'Приёмка материала'),
+                delivery.status === 'partial' && h('div', { style: { fontSize: 12, color: AM2, background: AM3, padding: '3px 10px', borderRadius: 12, display: 'inline-block', marginBottom: 4 } }, '⚡ Частичная поставка — уже принято')
+              ),
+
+              // Информация о материале
+              h('div', { style: { background: '#f5f1eb', borderRadius: 10, padding: '14px 16px', marginBottom: 20 } },
+                h('div', { style: { fontSize: 15, fontWeight: 500, color: '#1a1a1a', marginBottom: 6 } }, mat?.name || delivery.materialId),
+                h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 13 } },
+                  h('div', null, h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'Заказ'), h('div', { style: { fontWeight: 500, color: AM2 } }, order?.number || delivery.orderId)),
+                  h('div', null, h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'Этап'), h('div', { style: { fontWeight: 500 } }, delivery.stageName)),
+                  h('div', null, h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'Требуется'), h('div', { style: { fontWeight: 500, color: RD2 } }, `${delivery.requiredQty} ${delivery.unit}`)),
+                  delivery.deliveredQty > 0 && h('div', null, h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'Уже принято'), h('div', { style: { fontWeight: 500, color: GN2 } }, `${delivery.deliveredQty} ${delivery.unit}`))
+                )
+              ),
+
+              // Ввод количества
+              h('div', { style: { marginBottom: 14 } },
+                h('label', { style: { fontSize: 12, color: '#666', display: 'block', marginBottom: 6 } }, `Принято фактически (${delivery.unit})`),
+                h('input', {
+                  type: 'number', min: 0, autoFocus: true,
+                  style: { width: '100%', padding: '12px 14px', fontSize: 18, fontWeight: 500, border: `2px solid ${AM}`, borderRadius: 8, outline: 'none', textAlign: 'center' },
+                  value: qty,
+                  onChange: e => setQty(e.target.value)
+                })
+              ),
+
+              // Примечание
+              h('div', { style: { marginBottom: 20 } },
+                h('label', { style: { fontSize: 12, color: '#666', display: 'block', marginBottom: 6 } }, 'Примечание (накладная, поставщик)'),
+                h('input', {
+                  type: 'text', placeholder: 'Например: Накл. №123, ООО Металлснаб',
+                  style: { width: '100%', padding: '10px 14px', fontSize: 13, border: '1px solid #ddd', borderRadius: 8, outline: 'none' },
+                  value: note, onChange: e => setNote(e.target.value)
+                })
+              ),
+
+              // Кнопки
+              h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+                Number(qty) >= delivery.requiredQty - (delivery.deliveredQty || 0)
+                  ? h('button', {
+                      style: { ...abtn({ fontSize: 15, padding: '14px' }), width: '100%', background: GN, borderColor: GN2 },
+                      onClick: () => handleConfirm(false),
+                      disabled: saving
+                    }, saving ? '...' : `✅ Принять полностью — ${qty} ${delivery.unit}`)
+                  : h('button', {
+                      style: { ...abtn({ fontSize: 15, padding: '14px' }), width: '100%', background: AM, borderColor: AM2 },
+                      onClick: () => handleConfirm(true),
+                      disabled: saving
+                    }, saving ? '...' : `⚡ Принять частично — ${qty} ${delivery.unit}`),
+                h('button', { style: { ...gbtn({ fontSize: 13 }), width: '100%' }, onClick: onClose }, 'Отмена')
+              )
+            )
+    )
+  );
+});
 
 const DB = {
   _saveTimer:   null,
