@@ -616,11 +616,13 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
     role:'dialog', 'aria-modal':'true',
     style:{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100 }
   },
-    h('div', { className:'modal-content', style:{ background:'#faf9f6', borderRadius:14, padding:20, width:'min(700px, calc(100vw - 24px))', maxHeight:'90vh', overflowY:'auto' } },
+    h('div', { className:'modal-content', style:{ background:'#faf9f6', borderRadius:14, padding:20, width:'min(700px, calc(100vw - 24px))', maxHeight:'90vh', overflowY:'auto', position:'relative' } },
+
+      // ── Кнопка закрытия (вне шапки, всегда поверх) ──
+      h('button', { onClick:onClose, 'aria-label':'Закрыть', style:{ position:'sticky', top:0, float:'right', zIndex:10, background:'#fff', border:'1px solid #ccc', borderRadius:'50%', width:32, height:32, fontSize:18, lineHeight:'30px', textAlign:'center', cursor:'pointer', color:'#444', marginBottom:-32, marginRight:0 } }, '×'),
 
       // ── ШАПКА ──
-      h('div', { style:{ ...cardSt, position:'relative' } },
-        h('button', { onClick:onClose, style:{ position:'absolute', top:12, right:14, background:'none', border:'none', fontSize:20, cursor:'pointer', color:'#aaa', lineHeight:1 } }, '×'),
+      h('div', { style:{ ...cardSt } },
         h('div', { style:{ display:'flex', alignItems:'flex-start', gap:14, marginBottom:14 } },
           h('div', { style:{ width:52, height:52, borderRadius:'50%', background:displayStatus.bg, border:`1px solid ${displayStatus.br}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, fontWeight:500, color:displayStatus.cl, flexShrink:0 } },
             (worker.name || '?').charAt(0)
