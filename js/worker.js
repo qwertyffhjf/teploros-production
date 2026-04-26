@@ -650,15 +650,29 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
           const depsComplete = !op.dependsOn || op.dependsOn.length === 0 ||
             op.dependsOn.every(depId => { const d = data.ops.find(x => x.id === depId); return d && d.status === 'done'; });
 
+          // Проверка: все материалы для этого этапа поставлены?
+          const stage = (data.productionStages || []).find(s => s.name === op.name);
+          const materialsReady = !stage?.requiredMaterialIds?.length ||
+            stage.requiredMaterialIds.every(matId => {
+              const del = (data.materialDeliveries || []).find(d => d.orderId === op.orderId && d.materialId === matId);
+              return del?.status === 'confirmed' || del?.status === 'partial';
+            });
+          const canStart = depsComplete && materialsReady;
+          // Текст подсказки почему заблокировано
+          const blockReason = !depsComplete ? 'Ожидает завершения предыдущих операций'
+            : !materialsReady ? '📦 Ожидает поставки материалов'
+            : null;
+
           return h('div', { key: op.id, style: {
-            ...S.card, marginBottom: 14, opacity: depsComplete ? 1 : 0.6,
+            ...S.card, marginBottom: 14, opacity: canStart ? 1 : 0.6,
             borderLeft: isOverdue ? `4px solid ${RD}` : isUrgent ? `4px solid ${AM}` : order?.priority === 'critical' ? `4px solid ${RD}` : 'none'
           }},
             h('div', { style: { marginBottom: 10 } },
               h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' } },
                 h('div', { style: { flex: 1 } },
                   h('div', { style: { fontSize: 15, fontWeight: 500, marginBottom: 2 } }, op.name),
-                  h('div', { style: { fontSize: 11, color: AM4 } }, order?.number || '—')
+                  h('div', { style: { fontSize: 11, color: AM4 } }, order?.number || '—'),
+                  blockReason && h('div', { style: { fontSize: 11, color: AM2, background: AM3, padding: '2px 8px', borderRadius: 4, marginTop: 4, display: 'inline-block' } }, blockReason)
                 ),
                 op.isAuxiliary && op.addedByWorker === workerId && (op.status === 'pending' || op.status === 'in_progress') &&
                   h('button', { style: { background: 'none', border: 'none', fontSize: 16, color: '#bbb', cursor: 'pointer', padding: '2px 6px', minHeight: 'auto', lineHeight: 1 },
