@@ -434,202 +434,402 @@ const WN = memo(({ worker, workerId, data, onWorkerClick, style = {} }) => {
 });
 
 // ==================== WorkerCardModal ====================
-const WorkerCardModal = memo(({ worker, data, onClose }) => {
-  const [period, setPeriod] = useState(30);
-  const startDate = useMemo(() => now() - period * 86400000, [period]);
-  const opsDone = data.ops.filter(op => op.workerIds?.includes(worker.id) && op.status === 'done' && op.finishedAt >= startDate);
-  const opsDefect = data.ops.filter(op => op.workerIds?.includes(worker.id) && op.status === 'defect' && op.finishedAt >= startDate);
-  const opsInProgress = data.ops.filter(op => op.workerIds?.includes(worker.id) && op.status === 'in_progress');
-  const opsPending = data.ops.filter(op => op.workerIds?.includes(worker.id) && op.status === 'pending');
-  const totalOps = opsDone.length;
-  const avgTime = totalOps > 0 ? opsDone.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0) / totalOps : 0;
-  const defectRate = (totalOps + opsDefect.length) > 0 ? (opsDefect.length / (totalOps + opsDefect.length) * 100).toFixed(1) : '0.0';
-  const downtimeEvents = data.events.filter(e => e.workerId === worker.id && e.type === 'downtime' && e.ts >= startDate);
-  const downtimeByReason = {};
-  downtimeEvents.forEach(e => {
-    const reason = data.downtimeTypes.find(dt => dt.id === e.downtimeTypeId)?.name || 'Неизвестно';
-    if (!downtimeByReason[reason]) downtimeByReason[reason] = { count: 0, totalDuration: 0 };
-    downtimeByReason[reason].count++;
-    downtimeByReason[reason].totalDuration += (e.duration || 0);
-  });
-  const recentOps = [...opsDone, ...opsDefect].sort((a,b) => (b.finishedAt || 0) - (a.finishedAt || 0)).slice(0, 10);
-  const section = data.sections.find(s => s.id === worker.sectionId);
-  const avgByType = {};
-  opsDone.forEach(op => {
-    if (!avgByType[op.name]) avgByType[op.name] = { total: 0, count: 0 };
-    avgByType[op.name].total += (op.finishedAt - op.startedAt);
-    avgByType[op.name].count++;
-  });
-  const allDone = data.ops.filter(op => op.workerIds?.includes(worker.id) && op.status === 'done').length;
-  const level = getWorkerLevel(allDone);
-  const progress = getLevelProgress(allDone);
+// Типы инструктажей (дублируем здесь т.к. shared.js грузится раньше hr.js)
+const WC_INSTR_TYPES = [
+  { id: 'initial',   label: 'Вводный',             months: null },
+  { id: 'workplace', label: 'На рабочем месте',     months: 12 },
+  { id: 'fire',      label: 'Противопожарный',      months: 12 },
+  { id: 'electrical',label: 'Электробезопасность',  months: 12 },
+  { id: 'unplanned', label: 'Внеплановый',          months: null },
+  { id: 'targeted',  label: 'Целевой',              months: null },
+];
 
-  // Статус из табеля текущего дня
-  const today = new Date();
+// Хелпер: цвет бейджа по дням до дедлайна
+const wcBadge = (daysLeft, label) => {
+  const expired  = daysLeft !== null && daysLeft < 0;
+  const expiring = daysLeft !== null && !expired && daysLeft <= 30;
+  const ok       = daysLeft === null || (!expired && !expiring);
+  const bg = expired ? RD3 : expiring ? AM3 : ok ? GN3 : GN3;
+  const cl = expired ? RD2 : expiring ? AM2 : GN2;
+  return h('span', { style: { display:'inline-flex', alignItems:'center', padding:'3px 9px', borderRadius:20, fontSize:11, fontWeight:500, background:bg, color:cl, whiteSpace:'nowrap' } }, label);
+};
+
+// Хелпер: строка в таблице компетенций
+const wcCompRow = (opName, level, certifiedAt, expiresAt, canTeach) => {
+  const levelMap = {
+    0: { label:'Нет допуска', bg:'#f5f5f2',  cl:'#aaa'   },
+    1: { label:'Новичок',     bg:'#FFF8E1',  cl:'#F57F17' },
+    2: { label:'Компетентен', bg:AM3,        cl:AM2       },
+    3: { label:'Эксперт',     bg:GN3,        cl:GN2       },
+  };
+  const lc = levelMap[level] || levelMap[0];
+  const daysLeft = expiresAt ? Math.ceil((expiresAt - Date.now()) / 86400000) : null;
+  const expiredCert  = daysLeft !== null && daysLeft < 0;
+  const expiringSoon = daysLeft !== null && !expiredCert && daysLeft <= 30;
+  const certLabel = expiresAt
+    ? (expiredCert  ? `Просрочен (${new Date(expiresAt).toLocaleDateString('ru')})` :
+       expiringSoon ? `Через ${daysLeft} дн.` :
+                     `до ${new Date(expiresAt).toLocaleDateString('ru')}`)
+    : '—';
+  const certColor = expiredCert ? RD2 : expiringSoon ? AM2 : '#888';
+
+  return h('div', { style: { display:'flex', alignItems:'center', gap:8, padding:'7px 0', borderBottom:`0.5px solid ${S.card.border || '#e8e6df'}`, flexWrap:'wrap' } },
+    h('span', { style: { flex:1, fontSize:13, color: level === 0 ? '#aaa' : '#222' } }, opName),
+    h('span', { style: { display:'inline-flex', alignItems:'center', padding:'3px 9px', borderRadius:20, fontSize:11, fontWeight:500, background:lc.bg, color:lc.cl, flexShrink:0 } }, lc.label),
+    h('span', { style: { fontSize:11, color:certColor, minWidth:90, textAlign:'right' } }, certLabel),
+    canTeach && h('span', { style: { display:'inline-flex', alignItems:'center', padding:'3px 9px', borderRadius:20, fontSize:11, background:'#f5f5f2', color:'#666', flexShrink:0 } }, 'Может обучать')
+  );
+};
+
+const WorkerCardModal = memo(({ worker, data, onClose }) => {
+  const [tab, setTab]       = useState('comp');
+  const [opsLimit, setOpsLimit] = useState(10);
+
+  // ── Статус из табеля ──
+  const today     = new Date();
   const todayCell = data.timesheet?.[worker.id]?.[today.getDate()];
-  const tsStatus = (() => {
+  const tsStatus  = (() => {
     if (!todayCell) return null;
-    if (todayCell.code === 'ОТ') return { label: 'В отпуске', bg: '#E6F1FB', cl: '#0C447C', br: '#90CAF9' };
-    if (todayCell.code === 'Б')  return { label: 'Больничный', bg: '#FCEBEB', cl: '#791F1F', br: '#F48FB1' };
-    if (todayCell.code === 'ОЗ') return { label: 'Отпуск за свой счёт', bg: '#FFF3E0', cl: '#E65100', br: '#FFB74D' };
-    if (todayCell.code === 'К')  return { label: 'Командировка', bg: '#F3E5F5', cl: '#6A1B9A', br: '#CE93D8' };
-    if (todayCell.code === 'НН') return { label: 'Неявка', bg: '#F1EFE8', cl: '#888', br: '#ccc' };
-    if (todayCell.code === 'У')  return { label: 'Уволен', bg: '#E0E0E0', cl: '#444', br: '#bbb' };
-    if (todayCell.code === 'СД') return { label: 'Сдельная', bg: '#EDE7F6', cl: '#4527A0', br: '#B39DDB' };
-    if (todayCell.h > 0) return { label: `На смене · ${todayCell.h}ч`, bg: GN3, cl: GN2, br: GN };
+    if (todayCell.code === 'ОТ') return { label:'В отпуске',          bg:'#E6F1FB', cl:'#0C447C', br:'#90CAF9' };
+    if (todayCell.code === 'Б')  return { label:'Больничный',          bg:'#FCEBEB', cl:'#791F1F', br:'#F48FB1' };
+    if (todayCell.code === 'ОЗ') return { label:'Отпуск за свой счёт', bg:'#FFF3E0', cl:'#E65100', br:'#FFB74D' };
+    if (todayCell.code === 'К')  return { label:'Командировка',        bg:'#F3E5F5', cl:'#6A1B9A', br:'#CE93D8' };
+    if (todayCell.code === 'НН') return { label:'Неявка',             bg:'#F1EFE8', cl:'#888',    br:'#ccc'    };
+    if (todayCell.code === 'У')  return { label:'Уволен',             bg:'#E0E0E0', cl:'#444',    br:'#bbb'    };
+    if (todayCell.code === 'СД') return { label:'Сдельная',           bg:'#EDE7F6', cl:'#4527A0', br:'#B39DDB' };
+    if (todayCell.h > 0)         return { label:`На смене · ${todayCell.h}ч`, bg:GN3, cl:GN2, br:GN };
     return null;
   })();
   const displayStatus = tsStatus || WORKER_STATUS[worker.status] || WORKER_STATUS.working;
 
+  // ── Часы из табеля за месяц ──
+  const { totalHours, monthName } = useMemo(() => {
+    const n = new Date(), yr = n.getFullYear(), mo = n.getMonth();
+    const tsData = data.timesheet?.[worker.id] || {};
+    const dim = new Date(yr, mo + 1, 0).getDate();
+    let h = 0;
+    for (let d = 1; d <= dim; d++) { const cell = tsData[d]; if (cell?.h) h += cell.h; }
+    return { totalHours: Math.round(h * 10) / 10, monthName: n.toLocaleString('ru', { month: 'long', year: 'numeric' }) };
+  }, [worker.id, data.timesheet]);
+
+  // ── KPI операций (за 30 дн) ──
+  const period30 = useMemo(() => now() - 30 * 86400000, []);
+  const allOpsWorker   = useMemo(() => data.ops.filter(op => op.workerIds?.includes(worker.id)), [data.ops, worker.id]);
+  const opsDone30      = useMemo(() => allOpsWorker.filter(op => op.status === 'done'   && (op.finishedAt || 0) >= period30), [allOpsWorker, period30]);
+  const opsDefect30    = useMemo(() => allOpsWorker.filter(op => op.status === 'defect' && (op.finishedAt || 0) >= period30), [allOpsWorker, period30]);
+  const opsInProgress  = useMemo(() => allOpsWorker.filter(op => op.status === 'in_progress'), [allOpsWorker]);
+  const opsPending     = useMemo(() => allOpsWorker.filter(op => op.status === 'pending'),      [allOpsWorker]);
+  const allDone        = useMemo(() => allOpsWorker.filter(op => op.status === 'done').length,  [allOpsWorker]);
+  const avgTime30      = opsDone30.length > 0 ? opsDone30.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0) / opsDone30.length : 0;
+  const defectRate     = (opsDone30.length + opsDefect30.length) > 0
+    ? (opsDefect30.length / (opsDone30.length + opsDefect30.length) * 100).toFixed(1) : '0.0';
+  const level    = getWorkerLevel(allDone);
+  const progress = getLevelProgress(allDone);
+
+  // ── История операций ──
+  const allFinishedOps = useMemo(() =>
+    allOpsWorker
+      .filter(op => op.status === 'done' || op.status === 'defect')
+      .sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0)),
+    [allOpsWorker]
+  );
+
+  // ── Компетенции — совместимость со старой и новой структурой ──
+  const competencies = useMemo(() => {
+    // Новая структура: worker.competencies = [{operationType, level, certifiedAt, expiresAt, canTeach}]
+    if (worker.competencies && worker.competencies.length > 0) return worker.competencies;
+    // Старая структура: competences[] + competenceLevels{}
+    const names  = worker.competences || [];
+    const levels = worker.competenceLevels || {};
+    return names.map(opName => ({ operationType: opName, level: levels[opName] || 1, certifiedAt: null, expiresAt: null, canTeach: false }));
+  }, [worker.competencies, worker.competences, worker.competenceLevels]);
+
+  // Операции из productionStages которых нет в компетенциях — показываем как "нет допуска"
+  const allStageNames = useMemo(() => (data.productionStages || []).map(s => s.name), [data.productionStages]);
+  const compMap       = useMemo(() => Object.fromEntries(competencies.map(c => [c.operationType, c])), [competencies]);
+
+  // ── Инструктажи ──
+  const workerInstructions = useMemo(() => {
+    const instrs = data.instructions || [];
+    const byType = {};
+    WC_INSTR_TYPES.forEach(t => {
+      const last = instrs.filter(i => i.workerId === worker.id && i.type === t.id)
+        .sort((a, b) => (b.dateMs || 0) - (a.dateMs || 0))[0];
+      byType[t.id] = last || null;
+    });
+    return byType;
+  }, [data.instructions, worker.id]);
+
+  // ── Простои ──
+  const downtimeEvents = useMemo(() =>
+    data.events.filter(e => e.workerId === worker.id && e.type === 'downtime'),
+    [data.events, worker.id]
+  );
+  const downtimeByReason = useMemo(() => {
+    const map = {};
+    downtimeEvents.forEach(e => {
+      const reason = (data.downtimeTypes || []).find(dt => dt.id === e.downtimeTypeId)?.name || 'Неизвестно';
+      if (!map[reason]) map[reason] = { count: 0, total: 0 };
+      map[reason].count++;
+      map[reason].total += (e.duration || 0);
+    });
+    return Object.entries(map).sort((a, b) => b[1].total - a[1].total);
+  }, [downtimeEvents, data.downtimeTypes]);
+
+  // ── Благодарности ──
+  const thanks = useMemo(() =>
+    data.events.filter(e => e.type === 'thanks' && e.toWorkerId === worker.id)
+      .sort((a, b) => (b.ts || 0) - (a.ts || 0)),
+    [data.events, worker.id]
+  );
+
+  // ── Участок ──
+  const section = data.sections.find(s => s.id === worker.sectionId);
+
+  // ── Закрытие по Escape ──
   useEffect(() => {
-    const handleKey = (e) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
+    const fn = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', fn);
+    return () => document.removeEventListener('keydown', fn);
   }, [onClose]);
 
+  // ─────── Стили ───────
+  const cardSt  = { background:'#fff', border:'0.5px solid #dedad3', borderRadius:12, padding:'14px 18px', marginBottom:12 };
+  const secSt   = { fontSize:11, fontWeight:500, color:'#888', textTransform:'uppercase', letterSpacing:'.06em', marginBottom:10, paddingBottom:6, borderBottom:'0.5px solid #ede9e2' };
+  const rowSt   = { display:'flex', alignItems:'center', gap:8, padding:'7px 0', borderBottom:'0.5px solid #ede9e2', flexWrap:'wrap' };
+  const lastRow = { display:'flex', alignItems:'center', gap:8, padding:'7px 0', flexWrap:'wrap' };
+  const tabsSt  = { display:'flex', gap:4, flexWrap:'wrap', marginBottom:12 };
+  const tabSt   = (on) => ({ padding:'5px 12px', borderRadius:8, fontSize:12, fontWeight:500, cursor:'pointer', border:`0.5px solid ${on ? 'transparent' : '#ccc'}`, color: on ? AM2 : '#666', background: on ? AM3 : 'transparent' });
+  const emptyTx = { padding:'16px 0', fontSize:13, color:'#aaa', textAlign:'center' };
+
+  const TABS = [
+    { id:'comp',   label:'Компетенции' },
+    { id:'ops',    label:`История операций` },
+    { id:'instr',  label:'Инструктажи ОТ' },
+    { id:'docs',   label:'Допуски' },
+    { id:'down',   label:`Простои (${downtimeEvents.length})` },
+    { id:'thanks', label:`Благодарности (${thanks.length})` },
+    { id:'ach',    label:'Достижения' },
+  ];
+
   return h('div', {
-    role: 'dialog', 'aria-modal': 'true', 'aria-label': `Карточка сотрудника: ${worker.name}`,
-    style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }
+    role:'dialog', 'aria-modal':'true',
+    style:{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100 }
   },
-    h('div', { className: 'modal-content', style: { background: '#fff', borderRadius: 12, padding: 24, width: 'min(680px, calc(100vw - 32px))', maxHeight: '85vh', overflowY: 'auto' } },
-      h('button', { onClick: onClose, 'aria-label': 'Закрыть', style: { float: 'right', background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#888' } }, '×'),
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: 14, marginBottom: 20 } },
-        h('div', { style: { width: 52, height: 52, borderRadius: '50%', background: displayStatus.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 500, color: displayStatus.cl, border: '1px solid ' + displayStatus.br } }, worker.name?.charAt(0) || '?'),
-        h('div', null,
-          h('div', { style: { fontSize: 18, fontWeight: 500 } }, worker.name),
-          h('div', { style: { fontSize: 12, color: '#888' } }, [worker.position, worker.grade ? `${worker.grade} разряд` : null, worker.tabNumber ? `Таб. ${worker.tabNumber}` : null, section?.name].filter(Boolean).join(' · ') || '—'),
-          h('div', { style: { marginTop: 4 } },
-            h('span', { style: { display: 'inline-block', padding: '2px 10px', fontSize: 10, borderRadius: 8, fontWeight: 500, background: displayStatus.bg, color: displayStatus.cl, border: '0.5px solid ' + displayStatus.br } },
-              displayStatus.label
+    h('div', { className:'modal-content', style:{ background:'#faf9f6', borderRadius:14, padding:20, width:'min(700px, calc(100vw - 24px))', maxHeight:'90vh', overflowY:'auto' } },
+
+      // ── ШАПКА ──
+      h('div', { style:{ ...cardSt, position:'relative' } },
+        h('button', { onClick:onClose, style:{ position:'absolute', top:12, right:14, background:'none', border:'none', fontSize:20, cursor:'pointer', color:'#aaa', lineHeight:1 } }, '×'),
+        h('div', { style:{ display:'flex', alignItems:'flex-start', gap:14, marginBottom:14 } },
+          h('div', { style:{ width:52, height:52, borderRadius:'50%', background:displayStatus.bg, border:`1px solid ${displayStatus.br}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, fontWeight:500, color:displayStatus.cl, flexShrink:0 } },
+            (worker.name || '?').charAt(0)
+          ),
+          h('div', { style:{ flex:1, minWidth:0 } },
+            h('div', { style:{ fontSize:17, fontWeight:500, color:'#1a1a1a', marginBottom:3 } }, worker.name),
+            h('div', { style:{ fontSize:12, color:'#888', marginBottom:8 } },
+              [worker.position, worker.grade ? `${worker.grade} разряд` : null, worker.tabNumber ? `Таб. №${worker.tabNumber}` : null, section?.name].filter(Boolean).join(' · ') || '—'
+            ),
+            h('div', { style:{ display:'flex', gap:5, flexWrap:'wrap' } },
+              h('span', { style:{ display:'inline-flex', alignItems:'center', padding:'3px 9px', borderRadius:20, fontSize:11, fontWeight:500, background:displayStatus.bg, color:displayStatus.cl } }, displayStatus.label),
+              worker.hireDate && h('span', { style:{ display:'inline-flex', alignItems:'center', padding:'3px 9px', borderRadius:20, fontSize:11, background:'#f0ede8', color:'#666' } }, `Принят ${new Date(worker.hireDate).toLocaleDateString('ru')}`),
+              h('span', { style:{ display:'inline-flex', alignItems:'center', padding:'3px 9px', borderRadius:20, fontSize:11, background:AM3, color:AM2 } }, `Ур. ${level} — ${getLevelTitle(level)}`)
             )
+          ),
+          h('div', { style:{ textAlign:'right', flexShrink:0 } },
+            h('div', { style:{ fontSize:10, color:'#aaa' } }, 'Брак'),
+            h('div', { style:{ fontSize:22, fontWeight:500, color: Number(defectRate) > 5 ? RD : GN } }, `${defectRate}%`)
           )
+        ),
+
+        // KPI
+        h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, marginBottom:14 } },
+          h(MC, { v:opsDone30.length, l:'Выполнено (30 дн)', c:GN }),
+          h(MC, { v:fmtDur(avgTime30), l:'Ср. время операции', c:AM }),
+          h(MC, { v:`${opsInProgress.length} / ${opsPending.length}`, l:'В работе / Ожидает', c:BL }),
+          h(MC, { v:`${totalHours}ч`, l:`Табель, ${monthName}` })
+        ),
+
+        // Прогресс уровня
+        h('div', { style:{ display:'flex', alignItems:'center', gap:12, padding:'10px 14px', background:'#f5f1eb', borderRadius:8, marginBottom:12 } },
+          h('div', { style:{ fontSize:26, fontWeight:500, color:AM } }, `${level}`),
+          h('div', { style:{ flex:1 } },
+            h('div', { style:{ fontSize:13, fontWeight:500, color:'#333', marginBottom:4 } }, `${getLevelTitle(level)} · ${allDone} операций всего`),
+            h('div', { style:{ height:6, background:'#dedad3', borderRadius:3, overflow:'hidden' } },
+              h('div', { style:{ width:`${progress * 100}%`, height:6, background:AM, borderRadius:3 } })
+            )
+          ),
+          h('div', { style:{ fontSize:11, color:'#888' } }, `${Math.round(progress * 100)}% → Ур. ${level + 1}`)
+        ),
+
+        // Контакты
+        (worker.phone || worker.email || worker.emergencyContact) && h('div', { style:{ display:'flex', gap:16, flexWrap:'wrap', fontSize:12, color:'#666' } },
+          worker.phone && h('a', { href:`tel:${worker.phone}`, style:{ color:AM2, textDecoration:'none' } }, `📞 ${worker.phone}`),
+          worker.email && h('a', { href:`mailto:${worker.email}`, style:{ color:AM2, textDecoration:'none' } }, `✉ ${worker.email}`),
+          worker.emergencyContact && h('span', { style:{ color:RD2 } }, `🆘 ${worker.emergencyContact}`)
         )
       ),
-      // Контакты и кадровые данные
-      (worker.phone || worker.email || worker.hireDate || worker.dismissedAt || worker.emergencyContact || worker.medicalExamNextDate || (worker.licences && worker.licences.length > 0)) && h('div', { style: { ...S.card, marginBottom: 16, padding: '10px 14px' } },
-        h('div', { style: { fontSize: 11, fontWeight: 500, color: '#888', marginBottom: 8, textTransform: 'uppercase' } }, 'Кадровые данные'),
-        h('div', { style: { display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12, marginBottom: (worker.medicalExamNextDate || (worker.licences && worker.licences.length > 0)) ? 8 : 0 } },
-          worker.phone && h('a', { href: `tel:${worker.phone}`, style: { color: AM2, textDecoration: 'none', fontWeight: 500 } }, `📞 ${worker.phone}`),
-          worker.email && h('a', { href: `mailto:${worker.email}`, style: { color: AM2, textDecoration: 'none' } }, `✉ ${worker.email}`),
-          worker.hireDate && h('span', { style: { color: '#555' } }, `📅 Принят: ${new Date(worker.hireDate).toLocaleDateString('ru')}`),
-          worker.dismissedAt && h('span', { style: { color: RD2, fontWeight: 500 } }, `🚪 Уволен: ${new Date(worker.dismissedAt).toLocaleDateString('ru')}`),
-          worker.emergencyContact && h('span', { style: { color: RD2 } }, `🆘 ${worker.emergencyContact}`)
+
+      // ── ВКЛАДКИ ──
+      h('div', { style:tabsSt }, TABS.map(t =>
+        h('div', { key:t.id, style:tabSt(tab === t.id), onClick:() => { setTab(t.id); setOpsLimit(10); } }, t.label)
+      )),
+
+      // ── КОМПЕТЕНЦИИ ──
+      tab === 'comp' && h('div', { style:cardSt },
+        h('div', { style:secSt }, 'Матрица компетенций'),
+        allStageNames.length === 0 && competencies.length === 0
+          ? h('div', { style:emptyTx }, 'Нет данных о компетенциях')
+          : h('div', null,
+              // Сначала те у кого есть допуск
+              competencies.map((c, i) =>
+                h('div', { key:c.operationType + i, style: i < competencies.length - 1 ? rowSt : lastRow },
+                  wcCompRow(c.operationType, c.level, c.certifiedAt, c.expiresAt, c.canTeach)
+                )
+              ),
+              // Потом операции без допуска (из productionStages которых нет в competencies)
+              allStageNames.filter(n => !compMap[n]).map((n, i, arr) =>
+                h('div', { key:n, style: i < arr.length - 1 ? rowSt : lastRow },
+                  wcCompRow(n, 0, null, null, false)
+                )
+              )
+            )
+      ),
+
+      // ── ИСТОРИЯ ОПЕРАЦИЙ ──
+      tab === 'ops' && h('div', { style:cardSt },
+        h('div', { style:secSt }, `История операций · всего ${allFinishedOps.length}`),
+        allFinishedOps.length === 0
+          ? h('div', { style:emptyTx }, 'Операций пока нет')
+          : h('div', null,
+              // Шапка таблицы
+              h('div', { style:{ display:'grid', gridTemplateColumns:'2fr 1.1fr 0.9fr 0.8fr', gap:8, padding:'4px 0 6px', borderBottom:`0.5px solid #ccc`, fontSize:10, color:'#aaa' } },
+                h('span', null, 'Операция'), h('span', null, 'Заказ'), h('span', null, 'Статус'), h('span', null, 'Длительность')
+              ),
+              allFinishedOps.slice(0, opsLimit).map((op, i, arr) => {
+                const order = data.orders.find(o => o.id === op.orderId);
+                const isLast = i === arr.slice(0, opsLimit).length - 1;
+                return h('div', { key:op.id, style:{ display:'grid', gridTemplateColumns:'2fr 1.1fr 0.9fr 0.8fr', gap:8, padding:'6px 0', borderBottom: isLast ? 'none' : '0.5px solid #ede9e2', fontSize:12, alignItems:'center' } },
+                  h('span', { style:{ color:'#222' } }, op.name),
+                  h('span', { style:{ color:AM2 } }, order?.number || '—'),
+                  h(Badge, { st:op.status }),
+                  h('span', { style:{ color:'#888', fontFamily:'monospace' } }, op.startedAt && op.finishedAt ? fmtDur(op.finishedAt - op.startedAt) : '—')
+                );
+              }),
+              opsLimit < allFinishedOps.length && h('button', {
+                style:{ ...gbtn({ fontSize:12, width:'100%', marginTop:10 }) },
+                onClick:() => setOpsLimit(l => l + 10)
+              }, `Показать ещё (ещё ${allFinishedOps.length - opsLimit})`)
+            )
+      ),
+
+      // ── ИНСТРУКТАЖИ ОТ ──
+      tab === 'instr' && h('div', { style:cardSt },
+        h('div', { style:secSt }, 'Инструктажи ОТ'),
+        h('div', { style:{ display:'grid', gridTemplateColumns:'2fr 0.9fr 1.1fr', gap:8, padding:'4px 0 6px', borderBottom:`0.5px solid #ccc`, fontSize:10, color:'#aaa' } },
+          h('span', null, 'Вид инструктажа'), h('span', null, 'Последний'), h('span', null, 'Следующий')
         ),
-        // Медосмотр
-        worker.medicalExamNextDate && (() => {
-          const daysLeft = Math.ceil((new Date(worker.medicalExamNextDate).getTime() - Date.now()) / 86400000);
-          const color = daysLeft < 0 ? RD : daysLeft < 30 ? AM : GN;
-          const bg = daysLeft < 0 ? RD3 : daysLeft < 30 ? AM3 : GN3;
-          return h('span', { style: { display: 'inline-block', padding: '3px 10px', fontSize: 11, borderRadius: 6, background: bg, color, marginRight: 6, marginBottom: 4 } },
-            `🏥 Медосмотр: ${daysLeft < 0 ? `просрочен ${Math.abs(daysLeft)} дн.` : `через ${daysLeft} дн. (${new Date(worker.medicalExamNextDate).toLocaleDateString('ru')})`}`
-          );
-        })(),
-        // Допуски/удостоверения
-        (worker.licences || []).map(lic => {
-          const expiredLic = lic.expiryDate && new Date(lic.expiryDate).getTime() < Date.now();
-          const expiringSoon = lic.expiryDate && !expiredLic && Math.ceil((new Date(lic.expiryDate).getTime() - Date.now()) / 86400000) < 30;
-          return h('span', { key: lic.name, style: { display: 'inline-block', padding: '3px 10px', fontSize: 11, borderRadius: 6, marginRight: 4, marginBottom: 4, background: expiredLic ? RD3 : expiringSoon ? AM3 : GN3, color: expiredLic ? RD2 : expiringSoon ? AM2 : GN2 } },
-            `🎖 ${lic.name}${lic.expiryDate ? ` · до ${new Date(lic.expiryDate).toLocaleDateString('ru')}` : ''}`
+        WC_INSTR_TYPES.map((t, i) => {
+          const instr = workerInstructions[t.id];
+          const isLast = i === WC_INSTR_TYPES.length - 1;
+          let nextLabel = '—';
+          let daysLeft  = null;
+          if (instr && t.months && instr.nextDate) {
+            daysLeft  = Math.ceil((instr.nextDate - Date.now()) / 86400000);
+            nextLabel = daysLeft < 0
+              ? `Просрочен ${Math.abs(daysLeft)} дн.`
+              : daysLeft <= 30
+                ? `Через ${daysLeft} дн.`
+                : new Date(instr.nextDate).toLocaleDateString('ru');
+          } else if (instr && !t.months) {
+            nextLabel = 'Бессрочно';
+          } else if (!instr) {
+            nextLabel = 'Не проводился';
+          }
+          return h('div', { key:t.id, style:{ display:'grid', gridTemplateColumns:'2fr 0.9fr 1.1fr', gap:8, padding:'6px 0', borderBottom: isLast ? 'none' : '0.5px solid #ede9e2', fontSize:12, alignItems:'center' } },
+            h('span', { style:{ color: instr ? '#222' : '#aaa' } }, t.label),
+            h('span', { style:{ color:'#888' } }, instr ? new Date(instr.dateMs).toLocaleDateString('ru') : '—'),
+            instr
+              ? wcBadge(daysLeft, nextLabel)
+              : h('span', { style:{ fontSize:11, color:'#aaa' } }, nextLabel)
           );
         })
       ),
-      h('div', { style: { display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' } },
-        h('span', { style: { fontSize: 12, color: '#888' } }, 'Период:'),
-        [7,30,90].map(d => h('button', { key: d, style: period === d ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setPeriod(d) }, `${d} дней`))
+
+      // ── ДОПУСКИ И УДОСТОВЕРЕНИЯ ──
+      tab === 'docs' && h('div', { style:cardSt },
+        h('div', { style:secSt }, 'Допуски и удостоверения'),
+        worker.medicalExamNextDate && (() => {
+          const d = Math.ceil((new Date(worker.medicalExamNextDate).getTime() - Date.now()) / 86400000);
+          const label = d < 0 ? `Просрочен ${Math.abs(d)} дн.` : d <= 30 ? `Через ${d} дн.` : new Date(worker.medicalExamNextDate).toLocaleDateString('ru');
+          return h('div', { style:rowSt },
+            h('span', { style:{ flex:1, fontSize:13, color:'#222' } }, '🏥 Медицинский осмотр'),
+            wcBadge(d, label)
+          );
+        })(),
+        (worker.licences || []).length === 0 && !worker.medicalExamNextDate
+          ? h('div', { style:emptyTx }, 'Нет удостоверений')
+          : (worker.licences || []).map((lic, i, arr) => {
+              const d = lic.expiryDate ? Math.ceil((new Date(lic.expiryDate).getTime() - Date.now()) / 86400000) : null;
+              const label = d === null ? 'Бессрочно' : d < 0 ? `Просрочен ${Math.abs(d)} дн.` : d <= 30 ? `Через ${d} дн.` : `до ${new Date(lic.expiryDate).toLocaleDateString('ru')}`;
+              return h('div', { key:lic.name, style: i < arr.length - 1 ? rowSt : lastRow },
+                h('span', { style:{ flex:1, fontSize:13, color:'#222' } }, `🎖 ${lic.name}`),
+                wcBadge(d, label)
+              );
+            })
       ),
-      h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 } },
-        h(MC, { v: totalOps, l: 'Выполнено', c: GN }),
-        h(MC, { v: fmtDur(avgTime), l: 'Ср. время', c: AM }),
-        h(MC, { v: `${defectRate}%`, l: 'Брак', c: Number(defectRate) > 5 ? RD : GN }),
-        h(MC, { v: `${opsInProgress.length}/${opsPending.length}`, l: 'В работе / Ожидает', c: BL })
+
+      // ── ПРОСТОИ ──
+      tab === 'down' && h('div', { style:cardSt },
+        h('div', { style:secSt }, `Простои · всего ${downtimeEvents.length} случаев`),
+        downtimeByReason.length === 0
+          ? h('div', { style:emptyTx }, 'Простоев не зафиксировано')
+          : h('div', null,
+              h('div', { style:{ display:'grid', gridTemplateColumns:'2fr 0.7fr 0.9fr', gap:8, padding:'4px 0 6px', borderBottom:`0.5px solid #ccc`, fontSize:10, color:'#aaa' } },
+                h('span', null, 'Причина'), h('span', { style:{ textAlign:'center' } }, 'Кол-во'), h('span', { style:{ textAlign:'right' } }, 'Общее время')
+              ),
+              downtimeByReason.map(([reason, stat], i, arr) =>
+                h('div', { key:reason, style:{ display:'grid', gridTemplateColumns:'2fr 0.7fr 0.9fr', gap:8, padding:'6px 0', borderBottom: i < arr.length - 1 ? '0.5px solid #ede9e2' : 'none', fontSize:12, alignItems:'center' } },
+                  h('span', { style:{ color:'#222' } }, reason),
+                  h('span', { style:{ textAlign:'center', color:'#666' } }, `${stat.count}×`),
+                  h('span', { style:{ textAlign:'right', color:RD2, fontFamily:'monospace' } }, stat.total > 0 ? fmtDur(stat.total) : '—')
+                )
+              )
+            )
       ),
-      // Часы из табеля за текущий месяц
-      (() => {
-        const now = new Date();
-        const yr = now.getFullYear(), mo = now.getMonth();
-        const tsData = data.timesheet?.[worker.id] || {};
-        const dim = new Date(yr, mo + 1, 0).getDate();
-        let totalHours = 0;
-        for (let d = 1; d <= dim; d++) {
-          const cell = tsData[d];
-          if (cell?.h) totalHours += cell.h;
-        }
-        const monthName = now.toLocaleString('ru', { month: 'long', year: 'numeric' });
-        return totalHours > 0 && h('div', { style: { ...S.card, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px' } },
-          h('div', { style: { fontSize: 22, fontWeight: 600, color: GN } }, `${Math.round(totalHours * 10) / 10}ч`),
-          h('div', { style: { fontSize: 12, color: '#888' } }, `Отработано по табелю — ${monthName}`)
-        );
-      })(),
-      h('div', { style: { ...S.card, marginBottom: 16 } },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 } },
-          h('div', { style: { fontSize: 28, fontWeight: 500, color: AM } }, `${level}`),
-          h('div', null, h('div', { style: { fontSize: 14, fontWeight: 500 } }, getLevelTitle(level)), h('div', { style: { fontSize: 11, color: '#888' } }, `${allDone} операций всего`))
-        ),
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-          h('div', { style: { flex: 1, height: 8, background: '#eee', borderRadius: 4, overflow: 'hidden' } }, h('div', { style: { width: `${progress * 100}%`, height: 8, background: AM, borderRadius: 4 } })),
-          h('div', { style: { fontSize: 11, color: '#888' } }, `${Math.round(progress * 100)}% → Ур. ${level + 1}`)
-        )
+
+      // ── БЛАГОДАРНОСТИ ──
+      tab === 'thanks' && h('div', { style:cardSt },
+        h('div', { style:secSt }, `Благодарности · ${thanks.length}`),
+        thanks.length === 0
+          ? h('div', { style:emptyTx }, 'Благодарностей пока нет')
+          : thanks.map((ev, i) => {
+              const from = data.workers.find(w => w.id === ev.fromWorkerId);
+              const fromLabel = from ? from.name : ev.fromWorkerId === null ? 'Мастер' : 'Коллега';
+              return h('div', { key:ev.id, style:{ padding:'8px 12px', background:'#f5f5f2', borderRadius:8, marginBottom: i < thanks.length - 1 ? 6 : 0, borderLeft:`2px solid ${GN}` } },
+                h('div', { style:{ fontSize:11, color:'#888', marginBottom:3 } }, `от ${fromLabel} · ${ev.ts ? new Date(ev.ts).toLocaleDateString('ru') : ''}`),
+                h('div', { style:{ fontSize:13, color:'#222' } }, ev.note || '—')
+              );
+            })
       ),
-      h('div', { style: { marginBottom: 16 } },
-        h('div', { style: S.sec }, `Достижения (${(worker.achievements || []).length} / ${Object.keys(ACHIEVEMENTS).length})`),
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 } },
+
+      // ── ДОСТИЖЕНИЯ ──
+      tab === 'ach' && h('div', { style:cardSt },
+        h('div', { style:secSt }, `Достижения ${(worker.achievements || []).length} / ${Object.keys(ACHIEVEMENTS).length}`),
+        h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:8 } },
           Object.entries(ACHIEVEMENTS).map(([id, ach]) => {
             const earned = (worker.achievements || []).includes(id);
-            return h('div', { key: id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 8, background: earned ? AM3 : '#f5f5f2', opacity: earned ? 1 : 0.5 } },
-              h('span', { style: { fontSize: 18 } }, ach.icon),
-              h('div', null, h('div', { style: { fontSize: 12, fontWeight: 500, color: earned ? AM2 : '#888' } }, ach.title), h('div', { style: { fontSize: 10, color: '#aaa' } }, ach.desc))
+            return h('div', { key:id, style:{ display:'flex', alignItems:'center', gap:10, padding:'8px 10px', borderRadius:8, background: earned ? AM3 : '#f5f5f2', opacity: earned ? 1 : 0.45 } },
+              h('span', { style:{ fontSize:20 } }, ach.icon),
+              h('div', null,
+                h('div', { style:{ fontSize:12, fontWeight:500, color: earned ? AM2 : '#888' } }, ach.title),
+                h('div', { style:{ fontSize:10, color: earned ? AM2 : '#aaa' } }, ach.desc)
+              )
             );
           })
         )
-      ),
-      worker.competences && worker.competences.length > 0 && h('div', { style: { marginBottom: 16 } },
-        h('div', { style: S.sec }, 'Допуск к операциям'),
-        h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } }, worker.competences.map(c => h('span', { key: c, style: { padding: '3px 10px', fontSize: 11, background: AM3, color: AM2, borderRadius: 8 } }, c)))
-      ),
-      Object.keys(avgByType).length > 0 && h('div', { style: { marginBottom: 16 } },
-        h('div', { style: S.sec }, 'Среднее время по типам операций'),
-        h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null, ['Операция', 'Кол-во', 'Ср. время'].map((t,i) => h('th', { key: i, style: S.th }, t)))),
-          h('tbody', null, Object.entries(avgByType).map(([name, stat]) =>
-            h('tr', { key: name },
-              h('td', { style: S.td }, name),
-              h('td', { style: S.td }, stat.count),
-              h('td', { style: { ...S.td, fontFamily: 'monospace' } }, fmtDur(stat.total / stat.count))
-            )
-          ))
-        ))
-      ),
-      h('div', { style: { marginBottom: 16 } },
-        h('div', { style: S.sec }, `Простои (${downtimeEvents.length})`),
-        Object.keys(downtimeByReason).length === 0
-          ? h('div', { style: { padding: 8, fontSize: 12, color: '#888' } }, 'Нет простоев за период')
-          : h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-              h('thead', null, h('tr', null, ['Причина', 'Кол-во', 'Общее время'].map((t,i) => h('th', { key: i, style: S.th }, t)))),
-              h('tbody', null, Object.entries(downtimeByReason).sort((a,b) => b[1].count - a[1].count).map(([reason, stat]) =>
-                h('tr', { key: reason },
-                  h('td', { style: S.td }, reason),
-                  h('td', { style: { ...S.td, textAlign: 'center' } }, stat.count),
-                  h('td', { style: { ...S.td, fontFamily: 'monospace', color: stat.totalDuration > 0 ? RD : '#888' } }, stat.totalDuration > 0 ? fmtDur(stat.totalDuration) : '—')
-                )
-              ))
-            ))
-      ),
-      recentOps.length > 0 && h('div', null,
-        h('div', { style: S.sec }, 'Последние операции'),
-        h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null, ['Операция', 'Заказ', 'Статус', 'Время', 'Длительность'].map((t,i) => h('th', { key: i, style: S.th }, t)))),
-          h('tbody', null, recentOps.map(op => {
-            const order = data.orders.find(o => o.id === op.orderId);
-            return h('tr', { key: op.id },
-              h('td', { style: S.td }, op.name),
-              h('td', { style: { ...S.td, color: AM } }, order?.number || '—'),
-              h('td', { style: S.td }, h(Badge, { st: op.status })),
-              h('td', { style: { ...S.td, fontSize: 11 } }, op.finishedAt ? new Date(op.finishedAt).toLocaleString() : '—'),
-              h('td', { style: { ...S.td, fontFamily: 'monospace' } }, op.startedAt && op.finishedAt ? fmtDur(op.finishedAt - op.startedAt) : '—')
-            );
-          }))
-        ))
       )
+
     )
   );
 });
