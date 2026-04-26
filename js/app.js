@@ -1083,6 +1083,7 @@ function App() {
   const [workerId, setWorkerId] = useState(null);
   const [sectionId, setSectionId] = useState(null);
   const [initialOpId, setInitialOpId] = useState(null);
+  const [receiveDeliveryId, setReceiveDeliveryId] = useState(null);
   const [showChat, setShowChat] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [selectedOrderId, setSelectedOrderId] = useState(null);
@@ -1111,6 +1112,9 @@ function App() {
     const params = new URLSearchParams(window.location.search);
     const opId = params.get('opId');
     if (opId) setInitialOpId(opId);
+    // QR-приёмка материала: ?receive=deliveryId
+    const receiveId = params.get('receive');
+    if (receiveId) setReceiveDeliveryId(receiveId);
     if ("Notification" in window && Notification.permission !== "denied") { Notification.requestPermission().catch(() => {}); }
 
     // Защита от двух вкладок: при открытии второй вкладки — предупреждение
@@ -1345,6 +1349,13 @@ function App() {
       const worker = data.workers.find(w => w.id === selectedWorkerId);
       return worker ? h(WorkerCardModal, { worker, data, onClose: () => setSelectedWorkerId(null) }) : null;
     })(),
+    receiveDeliveryId && h(ReceiveDeliveryScreen, {
+      deliveryId: receiveDeliveryId,
+      data, onUpdate,
+      currentUserId: workerId,
+      addToast,
+      onClose: () => { setReceiveDeliveryId(null); window.history.replaceState({}, '', window.location.pathname); }
+    }),
     h('div', { 'aria-live': 'polite' }, toasts.map(t => h(Toast, { key: t.id, message: t.message, onClose: () => removeToast(t.id) }))),
     h(InstallPromptBanner)
   );
