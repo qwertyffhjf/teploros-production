@@ -1084,6 +1084,7 @@ function App() {
   const [sectionId, setSectionId] = useState(null);
   const [initialOpId, setInitialOpId] = useState(null);
   const [receiveDeliveryId, setReceiveDeliveryId] = useState(null);
+  const [theme, setTheme] = useTheme();
   const [showChat, setShowChat] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [selectedOrderId, setSelectedOrderId] = useState(null);
@@ -1310,6 +1311,26 @@ function App() {
         );
       })(),
       h('div', { style: { marginLeft:'auto', fontSize:10, display:'flex', alignItems:'center', gap:8 } },
+        h('div', { style: { display:'flex', borderRadius:8, overflow:'hidden', border:'0.5px solid var(--border)', flexShrink:0 } },
+          [
+            { val:'light', icon:'☀️', title:'Светлая' },
+            { val:'system', icon:'⚙', title:'Системная' },
+            { val:'dark',  icon:'🌙', title:'Тёмная'   },
+          ].map(({ val, icon, title }) =>
+            h('button', {
+              key: val,
+              title,
+              onClick: () => setTheme(val),
+              style: {
+                padding:'4px 8px', fontSize:13, minHeight:'auto',
+                border:'none', borderRadius:0,
+                background: theme === val ? 'var(--border)' : 'transparent',
+                color: theme === val ? 'var(--fg)' : 'var(--muted)',
+                cursor:'pointer', lineHeight:1,
+              }
+            }, icon)
+          )
+        ),
         isSaving && h('div', { style: { display:'flex', alignItems:'center', gap:4, color: AM4, fontWeight:500 } },
           h('span', { style: {
             width: 8, height: 8, borderRadius: '50%', background: AM,
