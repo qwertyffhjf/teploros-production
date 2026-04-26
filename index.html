@@ -38,10 +38,19 @@
       --r-sm:8px;--r-md:10px;--r-lg:12px;--r-xl:14px;
       --bg:#f5f5f2;--fg:#1a1a18;--card:#fff;--border:rgba(0,0,0,.25);--border-soft:rgba(0,0,0,.08);--muted:#888;
     }
+    /* Системная тёмная тема */
     @media (prefers-color-scheme: dark){
-      :root{
+      :root:not([data-theme="light"]){
         --bg:#1a1a18;--fg:#e8e6e0;--card:#26262c;--border:rgba(255,255,255,.2);--border-soft:rgba(255,255,255,.08);--muted:#999;
       }
+    }
+    /* Принудительная тёмная тема */
+    [data-theme="dark"]{
+      --bg:#1a1a18;--fg:#e8e6e0;--card:#26262c;--border:rgba(255,255,255,.2);--border-soft:rgba(255,255,255,.08);--muted:#999;
+    }
+    /* Принудительная светлая тема */
+    [data-theme="light"]{
+      --bg:#f5f3ef;--fg:#1a1a18;--card:#ffffff;--border:rgba(0,0,0,.15);--border-soft:rgba(0,0,0,.08);--muted:#666;
     }
     body{margin:0;padding:16px;font-family:system-ui,sans-serif;background:var(--bg);color:var(--fg);-webkit-text-size-adjust:100%}
     input,select,textarea,button{font-family:inherit}
@@ -145,6 +154,21 @@
       .gantt-container{background:var(--card)}
       .checkbox-group{background:var(--card);border-color:var(--border)}
       .worker-btn-pause{background:var(--card);color:var(--fg);border-color:var(--border)}
+
+      /* Таблица операций */
+      table td, table th { color: var(--fg) !important; }
+      table tr { border-color: var(--border-soft) !important; }
+      table tbody tr:hover { background: rgba(255,255,255,0.04) !important; }
+
+      /* Исполнители в строке операции */
+      details summary { color: #EF9F27 !important; }
+      details > div > div { background: var(--card) !important; color: var(--fg) !important; border-color: var(--border) !important; }
+
+      /* Панель выбранных операций */
+      .selected-ops-panel { background: rgba(239,159,39,0.15) !important; border-color: #EF9F27 !important; }
+
+      /* Карточки (.card в JS) */
+      .dark-card { background: var(--card) !important; border-color: var(--border) !important; }
     }
     
     /* Responsive header */
