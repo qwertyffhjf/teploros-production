@@ -1,6 +1,199 @@
 // teploros · warehouse.js
 // Автоматически извлечено из монолита
 
+// ==================== DeliveryBoard ====================
+const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId }) => {
+  const [filterStatus, setFilterStatus] = useState('pending'); // pending | all | confirmed
+  const [confirmModal, setConfirmModal] = useState(null); // {delivery, partialQty}
+  const [partialQty, setPartialQty] = useState('');
+  const [confirmNote, setConfirmNote] = useState('');
+
+  const deliveries = useMemo(() => {
+    const all = data.materialDeliveries || [];
+    if (filterStatus === 'all') return all;
+    if (filterStatus === 'confirmed') return all.filter(d => d.status === 'confirmed');
+    return all.filter(d => d.status === 'pending' || d.status === 'partial');
+  }, [data.materialDeliveries, filterStatus]);
+
+  const pendingCount = (data.materialDeliveries || []).filter(d => d.status === 'pending' || d.status === 'partial').length;
+
+  const openConfirm = (delivery) => {
+    setConfirmModal(delivery);
+    setPartialQty(String(delivery.requiredQty));
+    setConfirmNote('');
+  };
+
+  const handleConfirm = async (isPartial) => {
+    if (!confirmModal) return;
+    const qty = Number(partialQty);
+    if (!qty || qty <= 0) { addToast('Укажите количество', 'error'); return; }
+
+    const status = isPartial ? 'partial' : 'confirmed';
+    const mat = data.materials.find(m => m.id === confirmModal.materialId);
+
+    // Обновляем поставку
+    const updDeliveries = (data.materialDeliveries || []).map(d =>
+      d.id === confirmModal.id ? { ...d, status, deliveredQty: qty, confirmedAt: now(), confirmedBy: currentUserId, note: confirmNote } : d
+    );
+
+    // Пополняем остатки материала
+    const updMaterials = (data.materials || []).map(m =>
+      m.id === confirmModal.materialId ? { ...m, quantity: (m.quantity || 0) + qty } : m
+    );
+
+    // Добавляем событие прихода материала
+    const event = {
+      id: uid(), type: 'material_receive',
+      materialId: confirmModal.materialId,
+      orderId: confirmModal.orderId,
+      deliveryId: confirmModal.id,
+      qty, ts: now(),
+      confirmedBy: currentUserId,
+      note: confirmNote
+    };
+
+    const d = { ...data, materialDeliveries: updDeliveries, materials: updMaterials, events: [...data.events, event] };
+    await DB.save(d); onUpdate(d);
+
+    const label = isPartial ? `Частичная поставка: ${qty} ${confirmModal.unit}` : `Поставка подтверждена: ${qty} ${confirmModal.unit}`;
+    addToast(`✓ ${label}`, 'success');
+    setConfirmModal(null);
+  };
+
+  const printQR = (delivery) => {
+    const mat = data.materials.find(m => m.id === delivery.materialId);
+    const order = data.orders.find(o => o.id === delivery.orderId);
+    const url = `${location.origin}${location.pathname}?receive=${delivery.id}`;
+    const w = window.open('', '_blank', 'width=400,height=500');
+    w.document.write(`<!DOCTYPE html><html><head><title>QR поставки</title>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script></head>
+      <body style="font-family:sans-serif;padding:20px;text-align:center">
+        <div style="border:2px solid #333;padding:16px;display:inline-block;border-radius:8px">
+          <div style="font-size:11px;color:#888;margin-bottom:4px">ПОСТАВКА МАТЕРИАЛА</div>
+          <div style="font-size:15px;font-weight:bold;margin-bottom:2px">${mat?.name || delivery.materialId}</div>
+          <div style="font-size:12px;color:#666;margin-bottom:12px">Заказ: ${order?.number || delivery.orderId} · Этап: ${delivery.stageName}</div>
+          <div style="font-size:12px;margin-bottom:12px">Требуется: <b>${delivery.requiredQty} ${delivery.unit}</b></div>
+          <div id="qr" style="margin:0 auto 12px;width:180px"></div>
+          <div style="font-size:9px;color:#aaa;word-break:break-all">${url}</div>
+        </div>
+        <br><button onclick="window.print()" style="margin-top:12px;padding:8px 24px;font-size:13px;border-radius:6px;border:none;background:#EF9F27;color:#412402;cursor:pointer">🖨 Печать</button>
+        <script>new QRCode(document.getElementById("qr"),{text:"${url}",width:180,height:180,colorDark:"#000",colorLight:"#fff"});</script>
+      </body></html>`);
+    w.document.close();
+  };
+
+  return h('div', null,
+    // Фильтр статусов
+    h('div', { style: { ...S.card, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 } },
+      h('span', { style: { fontSize: 12, color: '#888' } }, 'Показать:'),
+      [
+        { id: 'pending', label: `⏳ Ожидаемые (${pendingCount})` },
+        { id: 'confirmed', label: '✓ Подтверждённые' },
+        { id: 'all', label: '📋 Все' }
+      ].map(f => h('button', { key: f.id, style: filterStatus === f.id ? abtn({ fontSize: 12 }) : gbtn({ fontSize: 12 }), onClick: () => setFilterStatus(f.id) }, f.label))
+    ),
+
+    deliveries.length === 0
+      ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888', padding: 32 } },
+          filterStatus === 'pending'
+            ? h('div', null, h('div', { style: { fontSize: 24, marginBottom: 8 } }, '✅'), 'Все поставки подтверждены')
+            : 'Нет поставок'
+        )
+      : h('div', null,
+          deliveries.map(del => {
+            const mat = data.materials.find(m => m.id === del.materialId);
+            const order = data.orders.find(o => o.id === del.orderId);
+            const isPending = del.status === 'pending';
+            const isPartial = del.status === 'partial';
+            const isDone    = del.status === 'confirmed';
+            const borderColor = isDone ? GN : isPartial ? AM : '#dedad3';
+
+            return h('div', { key: del.id, style: { ...S.card, borderLeft: `4px solid ${borderColor}`, marginBottom: 10 } },
+              h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 } },
+                h('div', { style: { flex: 1 } },
+                  h('div', { style: { fontSize: 14, fontWeight: 500, marginBottom: 3 } }, mat?.name || del.materialId),
+                  h('div', { style: { fontSize: 12, color: '#888', marginBottom: 6 } },
+                    `Заказ: `, h('span', { style: { color: AM2, fontWeight: 500 } }, order?.number || del.orderId),
+                    ` · Этап: ${del.stageName}`
+                  ),
+                  h('div', { style: { display: 'flex', gap: 12, fontSize: 12 } },
+                    h('span', null, `Нужно: `, h('b', null, `${del.requiredQty} ${del.unit}`)),
+                    del.deliveredQty > 0 && h('span', { style: { color: isPartial ? AM2 : GN2 } }, `Поступило: `, h('b', null, `${del.deliveredQty} ${del.unit}`))
+                  ),
+                  del.confirmedAt && h('div', { style: { fontSize: 11, color: '#aaa', marginTop: 4 } },
+                    `Подтверждено: ${new Date(del.confirmedAt).toLocaleString('ru')}`
+                  ),
+                  del.note && h('div', { style: { fontSize: 11, color: '#666', marginTop: 3, fontStyle: 'italic' } }, del.note)
+                ),
+                h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 } },
+                  h('span', { style: {
+                    padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 500, textAlign: 'center',
+                    background: isDone ? GN3 : isPartial ? AM3 : '#f0ede8',
+                    color: isDone ? GN2 : isPartial ? AM2 : '#888'
+                  }}, isDone ? '✓ Поставлено' : isPartial ? '⚡ Частично' : '⏳ Ожидаем'),
+                  !isDone && h('button', { style: abtn({ fontSize: 12 }), onClick: () => openConfirm(del) }, '📥 Подтвердить'),
+                  h('button', { style: gbtn({ fontSize: 12 }), onClick: () => printQR(del) }, '🖨 QR-код')
+                )
+              )
+            );
+          })
+        ),
+
+    // Модал подтверждения поставки
+    confirmModal && h('div', {
+      style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }
+    },
+      h('div', { style: { background: '#faf9f6', borderRadius: 12, padding: 24, width: 'min(420px, calc(100vw - 32px))' } },
+        h('div', { style: { fontSize: 16, fontWeight: 500, marginBottom: 4 } }, '📦 Подтвердить поставку'),
+        h('div', { style: { fontSize: 13, color: '#888', marginBottom: 20 } },
+          (data.materials.find(m => m.id === confirmModal.materialId))?.name,
+          ` · Заказ `,
+          (data.orders.find(o => o.id === confirmModal.orderId))?.number
+        ),
+
+        h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 } },
+          h('div', null,
+            h('label', { style: S.lbl }, 'Требуется'),
+            h('div', { style: { ...S.inp, background: '#f5f5f2', color: '#888', cursor: 'default' } },
+              `${confirmModal.requiredQty} ${confirmModal.unit}`
+            )
+          ),
+          h('div', null,
+            h('label', { style: S.lbl }, 'Поступило фактически'),
+            h('input', {
+              type: 'number', style: { ...S.inp, borderColor: AM },
+              value: partialQty,
+              onChange: e => setPartialQty(e.target.value),
+              min: 0, max: confirmModal.requiredQty * 2,
+              autoFocus: true
+            })
+          )
+        ),
+
+        h('div', { style: { marginBottom: 16 } },
+          h('label', { style: S.lbl }, 'Примечание (накладная, поставщик)'),
+          h('input', { type: 'text', style: S.inp, value: confirmNote, onChange: e => setConfirmNote(e.target.value), placeholder: 'Например: Накл. №123, ООО Металлснаб' })
+        ),
+
+        h('div', { style: { display: 'flex', gap: 8 } },
+          Number(partialQty) < confirmModal.requiredQty && Number(partialQty) > 0 &&
+            h('button', { style: { ...gbtn({ flex: 1 }), borderColor: AM, color: AM2 }, onClick: () => handleConfirm(true) },
+              `⚡ Частично (${partialQty} ${confirmModal.unit})`
+            ),
+          Number(partialQty) >= confirmModal.requiredQty &&
+            h('button', { style: { ...abtn({ flex: 1 }) }, onClick: () => handleConfirm(false) },
+              `✓ Подтвердить полностью`
+            ),
+          Number(partialQty) > 0 && Number(partialQty) < confirmModal.requiredQty &&
+            h('button', { style: abtn({ flex: 0 }), onClick: () => handleConfirm(false) }, 'Всё равно закрыть'),
+          h('button', { style: rbtn({ flex: 1 }), onClick: () => setConfirmModal(null) }, 'Отмена')
+        )
+      )
+    )
+  );
+});
+
+
 // ==================== MaterialImportModal ====================
 // Нормализация строки для нечёткого поиска
 
@@ -560,7 +753,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
     h(SectionAnalytics, { section: 'warehouse', data }),
     showImport && h(MaterialImportModal, { data, onClose: () => setShowImport(false), onUpdate, addToast, defaultMode: importMode }),
     // Вкладки
-    h(TabBar, { tabs: [['stock', '📦 Остатки'], ['requests', `🔔 Заявки (${materialRequests.length})`], ['receive', '📥 Приёмка'], ['history', '📋 Движение'], ['materials', '🗂 Справочник'], ['bom', '📋 Спецификации']], tab, setTab }),
+    h(TabBar, { tabs: [['deliveries', `🚚 Поставки (${(data.materialDeliveries||[]).filter(d=>d.status==='pending'||d.status==='partial').length})`], ['stock', '📦 Остатки'], ['requests', `🔔 Заявки (${materialRequests.length})`], ['receive', '📥 Приёмка'], ['history', '📋 Движение'], ['materials', '🗂 Справочник'], ['bom', '📋 Спецификации']], tab, setTab }),
 
     // Заявки (уведомления)
     materialRequests.length > 0 && tab !== 'requests' && h('div', { role: 'alert', style: { padding: '8px 12px', background: AM3, border: `0.5px solid ${AM}`, borderRadius: 8, marginBottom: 12, fontSize: 12, cursor: 'pointer' }, onClick: () => setTab('requests') },
@@ -568,6 +761,8 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
     ),
 
     // Остатки
+    tab === 'deliveries' && h(DeliveryBoard, { data, onUpdate, addToast, currentUserId }),
+
     tab === 'stock' && h('div', null,
       // Сводка
       h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 10, marginBottom: 12 } },
