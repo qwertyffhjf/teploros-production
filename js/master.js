@@ -9,6 +9,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
   const [filt, setFilt] = useState('all');
   const [editingId, setEditingId] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [showDone, setShowDone] = useState(false); // скрывать завершённые
   const [page, setPage] = useState(1);
   const pageSize = 20;
   const [fieldErrors, setFieldErrors] = useState({});
@@ -98,6 +99,18 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
     await DB.save(d); onUpdate(d); setSelectedOps(new Set()); addToast(`Удалено ${selectedOps.size} операций`, 'success');
   };
 
+  const hideSelected = async () => {
+    if (selectedOps.size === 0) return;
+    const d = { ...data, ops: data.ops.map(op => selectedOps.has(op.id) ? { ...op, hiddenFromFeed: true } : op) };
+    await DB.save(d); onUpdate(d); setSelectedOps(new Set()); addToast(`Скрыто ${selectedOps.size} операций`, 'info');
+  };
+
+  const archiveSelected = async () => {
+    if (selectedOps.size === 0) return;
+    const d = { ...data, ops: data.ops.map(op => selectedOps.has(op.id) ? { ...op, archived: true } : op) };
+    await DB.save(d); onUpdate(d); setSelectedOps(new Set()); addToast(`Архивировано ${selectedOps.size} операций`, 'info');
+  };
+
   const edit = useCallback(op => {
     setForm({ orderId: op.orderId, name: op.name, workerIds: op.workerIds || [], plannedHours: op.plannedHours || '', sectionId: op.sectionId || '', equipmentId: op.equipmentId || '', plannedStartDate: op.plannedStartDate ? new Date(op.plannedStartDate).toISOString().slice(0,16) : '', drawingUrl: op.drawingUrl || '' });
     setEditingId(op.id);
@@ -114,9 +127,14 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
     else if (filt === 'pending') filtered = filtered.filter(o => o.status === 'pending');
     else if (filt === 'issues') filtered = filtered.filter(o => o.status === 'defect' || o.status === 'rework');
     else if (filt === 'on_check') filtered = filtered.filter(o => o.status === 'on_check');
+    else if (filt === 'done') filtered = filtered.filter(o => o.status === 'done');
     else if (filt !== 'all') filtered = filtered.filter(o => o.orderId === filt);
+    // Скрываем завершённые если не включён showDone и не стоит фильтр 'done'
+    if (!showDone && filt !== 'done') {
+      filtered = filtered.filter(o => o.status !== 'done' && !o.hiddenFromFeed);
+    }
     return filtered;
-  }, [data.ops, data.orders, filt, showArchived, opsFilterType]);
+  }, [data.ops, data.orders, filt, showArchived, opsFilterType, showDone]);
 
   const paginated = useMemo(() => { const start = (page-1)*pageSize; return opsToShow.slice(start, start+pageSize); }, [opsToShow, page]);
   useEffect(() => { setPage(1); }, [filt, showArchived]);
@@ -225,31 +243,43 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
     ),
     h('div', { style: { display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' } },
       [['all','Все'],['pending','Ожидают'],['active','В работе'],['on_check','На контроле'],['issues','Проблемы']].map(([id,l]) => h('button', { key: id, style: filt === id ? abtn() : gbtn(), onClick: () => setFilt(id) }, l)),
+      h('button', {
+        style: filt === 'done' ? { ...abtn({ fontSize: 12 }), background: GN, borderColor: GN } : gbtn({ fontSize: 12 }),
+        onClick: () => { setFilt(filt === 'done' ? 'all' : 'done'); if (filt !== 'done') setShowDone(true); }
+      }, `✓ Завершённые (${data.ops.filter(o => o.status === 'done' && !o.archived).length})`),
       data.orders.filter(o => !o.archived).map(o => h('button', { key: o.id, style: filt === o.id ? abtn({ fontSize: 10 }) : gbtn({ fontSize: 10 }), onClick: () => setFilt(o.id) }, o.number)),
-      h('label', { style: { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 } },
-        h('input', { type: 'checkbox', checked: showArchived, onChange: e => setShowArchived(e.target.checked) }), 'Показать архивные'
+      h('div', { style: { marginLeft: 'auto', display: 'flex', gap: 12, alignItems: 'center' } },
+        h('label', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer' } },
+          h('input', { type: 'checkbox', checked: showDone, onChange: e => setShowDone(e.target.checked) }), 'Показать завершённые'
+        ),
+        h('label', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer' } },
+          h('input', { type: 'checkbox', checked: showArchived, onChange: e => setShowArchived(e.target.checked) }), 'Архивные'
+        )
       )
     ),
     // 🎯 Контролы для пакетного удаления
-    selectedOps.size > 0 && h('div', { style: { display: 'flex', gap: 8, marginBottom: 12, padding: '8px 12px', background: 'rgba(220, 38, 38, 0.1)', borderRadius: 6, alignItems: 'center', flexWrap: 'wrap' } },
-      h('span', { style: { fontSize: 12, color: '#666', fontWeight: 500 } }, `Выбрано: ${selectedOps.size} операций`),
-      h('button', { style: { padding: '4px 10px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 500 }, onClick: deleteSelected }, '🗑️ Удалить (или нажми Delete)'),
-      h('button', { style: gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setSelectedOps(new Set()) }, 'Отмена')
+    selectedOps.size > 0 && h('div', { style: { display: 'flex', gap: 8, marginBottom: 12, padding: '10px 14px', background: AM3, border: `1px solid ${AM}`, borderRadius: 8, alignItems: 'center', flexWrap: 'wrap' } },
+      h('span', { style: { fontSize: 13, color: AM2, fontWeight: 600 } }, `✓ Выбрано: ${selectedOps.size}`),
+      h('button', { style: gbtn({ fontSize: 12, padding: '6px 14px' }), onClick: hideSelected }, '👁 Скрыть'),
+      h('button', { style: gbtn({ fontSize: 12, padding: '6px 14px' }), onClick: archiveSelected }, '📁 Архивировать'),
+      h('button', { style: { ...gbtn({ fontSize: 12, padding: '6px 14px' }), color: RD2, borderColor: RD }, onClick: deleteSelected }, '🗑 Удалить'),
+      h('button', { style: gbtn({ fontSize: 12, padding: '6px 14px' }), onClick: () => setSelectedOps(new Set()) }, '✕ Отмена')
     ),
-    h('div', { style: { display: 'flex', gap: 6, marginBottom: 8 } },
-      paginated.length > 0 && h('button', { style: gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: selectAllVisible }, selectedOps.size === opsToShow.length && opsToShow.length > 0 ? '☑️ Убрать выделение' : '☐ Выбрать видимые')
-    ),
+
     paginated.length === 0
       ? h('div', { style: { ...S.card, textAlign: 'center' } }, 'Нет операций')
       : h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null, [h('th', { style: { ...S.th, width: 32, textAlign: 'center', padding: '8px 4px' } }, '☐'), ...['ID','Операция','Заказ','Исполнители','Участок','Оборуд.','План, ч','План. старт','Чертёж','Статус','Время',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t))])),
+          h('thead', null, h('tr', null, [h('th', { style: { ...S.th, width: 44, textAlign: 'center', padding: '8px 4px' } }, h('input', { type: 'checkbox', style: { width: 18, height: 18, cursor: 'pointer' }, checked: selectedOps.size === opsToShow.length && opsToShow.length > 0, onChange: selectAllVisible, title: 'Выбрать все' })), ...['ID','Операция','Заказ','Исполнители','Участок','Оборуд.','План, ч','План. старт','Чертёж','Статус','Время',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t))])),
           h('tbody', null, paginated.map(op => {
             const ord = data.orders.find(o => o.id === op.orderId);
             const section = data.sections.find(s => s.id === op.sectionId);
             const eq = data.equipment.find(e => e.id === op.equipmentId);
             const dur = op.startedAt && op.finishedAt ? fmtDur(op.finishedAt - op.startedAt) : op.startedAt ? fmtDur(now() - op.startedAt) + ' ↻' : '—';
-            return [h('tr', { key: op.id, style: { background: op.archived ? '#eee' : (op.status === 'defect' ? RD3 : op.status === 'rework' ? AM3 : op.status === 'on_check' ? '#E1F5FE' : editingId === op.id ? AM3 : 'transparent'), cursor: 'pointer' }, onClick: () => toggleOpSelection(op.id) },
-              h('td', { style: { ...S.td, width: 32, textAlign: 'center', padding: '8px 4px', userSelect: 'none' }, onClick: (e) => { e.stopPropagation(); toggleOpSelection(op.id); } }, selectedOps.has(op.id) ? '☑' : '☐'),
+            const rowOpacity = (op.status === 'done' || op.hiddenFromFeed) ? 0.45 : 1;
+            return [h('tr', { key: op.id, style: { background: op.archived ? '#eee' : (op.status === 'defect' ? RD3 : op.status === 'rework' ? AM3 : op.status === 'on_check' ? '#E1F5FE' : op.status === 'done' ? GN3 : editingId === op.id ? AM3 : 'transparent'), cursor: 'pointer', opacity: rowOpacity }, onClick: () => toggleOpSelection(op.id) },
+              h('td', { style: { ...S.td, width: 44, textAlign: 'center', padding: '8px 4px' }, onClick: e => e.stopPropagation() },
+              h('input', { type: 'checkbox', style: { width: 18, height: 18, cursor: 'pointer', accentColor: AM }, checked: selectedOps.has(op.id), onChange: () => toggleOpSelection(op.id) })
+            ),
               h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 10 } }, op.id),
               h('td', { style: { ...S.td, fontWeight: 500 } }, op.name, op.defectNote && h('div', { style: { fontSize: 10, color: RD } }, op.defectNote)),
               h('td', { style: { ...S.td, fontSize: 11 } },
@@ -593,6 +623,46 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     return stages.map(stage => ({ id: uid(), orderId, name: stage.name, qty: orderQty, workerIds: [], workerQty: {}, status: 'pending', createdAt: now(), plannedHours: undefined, archived: false, sectionId: null, equipmentId: null, plannedStartDate: undefined, requiresQC: stage.name.includes('свар') || stage.name.includes('Опресовка') }));
   }, [data.productionStages]);
 
+  // Создаём поставки материалов по всем этапам у которых есть requiredMaterialIds
+  const createMaterialDeliveries = useCallback((orderId, productType, orderQty, bomId) => {
+    const deliveries = [];
+    const stages = (data.productionStages || []).filter(s => !productType || s.productType === productType);
+    const bom = bomId ? data.bomTemplates?.find(b => b.id === bomId) : null;
+
+    stages.forEach(stage => {
+      (stage.requiredMaterialIds || []).forEach(matId => {
+        // Проверяем не создана ли уже поставка для этого заказа и материала
+        const mat = data.materials?.find(m => m.id === matId);
+        if (!mat) return;
+
+        // Пытаемся взять количество из BOM, иначе 1
+        let requiredQty = orderQty || 1;
+        if (bom?.materials) {
+          const bomLine = bom.materials.find(bl => bl.materialId === matId);
+          if (bomLine) requiredQty = (bomLine.qty || 1) * (orderQty || 1);
+        }
+
+        const qrCode = uid(); // уникальный ID для QR
+        deliveries.push({
+          id: qrCode,          // id = qrCode — проще
+          orderId,
+          materialId: matId,
+          stageName: stage.name,
+          stageId: stage.id,
+          requiredQty,
+          deliveredQty: 0,
+          unit: mat.unit || 'шт',
+          status: 'pending',   // pending | partial | confirmed
+          createdAt: now(),
+          confirmedAt: null,
+          confirmedBy: null,
+          note: ''
+        });
+      });
+    });
+    return deliveries;
+  }, [data.productionStages, data.materials, data.bomTemplates]);
+
   const addOrUpdate = useCallback(async () => {
     if (!validate()) return;
     if (editingId) {
@@ -618,15 +688,19 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
             qty: m.qty * qty, reservedAt: now()
           }));
           if (reservations.length > 0) {
-            const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps], materialReservations: [...(data.materialReservations || []), ...reservations] };
-            await DB.save(d); onUpdate(d); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({}); addToast('Заказ создан, материалы зарезервированы', 'success');
+            const newDeliveries = createMaterialDeliveries(newOrder.id, form.productType, Number(form.qty), form.bomId);
+            const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps], materialReservations: [...(data.materialReservations || []), ...reservations], materialDeliveries: [...(data.materialDeliveries || []), ...newDeliveries] };
+            await DB.save(d); onUpdate(d); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({});
+            addToast(`Заказ создан, зарезервированы материалы${newDeliveries.length > 0 ? `, ожидается ${newDeliveries.length} поставок` : ''}`, 'success');
             if (newOps.length > 0) setPrintOrderId(newOrder.id);
             return;
           }
         }
       }
-      const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps] };
-      await DB.save(d); onUpdate(d); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({}); addToast('Заказ создан', 'success');
+      const newDeliveries = createMaterialDeliveries(newOrder.id, form.productType, Number(form.qty), form.bomId);
+      const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps], materialDeliveries: [...(data.materialDeliveries || []), ...newDeliveries] };
+      await DB.save(d); onUpdate(d); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({});
+      addToast(newDeliveries.length > 0 ? `Заказ создан, ожидается ${newDeliveries.length} поставок материалов` : 'Заказ создан', 'success');
       if (newOps.length > 0) setPrintOrderId(newOrder.id);
     }
   }, [form, editingId, data, createDefaultOps, onUpdate, addToast]);
