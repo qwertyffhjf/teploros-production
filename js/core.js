@@ -450,6 +450,36 @@ const cleanStaleLocalStorageKeys = () => {
 };
 
 
+
+// ==================== useTheme ====================
+// Хук управления темой: light / dark / system
+// Сохраняет выбор в localStorage, применяет класс на <html>
+const useTheme = () => {
+  const stored = localStorage.getItem('tp_theme') || 'system';
+  const [theme, setThemeState] = React.useState(stored);
+
+  React.useEffect(() => {
+    const apply = (t) => {
+      const root = document.documentElement;
+      if (t === 'dark') {
+        root.setAttribute('data-theme', 'dark');
+      } else if (t === 'light') {
+        root.setAttribute('data-theme', 'light');
+      } else {
+        root.removeAttribute('data-theme');
+      }
+    };
+    apply(theme);
+  }, [theme]);
+
+  const setTheme = (t) => {
+    localStorage.setItem('tp_theme', t);
+    setThemeState(t);
+  };
+
+  return [theme, setTheme];
+};
+
 // ==================== ReceiveDeliveryScreen ====================
 // Показывается при открытии ?receive=deliveryId (QR-код на материале)
 const ReceiveDeliveryScreen = memo(({ deliveryId, data, onUpdate, currentUserId, addToast, onClose }) => {
