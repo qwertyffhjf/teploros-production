@@ -276,7 +276,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
             const eq = data.equipment.find(e => e.id === op.equipmentId);
             const dur = op.startedAt && op.finishedAt ? fmtDur(op.finishedAt - op.startedAt) : op.startedAt ? fmtDur(now() - op.startedAt) + ' ↻' : '—';
             const rowOpacity = (op.status === 'done' || op.hiddenFromFeed) ? 0.45 : 1;
-            return [h('tr', { key: op.id, style: { background: op.archived ? '#eee' : (op.status === 'defect' ? RD3 : op.status === 'rework' ? AM3 : op.status === 'on_check' ? '#E1F5FE' : op.status === 'done' ? GN3 : editingId === op.id ? AM3 : 'transparent'), cursor: 'pointer', opacity: rowOpacity }, onClick: () => toggleOpSelection(op.id) },
+            return [h('tr', { key: op.id, style: { background: op.archived ? 'var(--border-soft,#eee)' : (op.status === 'defect' ? RD3 : op.status === 'rework' ? AM3 : op.status === 'on_check' ? '#E1F5FE' : op.status === 'done' ? GN3 : editingId === op.id ? AM3 : 'transparent'), cursor: 'pointer', opacity: rowOpacity }, onClick: () => toggleOpSelection(op.id) },
               h('td', { style: { ...S.td, width: 44, textAlign: 'center', padding: '8px 4px' }, onClick: e => e.stopPropagation() },
               h('input', { type: 'checkbox', style: { width: 18, height: 18, cursor: 'pointer', accentColor: AM }, checked: selectedOps.has(op.id), onChange: () => toggleOpSelection(op.id) })
             ),
@@ -299,11 +299,28 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
                 ),
                 !op.archived && h('details', { style: { fontSize: 10 } },
                   h('summary', { style: { cursor: 'pointer', color: AM, userSelect: 'none', padding: '2px 0', fontWeight: 500 } }, '➕ Добавить'),
-                  h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 0', maxHeight: 120, overflowY: 'auto' } },
-                    data.workers.filter(w => !w.archived && (w.status || 'working') === 'working' && (!w.competences || w.competences.length === 0 || w.competences.includes(op.name)) && !(op.workerIds || []).includes(w.id))
-                      .map(w => h('div', { key: w.id, style: { padding: '4px 8px', borderRadius: 4, cursor: 'pointer', background: '#f5f5f5', fontSize: 11, userSelect: 'none', transition: 'all 0.2s', border: '1px solid #ddd' }, onClick: () => assignWorkers(op.id, [...(op.workerIds || []), w.id]) },
-                        h('span', { style: { color: GN, fontWeight: 500, marginRight: 4 } }, '+'), w.name
-                      ))
+                  h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, padding: '6px 0', maxHeight: 200, overflowY: 'auto' } },
+                    (() => {
+                      const available = data.workers.filter(w => !w.archived && !(op.workerIds || []).includes(w.id));
+                      const withPermit  = available.filter(w => (w.competences || []).includes(op.name));
+                      const noRestrict  = available.filter(w => !w.competences || w.competences.length === 0);
+                      const noPermit    = available.filter(w => w.competences?.length > 0 && !w.competences.includes(op.name));
+                      const mkRow = (w, badge) => h('div', { key: w.id,
+                        style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 8px', borderRadius: 6, cursor: 'pointer', background: 'var(--card,#f5f5f2)', border: '0.5px solid var(--border,#ddd)', fontSize: 11, userSelect: 'none', color: 'var(--fg,#222)' },
+                        onClick: () => assignWorkers(op.id, [...(op.workerIds || []), w.id])
+                      },
+                        h('span', null, h('span', { style: { color: GN, fontWeight: 600, marginRight: 4 } }, '+'), w.name),
+                        badge
+                      );
+                      return [
+                        withPermit.length > 0 && h('div', { key: 'g1', style: { fontSize: 10, color: GN2, fontWeight: 500, padding: '4px 0 2px', borderBottom: `1px solid var(--border-soft,#eee)`, marginBottom: 2 } }, `★ Есть допуск (${withPermit.length})`),
+                        ...withPermit.map(w => mkRow(w, h('span', { style: { fontSize: 9, background: GN3, color: GN2, padding: '1px 5px', borderRadius: 4 } }, '✓ допуск'))),
+                        noRestrict.length > 0 && h('div', { key: 'g2', style: { fontSize: 10, color: '#888', padding: '4px 0 2px', borderBottom: `1px solid var(--border-soft,#eee)`, marginBottom: 2, marginTop: 4 } }, `Без ограничений (${noRestrict.length})`),
+                        ...noRestrict.map(w => mkRow(w, h('span', { style: { fontSize: 9, background: 'var(--card,#f0f0f0)', color: '#888', padding: '1px 5px', borderRadius: 4 } }, 'любые'))),
+                        noPermit.length > 0 && h('div', { key: 'g3', style: { fontSize: 10, color: RD2, padding: '4px 0 2px', borderBottom: `1px solid var(--border-soft,#eee)`, marginBottom: 2, marginTop: 4 } }, `Нет допуска (${noPermit.length})`),
+                        ...noPermit.map(w => mkRow(w, h('span', { style: { fontSize: 9, background: RD3, color: RD2, padding: '1px 5px', borderRadius: 4 } }, '✕ нет')))
+                      ];
+                    })()
                   )
                 )
               ),
