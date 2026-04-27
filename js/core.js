@@ -410,6 +410,7 @@ const EMPTY_DATA = {
   auxStats: {},       // агрегация вспомогательных работ: {"YYYY-MM": {total, totalMs, byCategory:{cat:{count,ms}}, byWorker:{wid:{count,ms}}}}
   messages: [], reclamations: [], duels: [], materialReservations: [], defects: [],
   materialDeliveries: [],  // поставки материалов: [{id, orderId, materialId, stageName, requiredQty, deliveredQty, unit, status, confirmedAt, confirmedBy}]
+  // components хранятся внутри каждого order: order.components = [{id, name, qty, unit, code, price, status}]
   settings: {
     // Единый PIN-вход: все роли входят по PIN (хеши DJB2, дефолтные значения: 0000, 1111, 2222, 3333, 4444, 5555, 6666, 7777)
     masterPin: 'H_18D7OAL',
@@ -450,6 +451,25 @@ const cleanStaleLocalStorageKeys = () => {
 };
 
 
+
+// ==================== canShipOrder ====================
+// Проверяет готовность заказа к отгрузке с учётом комплектующих
+const canShipOrder = (order) => {
+  if (!order) return false;
+  const components = order.components || [];
+  if (components.length === 0) return true;
+  return components.every(c => c.status === 'confirmed');
+};
+
+// Статус комплектующих заказа
+const getComponentsStatus = (order) => {
+  const components = order?.components || [];
+  if (components.length === 0) return null;
+  const confirmed = components.filter(c => c.status === 'confirmed').length;
+  const total = components.length;
+  if (confirmed === total) return { label: `✓ Все комплектующие (${total})`, color: GN, ok: true };
+  return { label: `📦 Комплектующие: ${confirmed}/${total}`, color: AM, ok: false };
+};
 
 // ==================== useTheme ====================
 // Хук управления темой: light / dark / system
