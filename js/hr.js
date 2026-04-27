@@ -106,7 +106,23 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
   const filtered = useMemo(() => {
     let list = workersEnriched.filter(w => showArchivedWorkers ? w.archived : !w.archived);
     if (search) list = list.filter(w => w.name.toLowerCase().includes(search.toLowerCase()));
-    if (statusFilter !== 'all') list = list.filter(w => (w.status || 'working') === statusFilter);
+    if (statusFilter !== 'all') {
+      const todayDay = new Date().getDate();
+      list = list.filter(w => {
+        const cell = data.timesheet?.[w.id]?.[todayDay];
+        let status;
+        if (cell) {
+          if (cell.code === 'Б')                            status = 'sick';
+          else if (cell.code === 'ОТ' || cell.code === 'ОЗ') status = 'vacation';
+          else if (cell.code === 'НН')                      status = 'absent';
+          else if (cell.h > 0)                              status = 'working';
+          else                                              status = 'absent';
+        } else {
+          status = w.status || 'absent';
+        }
+        return status === statusFilter;
+      });
+    }
     if (sectionFilter) list = list.filter(w => w.sectionId === sectionFilter);
     if (positionFilter) list = list.filter(w => w.position === positionFilter);
     return list.sort((a,b) => a.name.localeCompare(b.name));
@@ -120,12 +136,38 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
 
   const summary = useMemo(() => {
     const active = data.workers.filter(w => !w.archived);
-    const s = { total: active.length, working:0, absent:0, sick:0, vacation:0 };
-    active.forEach(w => { const k = w.status || 'working'; if (s[k] !== undefined) s[k]++; });
-    const workingWorkers = workersEnriched.filter(w => !w.archived && (w.status || 'working') === 'working');
-    const avgLoad = workingWorkers.length > 0 ? Math.round(workingWorkers.reduce((sum,w) => sum + w.opsActive, 0) / workingWorkers.length * 100) || 0 : 0;
+    const todayDay = new Date().getDate();
+    const s = { total: active.length, working: 0, absent: 0, sick: 0, vacation: 0 };
+
+    active.forEach(w => {
+      // Источник истины — табель за сегодня
+      const cell = data.timesheet?.[w.id]?.[todayDay];
+      if (cell) {
+        if (cell.code === 'Б')                       s.sick++;
+        else if (cell.code === 'ОТ' || cell.code === 'ОЗ') s.vacation++;
+        else if (cell.code === 'НН')                 s.absent++;
+        else if (cell.code === 'У')                  { /* уволен — не считаем */ }
+        else if (cell.h > 0)                         s.working++;
+        else                                         s.absent++;
+      } else {
+        // Нет записи в табеле — смотрим статус карточки как запасной вариант
+        const k = w.status || 'absent';
+        if (k === 'sick')     s.sick++;
+        else if (k === 'vacation') s.vacation++;
+        else if (k === 'working')  s.working++;
+        else                       s.absent++;
+      }
+    });
+
+    const workingWorkers = workersEnriched.filter(w => !w.archived && (() => {
+      const cell = data.timesheet?.[w.id]?.[todayDay];
+      return cell ? cell.h > 0 : (w.status || 'absent') === 'working';
+    })());
+    const avgLoad = workingWorkers.length > 0
+      ? Math.round(workingWorkers.reduce((sum, w) => sum + w.opsActive, 0) / workingWorkers.length * 100) || 0
+      : 0;
     return { ...s, avgLoad };
-  }, [data.workers, workersEnriched]);
+  }, [data.workers, data.timesheet, workersEnriched]);
 
   const toggleCompetence = (comp) => { setForm(p => ({ ...p, competences: p.competences.includes(comp) ? p.competences.filter(c => c !== comp) : [...p.competences, comp] })); };
   const stagesForMatrix = useMemo(() => data.productionStages || [], [data.productionStages]);
@@ -133,7 +175,12 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
   // Покрытие навыков: Map<stageName, count> — мемоизируем чтобы не пересчитывать в render
   const competenceCoverage = useMemo(() => {
     const map = {};
-    const active = data.workers.filter(w => !w.archived && (w.status || 'working') === 'working');
+    const todayDayCC = new Date().getDate();
+    const active = data.workers.filter(w => {
+      if (w.archived) return false;
+      const cell = data.timesheet?.[w.id]?.[todayDayCC];
+      return cell ? cell.h > 0 : (w.status || 'absent') === 'working';
+    });
     (data.productionStages || []).forEach(s => {
       map[s.name] = active.filter(w => (w.competences || []).includes(s.name)).length;
     });
