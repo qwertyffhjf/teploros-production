@@ -112,54 +112,178 @@ const calcOrderCost = (order, data, hourlyRate = 500) => {
 const generateFullPassport = (order, data) => {
   const ops = data.ops.filter(op => op.orderId === order.id && !op.archived);
   const cost = calcOrderCost(order, data);
+
+  // ── Вспомогательные данные ──
+  const workerName = (id) => data.workers.find(w => w.id === id)?.name || '—';
+  const defectOps  = ops.filter(op => op.status === 'defect' || op.defectNote);
+  const doneOps    = ops.filter(op => op.status === 'done');
+  const totalActualHours = doneOps.reduce((s, op) => s + ((op.finishedAt && op.startedAt) ? (op.finishedAt - op.startedAt) / 3600000 : 0), 0);
+
+  // ── QC события по этому заказу ──
+  const qcEvents = (data.events || []).filter(e => ops.some(op => op.id === e.opId) && (e.type === 'qc_pass' || e.type === 'qc_reject'));
+
+  // ── Компоненты заказа ──
+  const components = order.components || [];
+
   const docDefinition = {
     content: [
+      // ═══ ШАПКА ═══
       { text: 'ПАСПОРТ ИЗДЕЛИЯ', style: 'header', alignment: 'center' },
-      { text: `Заказ №${order.number}`, style: 'subheader', alignment: 'center', margin: [0, 0, 0, 20] },
-      { columns: [
-        { width: '*', text: [{ text: 'Изделие: ', bold: true }, order.product] },
-        { width: '*', text: [{ text: 'Количество: ', bold: true }, String(order.qty)] }
-      ], margin: [0, 0, 0, 8] },
-      { columns: [
-        { width: '*', text: [{ text: 'Дата создания: ', bold: true }, order.createdAt ? new Date(order.createdAt).toLocaleDateString() : '—'] },
-        { width: '*', text: [{ text: 'Дата отгрузки: ', bold: true }, order.deadline || '—'] }
-      ], margin: [0, 0, 0, 8] },
-      { columns: [
-        { width: '*', text: [{ text: 'Приоритет: ', bold: true }, PRIORITY[order.priority]?.label || '—'] },
-        { width: '*', text: [{ text: 'Трудозатраты: ', bold: true }, `${cost.laborHours} ч`] }
-      ], margin: [0, 0, 0, 20] },
-      { text: 'Технологические операции', style: 'subheader', margin: [0, 0, 0, 10] },
+      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1.5 }], margin: [0, 4, 0, 12] },
+
+      // ═══ БЛОК 1: Общие данные ═══
+      { text: '1. ОБЩИЕ СВЕДЕНИЯ', style: 'subheader' },
       { table: {
-        headerRows: 1, widths: ['auto', 'auto', 'auto', 'auto', 'auto', 'auto'],
+        widths: ['25%','25%','25%','25%'],
         body: [
-          [{ text: '№', bold: true }, { text: 'Операция', bold: true }, { text: 'Исполнитель', bold: true }, { text: 'Начало', bold: true }, { text: 'Окончание', bold: true }, { text: 'Статус', bold: true }],
-          ...ops.map((op, i) => [
+          [
+            { text: 'Заказ №', bold: true }, { text: order.number },
+            { text: 'Изделие', bold: true }, { text: order.product || '—' }
+          ],
+          [
+            { text: 'Заказчик', bold: true }, { text: order.customer || '—', colSpan: 3 }, {}, {}
+          ],
+          [
+            { text: 'Количество', bold: true }, { text: String(order.qty || 1) + ' шт' },
+            { text: 'Код изделия', bold: true }, { text: order.productCode || '—' }
+          ],
+          [
+            { text: 'Дата создания', bold: true }, { text: order.createdAt ? new Date(order.createdAt).toLocaleDateString('ru') : '—' },
+            { text: 'Срок отгрузки', bold: true }, { text: order.deadline ? new Date(order.deadline).toLocaleDateString('ru') : '—' }
+          ],
+          [
+            { text: 'Приоритет', bold: true }, { text: PRIORITY[order.priority]?.label || '—' },
+            { text: 'Источник', bold: true }, { text: order.source === '1c_import' ? 'Импорт из 1С' : 'Ручной ввод' }
+          ],
+        ]
+      }, layout: 'lightHorizontalLines', margin: [0, 4, 0, 16] },
+
+      // Характеристики изделия (если есть)
+      order.specs && { text: '1.1 Технические характеристики', style: 'subheader2' },
+      order.specs && { text: order.specs, margin: [0, 0, 0, 12], italics: true },
+
+      // ═══ БЛОК 2: Комплектующие (если есть) ═══
+      components.length > 0 && { text: '2. КОМПЛЕКТУЮЩИЕ', style: 'subheader', margin: [0, 8, 0, 4] },
+      components.length > 0 && { table: {
+        headerRows: 1,
+        widths: ['auto', '*', 'auto', 'auto', 'auto'],
+        body: [
+          [{ text: '№', bold: true }, { text: 'Наименование', bold: true }, { text: 'Код', bold: true }, { text: 'Кол-во', bold: true }, { text: 'Статус', bold: true }],
+          ...components.map((c, i) => [
             i + 1,
-            op.name,
-            op.workerIds?.map(wid => data.workers.find(w => w.id === wid)?.name).filter(Boolean).join(', ') || '—',
-            op.startedAt ? new Date(op.startedAt).toLocaleString() : '—',
-            op.finishedAt ? new Date(op.finishedAt).toLocaleString() : '—',
-            STATUS[op.status]?.label || op.status
+            c.name,
+            c.code || '—',
+            `${c.qty} ${c.unit || 'шт'}`,
+            c.status === 'confirmed' ? 'Получено' : 'Ожидается'
           ])
         ]
-      }, layout: 'lightHorizontalLines', margin: [0, 0, 0, 20] },
-      ops.some(op => op.weldParams) && { text: 'Контроль сварки', style: 'subheader', margin: [0, 0, 0, 10] },
-      ops.some(op => op.weldParams) && { table: {
-        headerRows: 1, widths: ['auto', 'auto', 'auto', 'auto'],
+      }, layout: 'lightHorizontalLines', margin: [0, 0, 0, 16] },
+
+      // ═══ БЛОК 3: Технологические операции ═══
+      { text: `${components.length > 0 ? '3' : '2'}. ТЕХНОЛОГИЧЕСКИЕ ОПЕРАЦИИ`, style: 'subheader', margin: [0, 8, 0, 4] },
+      { table: {
+        headerRows: 1,
+        widths: ['auto', '*', 'auto', 'auto', 'auto', 'auto', 'auto'],
         body: [
-          [{ text: 'Операция', bold: true }, { text: 'Номер шва', bold: true }, { text: 'Электрод', bold: true }, { text: 'Результат', bold: true }],
-          ...ops.filter(op => op.weldParams).map(op => [op.name, op.weldParams.seamNumber, op.weldParams.electrode, op.weldParams.result === 'ok' ? 'Принято' : 'Брак'])
+          [
+            { text: '№', bold: true },
+            { text: 'Операция', bold: true },
+            { text: 'Исполнитель', bold: true },
+            { text: 'Начало', bold: true },
+            { text: 'Окончание', bold: true },
+            { text: 'Факт. время', bold: true },
+            { text: 'Статус', bold: true }
+          ],
+          ...ops.map((op, i) => {
+            const actualH = (op.finishedAt && op.startedAt) ? ((op.finishedAt - op.startedAt) / 3600000).toFixed(1) + ' ч' : '—';
+            const st = op.status === 'done' ? 'Выполнено' : op.status === 'defect' ? 'Брак' : op.status === 'in_progress' ? 'В работе' : op.status === 'on_check' ? 'На контроле' : 'Ожидает';
+            return [
+              i + 1,
+              op.name,
+              (op.workerIds || []).map(wid => workerName(wid)).join(', ') || '—',
+              op.startedAt ? new Date(op.startedAt).toLocaleString('ru', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—',
+              op.finishedAt ? new Date(op.finishedAt).toLocaleString('ru', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—',
+              actualH,
+              { text: st, color: op.status === 'done' ? '#2d6a2d' : op.status === 'defect' ? '#a32d2d' : '#333' }
+            ];
+          })
         ]
-      }, layout: 'lightHorizontalLines', margin: [0, 0, 0, 20] },
-      ops.some(op => op.defectNote) && { text: 'Выявленные дефекты', style: 'subheader', margin: [0, 0, 0, 10] },
-      ops.some(op => op.defectNote) && { ul: ops.filter(op => op.defectNote).map(op => `${op.name}: ${op.defectNote} (${op.defectSource === 'previous_stage' ? 'с предыдущего участка' : 'текущий'})`) },
-      { text: '\n\nДата формирования паспорта: ' + new Date().toLocaleString(), fontSize: 9, color: '#888', margin: [0, 20, 0, 0] }
+      }, layout: 'lightHorizontalLines', margin: [0, 0, 0, 8] },
+
+      // Итого трудозатраты
+      { columns: [
+        { width: '*', text: '' },
+        { width: 'auto', text: [
+          { text: 'Плановые трудозатраты: ', bold: true }, `${cost.laborHours} ч    `,
+          { text: 'Фактические: ', bold: true }, `${totalActualHours.toFixed(1)} ч`
+        ], margin: [0, 0, 0, 16] }
+      ]},
+
+      // ═══ БЛОК 4: Контроль качества ═══
+      qcEvents.length > 0 && { text: `${components.length > 0 ? '4' : '3'}. РЕЗУЛЬТАТЫ КОНТРОЛЯ ОТК`, style: 'subheader', margin: [0, 8, 0, 4] },
+      qcEvents.length > 0 && { table: {
+        headerRows: 1,
+        widths: ['*', 'auto', 'auto', 'auto'],
+        body: [
+          [{ text: 'Операция', bold: true }, { text: 'Контролёр', bold: true }, { text: 'Дата', bold: true }, { text: 'Результат', bold: true }],
+          ...qcEvents.map(e => {
+            const op = ops.find(o => o.id === e.opId);
+            return [
+              op?.name || '—',
+              workerName(e.workerId),
+              e.ts ? new Date(e.ts).toLocaleString('ru', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—',
+              { text: e.type === 'qc_pass' ? '✓ Принято' : '✗ Отклонено', color: e.type === 'qc_pass' ? '#2d6a2d' : '#a32d2d' }
+            ];
+          })
+        ]
+      }, layout: 'lightHorizontalLines', margin: [0, 0, 0, 16] },
+
+      // ═══ БЛОК 5: Выявленные дефекты ═══
+      defectOps.length > 0 && { text: `${components.length > 0 ? '5' : '4'}. ВЫЯВЛЕННЫЕ ДЕФЕКТЫ`, style: 'subheader', margin: [0, 8, 0, 4] },
+      defectOps.length > 0 && { table: {
+        headerRows: 1,
+        widths: ['*', '*', 'auto'],
+        body: [
+          [{ text: 'Операция', bold: true }, { text: 'Описание дефекта', bold: true }, { text: 'Источник', bold: true }],
+          ...defectOps.map(op => [
+            op.name,
+            op.defectNote || '—',
+            op.defectSource === 'previous_stage' ? 'С предыдущего участка' : 'Текущий участок'
+          ])
+        ]
+      }, layout: 'lightHorizontalLines', margin: [0, 0, 0, 16] },
+
+      // ═══ ПОДПИСИ ═══
+      { text: 'ПОДПИСИ', style: 'subheader', margin: [0, 16, 0, 8] },
+      { table: {
+        widths: ['33%', '33%', '34%'],
+        body: [[
+          { text: 'Начальник производства
+
+
+_________________', alignment: 'center' },
+          { text: 'Контролёр ОТК
+
+
+_________________', alignment: 'center' },
+          { text: 'Ответственный за отгрузку
+
+
+_________________', alignment: 'center' }
+        ]]
+      }, layout: 'noBorders', margin: [0, 0, 0, 16] },
+
+      // ═══ ФУТЕР ═══
+      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, color: '#ccc' }] },
+      { text: `Дата формирования паспорта: ${new Date().toLocaleString('ru')}   |   ООО НТ   |   Заказ №${order.number}`, fontSize: 8, color: '#888', margin: [0, 6, 0, 0], alignment: 'center' }
     ].filter(Boolean),
     styles: {
-      header: { fontSize: 20, bold: true, margin: [0, 0, 0, 10] },
-      subheader: { fontSize: 14, bold: true, margin: [0, 10, 0, 5] }
+      header:    { fontSize: 18, bold: true, margin: [0, 0, 0, 4] },
+      subheader: { fontSize: 12, bold: true, margin: [0, 8, 0, 4], color: '#333' },
+      subheader2:{ fontSize: 10, bold: true, margin: [0, 4, 0, 4], color: '#555' }
     },
-    defaultStyle: { fontSize: 10 }
+    defaultStyle: { fontSize: 9 },
+    pageMargins: [36, 36, 36, 36]
   };
   pdfMake.createPdf(docDefinition).download(`passport_${order.number}_${new Date().toISOString().slice(0, 10)}.pdf`);
 };
