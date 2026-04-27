@@ -522,8 +522,429 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+
+
+// ==================== Import1CModal ====================
+// Парсер заявки из 1С (Excel/XLSX)
+// Разделяет строки на: изделие (производство) и комплектующие
+
+const PRODUCT_KEYWORDS = ['котёл', 'котел', 'teplofor', 'теплофор', 'vv', 'кв-', 'boiler', 'дупл', 'duplex', 'агрегат'];
+const isProductRow = (name) => {
+  if (!name) return false;
+  const lower = name.toLowerCase();
+  return PRODUCT_KEYWORDS.some(kw => lower.includes(kw));
+};
+
+// Парсим дату вида "04.05.26" или "04.05.2026"
+const parseDate1C = (str) => {
+  if (!str) return '';
+  const s = String(str).trim();
+  const m = s.match(/(\d{2})\.(\d{2})\.(\d{2,4})/);
+  if (!m) return '';
+  const y = m[3].length === 2 ? '20' + m[3] : m[3];
+  return `${y}-${m[2]}-${m[1]}`; // YYYY-MM-DD
+};
+
+// Парсим заголовок "Заказ покупателя № 44/26 НТ от 21 апреля 2026 г."
+const parseOrderHeader = (text) => {
+  const numMatch = text.match(/№\s*([\w\/\-]+)/);
+  const dateMatch = text.match(/от\s+(\d+\s+\w+\s+\d{4})/);
+  return {
+    number: numMatch ? numMatch[1] : '',
+    dateStr: dateMatch ? dateMatch[1] : ''
+  };
+};
+
+const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
+  const [step, setStep] = useState('upload'); // upload | preview | done
+  const [parsed, setParsed] = useState(null);  // { orderNumber, customer, deadline, product, productCode, qty, specs, components[] }
+  const [isDragging, setIsDragging] = useState(false);
+  const [error, setError] = useState('');
+  const fileInputRef = React.useRef(null);
+
+  const parseExcel = (arrayBuffer) => {
+    try {
+      const wb = XLSX.read(arrayBuffer, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+      let orderNumber = '', customer = '', deadline = '', orderDateStr = '';
+      let product = null, productCode = '', productQty = 1, productSpecs = '';
+      const components = [];
+
+      rows.forEach(row => {
+        const cells = row.map(c => String(c || '').trim());
+        const fullText = cells.join(' ');
+
+        // Заголовок заказа
+        if (fullText.includes('Заказ покупателя')) {
+          const h = parseOrderHeader(fullText);
+          if (h.number) orderNumber = h.number;
+        }
+
+        // Заказчик
+        if (cells[0] === 'Заказчик:' || fullText.startsWith('Заказчик:')) {
+          const idx = cells.findIndex(c => c === 'Заказчик:');
+          const raw = cells.slice(idx + 1).join(' ');
+          const m = raw.match(/ООО\s*["«]([^"»]+)["»]/);
+          customer = m ? `ООО "${m[1]}"` : raw.slice(0, 60).trim();
+        }
+
+        // Строки товаров: первая ячейка — число (порядковый номер)
+        const num = parseInt(cells[0]);
+        if (!isNaN(num) && num > 0 && num < 100 && cells[1]) {
+          const name = cells[1] || cells[2] || '';
+          // Ищем код, кол-во, ед, цену, сумму по позиции в строке
+          // Типичная структура: [№, дата, название, ..., код, кол-во, ед, цена, сумма]
+          const code    = cells.find(c => /^НФ-\d+$/i.test(c)) || '';
+          const qtyIdx  = cells.findIndex(c => /^НФ-\d+$/i.test(c));
+          const qty     = qtyIdx >= 0 && cells[qtyIdx + 1] ? Number(cells[qtyIdx + 1]) || 1 : 1;
+          const unit    = qtyIdx >= 0 && cells[qtyIdx + 2] ? cells[qtyIdx + 2] : 'шт';
+          const price   = cells.map(c => Number(c)).find(n => n > 1000) || 0;
+
+          // Извлекаем спецификацию из скобок: "VV2-D 400 (400 кВт, 6 бар, 115С)"
+          const specsMatch = name.match(/\(([^)]+)\)/);
+          const specs = specsMatch ? specsMatch[1] : '';
+          const cleanName = name.replace(/\([^)]+\)/, '').trim();
+
+          // Срок — первая дата в строке
+          const dateCell = cells.find(c => /\d{2}\.\d{2}\.\d{2,4}/.test(c));
+          if (dateCell && !deadline) deadline = parseDate1C(dateCell);
+
+          if (isProductRow(name) && !product) {
+            product = cleanName;
+            productCode = code;
+            productQty = qty;
+            productSpecs = specs;
+          } else {
+            components.push({ id: uid(), name: cleanName, code, qty, unit, price, status: 'pending' });
+          }
+        }
+      });
+
+      if (!product) {
+        setError('Не найдено основное изделие в файле. Убедитесь что файл содержит котёл или изделие Teplofor.');
+        return;
+      }
+
+      setParsed({ orderNumber, customer, deadline, product, productCode, productQty, productSpecs, components });
+      setStep('preview');
+      setError('');
+    } catch (e) {
+      setError('Ошибка чтения файла: ' + e.message);
+    }
+  };
+
+  const handleFile = (file) => {
+    if (!file) return;
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!['xlsx', 'xls'].includes(ext)) {
+      setError('Поддерживаются только файлы Excel (.xlsx, .xls)');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = e => parseExcel(e.target.result);
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault(); setIsDragging(false);
+    handleFile(e.dataTransfer.files[0]);
+  };
+
+  const handleCreate = async () => {
+    if (!parsed) return;
+    const orderId = uid();
+
+    // Определяем тип продукта из справочника
+    const productType = data.settings?.productTypes?.[0]?.id || 'boiler';
+
+    // Создаём заказ
+    const newOrder = {
+      id: orderId,
+      number: parsed.orderNumber || `1С-${Date.now()}`,
+      product: parsed.product,
+      productCode: parsed.productCode,
+      specs: parsed.productSpecs,
+      qty: parsed.productQty,
+      customer: parsed.customer,
+      deadline: parsed.deadline,
+      priority: 'medium',
+      status: 'active',
+      shipped: false,
+      archived: false,
+      createdAt: now(),
+      source: '1c_import',
+      components: parsed.components   // ← комплектующие сохраняются в заказ
+    };
+
+    // Создаём операции по умолчанию
+    const stages = (data.productionStages || []).filter(s => !s.productType || s.productType === productType);
+    const newOps = stages.map(stage => ({
+      id: uid(), orderId, name: stage.name, qty: parsed.productQty,
+      workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
+      archived: false, sectionId: null, equipmentId: null,
+      requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.includes('Опресовка')
+    }));
+
+    // Создаём поставки материалов (если этапы имеют привязку)
+    const newDeliveries = [];
+    stages.forEach(stage => {
+      (stage.requiredMaterialIds || []).forEach(matId => {
+        const mat = data.materials?.find(m => m.id === matId);
+        if (!mat) return;
+        newDeliveries.push({
+          id: uid(), orderId, materialId: matId, stageName: stage.name,
+          stageId: stage.id, requiredQty: parsed.productQty,
+          deliveredQty: 0, unit: mat.unit || 'шт',
+          status: 'pending', createdAt: now(),
+          confirmedAt: null, confirmedBy: null, note: ''
+        });
+      });
+    });
+
+    const d = {
+      ...data,
+      orders: [...data.orders, newOrder],
+      ops: [...data.ops, ...newOps],
+      materialDeliveries: [...(data.materialDeliveries || []), ...newDeliveries]
+    };
+
+    await DB.save(d);
+    onUpdate(d);
+
+    const msg = [
+      `Заказ ${newOrder.number} создан`,
+      `${newOps.length} операций`,
+      parsed.components.length > 0 ? `${parsed.components.length} комплектующих` : null,
+      newDeliveries.length > 0 ? `${newDeliveries.length} поставок материалов` : null
+    ].filter(Boolean).join(' · ');
+
+    addToast(`✓ ${msg}`, 'success');
+    setStep('done');
+    setTimeout(onClose, 1500);
+  };
+
+  const S2 = {
+    dropzone: {
+      border: `2px dashed ${isDragging ? AM : 'var(--border,#ddd)'}`,
+      borderRadius: 12, padding: 40, textAlign: 'center',
+      background: isDragging ? AM3 : 'var(--card,#faf9f6)',
+      cursor: 'pointer', transition: 'all .2s'
+    },
+    row: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '0.5px solid var(--border-soft,#ede9e2)', fontSize: 13 },
+    lbl: { fontSize: 11, color: '#888', marginBottom: 3 }
+  };
+
+  return h('div', {
+    style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 400, padding: 16 }
+  },
+    h('div', { style: { background: 'var(--card,#fff)', borderRadius: 14, padding: 24, width: 'min(600px, 100%)', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 8px 40px rgba(0,0,0,.22)' } },
+
+      // Шапка
+      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 } },
+        h('div', null,
+          h('div', { style: { fontSize: 18, fontWeight: 600 } }, '📥 Импорт заказа из 1С'),
+          h('div', { style: { fontSize: 12, color: '#888', marginTop: 2 } }, 'Excel файл · Заказ покупателя')
+        ),
+        h('button', { onClick: onClose, style: { background: 'none', border: 'none', fontSize: 22, color: '#aaa', cursor: 'pointer' } }, '×')
+      ),
+
+      // ШАГ 1: Загрузка файла
+      step === 'upload' && h('div', null,
+        h('div', {
+          style: S2.dropzone,
+          onDragOver: e => { e.preventDefault(); setIsDragging(true); },
+          onDragLeave: () => setIsDragging(false),
+          onDrop: handleDrop,
+          onClick: () => fileInputRef.current?.click()
+        },
+          h('div', { style: { fontSize: 40, marginBottom: 12 } }, '📊'),
+          h('div', { style: { fontSize: 15, fontWeight: 500, marginBottom: 6 } }, 'Перетащите файл сюда'),
+          h('div', { style: { fontSize: 12, color: '#888', marginBottom: 16 } }, 'или нажмите для выбора'),
+          h('div', { style: { fontSize: 11, color: '#aaa' } }, 'Поддерживается: .xlsx, .xls (Заказ покупателя из 1С)')
+        ),
+        h('input', { ref: fileInputRef, type: 'file', accept: '.xlsx,.xls', style: { display: 'none' }, onChange: e => handleFile(e.target.files[0]) }),
+        error && h('div', { style: { marginTop: 12, padding: '10px 14px', background: RD3, color: RD2, borderRadius: 8, fontSize: 13 } }, `⚠ ${error}`)
+      ),
+
+      // ШАГ 2: Предпросмотр
+      step === 'preview' && parsed && h('div', null,
+
+        // Основные данные заказа
+        h('div', { style: { background: 'var(--bg,#f5f1eb)', borderRadius: 10, padding: '14px 16px', marginBottom: 16 } },
+          h('div', { style: { fontSize: 11, color: '#888', textTransform: 'uppercase', marginBottom: 10 } }, '📋 Основной заказ (изделие)'),
+          h('div', { style: S2.row },
+            h('span', { style: S2.lbl }, 'Номер заказа'),
+            h('span', { style: { fontWeight: 600, color: AM2 } }, parsed.orderNumber || '—')
+          ),
+          h('div', { style: S2.row },
+            h('span', { style: S2.lbl }, 'Изделие'),
+            h('span', { style: { fontWeight: 500 } }, parsed.product)
+          ),
+          parsed.productSpecs && h('div', { style: S2.row },
+            h('span', { style: S2.lbl }, 'Характеристики'),
+            h('span', { style: { color: '#666', fontSize: 12 } }, parsed.productSpecs)
+          ),
+          h('div', { style: S2.row },
+            h('span', { style: S2.lbl }, 'Заказчик'),
+            h('span', null, parsed.customer || '—')
+          ),
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, paddingTop: 8 } },
+            h('div', null, h('div', { style: S2.lbl }, 'Количество'), h('div', { style: { fontWeight: 500 } }, `${parsed.productQty} шт`)),
+            h('div', null, h('div', { style: S2.lbl }, 'Срок'), h('div', { style: { fontWeight: 500, color: parsed.deadline ? RD2 : '#888' } }, parsed.deadline || '—'))
+          )
+        ),
+
+        // Комплектующие
+        parsed.components.length > 0 && h('div', { style: { marginBottom: 16 } },
+          h('div', { style: { fontSize: 11, color: '#888', textTransform: 'uppercase', marginBottom: 8 } },
+            `📦 Комплектующие (${parsed.components.length} поз.) — статус: ожидаются`
+          ),
+          h('div', { style: { border: '0.5px solid var(--border,#ddd)', borderRadius: 8, overflow: 'hidden' } },
+            h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 } },
+              h('thead', null, h('tr', { style: { background: 'var(--bg,#f5f5f2)' } },
+                ['Наименование', 'Код', 'Кол-во', 'Ед.'].map((t, i) =>
+                  h('th', { key: i, style: { ...S.th, fontSize: 11 } }, t)
+                )
+              )),
+              h('tbody', null, parsed.components.map((c, i) =>
+                h('tr', { key: i },
+                  h('td', { style: S.td }, c.name),
+                  h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 10, color: '#888' } }, c.code || '—'),
+                  h('td', { style: { ...S.td, textAlign: 'center' } }, c.qty),
+                  h('td', { style: { ...S.td, color: '#888' } }, c.unit)
+                )
+              ))
+            )
+          )
+        ),
+
+        // Что будет создано
+        h('div', { style: { padding: '10px 14px', background: GN3, borderRadius: 8, fontSize: 12, color: GN2, marginBottom: 16 } },
+          h('div', { style: { fontWeight: 500, marginBottom: 4 } }, '✓ Будет создано автоматически:'),
+          h('div', null, `· Заказ ${parsed.orderNumber}`),
+          h('div', null, `· ${(data.productionStages || []).length} производственных операций`),
+          parsed.components.length > 0 && h('div', null, `· ${parsed.components.length} комплектующих (статус: ожидаются)`),
+          h('div', { style: { marginTop: 4, color: AM2 } }, '⚠ Отгрузка будет заблокирована до получения всех комплектующих')
+        ),
+
+        // Кнопки
+        h('div', { style: { display: 'flex', gap: 8 } },
+          h('button', { style: { ...abtn({ flex: 1 }), fontSize: 14 }, onClick: handleCreate }, '✓ Создать заказ'),
+          h('button', { style: gbtn({ flex: 0 }), onClick: () => { setStep('upload'); setParsed(null); } }, '← Назад')
+        )
+      ),
+
+      // ШАГ 3: Готово
+      step === 'done' && h('div', { style: { textAlign: 'center', padding: 32 } },
+        h('div', { style: { fontSize: 48, marginBottom: 12 } }, '✅'),
+        h('div', { style: { fontSize: 16, fontWeight: 500 } }, 'Заказ создан!')
+      )
+    )
+  );
+});
+
+// ==================== OrderComponentsBlock ====================
+// Блок комплектующих в карточке заказа
+const OrderComponentsBlock = memo(({ order, data, onUpdate }) => {
+  const components = order.components || [];
+  const confirmed = components.filter(c => c.status === 'confirmed').length;
+  const allOk = confirmed === components.length;
+
+  const confirmComponent = async (compId) => {
+    if (!onUpdate) return;
+    const updated = {
+      ...data,
+      orders: data.orders.map(o => o.id === order.id ? {
+        ...o,
+        components: (o.components || []).map(c =>
+          c.id === compId ? { ...c, status: 'confirmed', confirmedAt: now() } : c
+        )
+      } : o)
+    };
+    await DB.save(updated);
+    onUpdate(updated);
+  };
+
+  const unconfirmComponent = async (compId) => {
+    if (!onUpdate) return;
+    const updated = {
+      ...data,
+      orders: data.orders.map(o => o.id === order.id ? {
+        ...o,
+        components: (o.components || []).map(c =>
+          c.id === compId ? { ...c, status: 'pending', confirmedAt: null } : c
+        )
+      } : o)
+    };
+    await DB.save(updated);
+    onUpdate(updated);
+  };
+
+  return h('div', { style: { padding: '14px 20px', borderBottom: '0.5px solid rgba(0,0,0,0.06)' } },
+    // Заголовок с прогрессом
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 } },
+      h('div', { style: S.sec }, `📦 Комплектующие`),
+      h('span', { style: {
+        padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 500,
+        background: allOk ? GN3 : AM3,
+        color: allOk ? GN2 : AM2
+      }}, allOk ? `✓ Все получены (${components.length})` : `${confirmed} / ${components.length}`)
+    ),
+
+    // Прогресс-бар
+    h('div', { style: { height: 4, background: '#f0ede8', borderRadius: 3, overflow: 'hidden', marginBottom: 12 } },
+      h('div', { style: { height: '100%', width: `${components.length > 0 ? confirmed/components.length*100 : 0}%`, background: allOk ? GN : AM, borderRadius: 3, transition: 'width .3s' } })
+    ),
+
+    // Если не подтверждены — предупреждение
+    !allOk && h('div', { style: { padding: '8px 12px', background: AM3, borderRadius: 8, marginBottom: 10, fontSize: 12, color: AM2, display: 'flex', alignItems: 'center', gap: 8 } },
+      h('span', { style: { fontSize: 16 } }, '⚠️'),
+      'Отгрузка заблокирована до получения всех комплектующих'
+    ),
+
+    // Таблица комплектующих
+    h('div', { className: 'table-responsive' },
+      h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 } },
+        h('thead', null, h('tr', null,
+          ['Наименование', 'Код', 'Кол-во', 'Ед.', 'Статус', ''].map((t, i) =>
+            h('th', { key: i, style: { ...S.th, fontSize: 11 } }, t)
+          )
+        )),
+        h('tbody', null, components.map(comp => {
+          const isConfirmed = comp.status === 'confirmed';
+          return h('tr', { key: comp.id, style: { background: isConfirmed ? GN3 : 'transparent' } },
+            h('td', { style: { ...S.td, fontWeight: 500, color: isConfirmed ? GN2 : 'var(--fg)' } }, comp.name),
+            h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 10, color: '#888' } }, comp.code || '—'),
+            h('td', { style: { ...S.td, textAlign: 'center' } }, comp.qty),
+            h('td', { style: { ...S.td, color: '#888' } }, comp.unit || 'шт'),
+            h('td', { style: S.td },
+              isConfirmed
+                ? h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 10, background: GN3, color: GN2, fontSize: 11, fontWeight: 500 } },
+                    '✓ Получено',
+                    comp.confirmedAt && h('span', { style: { fontSize: 10, opacity: 0.7 } }, new Date(comp.confirmedAt).toLocaleDateString('ru'))
+                  )
+                : h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 10, background: '#f0ede8', color: '#888', fontSize: 11 } },
+                    '⏳ Ожидается'
+                  )
+            ),
+            h('td', { style: { ...S.td, textAlign: 'right' } },
+              onUpdate && (
+                isConfirmed
+                  ? h('button', { style: gbtn({ fontSize: 10, padding: '3px 8px' }), onClick: () => unconfirmComponent(comp.id) }, '↩ Отменить')
+                  : h('button', { style: abtn({ fontSize: 10, padding: '3px 8px' }), onClick: () => confirmComponent(comp.id) }, '✓ Получено')
+              )
+            )
+          );
+        }))
+      )
+    )
+  );
+});
+
 // ==================== OrderDetailModal ====================
-const OrderDetailModal = memo(({ orderId, data, onClose }) => {
+const OrderDetailModal = memo(({ orderId, data, onClose, onUpdate }) => {
   // ── Все хуки ПЕРЕД любым условным return (Rules of Hooks) ──
 
   // O(n) сортировка через Map индексов этапов
@@ -644,6 +1065,9 @@ const OrderDetailModal = memo(({ orderId, data, onClose }) => {
               }))
             ))
       ),
+
+      // ── Комплектующие ──
+      (order.components || []).length > 0 && h(OrderComponentsBlock, { order, data, onUpdate }),
 
       // ── Себестоимость ──
       h('div', { style: { padding: '14px 20px', borderBottom: '0.5px solid rgba(0,0,0,0.06)' } },
@@ -1364,7 +1788,7 @@ function App() {
           effectiveRole === 'warehouse' && h(WarehouseScreen, { data, onUpdate: save, addToast }),
           effectiveRole === 'dashboard' && h(Dashboard, { data, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId })
         ),
-    selectedOrderId && h(OrderDetailModal, { orderId: selectedOrderId, data, onClose: () => setSelectedOrderId(null) }),
+    selectedOrderId && h(OrderDetailModal, { orderId: selectedOrderId, data, onUpdate: save, onClose: () => setSelectedOrderId(null) }),
     // 🌍 Глобальная карточка сотрудника — открывается из любого места системы
     selectedWorkerId && (() => {
       const worker = data.workers.find(w => w.id === selectedWorkerId);
