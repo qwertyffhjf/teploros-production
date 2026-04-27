@@ -193,7 +193,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
     if (stepIdx === 0) {
       const opName = linkedOp?.name || rec.operationName || '';
       const linkedWorkerIds = linkedOp?.workerIds || [];
-      const notInTeam = data.workers.filter(w => (w.status || 'working') === 'working' && !(d8.team || []).includes(w.id));
+      const notInTeam = data.workers.filter(w => isWorkerOnShift(w, data.timesheet) && !(d8.team || []).includes(w.id));
       // Группа 1: непосредственные исполнители операции
       const executors = notInTeam.filter(w => linkedWorkerIds.includes(w.id));
       // Группа 2: имеют допуск к этому типу операции
@@ -285,7 +285,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
       h('select', { ...inp, value: d8.correctiveOwner || '', onChange: e => saveD8(rec.id, 'correctiveOwner', e.target.value) },
         h('option', { value: '' }, '— назначить —'),
         h('option', { value: 'master' }, 'Начальник цеха'),
-        data.workers.filter(w => (w.status || 'working') === 'working').map(w => h('option', { key: w.id, value: w.id }, w.name))
+        data.workers.filter(w => isWorkerOnShift(w, data.timesheet)).map(w => h('option', { key: w.id, value: w.id }, w.name))
       ),
       lbl('Срок выполнения'),
       h('input', { type: 'date', ...inp, value: d8.correctiveDeadline || '', onChange: e => saveD8(rec.id, 'correctiveDeadline', e.target.value) })
