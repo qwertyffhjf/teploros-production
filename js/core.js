@@ -473,14 +473,17 @@ const getComponentsStatus = (order) => {
 
 // ==================== getWorkerStatusToday ====================
 // Единый источник истины — статус сотрудника из табеля за сегодня
-// Возвращает: 'working' | 'sick' | 'vacation' | 'absent'
+// Структура табеля: data.timesheet['YYYY-MM'][workerId][day]
+// Возвращает: 'working' | 'sick' | 'vacation' | 'absent' | null (нет записи)
 const getWorkerStatusToday = (workerId, timesheet) => {
-  const day = new Date().getDate();
-  const cell = timesheet?.[workerId]?.[day];
+  const now = new Date();
+  const day = now.getDate();
+  const tsKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const cell = timesheet?.[tsKey]?.[workerId]?.[day];
   if (!cell) return null; // нет записи в табеле
   if (cell.code === 'Б')                          return 'sick';
   if (cell.code === 'ОТ' || cell.code === 'ОЗ')  return 'vacation';
-  if (cell.code === 'К')                          return 'vacation'; // командировка
+  if (cell.code === 'К')                          return 'vacation';
   if (cell.code === 'НН')                         return 'absent';
   if (cell.code === 'У')                          return 'absent';
   if (cell.h > 0)                                 return 'working';
@@ -491,7 +494,6 @@ const getWorkerStatusToday = (workerId, timesheet) => {
 const isWorkerOnShift = (worker, timesheet) => {
   const fromTs = getWorkerStatusToday(worker.id, timesheet);
   if (fromTs !== null) return fromTs === 'working';
-  // Нет записи в табеле — смотрим w.status
   return (worker.status || 'working') === 'working';
 };
 
