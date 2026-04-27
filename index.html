@@ -1,217 +1,1538 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-  <meta name="theme-color" content="#EF9F27">
-  <meta name="mobile-web-app-capable" content="yes">
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23EF9F27'/%3E%3Ctext x='16' y='24' text-anchor='middle' font-family='system-ui' font-size='22' font-weight='600' fill='%23412402'%3Et%3C/text%3E%3C/svg%3E">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>Производственный учёт · НТ</title>
-  <link rel="manifest" href="manifest.json">
-  <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23EF9F27' width='100' height='100' rx='20'/><text x='50' y='68' font-size='50' text-anchor='middle' fill='%23412402'>НТ</text></svg>">
-  <!-- Google Analytics 4 — G-DYPZ3BJ7FX -->
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-DYPZ3BJ7FX"></script>
-  <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    gtag('js', new Date());
-    gtag('config', 'G-DYPZ3BJ7FX', {
-      page_title: 'teploros · НТ',
-      send_page_view: true
-    });
-  </script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-  <style>
-    *{box-sizing:border-box}
-    :root{
-      --fs-xs:11px;--fs-sm:12px;--fs-base:14px;--fs-md:15px;--fs-lg:17px;
-      --fw-normal:400;--fw-medium:500;
-      --r-sm:8px;--r-md:10px;--r-lg:12px;--r-xl:14px;
-      --bg:#f5f5f2;--fg:#1a1a18;--card:#fff;--border:rgba(0,0,0,.25);--border-soft:rgba(0,0,0,.08);--muted:#888;
+// teploros · master.js
+// Автоматически извлечено из монолита
+
+const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWorkerClick }) => {
+  const stagesList = useMemo(() => (data.productionStages || []).map(s => s.name)
+, [data.productionStages]);
+  const { ask: askConfirm, confirmEl } = useConfirm();
+  const [form, setForm] = useState({ orderId: '', name: '', workerIds: [], plannedHours: '', sectionId: '', equipmentId: '', plannedStartDate: '', drawingUrl: '' });
+  const [filt, setFilt] = useState('all');
+  const [editingId, setEditingId] = useState(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [showDone, setShowDone] = useState(false); // скрывать завершённые
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [opsFilterType, setOpsFilterType] = useState('');
+  const [selectedOps, setSelectedOps] = useState(new Set());
+  const opsProductTypes = data.settings?.productTypes || [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }];
+
+  const autoAssign = useCallback(() => {
+    if (!form.name) { addToast('Сначала выберите операцию', 'error'); return; }
+    const workerId = autoAssignWorker(data, form.name);
+    if (!workerId) { addToast('Не найден подходящий свободный сотрудник', 'error'); return; }
+    setForm(p => ({ ...p, workerIds: [...new Set([...p.workerIds, workerId])] }));
+    addToast(`Назначен сотрудник ${data.workers.find(w => w.id === workerId)?.name}`, 'success');
+  }, [data, form.name, addToast]);
+
+  const validate = () => {
+    const errors = {};
+    if (!form.orderId) errors.orderId = 'Выберите заказ';
+    if (!form.name.trim()) errors.name = 'Введите название операции';
+    if (form.plannedHours && (isNaN(form.plannedHours) || Number(form.plannedHours) <= 0)) errors.plannedHours = 'Плановое время должно быть положительным числом';
+    setFieldErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const resetForm = () => { setForm({ orderId: '', name: '', workerIds: [], plannedHours: '', sectionId: '', equipmentId: '', plannedStartDate: '', drawingUrl: '' }); setFieldErrors({}); setEditingId(null); };
+
+  const addOrUpdate = useCallback(async () => {
+    if (!validate()) return;
+    // Проверка компетенций назначенных рабочих
+    if (form.workerIds.length > 0 && form.name) {
+      const invalid = data.workers.filter(w => form.workerIds.includes(w.id) && w.competences && w.competences.length > 0 && !w.competences.includes(form.name));
+      if (invalid.length > 0) { addToast(`У ${invalid.map(w => w.name).join(', ')} нет допуска к «${form.name}»`, 'error'); return; }
     }
-    /* Системная тёмная тема */
-    @media (prefers-color-scheme: dark){
-      :root:not([data-theme="light"]){
-        --bg:#1a1a18;--fg:#e8e6e0;--card:#26262c;--border:rgba(255,255,255,.2);--border-soft:rgba(255,255,255,.08);--muted:#999;
+    if (editingId) {
+      const updatedOps = data.ops.map(o => o.id === editingId ? { ...o, orderId: form.orderId, name: form.name.trim(), workerIds: form.workerIds, plannedHours: form.plannedHours ? Number(form.plannedHours) : undefined, sectionId: form.sectionId || null, equipmentId: form.equipmentId || null, plannedStartDate: form.plannedStartDate ? new Date(form.plannedStartDate).getTime() : undefined, drawingUrl: form.drawingUrl.trim() || undefined } : o);
+      const d = { ...data, ops: updatedOps };
+      await DB.save(d); onUpdate(d); resetForm(); addToast('Операция обновлена', 'success');
+    } else {
+      const op = { id: uid(), orderId: form.orderId, name: form.name.trim(), workerIds: form.workerIds, status: 'pending', createdAt: now(), plannedHours: form.plannedHours ? Number(form.plannedHours) : undefined, archived: false, sectionId: form.sectionId || null, equipmentId: form.equipmentId || null, plannedStartDate: form.plannedStartDate ? new Date(form.plannedStartDate).getTime() : undefined, drawingUrl: form.drawingUrl.trim() || undefined, requiresQC: form.name.includes('свар') || form.name.includes('Опресовка') };
+      const d = { ...data, ops: [...data.ops, op] };
+      await DB.save(d); onUpdate(d); resetForm(); addToast('Операция добавлена', 'success');
+    }
+  }, [form, editingId, data, onUpdate, addToast]);
+
+  const del = useCallback(async (id) => {
+    if (!(await askConfirm({ message: 'Переместить операцию в архив?', danger: false }))) return;
+    let d = { ...data, ops: data.ops.map(o => o.id === id ? { ...o, archived: true } : o) };
+    d = logAction(d, 'op_archive', { opId: id, opName: data.ops.find(o => o.id === id)?.name });
+    await DB.save(d); onUpdate(d); addToast('Операция архивирована', 'info');
+  }, [data, onUpdate, addToast]);
+
+  const restore = useCallback(async (id) => {
+    const d = { ...data, ops: data.ops.map(o => o.id === id ? { ...o, archived: false } : o) };
+    await DB.save(d); onUpdate(d); addToast('Операция восстановлена', 'success');
+  }, [data, onUpdate, addToast]);
+
+  const assignWorkers = useCallback(async (opId, workerIds) => {
+    const op = data.ops.find(o => o.id === opId);
+    const invalidWorkers = data.workers.filter(w => workerIds.includes(w.id) && w.competences && w.competences.length > 0 && !w.competences.includes(op.name));
+    if (invalidWorkers.length > 0) { addToast(`У следующих сотрудников нет компетенции: ${invalidWorkers.map(w => w.name).join(', ')}`, 'error'); return; }
+    
+    const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, workerIds } : o) };
+    await DB.save(d); onUpdate(d); addToast('Исполнители изменены', 'info');
+  }, [data, onUpdate, addToast]);
+
+  const toggleOpSelection = (opId) => {
+    const newSelected = new Set(selectedOps);
+    if (newSelected.has(opId)) {
+      newSelected.delete(opId);
+    } else {
+      newSelected.add(opId);
+    }
+    setSelectedOps(newSelected);
+  };
+
+  const selectAllVisible = () => {
+    if (selectedOps.size === opsToShow.length) {
+      setSelectedOps(new Set());
+    } else {
+      setSelectedOps(new Set(opsToShow.map(op => op.id)));
+    }
+  };
+
+  const deleteSelected = async () => {
+    if (selectedOps.size === 0) return;
+    const d = { ...data, ops: data.ops.filter(op => !selectedOps.has(op.id)) };
+    await DB.save(d); onUpdate(d); setSelectedOps(new Set()); addToast(`Удалено ${selectedOps.size} операций`, 'success');
+  };
+
+  const hideSelected = async () => {
+    if (selectedOps.size === 0) return;
+    const d = { ...data, ops: data.ops.map(op => selectedOps.has(op.id) ? { ...op, hiddenFromFeed: true } : op) };
+    await DB.save(d); onUpdate(d); setSelectedOps(new Set()); addToast(`Скрыто ${selectedOps.size} операций`, 'info');
+  };
+
+  const archiveSelected = async () => {
+    if (selectedOps.size === 0) return;
+    const d = { ...data, ops: data.ops.map(op => selectedOps.has(op.id) ? { ...op, archived: true } : op) };
+    await DB.save(d); onUpdate(d); setSelectedOps(new Set()); addToast(`Архивировано ${selectedOps.size} операций`, 'info');
+  };
+
+  const edit = useCallback(op => {
+    setForm({ orderId: op.orderId, name: op.name, workerIds: op.workerIds || [], plannedHours: op.plannedHours || '', sectionId: op.sectionId || '', equipmentId: op.equipmentId || '', plannedStartDate: op.plannedStartDate ? new Date(op.plannedStartDate).toISOString().slice(0,16) : '', drawingUrl: op.drawingUrl || '' });
+    setEditingId(op.id);
+  }, []);
+
+  const opsToShow = useMemo(() => {
+    let filtered = data.ops.filter(o => showArchived ? true : !o.archived);
+    // Фильтр по типу продукции (через заказ)
+    if (opsFilterType) {
+      const typeOrderIds = new Set(data.orders.filter(o => o.productType === opsFilterType).map(o => o.id));
+      filtered = filtered.filter(o => typeOrderIds.has(o.orderId));
+    }
+    if (filt === 'active') filtered = filtered.filter(o => o.status === 'in_progress');
+    else if (filt === 'pending') filtered = filtered.filter(o => o.status === 'pending');
+    else if (filt === 'issues') filtered = filtered.filter(o => o.status === 'defect' || o.status === 'rework');
+    else if (filt === 'on_check') filtered = filtered.filter(o => o.status === 'on_check');
+    else if (filt === 'done') filtered = filtered.filter(o => o.status === 'done');
+    else if (filt !== 'all') filtered = filtered.filter(o => o.orderId === filt);
+    // Скрываем завершённые если не включён showDone и не стоит фильтр 'done'
+    if (!showDone && filt !== 'done') {
+      filtered = filtered.filter(o => o.status !== 'done' && !o.hiddenFromFeed);
+    }
+    return filtered;
+  }, [data.ops, data.orders, filt, showArchived, opsFilterType, showDone]);
+
+  const paginated = useMemo(() => { const start = (page-1)*pageSize; return opsToShow.slice(start, start+pageSize); }, [opsToShow, page]);
+  useEffect(() => { setPage(1); }, [filt, showArchived]);
+  
+  // 🔥 Горячая клавиша Delete для удаления выбранных операций
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Delete' && selectedOps.size > 0) {
+        e.preventDefault();
+        deleteSelected();
       }
-    }
-    /* Принудительная тёмная тема */
-    [data-theme="dark"]{
-      --bg:#1a1a18;--fg:#e8e6e0;--card:#26262c;--border:rgba(255,255,255,.2);--border-soft:rgba(255,255,255,.08);--muted:#999;
-    }
-    /* Принудительная светлая тема */
-    [data-theme="light"]{
-      --bg:#f5f3ef;--fg:#1a1a18;--card:#ffffff;--border:rgba(0,0,0,.15);--border-soft:rgba(0,0,0,.08);--muted:#666;
-    }
-    body{margin:0;padding:16px;font-family:system-ui,sans-serif;background:var(--bg);color:var(--fg);-webkit-text-size-adjust:100%}
-    input,select,textarea,button{font-family:inherit}
-    input,select,textarea{font-size:16px;background:var(--card);color:var(--fg);border:.5px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;outline:none;width:100%}
-    button{cursor:pointer;border-radius:var(--r-sm);font-size:14px;font-weight:500;padding:10px 16px;background:transparent;border:.5px solid var(--border);color:var(--fg);min-height:44px}
-    button:disabled{opacity:.4;cursor:not-allowed}
-    button:active:not(:disabled){opacity:.85;transform:scale(0.98)}
-    #root{max-width:1200px;margin:0 auto}
-    .deadline-warning{color:#E24B4A;font-weight:500;margin-left:4px}
-    .priority-critical{color:#E24B4A;font-weight:700}
-    .priority-high{color:#EF9F27;font-weight:600}
-    .priority-medium{color:#378ADD}
-    .toast{position:fixed;bottom:calc(20px + env(safe-area-inset-bottom,0px));right:20px;left:20px;background:#333;color:#fff;padding:12px 20px;border-radius:var(--r-md);z-index:1000;animation:slideIn .3s;font-size:14px}
-    @keyframes slideIn{from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1}}
-    .error-message{color:#E24B4A;font-size:11px;margin-top:2px}
-    .pagination{display:flex;gap:8px;justify-content:center;margin-top:12px;align-items:center;flex-wrap:wrap}
-    .notification-badge{background:#E24B4A;color:#fff;border-radius:50%;padding:2px 6px;font-size:10px;margin-left:4px}
-    .gantt-container{overflow-x:auto;background:#fff;border-radius:var(--r-sm);padding:12px;-webkit-overflow-scrolling:touch}
-    .gantt-row{display:flex;border-bottom:1px solid #eee}
-    .gantt-label{width:150px;flex-shrink:0;padding:8px;font-weight:500;background:#f8f8f5;border-right:1px solid #eee}
-    .gantt-timeline{display:flex;flex:1;position:relative;min-height:50px}
-    .gantt-cell{flex:1;border-left:1px solid #f0f0f0;text-align:center;font-size:10px;color:#888;padding-top:4px}
-    .gantt-bar{position:absolute;background:#EF9F27;border-radius:4px;padding:2px 4px;font-size:10px;color:#412402;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
-    .worker-calendar-table{border-collapse:collapse;width:100%;font-size:12px}
-    .worker-calendar-table th,.worker-calendar-table td{border:1px solid #ddd;padding:6px 4px;text-align:center}
-    .worker-calendar-table th{background:#f8f8f5;font-weight:500}
-    .worker-cell{background:#fff}
-    .worker-cell.overload{background:#fcebeb;color:#e24b4a;font-weight:500}
-    .worker-cell.vacation{background:#e6f1fb;color:#042c53}
-    .worker-cell.sick{background:#fcebeb;color:#e24b4a}
-    .checkbox-group{display:flex;flex-wrap:wrap;gap:8px;max-height:120px;overflow-y:auto;border:.5px solid rgba(0,0,0,.15);border-radius:var(--r-sm);padding:8px;background:#fff}
-    .checkbox-group label{display:flex;align-items:center;gap:4px;font-size:13px;min-height:36px}
-    .report-builder{background:#fff;border-radius:var(--r-lg);padding:16px;margin-bottom:16px}
-    .chart-container{background:#fff;border-radius:var(--r-lg);padding:16px;margin-bottom:16px}
-    canvas{max-height:300px;width:100%}
-    .table-responsive{overflow-x:auto;-webkit-overflow-scrolling:touch}
-    @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(1.3)}}
-    .empty-state{text-align:center;padding:32px 16px;color:#888;font-size:14px}
-    .tabs-scroll{display:flex;gap:0;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none}
-    .tabs-scroll::-webkit-scrollbar{display:none}
-    .tabs-scroll button{flex-shrink:0;white-space:nowrap}
-    .modal-content{background:#fff;border-radius:var(--r-lg);padding:24px;width:min(680px, calc(100vw - 32px));max-height:85vh;overflow-y:auto}
-    .metrics-grid{display:grid;gap:10px;margin-bottom:16px}
-    /* Кнопки рабочего — сверхкрупные */
-    .worker-btn{display:block;width:100%;border:none;border-radius:var(--r-xl);cursor:pointer;font-weight:500;font-family:inherit;transition:opacity .12s,transform .1s}
-    .worker-btn:active{opacity:.87;transform:scale(0.985)}
-    .worker-btn-start{padding:22px 16px;font-size:18px;background:#EF9F27;color:#412402;min-height:68px}
-    .worker-btn-stop{padding:22px 16px;font-size:18px;background:#E24B4A;color:#fff;min-height:68px}
-    .worker-btn-defect{padding:18px 12px;font-size:15px;background:#FCEBEB;color:#791F1F;border:0.5px solid #F09595;border-radius:var(--r-lg);min-height:58px;cursor:pointer;font-family:inherit;font-weight:500;flex:1}
-    .worker-btn-pause{padding:16px;font-size:14px;background:#fff;color:#666;border:0.5px solid rgba(0,0,0,0.18);border-radius:var(--r-lg);min-height:52px;cursor:pointer;font-family:inherit;font-weight:500;width:100%}
-    @media(max-width:600px){
-      body{padding:8px;padding-bottom:calc(8px + env(safe-area-inset-bottom,0px))}
-      .metrics-grid{grid-template-columns:repeat(2,1fr)!important}
-      .m-card{padding:12px!important;margin-bottom:8px!important}
-      .modal-content{width:100vw!important;max-height:100vh!important;border-radius:0!important;padding:16px!important;margin:0!important}
-      table{font-size:11px}
-      th,td{padding:6px 4px!important}
-      .form-row{flex-direction:column!important}
-      .form-row>div{min-width:0!important;width:100%!important}
-      .header-bar{padding:6px 0!important;gap:8px!important}
-      .header-bar button{font-size:12px!important;padding:6px 10px!important;min-height:40px!important}
-      .action-btns{flex-direction:column!important}
-      .action-btns button{width:100%!important}
-      .tab-groups{gap:4px!important}
-      .tab-groups button{font-size:11px!important;padding:6px 10px!important;min-height:40px}
-      .forecast-grid{grid-template-columns:repeat(4,1fr)!important}
-      .kanban-col{flex:0 0 120px!important}
-      .toast{left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px))}
-    }
-    @media(min-width:601px) and (max-width:900px){
-      body{padding:12px}
-      .metrics-grid{grid-template-columns:repeat(3,1fr)!important}
-      .forecast-grid{grid-template-columns:repeat(7,1fr)!important}
-    }
-    @media(min-width:901px){
-      .metrics-grid{grid-template-columns:repeat(5,1fr)!important}
-      .forecast-grid{grid-template-columns:repeat(7,1fr)!important}
-    }
-    
-    /* ══════ MOBILE & DARK THEME IMPROVEMENTS ══════ */
-    /* Typography hierarchy */
-    h1, .h1{font-size:20px;font-weight:700;line-height:1.3;margin:0}
-    h2, .h2{font-size:16px;font-weight:600;line-height:1.3;margin:0}
-    h3, .h3{font-size:14px;font-weight:600;line-height:1.4;margin:0}
-    h4, .h4{font-size:12px;font-weight:500;line-height:1.4;text-transform:uppercase;color:var(--muted);margin:0}
-    
-    /* Safe area for notches (iPhone, Android) */
-    @supports(padding-top:max(0px)){
-      body{padding-top:max(16px, env(safe-area-inset-top, 0px))}
-      .header-safe{padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
-    }
-    
-    /* Input min-size for touch */
-    input[type="checkbox"], input[type="radio"]{min-height:24px;min-width:24px}
-    
-    /* Better dark mode for interactive elements */
-    @media(prefers-color-scheme:dark){
-      input,select,textarea{background:var(--card);border-color:var(--border)}
-      button{background:transparent;color:var(--fg);border-color:var(--border)}
-      .modal-content{background:var(--card)}
-      .gantt-container{background:var(--card)}
-      .checkbox-group{background:var(--card);border-color:var(--border)}
-      .worker-btn-pause{background:var(--card);color:var(--fg);border-color:var(--border)}
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedOps]);
 
-      /* Таблица операций */
-      table td, table th { color: var(--fg) !important; }
-      table tr { border-color: var(--border-soft) !important; }
-      table tbody tr:hover { background: rgba(255,255,255,0.04) !important; }
+  return h('div', null,
+    confirmEl,
+    !editingId && h(PasteImportWidget, { addToast, hint: 'Вставить операции из Excel',
+      columns: [
+        { key: 'orderNumber',  label: 'Номер заказа', required: true },
+        { key: 'name',         label: 'Операция',     required: true },
+        { key: 'plannedHours', label: 'План, ч',       required: false, default: '' },
+      ],
+      onImport: async (rows) => {
+        const orderMap = {};
+        data.orders.forEach(o => { orderMap[o.number.toLowerCase()] = o.id; });
+        let added = 0;
+        let newOps = [...data.ops];
+        rows.forEach(r => {
+          const orderId = orderMap[r.orderNumber?.toLowerCase()];
+          if (!orderId || !r.name) return;
+          newOps.push({ id: uid(), orderId, name: r.name, status: 'pending',
+            workerIds: [], plannedHours: Number(r.plannedHours) || undefined,
+            sectionId: '', equipmentId: '', drawingUrl: '', createdAt: now() });
+          added++;
+        });
+        if (!added) { addToast('Не найдено подходящих операций (проверьте номера заказов)', 'error'); return; }
+        const d = { ...data, ops: newOps };
+        await DB.save(d); onUpdate(d); addToast(`Добавлено операций: ${added}`, 'success');
+      }}),
+    // Форма создания/редактирования операции
+    h('div', { style: S.card },
+      h('div', { style: S.sec }, editingId ? '📝 Редактировать операцию' : 'Создать операцию'),
+      h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
+        !editingId && h('div', { style: { minWidth: 150 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.orderId, onChange: e => setForm(p => ({ ...p, orderId: e.target.value })) }, h('option', { value: '' }, '— заказ —'), data.orders.map(o => h('option', { key: o.id, value: o.id }, o.number))), fieldErrors.orderId && h('div', { className: 'error-message' }, fieldErrors.orderId)),
+        h('div', { style: { flex: 1, minWidth: 160 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })) }, h('option', { value: '' }, '— операция —'), stagesList.map(stage => h('option', { key: stage, value: stage }, stage))), fieldErrors.name && h('div', { className: 'error-message' }, fieldErrors.name)),
+        h('div', { style: { minWidth: 200 } },
+          h('div', { style: { fontSize: 10, color: '#888', marginBottom: 4 } }, 'Исполнители'),
+          h('div', { className: 'checkbox-group', style: { display: 'flex', flexDirection: 'column', gap: 6 } }, (() => {
+            const allWorkers = data.workers.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet));
+            // Сортировка: 1) Есть нужная компетенция, 2) Без ограничений, 3) Нет компетенции
+            const hasComp = allWorkers.filter(w => form.name && w.competences?.length > 0 && w.competences.includes(form.name));
+            const noRestriction = allWorkers.filter(w => !w.competences || w.competences.length === 0);
+            const noComp = allWorkers.filter(w => form.name && w.competences?.length > 0 && !w.competences.includes(form.name));
+            const sorted = [...hasComp, ...noRestriction, ...noComp];
+            return sorted.map(w => {
+              const isSelected = form.workerIds.includes(w.id);
+              const hasRelevantComp = form.name && w.competences?.includes(form.name);
+              const noCompRestriction = !w.competences || w.competences.length === 0;
+              const notQualified = form.name && w.competences?.length > 0 && !w.competences.includes(form.name);
+              return h('span', { key: w.id,
+                style: {
+                  padding: '6px 10px',
+                  borderRadius: 6,
+                  cursor: notQualified ? 'not-allowed' : 'pointer',
+                  background: isSelected ? AM3 : notQualified ? '#fafafa' : '#f5f5f5',
+                  color: isSelected ? AM2 : notQualified ? '#ccc' : '#666',
+                  fontSize: 13,
+                  fontWeight: isSelected ? 500 : 400,
+                  border: isSelected ? `1.5px solid ${AM}` : notQualified ? '1px solid #eee' : '1px solid #ddd',
+                  userSelect: 'none',
+                  opacity: notQualified ? 0.5 : 1,
+                },
+                title: hasRelevantComp ? `✓ Допущен к "${form.name}"` : noCompRestriction ? 'Без ограничений по компетенциям' : `Нет допуска к "${form.name}"`,
+                onClick: () => {
+                  if (notQualified) return;
+                  if (isSelected) setForm(p => ({ ...p, workerIds: p.workerIds.filter(id => id !== w.id) }));
+                  else setForm(p => ({ ...p, workerIds: [...p.workerIds, w.id] }));
+                }
+              }, isSelected ? '✓ ' : hasRelevantComp ? '★ ' : '', w.name);
+            });
+          })()),
+          h('button', { style: gbtn({ marginTop: 4, fontSize: 11, padding: '4px 8px' }), onClick: autoAssign }, '🤖 Подобрать')
+        ),
+        h('div', { style: { minWidth: 100 } },
+          h('input', { type: 'number', step: '0.1', style: { ...S.inp, width: '100%' }, placeholder: 'План, ч', value: form.plannedHours, onChange: e => setForm(p => ({ ...p, plannedHours: e.target.value })) }),
+          (() => {
+            const norm = data.opNorms?.[form.name];
+            if (!norm || norm.samples < 2) return null;
+            const suggested = Math.round(norm.totalMs / norm.samples / 3600000 * 10) / 10;
+            return h('div', { style: { fontSize: 10, color: AM4, marginTop: 2, cursor: 'pointer' }, onClick: () => setForm(p => ({ ...p, plannedHours: String(suggested) })) },
+              `↑ норма ${suggested}ч (${norm.samples} оп.)`
+            );
+          })()
+        ),
+        h('div', { style: { minWidth: 140 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Ссылка на чертёж', value: form.drawingUrl, onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value })) })),
+        h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, editingId ? '✓' : '+'),
+        editingId && h('button', { type: 'button', style: gbtn(), onClick: () => resetForm() }, 'Отмена')
+      )
+    ),
+    // Фильтр по типу продукции
+    h('div', { style: { display: 'flex', gap: 4, marginBottom: 8 } },
+      h('button', { style: !opsFilterType ? abtn({ fontSize: 11, padding: '4px 12px' }) : gbtn({ fontSize: 11, padding: '4px 12px' }), onClick: () => setOpsFilterType('') }, 'Все'),
+      opsProductTypes.map(pt => h('button', { key: pt.id, style: opsFilterType === pt.id ? abtn({ fontSize: 11, padding: '4px 12px' }) : gbtn({ fontSize: 11, padding: '4px 12px' }), onClick: () => setOpsFilterType(pt.id) }, pt.label))
+    ),
+    h('div', { style: { display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' } },
+      [['all','Все'],['pending','Ожидают'],['active','В работе'],['on_check','На контроле'],['issues','Проблемы']].map(([id,l]) => h('button', { key: id, style: filt === id ? abtn() : gbtn(), onClick: () => setFilt(id) }, l)),
+      h('button', {
+        style: filt === 'done' ? { ...abtn({ fontSize: 12 }), background: GN, borderColor: GN } : gbtn({ fontSize: 12 }),
+        onClick: () => { setFilt(filt === 'done' ? 'all' : 'done'); if (filt !== 'done') setShowDone(true); }
+      }, `✓ Завершённые (${data.ops.filter(o => o.status === 'done' && !o.archived).length})`),
+      data.orders.filter(o => !o.archived).map(o => h('button', { key: o.id, style: filt === o.id ? abtn({ fontSize: 10 }) : gbtn({ fontSize: 10 }), onClick: () => setFilt(o.id) }, o.number)),
+      h('div', { style: { marginLeft: 'auto', display: 'flex', gap: 12, alignItems: 'center' } },
+        h('label', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer' } },
+          h('input', { type: 'checkbox', checked: showDone, onChange: e => setShowDone(e.target.checked) }), 'Показать завершённые'
+        ),
+        h('label', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer' } },
+          h('input', { type: 'checkbox', checked: showArchived, onChange: e => setShowArchived(e.target.checked) }), 'Архивные'
+        )
+      )
+    ),
+    // 🎯 Контролы для пакетного удаления
+    selectedOps.size > 0 && h('div', { style: { display: 'flex', gap: 8, marginBottom: 12, padding: '10px 14px', background: AM3, border: `1px solid ${AM}`, borderRadius: 8, alignItems: 'center', flexWrap: 'wrap' } },
+      h('span', { style: { fontSize: 13, color: AM2, fontWeight: 600 } }, `✓ Выбрано: ${selectedOps.size}`),
+      h('button', { style: gbtn({ fontSize: 12, padding: '6px 14px' }), onClick: hideSelected }, '👁 Скрыть'),
+      h('button', { style: gbtn({ fontSize: 12, padding: '6px 14px' }), onClick: archiveSelected }, '📁 Архивировать'),
+      h('button', { style: { ...gbtn({ fontSize: 12, padding: '6px 14px' }), color: RD2, borderColor: RD }, onClick: deleteSelected }, '🗑 Удалить'),
+      h('button', { style: gbtn({ fontSize: 12, padding: '6px 14px' }), onClick: () => setSelectedOps(new Set()) }, '✕ Отмена')
+    ),
 
-      /* Исполнители в строке операции */
-      details summary { color: #EF9F27 !important; }
-      details > div > div { background: var(--card) !important; color: var(--fg) !important; border-color: var(--border) !important; }
+    paginated.length === 0
+      ? h('div', { style: { ...S.card, textAlign: 'center' } }, 'Нет операций')
+      : h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+          h('thead', null, h('tr', null, [h('th', { style: { ...S.th, width: 44, textAlign: 'center', padding: '8px 4px' } }, h('input', { type: 'checkbox', style: { width: 18, height: 18, cursor: 'pointer' }, checked: selectedOps.size === opsToShow.length && opsToShow.length > 0, onChange: selectAllVisible, title: 'Выбрать все' })), ...['ID','Операция','Заказ','Исполнители','Участок','Оборуд.','План, ч','План. старт','Чертёж','Статус','Время',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t))])),
+          h('tbody', null, paginated.map(op => {
+            const ord = data.orders.find(o => o.id === op.orderId);
+            const section = data.sections.find(s => s.id === op.sectionId);
+            const eq = data.equipment.find(e => e.id === op.equipmentId);
+            const dur = op.startedAt && op.finishedAt ? fmtDur(op.finishedAt - op.startedAt) : op.startedAt ? fmtDur(now() - op.startedAt) + ' ↻' : '—';
+            const rowOpacity = (op.status === 'done' || op.hiddenFromFeed) ? 0.45 : 1;
+            return [h('tr', { key: op.id, style: { background: op.archived ? 'var(--border-soft,#eee)' : (op.status === 'defect' ? RD3 : op.status === 'rework' ? AM3 : op.status === 'on_check' ? '#E1F5FE' : op.status === 'done' ? GN3 : editingId === op.id ? AM3 : 'transparent'), cursor: 'pointer', opacity: rowOpacity }, onClick: () => toggleOpSelection(op.id) },
+              h('td', { style: { ...S.td, width: 44, textAlign: 'center', padding: '8px 4px' }, onClick: e => e.stopPropagation() },
+              h('input', { type: 'checkbox', style: { width: 18, height: 18, cursor: 'pointer', accentColor: AM }, checked: selectedOps.has(op.id), onChange: () => toggleOpSelection(op.id) })
+            ),
+              h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 10 } }, op.id),
+              h('td', { style: { ...S.td, fontWeight: 500 }, title: [
+                op.name,
+                op.defectNote ? '⚠ ' + op.defectNote : null,
+                op.plannedHours ? 'Плановое время: ' + op.plannedHours + ' ч' : null,
+                op.sectionId ? 'Участок: ' + (data.sections.find(s=>s.id===op.sectionId)?.name||'') : null,
+              ].filter(Boolean).join('\n') },
+              op.name,
+              op.defectNote && h('div', { style: { fontSize: 10, color: RD } }, op.defectNote)),
+              h('td', { style: { ...S.td, fontSize: 11 } },
+                onOrderClick && ord
+                  ? h('span', { style: { color: AM, fontWeight: 500, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => onOrderClick(ord.id), title: 'Открыть карточку заказа' }, ord.number)
+                  : h('span', { style: { color: AM } }, ord?.number || '—')
+              ),
+              h('td', { style: { ...S.td, minWidth: 120 } },
+                (op.workerIds || []).length > 0 && h('div', { style: { display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 4 } },
+                  (op.workerIds || []).map(wid => {
+                    const w = data.workers.find(w => w.id === wid);
+                    return w ? h('span', { key: wid, style: { display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', fontSize: 10, background: AM3, color: AM2, borderRadius: 6 } },
+                      h(WN, { workerId: wid, data, onWorkerClick, style: { fontSize: 11 } }),
+                      !op.archived && h('span', { style: { cursor: 'pointer', fontWeight: 500, marginLeft: 2 }, onClick: () => assignWorkers(op.id, (op.workerIds || []).filter(id => id !== wid)) }, '×')
+                    ) : null;
+                  })
+                ),
+                !op.archived && h('details', { style: { fontSize: 10 } },
+                  h('summary', { style: { cursor: 'pointer', color: AM, userSelect: 'none', padding: '2px 0', fontWeight: 500 } }, '➕ Добавить'),
+                  h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, padding: '6px 0', maxHeight: 200, overflowY: 'auto' } },
+                    (() => {
+                      const available = data.workers.filter(w => !w.archived && !(op.workerIds || []).includes(w.id));
+                      const withPermit  = available.filter(w => (w.competences || []).includes(op.name));
+                      const noRestrict  = available.filter(w => !w.competences || w.competences.length === 0);
+                      const noPermit    = available.filter(w => w.competences?.length > 0 && !w.competences.includes(op.name));
+                      const mkRow = (w, badge) => h('div', { key: w.id,
+                        style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 8px', borderRadius: 6, cursor: 'pointer', background: 'var(--card,#f5f5f2)', border: '0.5px solid var(--border,#ddd)', fontSize: 11, userSelect: 'none', color: 'var(--fg,#222)' },
+                        onClick: () => assignWorkers(op.id, [...(op.workerIds || []), w.id])
+                      },
+                        h('span', null, h('span', { style: { color: GN, fontWeight: 600, marginRight: 4 } }, '+'), w.name),
+                        badge
+                      );
+                      return [
+                        withPermit.length > 0 && h('div', { key: 'g1', style: { fontSize: 10, color: GN2, fontWeight: 500, padding: '4px 0 2px', borderBottom: `1px solid var(--border-soft,#eee)`, marginBottom: 2 } }, `★ Есть допуск (${withPermit.length})`),
+                        ...withPermit.map(w => mkRow(w, h('span', { style: { fontSize: 9, background: GN3, color: GN2, padding: '1px 5px', borderRadius: 4 } }, '✓ допуск'))),
+                        noRestrict.length > 0 && h('div', { key: 'g2', style: { fontSize: 10, color: '#888', padding: '4px 0 2px', borderBottom: `1px solid var(--border-soft,#eee)`, marginBottom: 2, marginTop: 4 } }, `Без ограничений (${noRestrict.length})`),
+                        ...noRestrict.map(w => mkRow(w, h('span', { style: { fontSize: 9, background: 'var(--card,#f0f0f0)', color: '#888', padding: '1px 5px', borderRadius: 4 } }, 'любые'))),
+                        noPermit.length > 0 && h('div', { key: 'g3', style: { fontSize: 10, color: RD2, padding: '4px 0 2px', borderBottom: `1px solid var(--border-soft,#eee)`, marginBottom: 2, marginTop: 4 } }, `Нет допуска (${noPermit.length})`),
+                        ...noPermit.map(w => mkRow(w, h('span', { style: { fontSize: 9, background: RD3, color: RD2, padding: '1px 5px', borderRadius: 4 } }, '✕ нет')))
+                      ];
+                    })()
+                  )
+                )
+              ),
+              h('td', { style: { ...S.td, fontSize: 11 } }, section?.name || '—'),
+              h('td', { style: { ...S.td, fontSize: 11 } }, eq?.name || '—'),
+              h('td', { style: { ...S.td, textAlign: 'center' } }, op.plannedHours || '—'),
+              h('td', { style: { ...S.td, fontSize: 11 } }, op.plannedStartDate ? new Date(op.plannedStartDate).toLocaleString() : '—'),
+              h('td', { style: { ...S.td, fontSize: 11 } }, op.drawingUrl ? h('a', { href: op.drawingUrl, target: '_blank', rel: 'noopener', style: { color: BL, textDecoration: 'none' } }, '📐') : '—'),
+              h('td', { style: S.td }, h(Badge, { st: op.status })),
+              h('td', { style: { ...S.td, fontFamily: 'monospace' } }, dur),
+              h('td', { style: S.td },
+                h('div', { style: { display: 'flex', gap: 4 } },
+                  !op.archived ? [
+                    h('button', { key: 'qr', style: gbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => onShowQR(op, data.workers.find(w => w.id === op.workerIds?.[0])) }, 'QR'),
+                    h('button', { key: 'edit', style: (editingId === op.id ? abtn : gbtn)({ fontSize: 11, padding: '4px 8px' }), onClick: () => editingId === op.id ? resetForm() : edit(op) }, editingId === op.id ? '✕' : '✎'),
+                    editingId !== op.id && h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => del(op.id) }, '✕')
+                  ] : h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => restore(op.id) }, '↩')
+                )
+              )
+            ),
+            // Inline-редактирование — карточка под строкой
+            editingId === op.id && h('tr', { key: op.id + '_edit' },
+              h('td', { colSpan: 12, style: { padding: '10px', background: AM3, borderBottom: `2px solid ${AM}` } },
+                h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' } },
+                  h('div', { style: { minWidth: 140 } }, h('div', { style: S.lbl }, 'Операция'), h('select', { style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })) }, stagesList.map(s => h('option', { key: s, value: s }, s)))),
+                  h('div', { style: { minWidth: 100 } }, h('div', { style: S.lbl }, 'Участок'), h('select', { style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.sectionId, onChange: e => setForm(p => ({ ...p, sectionId: e.target.value })) }, h('option', { value: '' }, '—'), data.sections.map(s => h('option', { key: s.id, value: s.id }, s.name)))),
+                  h('div', { style: { minWidth: 100 } }, h('div', { style: S.lbl }, 'Оборудов.'), h('select', { style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.equipmentId, onChange: e => setForm(p => ({ ...p, equipmentId: e.target.value })) }, h('option', { value: '' }, '—'), data.equipment.map(eq => h('option', { key: eq.id, value: eq.id }, eq.name)))),
+                  h('div', { style: { minWidth: 80 } }, h('div', { style: S.lbl }, 'План, ч'), h('input', { type: 'number', step: '0.1', style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.plannedHours, onChange: e => setForm(p => ({ ...p, plannedHours: e.target.value })) })),
+                  h('div', { style: { minWidth: 130 } }, h('div', { style: S.lbl }, 'План. старт'), h('input', { type: 'datetime-local', style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.plannedStartDate, onChange: e => setForm(p => ({ ...p, plannedStartDate: e.target.value })) })),
+                  h('div', { style: { minWidth: 130 } }, h('div', { style: S.lbl }, 'Чертёж'), h('input', { style: { ...S.inp, width: '100%', fontSize: 11 }, placeholder: 'URL', value: form.drawingUrl, onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value })) })),
+                  h('button', { style: abtn({ padding: '7px 16px' }), onClick: addOrUpdate }, '✓ Сохранить'),
+                  h('button', { style: gbtn({ padding: '7px 12px' }), onClick: resetForm }, 'Отмена')
+                )
+              )
+            )];
+          }))
+        ))),
+    h('div', { className: 'pagination' },
+      h('button', { style: gbtn({ opacity: page === 1 ? 0.4 : 1 }), disabled: page === 1, onClick: () => setPage(p => Math.max(1, p-1)) }, '← Пред'),
+      h('span', { style: { fontSize: 12 } }, `${page} / ${Math.ceil(opsToShow.length / pageSize) || 1}`),
+      h('button', { style: gbtn({ opacity: page >= Math.ceil(opsToShow.length / pageSize) ? 0.4 : 1 }), disabled: page >= Math.ceil(opsToShow.length / pageSize), onClick: () => setPage(p => p+1) }, 'След →')
+    )
+  );
+});
 
-      /* Панель выбранных операций */
-      .selected-ops-panel { background: rgba(239,159,39,0.15) !important; border-color: #EF9F27 !important; }
+// ==================== MasterOrders ====================
+// ==================== Редактор зависимостей операций ====================
+const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) => {
+  const order = data.orders.find(o => o.id === orderId);
+  const ops = useMemo(() => data.ops.filter(op => op.orderId === orderId && !op.archived), [data.ops, orderId]);
 
-      /* Карточки (.card в JS) */
-      .dark-card { background: var(--card) !important; border-color: var(--border) !important; }
+  const toggleDep = useCallback(async (opId, depId) => {
+    const op = ops.find(o => o.id === opId);
+    if (!op) return;
+    const deps = op.dependsOn || [];
+    const newDeps = deps.includes(depId) ? deps.filter(d => d !== depId) : [...deps, depId];
+    // Проверка циклов
+    const checkCycle = (target, visited = new Set()) => {
+      if (visited.has(target)) return true;
+      visited.add(target);
+      const t = ops.find(o => o.id === target);
+      return (t?.dependsOn || []).some(d => d === opId || checkCycle(d, visited));
+    };
+    if (!deps.includes(depId) && checkCycle(depId)) {
+      addToast('Нельзя: циклическая зависимость', 'error'); return;
     }
-    
-    /* Responsive header */
-    @media(max-width:600px){
-      h1, .h1{font-size:18px}
-      h2, .h2{font-size:14px}
-      h3, .h3{font-size:12px}
+    const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, dependsOn: newDeps.length > 0 ? newDeps : undefined } : o) };
+    await DB.save(d); onUpdate(d);
+  }, [data, ops, onUpdate, addToast, orderId]);
+
+  // Автоустановка: все последовательно
+  const setAllSequential = useCallback(async () => {
+    const sorted = [...ops];
+    const updated = data.ops.map(o => {
+      const idx = sorted.findIndex(s => s.id === o.id);
+      if (idx <= 0 || o.orderId !== orderId) return { ...o, dependsOn: o.orderId === orderId ? undefined : o.dependsOn };
+      return { ...o, dependsOn: [sorted[idx - 1].id] };
+    });
+    const d = { ...data, ops: updated };
+    await DB.save(d); onUpdate(d); addToast('Все операции последовательно', 'success');
+  }, [data, ops, orderId, onUpdate, addToast]);
+
+  // Автоустановка: все параллельно (без зависимостей)
+  const setAllParallel = useCallback(async () => {
+    const d = { ...data, ops: data.ops.map(o => o.orderId === orderId ? { ...o, dependsOn: undefined } : o) };
+    await DB.save(d); onUpdate(d); addToast('Все операции параллельно', 'success');
+  }, [data, orderId, onUpdate, addToast]);
+
+  // Визуальная карта: какие операции от каких зависят
+  const depMap = useMemo(() => {
+    const map = {};
+    ops.forEach(op => { map[op.id] = { op, deps: op.dependsOn || [], dependents: [] }; });
+    ops.forEach(op => { (op.dependsOn || []).forEach(depId => { if (map[depId]) map[depId].dependents.push(op.id); }); });
+    return map;
+  }, [ops]);
+
+  return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 } },
+    h('div', { className: 'modal-content', style: { background: '#fff', borderRadius: 12, padding: 20, width: 'min(700px, calc(100vw - 24px))', maxHeight: '90vh', overflowY: 'auto' } },
+      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 } },
+        h('div', null,
+          h('div', { style: { fontSize: 16, fontWeight: 500 } }, `Зависимости: ${order?.number || '—'}`),
+          h('div', { style: { fontSize: 11, color: '#888' } }, `${ops.length} операций · нажмите на ячейку для переключения`)
+        ),
+        h('button', { style: gbtn({ fontSize: 14, padding: '4px 12px' }), onClick: onClose }, '×')
+      ),
+      // Легенда
+      h('div', { style: { display: 'flex', gap: 12, marginBottom: 12, padding: '8px 12px', background: '#f8f8f5', borderRadius: 6, fontSize: 11, flexWrap: 'wrap' } },
+        h('span', { style: { fontWeight: 500, color: '#666' } }, 'Как пользоваться:'),
+        h('span', null, '✓ — строка зависит от колонки (ждёт её завершения)'),
+        h('span', null, '— — сама операция'),
+        h('span', null, '⇉ — параллельные (независимые)'),
+        h('span', null, '↓ — после предыдущей')
+      ),
+      // Быстрые действия
+      h('div', { style: { display: 'flex', gap: 8, marginBottom: 12 } },
+        h('button', { style: gbtn({ fontSize: 11 }), onClick: setAllSequential }, '↓ Все последовательно'),
+        h('button', { style: gbtn({ fontSize: 11 }), onClick: setAllParallel }, '⇉ Все параллельно')
+      ),
+      // Матрица зависимостей
+      h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 11 } },
+        h('thead', null, h('tr', null,
+          h('th', { style: { ...S.th, position: 'sticky', left: 0, background: '#f8f8f5', zIndex: 1 } }, 'Операция ↓ зависит от →'),
+          ops.map(op => h('th', { key: op.id, style: { ...S.th, writingMode: 'vertical-lr', textOrientation: 'mixed', minWidth: 30, maxWidth: 40, height: 80, padding: '4px 2px' } }, op.name.length > 10 ? op.name.slice(0, 10) + '…' : op.name))
+        )),
+        h('tbody', null, ops.map(op => h('tr', { key: op.id },
+          h('td', { style: { ...S.td, fontWeight: 500, position: 'sticky', left: 0, background: '#fff', zIndex: 1, minWidth: 120 } },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 4 } },
+              h(Badge, { st: op.status }),
+              h('span', { style: { fontSize: 11 } }, op.name.length > 14 ? op.name.slice(0, 14) + '…' : op.name)
+            )
+          ),
+          ops.map(depOp => {
+            const isSelf = op.id === depOp.id;
+            const isDep = (op.dependsOn || []).includes(depOp.id);
+            return h('td', { key: depOp.id, style: { ...S.td, textAlign: 'center', padding: 2, cursor: isSelf ? 'default' : 'pointer', background: isSelf ? '#f0f0f0' : isDep ? GN3 : 'transparent' },
+              onClick: isSelf ? undefined : () => toggleDep(op.id, depOp.id)
+            }, isSelf ? '—' : isDep ? h('span', { style: { color: GN, fontWeight: 500, fontSize: 14 } }, '✓') : '');
+          })
+        )))
+      )),
+      // Визуальная последовательность
+      h('div', { style: { marginTop: 16 } },
+        h('div', { style: S.sec }, 'Последовательность выполнения'),
+        h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+          ops.map(op => {
+            const deps = (op.dependsOn || []).map(depId => ops.find(o => o.id === depId)?.name).filter(Boolean);
+            const isParallel = deps.length === 0;
+            return h('div', { key: op.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 8, background: isParallel ? '#E3F2FD' : '#f8f8f5', fontSize: 12 } },
+              h('span', { style: { fontSize: 14 } }, isParallel ? '⇉' : '↓'),
+              h('span', { style: { fontWeight: 500 } }, op.name),
+              h(Badge, { st: op.status }),
+              deps.length > 0 && h('span', { style: { color: '#888', fontSize: 10 } }, `после: ${deps.join(', ')}`)
+            );
+          })
+        )
+      )
+    )
+  );
+});
+
+// ==================== DepsScreen: Зависимости операций ====================
+const DepsScreen = memo(({ data, onUpdate, addToast }) => {
+  const [selOrderId, setSelOrderId] = useState('');
+  const activeOrders = useMemo(() => data.orders.filter(o => !o.archived), [data.orders]);
+  const selectedOrder = selOrderId ? data.orders.find(o => o.id === selOrderId) : null;
+
+  return h('div', { style: { padding: '12px 0 80px' } },
+    // Легенда использования
+    h('div', { style: { ...S.card, marginBottom: 12, padding: '10px 14px', background: '#E3F2FD', border: '0.5px solid #90CAF9' } },
+      h('div', { style: { fontWeight: 500, fontSize: 12, color: '#1565C0', marginBottom: 6 } }, 'ℹ Как использовать взаимосвязи операций'),
+      h('div', { style: { fontSize: 11, color: '#1976D2', lineHeight: 1.6 } },
+        h('div', null, '✓ в ячейке — строка ЖДЁТ завершения колонки (зависит от неё)'),
+        h('div', null, '⇉ синий фон — операция параллельная (начинается сразу)'),
+        h('div', null, '↓ — операция последовательная (после другой)'),
+        h('div', null, '🔴/🟡/🟢 цвет колонки — покрытие сотрудниками'),
+        h('div', null, '← Установите зависимости чтобы система показывала правильный порядок на Гант-диаграмме и в Канбан')
+      )
+    ),
+    // Выбор заказа
+    h('div', { style: { ...S.card, marginBottom: 12 } },
+      h('div', { style: S.sec }, 'Выберите заказ'),
+      h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+        activeOrders.map(o => {
+          const ops = data.ops.filter(op => op.orderId === o.id && !op.archived);
+          const hasDeps = ops.some(op => op.dependsOn?.length > 0);
+          return h('button', { key: o.id,
+            style: selOrderId === o.id ? abtn({ fontSize: 12 }) : gbtn({ fontSize: 12 }),
+            onClick: () => setSelOrderId(selOrderId === o.id ? '' : o.id)
+          },
+            o.number,
+            h('span', { style: { fontSize: 10, marginLeft: 4, opacity: 0.7 } }, `${ops.length} оп.`),
+            hasDeps && h('span', { style: { fontSize: 10, marginLeft: 4, color: GN } }, '🔗')
+          );
+        })
+      )
+    ),
+    // Редактор зависимостей
+    selectedOrder
+      ? h(DependencyEditorInline, { data, orderId: selOrderId, onUpdate, addToast })
+      : h('div', { style: { ...S.card, textAlign: 'center', color: '#888', padding: 24, fontSize: 13 } },
+          '← Выберите заказ для настройки зависимостей операций'
+        )
+  );
+});
+
+// Inline версия DependencyEditor (без модального окна)
+const DependencyEditorInline = memo(({ data, orderId, onUpdate, addToast }) => {
+  const order = data.orders.find(o => o.id === orderId);
+  const ops = useMemo(() => data.ops.filter(op => op.orderId === orderId && !op.archived), [data.ops, orderId]);
+
+  const toggleDep = useCallback(async (opId, depId) => {
+    const op = ops.find(o => o.id === opId);
+    if (!op) return;
+    const deps = op.dependsOn || [];
+    const newDeps = deps.includes(depId) ? deps.filter(d => d !== depId) : [...deps, depId];
+    const checkCycle = (target, visited = new Set()) => {
+      if (visited.has(target)) return true;
+      visited.add(target);
+      const t = ops.find(o => o.id === target);
+      return (t?.dependsOn || []).some(d => d === opId || checkCycle(d, visited));
+    };
+    if (!deps.includes(depId) && checkCycle(depId)) { addToast('Нельзя: циклическая зависимость', 'error'); return; }
+    const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, dependsOn: newDeps.length > 0 ? newDeps : undefined } : o) };
+    await DB.save(d); onUpdate(d);
+  }, [data, ops, onUpdate, addToast, orderId]);
+
+  const setAllSequential = useCallback(async () => {
+    const updated = data.ops.map(o => {
+      const idx = ops.findIndex(s => s.id === o.id);
+      if (idx <= 0 || o.orderId !== orderId) return { ...o, dependsOn: o.orderId === orderId ? undefined : o.dependsOn };
+      return { ...o, dependsOn: [ops[idx - 1].id] };
+    });
+    const d = { ...data, ops: updated };
+    await DB.save(d); onUpdate(d); addToast('Все последовательно', 'success');
+  }, [data, ops, orderId, onUpdate, addToast]);
+
+  const setAllParallel = useCallback(async () => {
+    const d = { ...data, ops: data.ops.map(o => o.orderId === orderId ? { ...o, dependsOn: undefined } : o) };
+    await DB.save(d); onUpdate(d); addToast('Все параллельно', 'success');
+  }, [data, orderId, onUpdate, addToast]);
+
+  return h('div', { style: S.card },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } },
+      h('div', { style: { fontSize: 14, fontWeight: 500 } }, `Зависимости: ${order?.number}`),
+      h('div', { style: { display: 'flex', gap: 8 } },
+        h('button', { style: gbtn({ fontSize: 11 }), onClick: setAllSequential }, '↓ Все последовательно'),
+        h('button', { style: gbtn({ fontSize: 11 }), onClick: setAllParallel }, '⇉ Все параллельно')
+      )
+    ),
+    h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 11 } },
+      h('thead', null, h('tr', null,
+        h('th', { style: { ...S.th, position: 'sticky', left: 0, background: '#f8f8f5', zIndex: 1 } }, 'Операция ↓ зависит от →'),
+        ops.map(op => h('th', { key: op.id, style: { ...S.th, writingMode: 'vertical-lr', minWidth: 30, maxWidth: 40, height: 80, padding: '4px 2px' } }, op.name.length > 10 ? op.name.slice(0, 10) + '…' : op.name))
+      )),
+      h('tbody', null, ops.map(op => h('tr', { key: op.id },
+        h('td', { style: { ...S.td, fontWeight: 500, position: 'sticky', left: 0, background: '#fff', zIndex: 1, minWidth: 120 } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 4 } },
+            h(Badge, { st: op.status }),
+            h('span', null, op.name.length > 14 ? op.name.slice(0, 14) + '…' : op.name)
+          )
+        ),
+        ops.map(depOp => {
+          const isSelf = op.id === depOp.id;
+          const isDep = (op.dependsOn || []).includes(depOp.id);
+          return h('td', { key: depOp.id, style: { ...S.td, textAlign: 'center', padding: 2, cursor: isSelf ? 'default' : 'pointer', background: isSelf ? '#f0f0f0' : isDep ? GN3 : 'transparent' },
+            onClick: isSelf ? undefined : () => toggleDep(op.id, depOp.id)
+          }, isSelf ? '—' : isDep ? h('span', { style: { color: GN, fontWeight: 500, fontSize: 14 } }, '✓') : '');
+        })
+      )))
+    )),
+    h('div', { style: { marginTop: 16 } },
+      h('div', { style: S.sec }, 'Последовательность'),
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+        ops.map(op => {
+          const deps = (op.dependsOn || []).map(depId => ops.find(o => o.id === depId)?.name).filter(Boolean);
+          return h('div', { key: op.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 8, background: deps.length === 0 ? '#E3F2FD' : '#f8f8f5', fontSize: 12 } },
+            h('span', { style: { fontSize: 14 } }, deps.length === 0 ? '⇉' : '↓'),
+            h('span', { style: { fontWeight: 500 } }, op.name),
+            h(Badge, { st: op.status }),
+            deps.length > 0 && h('span', { style: { color: '#888', fontSize: 10 } }, `после: ${deps.join(', ')}`)
+          );
+        })
+      )
+    )
+  );
+});
+
+const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
+  const [form, setForm] = useState({ number: '', product: '',
+ qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' });
+  const { ask: askConfirm, confirmEl } = useConfirm();
+  const [editingId, setEditingId] = useState(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [showShipped, setShowShipped] = useState(true);
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [depEditorOrderId, setDepEditorOrderId] = useState(null);
+  const [printOrderId, setPrintOrderId] = useState(null);
+  const [filterType, setFilterType] = useState('');
+  const [showImport1C, setShowImport1C] = useState(false);
+  const productTypes = data.settings?.productTypes || [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }];
+
+  const validate = () => {
+    const errors = {};
+    if (!form.number.trim()) errors.number = 'Введите номер заказа';
+    else { const exists = data.orders.some(o => o.number === form.number && o.id !== editingId && !o.archived); if (exists) errors.number = 'Такой номер уже существует'; }
+    if (!form.product.trim()) errors.product = 'Введите название изделия';
+    const qtyNum = Number(form.qty);
+    if (!form.qty || isNaN(qtyNum) || qtyNum <= 0) errors.qty = 'Количество должно быть положительным числом';
+    if (form.deadline) { const today = new Date(); today.setHours(0,0,0,0); if (new Date(form.deadline) < today) errors.deadline = 'Дата отгрузки не может быть раньше сегодняшнего дня'; }
+    setFieldErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const createDefaultOps = useCallback((orderId, productType, orderQty) => {
+    const stages = (data.productionStages || []).filter(s => !productType || s.productType === productType);
+    return stages.map(stage => ({ id: uid(), orderId, name: stage.name, qty: orderQty, workerIds: [], workerQty: {}, status: 'pending', createdAt: now(), plannedHours: undefined, archived: false, sectionId: null, equipmentId: null, plannedStartDate: undefined, requiresQC: stage.name.includes('свар') || stage.name.includes('Опресовка') }));
+  }, [data.productionStages]);
+
+  // Создаём поставки материалов по всем этапам у которых есть requiredMaterialIds
+  const createMaterialDeliveries = useCallback((orderId, productType, orderQty, bomId) => {
+    const deliveries = [];
+    const stages = (data.productionStages || []).filter(s => !productType || s.productType === productType);
+    const bom = bomId ? data.bomTemplates?.find(b => b.id === bomId) : null;
+
+    stages.forEach(stage => {
+      (stage.requiredMaterialIds || []).forEach(matId => {
+        // Проверяем не создана ли уже поставка для этого заказа и материала
+        const mat = data.materials?.find(m => m.id === matId);
+        if (!mat) return;
+
+        // Пытаемся взять количество из BOM, иначе 1
+        let requiredQty = orderQty || 1;
+        if (bom?.materials) {
+          const bomLine = bom.materials.find(bl => bl.materialId === matId);
+          if (bomLine) requiredQty = (bomLine.qty || 1) * (orderQty || 1);
+        }
+
+        const qrCode = uid(); // уникальный ID для QR
+        deliveries.push({
+          id: qrCode,          // id = qrCode — проще
+          orderId,
+          materialId: matId,
+          stageName: stage.name,
+          stageId: stage.id,
+          requiredQty,
+          deliveredQty: 0,
+          unit: mat.unit || 'шт',
+          status: 'pending',   // pending | partial | confirmed
+          createdAt: now(),
+          confirmedAt: null,
+          confirmedBy: null,
+          note: ''
+        });
+      });
+    });
+    return deliveries;
+  }, [data.productionStages, data.materials, data.bomTemplates]);
+
+  const addOrUpdate = useCallback(async () => {
+    if (!validate()) return;
+    if (editingId) {
+      const updatedOrders = data.orders.map(o => o.id === editingId ? { ...o, ...form, qty: Number(form.qty), priority: form.priority } : o);
+      const d = { ...data, orders: updatedOrders };
+      await DB.save(d); onUpdate(d); setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({}); addToast('Заказ обновлён', 'success');
+    } else {
+      const newOrder = { id: uid(), ...form, qty: Number(form.qty), createdAt: now(), archived: false };
+      const newOps = createDefaultOps(newOrder.id, form.productType, Number(form.qty));
+      // BOM: предупреждение о дефиците (не блокирует создание)
+      if (form.bomId) {
+        const bom = data.bomTemplates.find(b => b.id === form.bomId);
+        if (bom?.materials?.length) {
+          const qty = Number(form.qty) || 1;
+          const deficit = bom.materials.filter(m => {
+            const mat = data.materials.find(dm => dm.id === m.materialId);
+            return !mat || mat.quantity < m.qty * qty;
+          });
+          if (deficit.length > 0) addToast(`⚠ Дефицит ${deficit.length} материалов по BOM. Заказ создан, но проверьте остатки.`, 'warning');
+          // Создать резервирование материалов
+          const reservations = bom.materials.filter(m => m.materialId).map(m => ({
+            id: uid(), orderId: newOrder.id, materialId: m.materialId,
+            qty: m.qty * qty, reservedAt: now()
+          }));
+          if (reservations.length > 0) {
+            const newDeliveries = createMaterialDeliveries(newOrder.id, form.productType, Number(form.qty), form.bomId);
+            const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps], materialReservations: [...(data.materialReservations || []), ...reservations], materialDeliveries: [...(data.materialDeliveries || []), ...newDeliveries] };
+            await DB.save(d); onUpdate(d); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({});
+            addToast(`Заказ создан, зарезервированы материалы${newDeliveries.length > 0 ? `, ожидается ${newDeliveries.length} поставок` : ''}`, 'success');
+            if (newOps.length > 0) setPrintOrderId(newOrder.id);
+            return;
+          }
+        }
+      }
+      const newDeliveries = createMaterialDeliveries(newOrder.id, form.productType, Number(form.qty), form.bomId);
+      const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps], materialDeliveries: [...(data.materialDeliveries || []), ...newDeliveries] };
+      await DB.save(d); onUpdate(d); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({});
+      addToast(newDeliveries.length > 0 ? `Заказ создан, ожидается ${newDeliveries.length} поставок материалов` : 'Заказ создан', 'success');
+      if (newOps.length > 0) setPrintOrderId(newOrder.id);
     }
-  </style>
-</head>
-<body>
-<div id="update-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#1a1a18;color:#fff;padding:12px 20px;z-index:9999;align-items:center;gap:12px;font-family:system-ui,sans-serif;font-size:14px;box-shadow:0 -2px 12px rgba(0,0,0,0.2)">
-  <span style="flex:1">🔄 Доступна новая версия приложения</span>
-  <button onclick="navigator.serviceWorker.getRegistration().then(r=>{if(r?.waiting){r.waiting.postMessage({type:'SKIP_WAITING'})}else{window.location.reload()}})" style="background:#EF9F27;color:#412402;border:none;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer">Обновить</button>
-  <button onclick="document.getElementById('update-banner').style.display='none'" style="background:transparent;color:#888;border:0.5px solid #555;padding:8px 14px;border-radius:8px;font-size:13px;cursor:pointer">Позже</button>
-</div>
-<div id="root"></div>
-<!-- Core: константы, DB, утилиты, общие компоненты -->
-<script src="js/core.js?v=20260427b"></script>
-<!-- Shared: QR, PDF, LoadForecast, WorkerCardModal, MasterOnboarding -->
-<script defer src="js/shared.js?v=20260427b"></script>
-<script defer src="js/qms.js?v=20260427b"></script>
-<!-- Аналитика: графики, SectionAnalytics, ReportsBuilder -->
-<script defer src="js/analytics.js?v=20260427b"></script>
-<!-- Табель: isWorkday, calcDayData, MasterTimeTracking -->
-<script defer src="js/timesheet.js?v=20260427b"></script>
-<!-- Доп. работы: AuxOpsViewer -->
-<script defer src="js/auxops.js?v=20260427b"></script>
-<!-- Справочники: PasteImport, Sections, Equipment, Materials, BOM, Stages, Admin -->
-<script defer src="js/reference.js?v=20260427b"></script>
-<!-- Качество: ControllerScreen, MasterReclamations -->
-<script defer src="js/quality.js?v=20260427b"></script>
-<!-- Сотрудники: HR, Workers, Instructions, Vacations, MonthlyReport -->
-<script defer src="js/hr.js?v=20260427b"></script>
-<!-- Чат -->
-<script defer src="js/chat.js?v=20260427b"></script>
-<!-- Склад: MaterialImport, WarehouseScreen -->
-<script defer src="js/warehouse.js?v=20260427b"></script>
-<!-- Производство: MasterOps, MasterOrders, Kanban, Gantt, MasterScreen -->
-<script defer src="js/master.js?v=20260427b"></script>
-<!-- Рабочий: WorkerScreen -->
-<script defer src="js/worker.js?v=20260427b"></script>
-<!-- Приложение: App, Login, Dashboard, роутинг, PWA -->
-<script defer src="js/app.js?v=20260427b"></script>
-</body>
-</html>
+  }, [form, editingId, data, createDefaultOps, onUpdate, addToast]);
+
+  const shipOrder = useCallback(async id => {
+    const order = data.orders.find(o => o.id === id);
+    const ops = data.ops.filter(op => op.orderId === id && !op.archived);
+    const allDone = ops.length > 0 && ops.every(op => op.status === 'done' || op.status === 'defect');
+    if (!allDone) {
+      if (!(await askConfirm({ message: `Отгрузить заказ ${order?.number}?`, detail: 'Не все операции завершены. Отгрузить всё равно?', danger: false }))) return;
+    }
+    const ord = data.orders.find(o => o.id === id);
+    if (!canShipOrder(ord)) {
+      const st = getComponentsStatus(ord);
+      addToast(`Нельзя отгрузить — ${st?.label || 'не все комплектующие подтверждены'}`, 'error');
+      return;
+    }
+    let d = { ...data, orders: data.orders.map(o => o.id === id ? { ...o, shipped: true, shippedAt: Date.now() } : o) };
+    d = logAction(d, 'order_shipped', { orderId: id, orderNumber: order?.number });
+    await DB.save(d); onUpdate(d); addToast(`Заказ ${order?.number} отгружен ✓`, 'success');
+  }, [data, onUpdate, addToast]);
+
+  const del = useCallback(async id => {
+    if (!(await askConfirm({ message: 'Переместить заказ в архив?', danger: false }))) return;
+    let d = { ...data, orders: data.orders.map(o => o.id === id ? { ...o, archived: true } : o) };
+    d = logAction(d, 'order_archive', { orderId: id, orderNumber: data.orders.find(o => o.id === id)?.number });
+    await DB.save(d); onUpdate(d); addToast('Заказ архивирован', 'info');
+  }, [data, onUpdate, addToast]);
+
+  const restore = useCallback(async id => {
+    let d = { ...data, orders: data.orders.map(o => o.id === id ? { ...o, archived: false } : o) };
+    d = logAction(d, 'order_restore', { orderId: id });
+    await DB.save(d); onUpdate(d); addToast('Заказ восстановлен', 'success');
+  }, [data, onUpdate, addToast]);
+
+  const edit = useCallback(ord => { setForm({ number: ord.number, product: ord.product, qty: String(ord.qty), deadline: ord.deadline || '', priority: ord.priority || 'medium', bomId: '', productType: ord.productType || '' }); setEditingId(ord.id); }, []);
+
+  const ordersToShow = useMemo(() => data.orders.filter(o => (showArchived ? true : !o.archived) && (!o.shipped || showShipped) && (!filterType || o.productType === filterType)).sort((a,b) => { const priorityOrder = { critical:0, high:1, medium:2, low:3 }; return (priorityOrder[a.priority]||4) - (priorityOrder[b.priority]||4) || (b.createdAt||0) - (a.createdAt||0); }), [data.orders, showArchived, showShipped, filterType]);
+  const paginated = useMemo(() => { const start = (page-1)*pageSize; return ordersToShow.slice(start, start+pageSize); }, [ordersToShow, page]);
+  useEffect(() => { setPage(1); }, [showArchived]);
+
+  return h('div', null,
+    confirmEl,
+    h(PasteImportWidget, { addToast, hint: 'Вставить заказы из Excel',
+      columns: [
+        { key: 'number',   label: 'Номер заказа', required: true },
+        { key: 'product',  label: 'Изделие',       required: true },
+        { key: 'qty',      label: 'Количество',    required: false, default: '1' },
+        { key: 'deadline', label: 'Срок (дата)',   required: false, default: '' },
+        { key: 'priority', label: 'Приоритет',     required: false, default: 'medium' },
+      ],
+      onImport: async (rows) => {
+        const existing = new Set(data.orders.map(o => o.number.toLowerCase()));
+        const items = rows.filter(r => r.number && r.product && !existing.has(r.number.toLowerCase()))
+          .map(r => ({ id: uid(), number: r.number, product: r.product,
+            qty: Number(r.qty) || 1, deadline: r.deadline || '',
+            priority: ['critical','high','medium','low'].includes(r.priority) ? r.priority : 'medium',
+            status: 'active', createdAt: now() }));
+        if (!items.length) { addToast('Все номера заказов уже существуют', 'info'); return; }
+        let d = { ...data, orders: [...data.orders, ...items] };
+        d = logAction(d, 'orders_batch_import', { count: items.length });
+        await DB.save(d); onUpdate(d); addToast(`Добавлено заказов: ${items.length}`, 'success');
+      }}),
+    depEditorOrderId && h(DependencyEditor, { data, orderId: depEditorOrderId, onUpdate, addToast, onClose: () => setDepEditorOrderId(null) }),
+    printOrderId && (() => {
+      const pOrder = data.orders.find(o => o.id === printOrderId);
+      const pOps = data.ops.filter(o => o.orderId === printOrderId && !o.archived);
+      // 🔧 Показываем QR только если есть хотя бы одна операция с назначенными рабочими
+      const hasAssignedWorkers = pOps.some(op => op.workerIds && op.workerIds.length > 0);
+      if (!pOrder || pOps.length === 0 || !hasAssignedWorkers) return null;
+      return h(QRModal, { ops: pOps, order: pOrder, worker: null, onClose: () => setPrintOrderId(null) });
+    })(),
+    showImport1C && h(Import1CModal, { data, onUpdate, addToast, onClose: () => setShowImport1C(false) }),
+    h('div', { style: S.card },
+      h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
+        h('div', { style: { minWidth: 120 } }, h('input', { style: S.inp, placeholder: 'Номер', value: form.number, onChange: e => setForm(p => ({ ...p, number: e.target.value })) }), fieldErrors.number && h('div', { className: 'error-message' }, fieldErrors.number)),
+        h('div', { style: { flex: 1, minWidth: 160 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Изделие', value: form.product, onChange: e => setForm(p => ({ ...p, product: e.target.value })) }), fieldErrors.product && h('div', { className: 'error-message' }, fieldErrors.product)),
+        h('div', { style: { minWidth: 70 } }, h('input', { type: 'number', style: { ...S.inp, width: '100%' }, placeholder: 'Кол-во', value: form.qty, onChange: e => setForm(p => ({ ...p, qty: e.target.value })) }), fieldErrors.qty && h('div', { className: 'error-message' }, fieldErrors.qty)),
+        h('div', { style: { minWidth: 140 } }, h('input', { type: 'date', style: { ...S.inp, width: '100%' }, value: form.deadline, onChange: e => setForm(p => ({ ...p, deadline: e.target.value })) }), fieldErrors.deadline && h('div', { className: 'error-message' }, fieldErrors.deadline)),
+        h('div', { style: { minWidth: 120 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.priority, onChange: e => setForm(p => ({ ...p, priority: e.target.value })) }, h('option', { value: 'low' }, 'Низкий'), h('option', { value: 'medium' }, 'Средний'), h('option', { value: 'high' }, 'Высокий'), h('option', { value: 'critical' }, 'Критический'))),
+        h('div', { style: { minWidth: 100 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.productType, onChange: e => setForm(p => ({ ...p, productType: e.target.value })) }, h('option', { value: '' }, 'Тип'), productTypes.map(pt => h('option', { key: pt.id, value: pt.id }, pt.label)))),
+        h('div', { style: { minWidth: 140 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.bomId, onChange: e => setForm(p => ({ ...p, bomId: e.target.value })) }, h('option', { value: '' }, '— без BOM —'), data.bomTemplates.filter(b => !form.productType || b.productType === form.productType || !b.productType).map(b => h('option', { key: b.id, value: b.id }, b.productName)))),
+        h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, editingId ? '✓' : '+'),
+        editingId && h('button', { type: 'button', style: gbtn(), onClick: () => { setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({}); } }, 'Отмена'),
+        !editingId && h('button', { type: 'button', style: { ...gbtn(), borderColor: AM, color: AM2 }, onClick: () => setShowImport1C(true), title: 'Импортировать заказ из файла 1С (Excel)' }, '📥 Импорт из 1С')
+      ),
+      // Проверка остатков при выборе BOM
+      form.bomId && form.qty && (() => {
+        const bom = data.bomTemplates.find(b => b.id === form.bomId);
+        if (!bom || !bom.materials?.length) return null;
+        const qty = Number(form.qty) || 1;
+        const checks = bom.materials.map(m => {
+          const mat = data.materials.find(dm => dm.id === m.materialId);
+          const need = m.qty * qty;
+          const have = mat?.quantity || 0;
+          return { name: mat?.name || '?', need, have, unit: mat?.unit || '', ok: have >= need };
+        });
+        const allOk = checks.every(c => c.ok);
+        return h('div', { style: { marginTop: 10, padding: '8px 12px', borderRadius: 8, background: allOk ? GN3 : RD3, border: `0.5px solid ${allOk ? GN : RD}` } },
+          h('div', { style: { fontSize: 11, fontWeight: 500, color: allOk ? GN2 : RD2, marginBottom: allOk ? 0 : 4 } }, allOk ? `✓ Все материалы в наличии (BOM: ${bom.productName})` : `⚠ Дефицит материалов (BOM: ${bom.productName}):`),
+          !allOk && checks.filter(c => !c.ok).map((c, i) => h('div', { key: i, style: { fontSize: 11, color: RD2 } }, `${c.name}: нужно ${c.need} ${c.unit}, есть ${c.have} ${c.unit}`))
+        );
+      })()
+    ),
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 8, flexWrap: 'wrap' } },
+      h('div', { style: { display: 'flex', gap: 4 } },
+        h('button', { style: !filterType ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setFilterType('') }, 'Все'),
+        productTypes.map(pt => h('button', { key: pt.id, style: filterType === pt.id ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setFilterType(pt.id) }, pt.label))
+      ),
+      h('label', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 } },
+        h('input', { type: 'checkbox', checked: showArchived, onChange: e => setShowArchived(e.target.checked) }), 'Архивные'
+      ),
+      h('label', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 } },
+        h('input', { type: 'checkbox', checked: showShipped, onChange: e => setShowShipped(e.target.checked) }), 'Отгружен'
+      )
+    ),
+    paginated.length === 0
+      ? h('div', { style: { ...S.card, textAlign: 'center' } }, 'Заказов нет')
+      : h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+          h('thead', null, h('tr', null, ['Номер','Изделие','Тип','Кол-во','Дата отгрузки','Приоритет','Операций','Материалы','Статус',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
+          h('tbody', null, paginated.map(ord => {
+            const ops = data.ops.filter(o => o.orderId === ord.id);
+            const done = ops.filter(o => o.status === 'done').length;
+            const def = ops.filter(o => o.status === 'defect').length;
+            const st = ops.length === 0 ? 'pending' : done === ops.length ? 'done' : ops.some(o => o.status === 'in_progress') ? 'in_progress' : 'pending';
+            const nearDeadline = isShipmentNear(ord.deadline) && st !== 'done';
+            const matConsumption = (data.materialConsumptions || []).filter(mc => ops.some(op => op.id === mc.opId));
+            const matCost = matConsumption.reduce((s, mc) => { const mat = data.materials.find(m => m.id === mc.materialId); return s + mc.qty * (mat?.unitCost || 0); }, 0);
+            return h('tr', { key: ord.id, style: { background: ord.archived ? '#eee' : 'transparent' } },
+              h('td', { style: { ...S.td, fontWeight: 500 } },
+                onOrderClick
+                  ? h('span', { style: { color: AM, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => onOrderClick(ord.id), title: 'Открыть карточку' }, ord.number)
+                  : h('span', { style: { color: AM } }, ord.number),
+                nearDeadline && h('span', { style: { marginLeft: 6, color: RD } }, '⏳')
+              ),
+              h('td', { style: S.td }, ord.product),
+              h('td', { style: { ...S.td, fontSize: 11 } }, (productTypes.find(pt => pt.id === ord.productType)?.label) || '—'),
+              h('td', { style: S.td }, ord.qty),
+              h('td', { style: { ...S.td, color: nearDeadline ? RD : '#888' } }, ord.deadline || '—'),
+              h('td', { style: { ...S.td, color: PRIORITY[ord.priority]?.color || '#888' } }, PRIORITY[ord.priority]?.label || '—'),
+              h('td', { style: S.td }, `${done}/${ops.length}`, def > 0 && h('span', { style: { marginLeft: 4, color: RD } }, `⚠ ${def}`)),
+              h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 11 } }, matConsumption.length > 0 ? `${matCost.toLocaleString()}₽` : '—'),
+              h('td', { style: S.td }, h(Badge, { st: ord.shipped ? 'shipped' : st })),
+              h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
+                !ord.archived ? [
+                  h('button', { key: 'edit', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Редактировать', title: 'Редактировать заказ', onClick: () => edit(ord) }, '✎'),
+                  h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'В архив', title: 'Переместить в архив', onClick: () => del(ord.id) }, '✕'),
+                  h('button', { key: 'passport', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Паспорт PDF', title: 'Сформировать паспорт изделия (PDF)', onClick: () => generateFullPassport(ord, data) }, '📄'),
+                  h('button', { key: 'route', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Маршрутный лист PDF', title: 'Распечатать маршрутный лист (PDF)', onClick: () => generateRouteSheet(ord, data) }, '📋'),
+                  h('button', { key: 'deps', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Зависимости операций', title: 'Настроить зависимости операций', onClick: () => setDepEditorOrderId(ord.id) }, '🔗'),
+                  !ord.shipped && h('button', { key: 'ship', style: { ...gbtn({ fontSize: 11, padding: '4px 8px' }), color: GN2, borderColor: GN }, 'aria-label': 'Отгрузить заказ', title: 'Отметить заказ как отгруженный', onClick: () => shipOrder(ord.id) }, '🚚'),
+                  ord.shipped && h('span', { key: 'shipped', style: { fontSize: 10, padding: '3px 6px', background: GN3, color: GN2, borderRadius: 4, fontWeight: 500 } }, `✓ Отгружен${ord.shippedAt ? ' ' + new Date(ord.shippedAt).toLocaleDateString('ru') : ''}`)
+                ] : h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Восстановить', title: 'Восстановить из архива', onClick: () => restore(ord.id) }, '↩ Восстановить')
+              ))
+            );
+          }))
+        ))),
+    h('div', { className: 'pagination' },
+      h('button', { style: gbtn({ opacity: page === 1 ? 0.4 : 1 }), disabled: page === 1, onClick: () => setPage(p => Math.max(1, p-1)) }, '← Пред'),
+      h('span', { style: { fontSize: 12 } }, `${page} / ${Math.ceil(ordersToShow.length / pageSize) || 1}`),
+      h('button', { style: gbtn({ opacity: page >= Math.ceil(ordersToShow.length / pageSize) ? 0.4 : 1 }), disabled: page >= Math.ceil(ordersToShow.length / pageSize), onClick: () => setPage(p => p+1) }, 'След →')
+    )
+  );
+});
+
+
+
+// ==================== GanttChart ====================
+const GanttChart = memo(({ data }) => {
+  const [startDate, setStartDate] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 7); return d; });
+  const [daysCount, setDaysCount] = useState(14);
+  const operations = useMemo(() => data.ops.filter(op => op.plannedStartDate && !op.archived && op.status !== 'done' && op.status !== 'defect'), [data.ops]);
+  const timeline = useMemo(() => {
+    const start = startDate.getTime(); const end = start + daysCount*86400000;
+    const days = [];
+    for (let i=0; i<daysCount; i++) { const date = new Date(start + i*86400000); days.push({ date, day:date.getDate(), month:date.getMonth()+1, dayOfWeek:date.toLocaleDateString('ru',{weekday:'short'}) }); }
+    return { days, start, end };
+  }, [startDate, daysCount]);
+  const bars = useMemo(() => operations.map(op => {
+    const start = op.plannedStartDate; const end = start + (op.plannedHours ? op.plannedHours*3600000 : 4*3600000);
+    if (end < timeline.start || start > timeline.end) return null;
+    const left = ((start - timeline.start) / (timeline.end - timeline.start))*100;
+    const width = ((end - start) / (timeline.end - timeline.start))*100;
+    const order = data.orders.find(o => o.id === op.orderId);
+    return { ...op, orderNumber: order?.number, left, width };
+  }).filter(b => b), [operations, timeline, data.orders]);
+  const changeDate = (delta) => { const newStart = new Date(startDate); newStart.setDate(newStart.getDate() + delta); setStartDate(newStart); };
+  return h('div', { style: S.card },
+    h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 } },
+      h('div', { style: { display:'flex', gap:8 } }, h('button', { style: gbtn(), onClick: () => changeDate(-7) }, '-7д'), h('button', { style: gbtn(), onClick: () => changeDate(-1) }, '-1д'), h('button', { style: gbtn(), onClick: () => changeDate(1) }, '+1д'), h('button', { style: gbtn(), onClick: () => changeDate(7) }, '+7д')),
+      h('div', { style: { display:'flex', gap:8 } }, h('button', { style: gbtn(), onClick: () => setDaysCount(7) }, '7 дней'), h('button', { style: gbtn(), onClick: () => setDaysCount(14) }, '14 дней'))
+    ),
+    h('div', { className:'gantt-container' },
+      h('div', { style: { display:'flex', flexDirection:'column' } },
+        h('div', { className:'gantt-row' }, h('div', { className:'gantt-label' }, 'Операции'), h('div', { className:'gantt-timeline' }, timeline.days.map((day,idx) => h('div', { key:idx, className:'gantt-cell', style:{flex:1} }, `${day.day}.${day.month} ${day.dayOfWeek}`)))),
+        bars.map(bar => h('div', { key:bar.id, className:'gantt-row', style:{ position:'relative', height:'40px' } },
+          h('div', { className:'gantt-label', style:{ display:'flex', alignItems:'center', gap:4 } }, h('span', { style:{ fontWeight:500 } }, bar.orderNumber), h('span', { style:{ fontSize:10, color:'#888' } }, bar.name)),
+          h('div', { className:'gantt-timeline', style:{ position:'relative' } }, h('div', { className:'gantt-bar', style:{ left:`${bar.left}%`, width:`${bar.width}%`, position:'absolute', top:4, height:'32px', background: bar.status === 'in_progress' ? AM : BL } }, `${bar.name} (${bar.orderNumber})`))
+        ))
+      )
+    )
+  );
+});
+
+// ==================== ResourceCalendar ====================
+const ResourceCalendar = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
+  const [startDate, setStartDate] = useState(() => { const d = new Date(); d.setDate(d.getDate() - d.getDay() + 1); return d; });
+  const [daysCount] = useState(14);
+  const [showModal, setShowModal] = useState(null);
+  const [availForm, setAvailForm] = useState({ workerId:'', startDate:'', endDate:'', type:'vacation' });
+  const days = useMemo(() => { const start = startDate.getTime(); const arr = []; for (let i=0; i<daysCount; i++) arr.push(new Date(start + i*86400000)); return arr; }, [startDate, daysCount]);
+  const getAvailability = (workerId, date) => { const avail = data.workerAvailabilities?.find(a => a.workerId === workerId && date >= a.startDate && date <= a.endDate); return avail ? avail.type : null; };
+  const getWorkerOpsCount = (workerId, date) => { const startOfDay = new Date(date).setHours(0,0,0,0); const endOfDay = new Date(date).setHours(23,59,59,999); return data.ops.filter(op => op.workerIds?.includes(workerId) && op.plannedStartDate >= startOfDay && op.plannedStartDate <= endOfDay && op.status !== 'done' && op.status !== 'defect').length; };
+  const getWorkerPlannedHours = (workerId, date) => { const startOfDay = new Date(date).setHours(0,0,0,0); const endOfDay = new Date(date).setHours(23,59,59,999); return data.ops.filter(op => op.workerIds?.includes(workerId) && op.plannedStartDate >= startOfDay && op.plannedStartDate <= endOfDay && op.status !== 'done' && op.status !== 'defect').reduce((sum,op) => sum + (op.plannedHours || 0), 0); };
+  const addAvailability = async () => {
+    if (!availForm.workerId || !availForm.startDate || !availForm.endDate) return;
+    const newAvail = { id: uid(), workerId: availForm.workerId, startDate: new Date(availForm.startDate).getTime(), endDate: new Date(availForm.endDate).getTime(), type: availForm.type };
+    const updated = { ...data, workerAvailabilities: [...(data.workerAvailabilities || []), newAvail] };
+    await DB.save(updated); onUpdate(updated); setShowModal(null); setAvailForm({ workerId:'', startDate:'', endDate:'', type:'vacation' }); addToast('Период недоступности добавлен', 'success');
+  };
+  const deleteAvailability = async (id) => { const updated = { ...data, workerAvailabilities: (data.workerAvailabilities || []).filter(a => a.id !== id) }; await DB.save(updated); onUpdate(updated); addToast('Период удалён', 'info'); };
+  const changeWeek = (delta) => { const newStart = new Date(startDate); newStart.setDate(newStart.getDate() + delta*7); setStartDate(newStart); };
+  return h('div', { style: { ...S.card } },
+    h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 } },
+      h('div', { style: { display:'flex', gap:8 } }, h('button', { style: gbtn(), onClick: () => changeWeek(-1) }, '-1 нед'), h('button', { style: gbtn(), onClick: () => changeWeek(1) }, '+1 нед')),
+      h('button', { style: abtn(), onClick: () => setShowModal({}) }, 'Задать отпуск/больничный')
+    ),
+    h('div', { className: 'table-responsive' }, h('table', { className:'worker-calendar-table' },
+      h('thead', null, h('tr', null, h('th', { style:{width:'150px'} }, 'Сотрудник'), days.map(d => h('th', { key: d.getTime() }, `${d.getDate()}.${d.getMonth()+1} (${d.toLocaleDateString('ru',{weekday:'short'})})`)))),
+      h('tbody', null, data.workers.filter(w => !w.archived).map(w => {
+        const availabilities = (data.workerAvailabilities || []).filter(a => a.workerId === w.id);
+        return h('tr', { key: w.id },
+          h('td', { style: { fontWeight:500 } }, h(WN, { worker: w, onWorkerClick }),
+            h('div', { style: { fontSize:10, color:'#888' } }, availabilities.map(a => `${a.type === 'vacation' ? 'Отпуск' : 'Больничный'} ${new Date(a.startDate).toLocaleDateString()}–${new Date(a.endDate).toLocaleDateString()}`).join(', ')),
+            h('button', { style: gbtn({ fontSize:10, padding:'2px 6px', marginTop:4 }), 'aria-label': `Добавить отсутствие для ${w.name}`, onClick: () => setShowModal({ workerId: w.id }) }, '+')
+          ),
+          days.map(d => {
+            const avail = getAvailability(w.id, d);
+            const opsCount = getWorkerOpsCount(w.id, d);
+            const plannedHours = getWorkerPlannedHours(w.id, d);
+            let cellClass = 'worker-cell';
+            if (avail === 'vacation') cellClass = 'worker-cell vacation';
+            if (avail === 'sick') cellClass = 'worker-cell sick';
+            if (opsCount > 3 || plannedHours > 8) cellClass = 'worker-cell overload';
+            return h('td', { key: d.getTime(), className: cellClass },
+              h('div', { style:{ fontSize:13, fontWeight:500 } }, opsCount || ''),
+              plannedHours > 0 && h('div', { style:{ fontSize:10, color:'#888' } }, `${plannedHours}ч`)
+            );
+          })
+        );
+      }))
+    )),
+    showModal && h('div', { role:'dialog','aria-modal':'true','aria-label':'Период недоступности', style: { position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:200 } },
+      h('div', { style: { background:'#fff',borderRadius:12,padding:24,width:'min(320px, calc(100vw - 32px))' } },
+        h('div', { style: { fontSize:16, fontWeight:500, marginBottom:16 } }, 'Период недоступности'),
+        h('select', { style: { ...S.inp, width:'100%', marginBottom:12 }, value: availForm.workerId, onChange: e => setAvailForm(p => ({ ...p, workerId: e.target.value })) }, h('option', { value:'' }, '— сотрудник —'), data.workers.map(w => h('option', { key: w.id, value: w.id }, w.name))),
+        h('input', { type:'date', style: { ...S.inp, width:'100%', marginBottom:12 }, value: availForm.startDate, onChange: e => setAvailForm(p => ({ ...p, startDate: e.target.value })) }),
+        h('input', { type:'date', style: { ...S.inp, width:'100%', marginBottom:12 }, value: availForm.endDate, onChange: e => setAvailForm(p => ({ ...p, endDate: e.target.value })) }),
+        h('select', { style: { ...S.inp, width:'100%', marginBottom:16 }, value: availForm.type, onChange: e => setAvailForm(p => ({ ...p, type: e.target.value })) }, h('option', { value:'vacation' }, 'Отпуск'), h('option', { value:'sick' }, 'Больничный')),
+        h('div', { style: { display:'flex', gap:8, justifyContent:'flex-end' } },
+          h('button', { style: gbtn(), onClick: () => setShowModal(null) }, 'Отмена'),
+          h('button', { style: abtn(), onClick: addAvailability }, 'Сохранить')
+        )
+      )
+    )
+  );
+});
+
+// ==================== MasterKanban (с WIP-лимитами) ====================
+const MasterKanban = memo(({ data, onUpdate, addToast }) => {
+  const stagesList = useMemo(() => (data.productionStages || []).map(s => s.name), [data.productionStages]);
+  const wipLimits = data.settings?.wipLimits || {};
+  const [editingWip, setEditingWip] = useState(null);
+  const [wipValue, setWipValue] = useState('');
+
+  const saveWipLimit = useCallback(async (stage, limit) => {
+    const val = Number(limit);
+    if (isNaN(val) || val < 0) return;
+    const newLimits = { ...wipLimits, [stage]: val || undefined };
+    if (!val) delete newLimits[stage];
+    const d = { ...data, settings: { ...data.settings, wipLimits: newLimits } };
+    await DB.save(d); onUpdate(d); setEditingWip(null); setWipValue('');
+    addToast(val ? `WIP-лимит: ${stage} = ${val}` : `WIP-лимит снят: ${stage}`, 'success');
+  }, [data, wipLimits, onUpdate, addToast]);
+
+  const columns = useMemo(() => stagesList.map(stage => {
+    const opsAtStage = data.ops.filter(op => op.name === stage && !op.archived);
+    const active = opsAtStage.filter(op => op.status === 'in_progress' || op.status === 'pending' || op.status === 'on_check');
+    const wip = wipLimits[stage] || 0;
+    const overWip = wip > 0 && active.length > wip;
+    return { stage, pending: opsAtStage.filter(op => op.status === 'pending'), in_progress: opsAtStage.filter(op => op.status === 'in_progress'), on_check: opsAtStage.filter(op => op.status === 'on_check'), done: opsAtStage.filter(op => op.status === 'done'), defect: opsAtStage.filter(op => op.status === 'defect' || op.status === 'rework'), total: opsAtStage.length, activeCount: active.length, wipLimit: wip, overWip };
+  }), [stagesList, data.ops, wipLimits]);
+
+  const overWipStages = columns.filter(c => c.overWip);
+
+  return h('div', { style: { overflowX:'auto', paddingBottom:16 } },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 } },
+      h('div', { style: S.sec }, 'Канбан-доска производства'),
+      h('div', { style: { fontSize: 10, color: '#888' } }, 'Нажмите на лимит для изменения')
+    ),
+    // Алерт превышения WIP
+    overWipStages.length > 0 && h('div', { role: 'alert', style: { padding: '8px 12px', background: RD3, border: `0.5px solid ${RD}`, borderRadius: 8, marginBottom: 10, fontSize: 11 } },
+      h('span', { style: { fontWeight: 500, color: RD } }, '⚠ Превышен WIP-лимит: '),
+      h('span', { style: { color: RD2 } }, overWipStages.map(c => `${c.stage} (${c.activeCount}/${c.wipLimit})`).join(', '))
+    ),
+    h('div', { style: { display:'flex', gap:8, minWidth: columns.length*160 } },
+      columns.map(col => h('div', { key: col.stage, className: 'kanban-col', style: { flex:'0 0 150px', background: col.overWip ? '#FFF0F0' : '#fff', border: col.overWip ? `1px solid ${RD}` : '0.5px solid rgba(0,0,0,0.1)', borderRadius:10, padding:10, fontSize:11 } },
+        h('div', { style: { fontSize:10, fontWeight:500, color:AM4, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 } }, col.stage),
+        // WIP-лимит
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 } },
+          editingWip === col.stage
+            ? h('div', { style: { display: 'flex', gap: 4 } },
+                h('input', { type: 'number', style: { ...S.inp, width: 40, padding: '2px 4px', fontSize: 11 }, value: wipValue, onChange: e => setWipValue(e.target.value), onKeyDown: e => e.key === 'Enter' && saveWipLimit(col.stage, wipValue), autoFocus: true }),
+                h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: GN }, onClick: () => saveWipLimit(col.stage, wipValue) }, '✓'),
+                h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: '#888' }, onClick: () => setEditingWip(null) }, '✕')
+              )
+            : h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: col.overWip ? RD : col.wipLimit ? AM : '#bbb', padding: 0 }, onClick: () => { setEditingWip(col.stage); setWipValue(col.wipLimit || ''); } },
+                col.wipLimit ? `WIP: ${col.activeCount}/${col.wipLimit}` : 'Лимит: ∞'
+              )
+        ),
+        h('div', { style: { display:'flex', gap:4, flexWrap:'wrap', marginBottom:8 } },
+          col.pending.length>0 && h('span', { style:{ padding:'2px 6px', fontSize:10, borderRadius:6, background:'#f0ede8', color:'#666' } }, `⏳ ${col.pending.length}`),
+          col.in_progress.length>0 && h('span', { style:{ padding:'2px 6px', fontSize:10, borderRadius:6, background:AM3, color:AM2 } }, `▶ ${col.in_progress.length}`),
+          col.on_check.length>0 && h('span', { style:{ padding:'2px 6px', fontSize:10, borderRadius:6, background:'#E1F5FE', color:'#0277BD' } }, `🔍 ${col.on_check.length}`),
+          col.done.length>0 && h('span', { style:{ padding:'2px 6px', fontSize:10, borderRadius:6, background:GN3, color:GN2 } }, `✓ ${col.done.length}`),
+          col.defect.length>0 && h('span', { style:{ padding:'2px 6px', fontSize:10, borderRadius:6, background:RD3, color:RD2 } }, `⚠ ${col.defect.length}`)
+        ),
+        col.total>0 && h('div', { style: { height:4, background:'#eee', borderRadius:2, overflow:'hidden', marginBottom:6 } }, h('div', { style: { width: `${(col.done.length/col.total)*100}%`, height:4, background:GN, borderRadius:2 } })),
+        col.in_progress.map(op => { const order = data.orders.find(o => o.id === op.orderId); const workerNames = op.workerIds?.map(id => data.workers.find(w => w.id === id)?.name).filter(Boolean).join(', ') || '—'; return h('div', { key: op.id, style: { padding:'6px 8px', background:AM3, borderRadius:6, marginBottom:4, borderLeft:`3px solid ${AM}` } }, h('div', { style: { fontSize:11, fontWeight:500, color:AM2 } }, order?.number || '—'), workerNames && h('div', { style: { fontSize:10, color:AM4 } }, workerNames), op.startedAt && h('div', { style: { fontSize:9, color:'#888' } }, fmtDur(now() - op.startedAt))); }),
+        col.defect.map(op => { const order = data.orders.find(o => o.id === op.orderId); return h('div', { key: op.id, style: { padding:'6px 8px', background:RD3, borderRadius:6, marginBottom:4, borderLeft:`3px solid ${RD}` } }, h('div', { style: { fontSize:11, fontWeight:500, color:RD2 } }, order?.number || '—'), h('div', { style: { fontSize:10, color:RD } }, op.defectNote || 'Брак')); })
+      ))
+    )
+  );
+});
+
+
+
+// ==================== MasterScreen ====================
+const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, onWorkerClick, role }) => {
+  const [qrOpData, setQrOpData] = useState(null);
+
+  // Конфигурация вкладок по ролям
+  const ALL_GROUPS = {
+    production: { label: '⚙ Производство', tabs: [['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['deps','Зависимости'],['orders','Заказы'],['plan','План']] },
+    reference:  { label: '📋 Справочники', tabs: [['workers','Сотрудники'],['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],['materials','Материалы'],['equipment','Оборудование'],['bom','Спецификации'],['sections','Участки']] },
+    analytics:  { label: '📊 Аналитика',   tabs: [['reports','Отчёты'],['analytics','Аналитика'],['qms','Качество'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['auxops','Доп. работы'],['journal','Журнал'],['notifications','Уведомления']] },
+    system:     { label: '🔧 Система',      tabs: [['time','Учёт времени'],['admin','Управление']] }
+  };
+
+  // Вкладки для каждой роли
+  const ROLE_TABS = {
+    master:      ALL_GROUPS, // полный доступ
+    pdo: {
+      production: { label: '⚙ Производство', tabs: [['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['orders','Заказы'],['plan','План']] },
+      analytics:  { label: '📊 Аналитика',   tabs: [['reports','Отчёты'],['qms','Качество'],['auxops','Доп. работы'],['journal','Журнал'],['notifications','Уведомления']] },
+    },
+    director: {
+      analytics:  { label: '📊 Аналитика',   tabs: [['analytics','Аналитика'],['qms','Качество'],['kpi','KPI / Премии'],['reports','Отчёты'],['reclamations','Рекламации'],['auxops','Доп. работы']] },
+      production: { label: '⚙ Производство', tabs: [['orders','Заказы'],['kanban','Канбан']] },
+    },
+    hr: {
+      reference:  { label: '👥 Сотрудники',  tabs: [['workers','Сотрудники']] },
+      analytics:  { label: '📊 Аналитика',   tabs: [['kpi','KPI / Премии'],['reports','Отчёты']] },
+      system:     { label: '🕐 Учёт',         tabs: [['time','Учёт времени']] },
+    },
+    shop_master: {
+      production: { label: '⚙ Производство', tabs: [['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['orders','Заказы']] },
+      analytics:  { label: '📊 Аналитика',   tabs: [['auxops','Доп. работы'],['journal','Журнал'],['notifications','Уведомления'],['reports','Отчёты']] },
+    },
+    admin: {
+      reference:  { label: '📋 Справочники', tabs: [['workers','Сотрудники'],['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],['materials','Материалы'],['equipment','Оборудование'],['bom','Спецификации'],['sections','Участки']] },
+      system:     { label: '🔧 Система',      tabs: [['time','Учёт времени'],['admin','Управление']] },
+    },
+  };
+
+  const tabGroups = ROLE_TABS[role] || ALL_GROUPS;
+  const firstGroup = Object.keys(tabGroups)[0];
+  const [activeGroup, setActiveGroup] = useState(firstGroup);
+  const [tab, setTab] = useState(tabGroups[firstGroup]?.tabs[0]?.[0] || 'ops');
+  const currentTabs = tabGroups[activeGroup]?.tabs || [];
+  const switchGroup = (g) => { setActiveGroup(g); setTab(tabGroups[g].tabs[0][0]); };
+  const filteredData = useMemo(() => {
+    if (!sectionId) return data;
+    return { ...data, ops: data.ops.filter(o => o.sectionId === sectionId || !o.sectionId), workers: data.workers.filter(w => w.sectionId === sectionId || !w.sectionId) };
+  }, [data, sectionId]);
+
+  // Сводка мастера — мемоизируем чтобы не пересчитывать на каждый рендер
+  const masterSummary = useMemo(() => {
+    const activeOps   = data.ops.filter(o => o.status === 'in_progress' && !o.archived);
+    const pendingOps  = data.ops.filter(o => o.status === 'pending' && !o.archived);
+    const defectOps   = data.ops.filter(o => (o.status === 'defect' || o.status === 'rework') && !o.archived);
+    const onCheckOps  = data.ops.filter(o => o.status === 'on_check' && !o.archived);
+    const wipOrders   = data.orders.filter(o => !o.archived && data.ops.some(op => op.orderId === o.id && op.status === 'in_progress'));
+    const freeWorkers = data.workers.filter(w => isWorkerOnShift(w, data.timesheet) && !data.ops.some(op => op.status === 'in_progress' && op.workerIds?.includes(w.id)));
+    return { activeOps, pendingOps, defectOps, onCheckOps, wipOrders, freeWorkers };
+  }, [data.ops, data.orders, data.workers]);
+  return h('div', { style: { padding:'0 0 24px' } },
+    qrOpData && h(QRModal, { ops:[qrOpData.op], order: data.orders.find(o => o.id === qrOpData.op.orderId), worker: qrOpData.worker, onClose: () => setQrOpData(null) }),
+    // Онбординг мастера — автоматически скрывается когда всё настроено
+    role === 'master' && h(MasterOnboarding, { data, onDone: () => {} }),
+    // Группы вкладок
+    h('div', { className: 'tab-groups', style: { display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' } },
+      Object.entries(tabGroups).map(([gid, g]) => h('button', { key: gid, style: activeGroup === gid ? abtn({ fontSize: 12, padding: '6px 14px' }) : gbtn({ fontSize: 12, padding: '6px 14px' }), onClick: () => switchGroup(gid) }, g.label))
+    ),
+    // Вкладки внутри группы — скролл
+    h('div', { style: { borderBottom:'0.5px solid rgba(0,0,0,0.08)', marginBottom:16 }, role: 'tablist' },
+      h('div', { className: 'tabs-scroll' },
+        currentTabs.map(([id,label]) => h('button', { key: id, role: 'tab', 'aria-selected': tab === id, onClick: () => setTab(id), style: { padding:'8px 16px', background:'transparent', border:'none', borderBottom: tab === id ? `2px solid ${AM}` : '2px solid transparent', color: tab === id ? AM : '#888', cursor:'pointer', fontSize:13, minHeight: 40 } }, label))
+      )
+    ),
+    tab === 'ops' && h('div', null,
+      h(SectionAnalytics, { section: 'production', data }),
+      // Сводка мастера
+      (() => {
+        const { activeOps, pendingOps, defectOps, onCheckOps, wipOrders, freeWorkers } = masterSummary;
+        return h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 8, marginBottom: 16 } },
+          h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500, color: AM } }, activeOps.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'В работе')),
+          h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500, color: BL } }, pendingOps.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Ожидают')),
+          h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500, color: '#0277BD' } }, onCheckOps.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Контроль')),
+          h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500, color: RD } }, defectOps.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Проблемы')),
+          h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500, color: AM4 } }, wipOrders.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'НЗП')),
+          h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500, color: GN } }, freeWorkers.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Свободны'))
+        );
+      })(),
+      h(LoadForecastWidget, { data }),
+      h(MasterOps, { data: filteredData, onUpdate, onShowQR: (op, worker) => setQrOpData({ op, worker }), addToast, onOrderClick, onWorkerClick })
+    ),
+    tab === 'recommend' && h(AssignmentRecommendations, { data, onUpdate, addToast }),
+    tab === 'kanban' && h(MasterKanban, { data, onUpdate, addToast }),
+    tab === 'gantt' && h(GanttChart, { data }),
+    tab === 'calendar' && h(ResourceCalendar, { data, onUpdate, addToast, onWorkerClick }),
+    tab === 'deps' && h(DepsScreen, { data, onUpdate, addToast }),
+    tab === 'orders' && h(MasterOrders, { data, onUpdate, addToast, onOrderClick }),
+    tab === 'workers' && h(MasterWorkers, { data, onUpdate, addToast }),
+    tab === 'stages' && h(MasterProductionStages, { data, onUpdate, addToast }),
+    tab === 'defectReasons' && h(MasterDefectReasons, { data, onUpdate, addToast }),
+    tab === 'downtimes' && h(MasterDowntimes, { data, onUpdate, addToast }),
+    tab === 'materials' && h(MasterMaterials, { data, onUpdate, addToast }),
+    tab === 'equipment' && h(MasterEquipment, { data, onUpdate, addToast }),
+    tab === 'bom' && h(MasterBOM, { data, onUpdate, addToast }),
+    tab === 'time' && h(MasterTimeTracking, { data, onUpdate, addToast, onWorkerClick }),
+    tab === 'journal' && h(MasterJournal, { data, onWorkerClick }),
+    tab === 'sections' && h(MasterSections, { data, onUpdate, addToast }),
+    tab === 'plan' && h(MasterTodayPlan, { data, onWorkerClick }),
+    tab === 'notifications' && h(MasterNotifications, { data }),
+    tab === 'reports' && h(ReportsBuilder, { data }),
+    tab === 'analytics' && h(AnalyticsDashboard, { data, onWorkerClick }),
+    tab === 'qms' && h(QMSScreen, { data, onUpdate, addToast, onWorkerClick }),
+    tab === 'kpi' && h(KPIReport, { data, onWorkerClick }),
+    tab === 'reclamations' && h(MasterReclamations, { data, onUpdate, addToast, onWorkerClick }),
+    tab === 'auxops' && h(AuxOpsViewer, { data, onUpdate, addToast, onWorkerClick }),
+    tab === 'admin' && h(MasterAdmin, { data, onUpdate, addToast })
+  );
+});
+
+
+// ==================== QMSScreen: Управление качеством ====================
+const QMSScreen = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
+  const [filterStatus, setFilterStatus] = useState('open');
+  const [filterStage, setFilterStage] = useState('');
+  const [investigatingDefectId, setInvestigatingDefectId] = useState(null);
+  const [investigationNotes, setInvestigationNotes] = useState('');
+  const [rootCause, setRootCause] = useState('');
+  const [preventiveMeasure, setPreventiveMeasure] = useState('');
+
+  // Получить все дефекты, отфильтровать
+  const allDefects = data.defects || [];
+  const filtered = allDefects.filter(d => {
+    if (filterStatus && d.status !== filterStatus) return false;
+    if (filterStage && d.operationName !== filterStage) return false;
+    return true;
+  });
+
+  // Парето анализ
+  const paretoData = paretoDefectAnalysis(filtered);
+  const sourceAnalysis = defectSourceAnalysis(filtered);
+  const stageAnalysis = defectsByStage(filtered);
+
+  // KPI
+  const kpi = qmsKPI(filtered, data);
+
+  // Сохранить разбор дефекта
+  const resolveDefect = async (defectId, status) => {
+    const updated = data.defects.map(d =>
+      d.id === defectId
+        ? {
+            ...d,
+            status,
+            investigationDate: status !== 'open' ? Date.now() : null,
+            investigatedBy: status !== 'open' ? data.currentUser?.name || '?' : null,
+            rootCause: status !== 'open' ? rootCause : null,
+            preventiveMeasure: status !== 'open' ? preventiveMeasure : null,
+            investigationNotes
+          }
+        : d
+    );
+    const d = { ...data, defects: updated };
+    await DB.save(d);
+    onUpdate(d);
+    setInvestigatingDefectId(null);
+    setRootCause('');
+    setPreventiveMeasure('');
+    setInvestigationNotes('');
+    addToast(`Дефект отмечен как "${status}"`, 'success');
+  };
+
+  return h('div', { style: { padding: '16px 12px 80px' } },
+    // КПИ карточки
+    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8, marginBottom: 16 } },
+      h('div', { style: { ...S.card, padding: '12px', textAlign: 'center' } },
+        h('div', { style: { fontSize: 20, fontWeight: 600, color: RD } }, kpi.totalDefects),
+        h('div', { style: { fontSize: 10, color: '#888', marginTop: 4 } }, 'Всего дефектов')
+      ),
+      h('div', { style: { ...S.card, padding: '12px', textAlign: 'center' } },
+        h('div', { style: { fontSize: 20, fontWeight: 600, color: '#FF9800' } }, kpi.openDefects),
+        h('div', { style: { fontSize: 10, color: '#888', marginTop: 4 } }, 'Открыто')
+      ),
+      h('div', { style: { ...S.card, padding: '12px', textAlign: 'center' } },
+        h('div', { style: { fontSize: 20, fontWeight: 600, color: GN } }, kpi.resolvedDefects),
+        h('div', { style: { fontSize: 10, color: '#888', marginTop: 4 } }, 'Разрешено')
+      ),
+      h('div', { style: { ...S.card, padding: '12px', textAlign: 'center' } },
+        h('div', { style: { fontSize: 20, fontWeight: 600, color: AM } }, `${kpi.resolutionRate}%`),
+        h('div', { style: { fontSize: 10, color: '#888', marginTop: 4 } }, 'Разрешено, %')
+      )
+    ),
+
+    // Статистика источников
+    h('div', { style: { ...S.card, marginBottom: 16 } },
+      h('div', { style: S.sec }, 'Источник дефектов'),
+      h('div', { style: { display: 'flex', gap: 16, fontSize: 12 } },
+        h('div', null,
+          h('div', { style: { fontWeight: 500, color: '#666' } }, 'Мой брак'),
+          h('div', { style: { fontSize: 16, fontWeight: 600, color: RD } }, sourceAnalysis.thisStage),
+          h('div', { style: { fontSize: 10, color: '#888' } }, `${sourceAnalysis.thisStagePercent}%`)
+        ),
+        h('div', null,
+          h('div', { style: { fontWeight: 500, color: '#666' } }, 'С предыдущего'),
+          h('div', { style: { fontSize: 16, fontWeight: 600, color: '#FF9800' } }, sourceAnalysis.previousStage),
+          h('div', { style: { fontSize: 10, color: '#888' } }, `${sourceAnalysis.previousStagePercent}%`)
+        )
+      )
+    ),
+
+    // Парето (топ типы дефектов)
+    h('div', { style: { ...S.card, marginBottom: 16 } },
+      h('div', { style: S.sec }, '📊 Парето — Типы дефектов (80/20)'),
+      paretoData.length === 0
+        ? h('div', { style: { textAlign: 'center', color: '#888', padding: '20px', fontSize: 12 } }, 'Нет дефектов')
+        : h('div', null,
+            paretoData.map(item =>
+              h('div', { key: item.type, style: { marginBottom: 10 } },
+                h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 } },
+                  h('span', { style: { fontWeight: 500 } }, item.type),
+                  h('span', { style: { color: '#888' } }, `${item.count} (${item.percent}%) → ${item.cumulative}%`)
+                ),
+                h('div', { style: { background: '#f0f0f0', height: 8, borderRadius: 4, overflow: 'hidden' } },
+                  h('div', { style: { background: item.cumulative > 80 ? GN : AM, height: 8, width: `${item.cumulative}%`, borderRadius: 4 } })
+                )
+              )
+            )
+          )
+    ),
+
+    // Дефекты по этапам
+    h('div', { style: { ...S.card, marginBottom: 16 } },
+      h('div', { style: S.sec }, 'Дефекты по этапам'),
+      stageAnalysis.length === 0
+        ? h('div', { style: { textAlign: 'center', color: '#888', padding: '20px', fontSize: 12 } }, 'Нет дефектов')
+        : h('div', null,
+            stageAnalysis.slice(0, 5).map(item =>
+              h('div', { key: item.stage, style: { display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '0.5px solid #eee', fontSize: 12 } },
+                h('span', null, item.stage),
+                h('span', { style: { fontWeight: 600, color: RD } }, item.count)
+              )
+            )
+          )
+    ),
+
+    // Фильтры и список дефектов
+    h('div', { style: { marginBottom: 12 } },
+      h('div', { style: { display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' } },
+        h('button', { style: filterStatus === 'open' ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setFilterStatus('open') }, 'Открыто'),
+        h('button', { style: filterStatus === 'investigating' ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setFilterStatus('investigating') }, 'Разбирается'),
+        h('button', { style: filterStatus === 'resolved' ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setFilterStatus('resolved') }, 'Разрешено'),
+        h('button', { style: filterStatus === '' ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setFilterStatus('') }, 'Все')
+      )
+    ),
+
+    // Список дефектов
+    h('div', { style: { ...S.card, padding: 0 } },
+      filtered.length === 0
+        ? h('div', { style: { textAlign: 'center', padding: '30px', color: '#888', fontSize: 12 } }, 'Нет дефектов по выбранным фильтрам')
+        : h('div', null,
+            filtered.map(d => {
+              const order = data.orders.find(o => o.id === d.orderId);
+              const worker = data.workers.find(w => w.id === d.workerId);
+              const isInvestigating = investigatingDefectId === d.id;
+
+              return h('div', { key: d.id, style: { padding: '12px', borderBottom: '0.5px solid #eee', background: d.status === 'resolved' ? '#f5f5f5' : d.status === 'investigating' ? '#FFF3E0' : '#fff' } },
+                h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 8 } },
+                  h('div', null,
+                    h('div', { style: { fontWeight: 500, fontSize: 12 } }, d.defectType),
+                    h('div', { style: { fontSize: 11, color: '#888', marginTop: 2, display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' } },
+                      h('span', null, `${order?.number || '?'} → ${d.operationName} →`),
+                      h(WN, { workerId: d.workerId, data, onWorkerClick })
+                    )
+                  ),
+                  h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 3, background: d.status === 'resolved' ? GN3 : d.status === 'investigating' ? '#FFE0B2' : '#FFF3CD', color: d.status === 'resolved' ? GN2 : d.status === 'investigating' ? '#E65100' : '#856404' } },
+                    d.status === 'open' ? 'Открыто' : d.status === 'investigating' ? 'Разбирается' : 'Разрешено'
+                  )
+                ),
+                h('div', { style: { fontSize: 11, color: '#666', marginBottom: 8, lineHeight: 1.4 } }, d.description),
+                h('div', { style: { fontSize: 10, color: '#999', marginBottom: 8 } },
+                  `Источник: ${d.source === 'previous_stage' ? '🔙 С предыдущего' : '👤 Мой брак'} • ${new Date(d.createdAt).toLocaleString('ru')}`
+                ),
+                
+                isInvestigating
+                  ? h('div', { style: { background: '#f9f9f9', padding: '10px', borderRadius: 6, marginTop: 8 } },
+                      h('div', { style: { fontSize: 11, fontWeight: 500, marginBottom: 8 } }, 'Разбор дефекта'),
+                      h('textarea', { style: { ...S.inp, width: '100%', minHeight: 60, marginBottom: 8, fontSize: 12 }, placeholder: 'Первопричина...', value: rootCause, onChange: e => setRootCause(e.target.value) }),
+                      h('textarea', { style: { ...S.inp, width: '100%', minHeight: 60, marginBottom: 8, fontSize: 12 }, placeholder: 'Какие меры принять чтобы не повторилось?', value: preventiveMeasure, onChange: e => setPreventiveMeasure(e.target.value) }),
+                      h('textarea', { style: { ...S.inp, width: '100%', minHeight: 40, marginBottom: 8, fontSize: 12 }, placeholder: 'Примечания...', value: investigationNotes, onChange: e => setInvestigationNotes(e.target.value) }),
+                      h('div', { style: { display: 'flex', gap: 6 } },
+                        h('button', { style: gbtn({ flex: 1, fontSize: 11 }), onClick: () => resolveDefect(d.id, 'resolved') }, '✓ Разрешено'),
+                        h('button', { style: { ...gbtn({ flex: 1, fontSize: 11 }), color: '#666' }, onClick: () => setInvestigatingDefectId(null) }, 'Назад')
+                      )
+                    )
+                  : h('div', { style: { display: 'flex', gap: 6 } },
+                      d.status === 'open' && h('button', { style: gbtn({ flex: 1, fontSize: 11 }), onClick: () => { setInvestigatingDefectId(d.id); setRootCause(''); setPreventiveMeasure(''); setInvestigationNotes(''); } }, 'Разобрать'),
+                      h('button', { style: gbtn({ flex: 1, fontSize: 11 }), onClick: () => resolveDefect(d.id, 'wontfix') }, '✗ Не рассматр.')
+                    )
+              );
+            })
+          )
+    )
+  );
+});
+
+
+const CostAnalytics = memo(({ data, onUpdate, addToast }) => {
+  const [showRates, setShowRates] = useState(false);
+  
+  // 💰 Отчёт по себестоимости всех заказов
+  const costReport = useMemo(() => getCostReport(data), [data.orders?.length, data.ops?.length, data.workers?.length]);
+  
+  return h('div', null,
+    h('div', { style: S.card },
+      h('div', { style: S.sec }, '💰 Рентабельность заказов'),
+      h('div', { style: { display:'flex', gap:8, marginBottom:12 } },
+        h('button', { style: gbtn({ fontSize:11, padding:'6px 10px' }), onClick: () => setShowRates(v => !v) }, showRates ? '▼ Ставки' : '▶ Ставки сотрудников')
+      ),
+      // 📋 Таблица себестоимости
+      h('div', { className:'table-responsive' }, h('table', { style: { width:'100%', borderCollapse:'collapse', fontSize:11 } },
+        h('thead', null, h('tr', null,
+          ['Заказ','Цена','Материал','Рабсила','Себест','Прибыль','Маржа'].map((h, i) => h('th', { key:i, style: S.th }, h))
+        )),
+        h('tbody', null, costReport.map(r => h('tr', { key:r.orderId },
+          h('td', { style: S.td }, data.orders?.find(o => o.id === r.orderId)?.number || '—'),
+          h('td', { style: S.td }, `${r.price} ₽`),
+          h('td', { style: S.td }, `${r.materialCost} ₽`),
+          h('td', { style: S.td }, `${r.laborCost} ₽`),
+          h('td', { style: S.td }, `${r.totalCost} ₽`),
+          h('td', { style: { ...S.td, color: r.profit >= 0 ? GN : RD, fontWeight:500 } }, `${r.profit} ₽`),
+          h('td', { style: { ...S.td, background: r.margin >= 20 ? '#E8F5E9' : r.margin >= 0 ? '#FFF8E1' : '#FFF0F0', fontWeight:500 } }, `${r.margin}%`)
+        )))
+      )),
+      // 📊 Ставки сотрудников (редактируемо)
+      showRates && h('div', { style: { marginTop:16, padding:12, background:'#f8f8f5', borderRadius:8 } },
+        h('div', { style: { fontSize:12, fontWeight:500, marginBottom:12 } }, 'Установить часовую ставку (руб/час):'),
+        data.workers?.filter(w => !w.archived).map(w => h('div', { key:w.id, style: { display:'flex', gap:8, marginBottom:8, alignItems:'center' } },
+          h('div', { style: { flex:1, fontSize:12 } }, w.name),
+          h('input', { type:'number', min:100, max:5000, step:50, style: { ...S.inp, width:80, fontSize:12 }, value: w.hourlyRate || 200, onChange: e => {
+            const newRate = parseInt(e.target.value);
+            if (newRate > 0) setWorkerRate(data, w.id, newRate, onUpdate).then(() => addToast(`Ставка ${w.name}: ${newRate} ₽/ч`, 'success'));
+          } }),
+          h('span', { style: { fontSize:11, color:'#888' } }, '₽/ч')
+        ))
+      )
+    )
+  );
+});
+
+// ==================== QRScreen ====================
+const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
+  const op = data.ops.find(o => o.id === opId);
+  const order = op ? data.orders.find(o => o.id === op.orderId) : null;
+  const workerNames = op ? op.workerIds?.map(id => data.workers.find(w => w.id === id)?.name).filter(Boolean).join(', ') : '';
+  const [defNote, setDefNote] = useState('');
+  const [defectReasonId, setDefectReasonId] = useState('');
+  const [showDefForm, setShowDefForm] = useState(false);
+  const [defectFromPrev, setDefectFromPrev] = useState(true);
+  const [showDowntimeModal, setShowDowntimeModal] = useState(false);
+  const [selectedDowntimeType, setSelectedDowntimeType] = useState('');
+  const [, setTick] = useState(0);
+  const [weldParams, setWeldParams] = useState({ seamNumber:'', electrode:'', result:'ok' });
+  const [downtimeStartedAt, setDowntimeStartedAt] = useState(null);
+  const [downtimeEquipmentId, setDowntimeEquipmentId] = useState('');
+
+  useEffect(() => {
+    if (!op || op.status !== 'in_progress') return;
+    const t = setInterval(() => setTick(n => n+1), 1000);
+    return () => clearInterval(t);
+  }, [op?.status]);
+
+  // ── Все useCallback ДО раннего return (Rules of Hooks) ──
+  const handleStart = useCallback(async () => {
+    if (!op || op.status !== 'pending') return;
+    const workerId = op.workerIds?.[0];
+    const worker = data.workers.find(w => w.id === workerId);
+    if (worker && worker.competences && worker.competences.length > 0 && !worker.competences.includes(op.name)) { addToast('У сотрудника нет компетенции', 'error'); return; }
+    const result = buildStartUpdate(data, op, workerId);
+    const updated = { ...data, ops: result.ops, events: result.events };
+    await DB.save(updated); onUpdate(updated); addToast('Операция начата', 'success');
+  }, [data, op, onUpdate, addToast]);
+
+  const handleFinish = useCallback(async (isDefect=false, isRework=false, source='current') => {
+    if (!op || op.status !== 'in_progress') return;
+    const workerId = op.workerIds?.[0];
+    const result = buildFinishUpdate(data, op, workerId, { isDefect, isRework, source, defNote, defectReasonId, weldParams });
+    const updated = { ...data, ops: result.ops, events: result.events, reclamations: result.reclamations };
+    const allAchUpdated = (op.workerIds || []).reduce((acc, wid) => { const r = checkAchievements(wid, acc); return r; }, updated);
+    const final = allAchUpdated !== updated ? allAchUpdated : updated;
+    await DB.save(final); onUpdate(final);
+    setShowDefForm(false); setDefNote(''); setDefectReasonId(''); setWeldParams({ seamNumber:'', electrode:'', result:'ok' });
+    addToast('Операция завершена', 'info');
+  }, [data, op, onUpdate, defNote, defectReasonId, weldParams, addToast]);
+
+  const recordDowntime = useCallback(async () => {
+    if (!op || !selectedDowntimeType) return addToast('Выберите причину', 'error');
+    const shift = getCurrentShift(data.settings?.shifts);
+    const duration = downtimeStartedAt ? now() - downtimeStartedAt : 0;
+    const newEvent = { id: uid(), type:'downtime', workerId: op.workerIds?.[0], opId: op.id, ts: now(), downtimeTypeId: selectedDowntimeType, shift, startedAt: downtimeStartedAt || now(), duration, equipmentId: downtimeEquipmentId || undefined };
+    const updated = { ...data, events: [...data.events, newEvent] };
+    await DB.save(updated); onUpdate(updated);
+    setShowDowntimeModal(false); setSelectedDowntimeType(''); setDowntimeStartedAt(null); setDowntimeEquipmentId('');
+    addToast('Простой зафиксирован', 'success');
+  }, [data, op, selectedDowntimeType, downtimeStartedAt, onUpdate, addToast]);
+
+  // ── Ранний return — только после всех хуков ──
+  if (!op || op.archived) return h('div', { style: { ...S.card, textAlign:'center', padding: 24 } },
+    h('div', { style: { fontSize: 16, marginBottom: 8 } }, '⏳ Поиск операции...'),
+    h('div', { style: { fontSize: 12, color: '#888', marginBottom: 16 } }, `ID: ${opId}`),
+    h('div', { style: { fontSize: 12, color: '#888' } }, 'Если операция не появится — данные ещё не синхронизированы. Обновите страницу.'),
+    h('button', { style: abtn({ marginTop: 12 }), onClick: () => window.location.reload() }, '🔄 Обновить')
+  );
+  const elapsed = op.startedAt && !op.finishedAt ? now() - op.startedAt : 0;
+
+  const renderQRActions = () => {
+    if (showDefForm) return h('div', null,
+      h('div', { style: { fontSize: 11, color: RD, fontWeight: 500, marginBottom: 6, textTransform: 'uppercase' } }, 'Фиксация брака'),
+      h('div', { style: { display: 'flex', gap: 6, marginBottom: 8 } },
+        h('button', { type: 'button', style: defectFromPrev ? rbtn({ flex:1, fontSize:11 }) : gbtn({ flex:1, fontSize:11 }), onClick: () => setDefectFromPrev(true) }, 'С пред. участка'),
+        h('button', { type: 'button', style: !defectFromPrev ? rbtn({ flex:1, fontSize:11 }) : gbtn({ flex:1, fontSize:11 }), onClick: () => setDefectFromPrev(false) }, 'Текущий этап')
+      ),
+      h('select', { style: { ...S.inp, width:'100%', marginBottom:8 }, value: defectReasonId, onChange: e => setDefectReasonId(e.target.value) }, h('option', { value:'' }, '— выберите причину —'), (data.defectReasons || []).map(r => h('option', { key: r.id, value: r.id }, r.name))),
+      h('textarea', { style: { ...S.inp, width:'100%', marginBottom:8 }, rows:2, placeholder:'Опишите дефект...', value: defNote, onChange: e => setDefNote(e.target.value) }),
+      h('div', { style: { display:'flex', gap:6 } },
+        h('button', { style: rbtn({ flex:1 }), onClick: () => handleFinish(true, false, defectFromPrev ? 'previous_stage' : 'current') }, 'Зафиксировать брак'),
+        h('button', { style: { ...gbtn({ flex:1 }), color:AM2, borderColor:AM4 }, onClick: () => handleFinish(false, true, defectFromPrev ? 'previous_stage' : 'current') }, 'Переделка'),
+        h('button', { style: gbtn({ flex:1 }), onClick: () => { setShowDefForm(false); setDefectFromPrev(true); } }, 'Отмена')
+      )
+    );
+    if (op.name.includes('свар')) return h('div', null,
+      h('div', { style: { display:'flex', gap:8, marginBottom:8 } }, h('input', { style: { ...S.inp, flex:1 }, placeholder:'Номер шва', value: weldParams.seamNumber, onChange: e => setWeldParams(p => ({ ...p, seamNumber: e.target.value })) }), h('input', { style: { ...S.inp, flex:1 }, placeholder:'Тип электрода', value: weldParams.electrode, onChange: e => setWeldParams(p => ({ ...p, electrode: e.target.value })) })),
+      h('div', { style: { display:'flex', gap:8, marginBottom:8 } },
+        h('label', { style: { display:'flex', alignItems:'center', gap:4 } }, h('input', { type:'radio', name:`weldResult_qr_${op.id}`, value:'ok', checked: weldParams.result === 'ok', onChange: e => setWeldParams(p => ({ ...p, result: e.target.value })) }), 'Принято'),
+        h('label', { style: { display:'flex', alignItems:'center', gap:4 } }, h('input', { type:'radio', name:`weldResult_qr_${op.id}`, value:'fail', checked: weldParams.result === 'fail', onChange: e => setWeldParams(p => ({ ...p, result: e.target.value })) }), 'Брак')
+      ),
+      h('div', { className: 'action-btns', style: { display:'flex', gap:8, flexWrap:'wrap' } },
+        op.status === 'pending' && workerNames && h('button', { style: abtn({ flex:1, padding:'12px' }), onClick: handleStart }, '▶ Старт'),
+        op.status === 'in_progress' && h('button', { style: { ...abtn({ flex:1 }), background:GN, color:GN2 }, onClick: () => handleFinish() }, '✓ Завершить'),
+        op.status === 'in_progress' && h('button', { style: rbtn({ flex:1 }), onClick: () => { setShowDefForm(true); setDefectFromPrev(true); } }, '⚠ Брак с пред.'),
+        op.status === 'in_progress' && h('button', { style: { ...rbtn({ flex:1 }), background:'#FFF0F0', borderColor:'#F09595' }, onClick: () => { setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
+        (op.status === 'pending' || op.status === 'in_progress') && h('button', { style: gbtn({ flex:1 }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
+      )
+    );
+    return h('div', { className: 'action-btns', style: { display:'flex', gap:8, flexWrap:'wrap' } },
+      op.status === 'pending' && workerNames && h('button', { style: abtn({ flex:1, padding:'12px' }), onClick: handleStart }, '▶ Старт'),
+      op.status === 'in_progress' && h('button', { style: { ...abtn({ flex:1 }), background:GN, color:GN2 }, onClick: () => handleFinish() }, '✓ Завершить'),
+      op.status === 'in_progress' && h('button', { style: rbtn({ flex:1 }), onClick: () => { setShowDefForm(true); setDefectFromPrev(true); } }, '⚠ Брак с пред.'),
+      op.status === 'in_progress' && h('button', { style: { ...rbtn({ flex:1 }), background:'#FFF0F0', borderColor:'#F09595' }, onClick: () => { setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
+      (op.status === 'pending' || op.status === 'in_progress') && h('button', { style: gbtn({ flex:1 }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
+    );
+  };
+
+  return h('div', { style: { maxWidth:420, margin:'0 auto', padding:'16px 12px' } },
+    h('div', { style: { ...S.card, border: `1px solid ${AM}`, background:AM3 } },
+      h('div', { style: { fontSize:10, color:AM, textTransform:'uppercase', marginBottom:6 } }, 'Операция по QR-коду'),
+      h('div', { style: { fontSize:18, fontWeight:500, color:AM2 } }, op.name),
+      h('div', { style: { fontSize:14, color:AM, marginBottom:8 } }, order?.number || '—'),
+      h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom:16, background:'#fff', borderRadius:8, padding:8 } },
+        h('div', { style: { width:32, height:32, borderRadius:'50%', background:AM3, display:'flex', alignItems:'center', justifyContent:'center' } }, workerNames?.[0] || '?'),
+        h('div', null, h('div', { style: { fontSize:13, fontWeight:500 } }, workerNames || 'Не назначен'), h('div', { style: { fontSize:10, color:'#888' } }, 'Плановый исполнитель'))
+      ),
+      h('div', { style: { display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 } }, h(Badge, { st: op.status }), op.status === 'in_progress' && h('div', { style: { fontSize:24, fontWeight:500, color:AM } }, fmtDur(elapsed))),
+      renderQRActions()
+    ),
+    showDowntimeModal && h('div', { role:'dialog','aria-modal':'true','aria-label':'Фиксация простоя', style: { position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:60 } },
+      h('div', { style: { background:'#fff',borderRadius:12,padding:24,width:'min(300px, calc(100vw - 32px))' } },
+        h('div', { style: { fontSize:14, fontWeight:500, marginBottom:12 } }, 'Причина простоя'),
+        h('select', { style: { ...S.inp, width:'100%', marginBottom:16 }, value: selectedDowntimeType, onChange: e => setSelectedDowntimeType(e.target.value) }, h('option', { value:'' }, '— выберите —'), data.downtimeTypes.map(dt => h('option', { key: dt.id, value: dt.id }, dt.name))),
+        h('div', { style: { display:'flex', gap:8, justifyContent:'flex-end' } }, h('button', { style: gbtn(), onClick: () => setShowDowntimeModal(false) }, 'Отмена'), h('button', { style: abtn(), onClick: recordDowntime }, 'Зафиксировать'))
+      )
+    )
+  );
+});
+
+
+
