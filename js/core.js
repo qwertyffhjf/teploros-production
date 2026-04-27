@@ -973,6 +973,30 @@ const migrateData = (d) => {
   if (d.productionStages?.some(s => !s.productType)) {
     d = { ...d, productionStages: d.productionStages.map(s => s.productType ? s : { ...s, productType: 'boiler' }) };
   }
+  // Миграция: operationIds должен быть массивом (старые заказы могут хранить объект или undefined)
+  if (d.orders?.some(o => o.operationIds !== undefined && !Array.isArray(o.operationIds))) {
+    d = { ...d, orders: d.orders.map(o => {
+      if (o.operationIds !== undefined && !Array.isArray(o.operationIds)) {
+        const { operationIds, ...rest } = o;
+        return rest;
+      }
+      return o;
+    })};
+  }
+  // Дедупликация событий по id (убираем дубликаты material_receive и других)
+  if (d.events?.length > 0) {
+    const seen = new Set();
+    const deduped = d.events.filter(e => {
+      if (!e.id) return true; // без id — оставляем
+      if (seen.has(e.id)) return false;
+      seen.add(e.id);
+      return true;
+    });
+    if (deduped.length < d.events.length) {
+      console.log(\`Дедупликация событий: убрано \${d.events.length - deduped.length} дублей\`);
+      d = { ...d, events: deduped };
+    }
+  }
   return d;
 };
 
