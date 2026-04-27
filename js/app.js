@@ -1706,7 +1706,7 @@ function App() {
         setWorkerId(wid);
         setSectionId(sid);
         // Запускаем presence tracking
-        const userName = wid ? (appData?.workers?.find(w => w.id === wid)?.name || r) : r;
+        const userName = wid ? (data?.workers?.find(w => w.id === wid)?.name || r) : r;
         const presenceId = wid || r;
         Presence.start(presenceId, userName);
         // chat, chat_master, chat_controller — всё это режим чата
