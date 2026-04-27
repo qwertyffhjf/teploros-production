@@ -183,7 +183,7 @@ const LoadForecastWidget = memo(({ data }) => {
         hoursByType[type] = (hoursByType[type] || 0) + (op.plannedHours || 2);
       });
       // Доступные рабочие
-      const available = data.workers.filter(w => (w.status || 'working') === 'working');
+      const available = data.workers.filter(w => isWorkerOnShift(w, data.timesheet));
       // Потенциальные проблемы
       const warnings = [];
       Object.entries(hoursByType).forEach(([type, hours]) => {
