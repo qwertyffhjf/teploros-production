@@ -308,20 +308,41 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
                   h('summary', { style: { cursor: 'pointer', color: AM, userSelect: 'none', padding: '2px 0', fontWeight: 500 } }, '➕ Добавить'),
                   h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, padding: '6px 0', maxHeight: 200, overflowY: 'auto' } },
                     (() => {
+                      const LEVEL_ICONS = { 0: '', 1: '🟡', 2: '🟠', 3: '🟢' };
+                      const LEVEL_LABELS = { 0: '—', 1: 'Новичок', 2: 'Компетентен', 3: 'Эксперт' };
+                      const getLevel = (w) => (w.competenceLevels || {})[op.name] || 0;
+                      const checkExpired = (w) => {
+                        const meta = (w.competenceMeta || {})[op.name];
+                        if (!meta?.expiresAt) return false;
+                        return meta.expiresAt < Date.now();
+                      };
                       const available = data.workers.filter(w => !w.archived && !(op.workerIds || []).includes(w.id));
-                      const withPermit  = available.filter(w => (w.competences || []).includes(op.name));
+                      const withPermit  = available.filter(w => (w.competences || []).includes(op.name))
+                        .sort((a, b) => getLevel(b) - getLevel(a)); // сортировка по уровню
                       const noRestrict  = available.filter(w => !w.competences || w.competences.length === 0);
                       const noPermit    = available.filter(w => w.competences?.length > 0 && !w.competences.includes(op.name));
-                      const mkRow = (w, badge) => h('div', { key: w.id,
-                        style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 8px', borderRadius: 6, cursor: 'pointer', background: 'var(--card,#f5f5f2)', border: '0.5px solid var(--border,#ddd)', fontSize: 11, userSelect: 'none', color: 'var(--fg,#222)' },
-                        onClick: () => assignWorkers(op.id, [...(op.workerIds || []), w.id])
-                      },
-                        h('span', null, h('span', { style: { color: GN, fontWeight: 600, marginRight: 4 } }, '+'), w.name),
-                        badge
-                      );
+                      const mkRow = (w, badge) => {
+                        const level = getLevel(w);
+                        const expired = checkExpired(w);
+                        return h('div', { key: w.id,
+                          style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 8px', borderRadius: 6, cursor: 'pointer', background: 'var(--card,#f5f5f2)', border: '0.5px solid var(--border,#ddd)', fontSize: 11, userSelect: 'none', color: 'var(--fg,#222)', opacity: expired ? 0.6 : 1 },
+                          title: level > 0 ? `${LEVEL_LABELS[level]}${expired ? ' (допуск просрочен!)' : ''}` : '',
+                          onClick: () => assignWorkers(op.id, [...(op.workerIds || []), w.id])
+                        },
+                          h('span', null,
+                            h('span', { style: { color: GN, fontWeight: 600, marginRight: 4 } }, '+'),
+                            w.name,
+                            level > 0 && h('span', { style: { marginLeft: 4, fontSize: 12 } }, LEVEL_ICONS[level])
+                          ),
+                          h('span', { style: { display: 'flex', gap: 3 } },
+                            expired && h('span', { style: { fontSize: 9, background: RD3, color: RD2, padding: '1px 5px', borderRadius: 4 } }, '⚠ просрочен'),
+                            badge
+                          )
+                        );
+                      };
                       return [
                         withPermit.length > 0 && h('div', { key: 'g1', style: { fontSize: 10, color: GN2, fontWeight: 500, padding: '4px 0 2px', borderBottom: `1px solid var(--border-soft,#eee)`, marginBottom: 2 } }, `★ Есть допуск (${withPermit.length})`),
-                        ...withPermit.map(w => mkRow(w, h('span', { style: { fontSize: 9, background: GN3, color: GN2, padding: '1px 5px', borderRadius: 4 } }, '✓ допуск'))),
+                        ...withPermit.map(w => mkRow(w, h('span', { style: { fontSize: 9, background: GN3, color: GN2, padding: '1px 5px', borderRadius: 4 } }, LEVEL_LABELS[getLevel(w)] || '✓'))),
                         noRestrict.length > 0 && h('div', { key: 'g2', style: { fontSize: 10, color: '#888', padding: '4px 0 2px', borderBottom: `1px solid var(--border-soft,#eee)`, marginBottom: 2, marginTop: 4 } }, `Без ограничений (${noRestrict.length})`),
                         ...noRestrict.map(w => mkRow(w, h('span', { style: { fontSize: 9, background: 'var(--card,#f0f0f0)', color: '#888', padding: '1px 5px', borderRadius: 4 } }, 'любые'))),
                         noPermit.length > 0 && h('div', { key: 'g3', style: { fontSize: 10, color: RD2, padding: '4px 0 2px', borderBottom: `1px solid var(--border-soft,#eee)`, marginBottom: 2, marginTop: 4 } }, `Нет допуска (${noPermit.length})`),
