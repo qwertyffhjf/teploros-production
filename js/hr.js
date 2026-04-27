@@ -66,7 +66,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
       const year = today.getFullYear();
       const month = today.getMonth(); // 0-based — ключ в timesheet
       const day = today.getDate();
-      const tsKey = `${year}-${String(month).padStart(2,'0')}`;
+      const tsKey = `${year}-${String(month + 1).padStart(2,'0')}`;  // month 0-based → +1
       const workerTs = (d.timesheet?.[id] || {});
       if (!workerTs[day]) { // только если ячейка пустая
         d = { ...d, timesheet: { ...(d.timesheet || {}), [id]: { ...workerTs, [day]: { h: 8 } } } };
