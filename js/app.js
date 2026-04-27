@@ -3,7 +3,7 @@
 
 // ==================== Таблица лидеров ====================
 const Leaderboard = memo(({ data }) => {
-  const workers = useMemo(() => data.workers.filter(w => !w.archived && (w.status || 'working') === 'working'), [data.workers]);
+  const workers = useMemo(() => data.workers.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet)), [data.workers]);
   const boards = useMemo(() => {
     const stats = workers.map(w => {
       const s = calcWorkerStats(w.id, data, Date.now());
@@ -279,7 +279,7 @@ const Dashboard = memo(({ data, addToast, onOrderClick }) => {
   const defectsToday = useMemo(() => { const t = new Date().setHours(0,0,0,0); return data.ops.filter(o => o.status === 'defect' && o.finishedAt >= t); }, [data.ops]);
   const downtimesToday = useMemo(() => { const t = new Date().setHours(0,0,0,0); return data.events.filter(e => e.type === 'downtime' && e.ts >= t); }, [data.events]);
   const totalDowntimeMin = useMemo(() => Math.round(downtimesToday.reduce((s, e) => s + (e.duration || 0), 0) / 60000), [downtimesToday]);
-  const activeWorkers = useMemo(() => data.workers.filter(w => !w.archived && (w.status || 'working') === 'working'), [data.workers]);
+  const activeWorkers = useMemo(() => data.workers.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet)), [data.workers]);
   const busyWorkers = useMemo(() => new Set(activeOps.flatMap(op => op.workerIds || [])), [activeOps]);
   const freeWorkers = useMemo(() => activeWorkers.filter(w => !busyWorkers.has(w.id)), [activeWorkers, busyWorkers]);
   const criticalMaterials = useMemo(() => data.materials.filter(m => m.minStock && m.quantity <= m.minStock), [data.materials]);
@@ -1297,7 +1297,7 @@ const ShopMasterScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const pendingOps = useMemo(() => data.ops.filter(o => o.status === 'pending' && !o.archived), [data.ops]);
   const freeWorkers = useMemo(() => {
     const busy = new Set(activeOps.flatMap(o => o.workerIds || []));
-    return data.workers.filter(w => !w.archived && (w.status || 'working') === 'working' && !busy.has(w.id));
+    return data.workers.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet) && !busy.has(w.id));
   }, [data.workers, activeOps]);
   const alerts = useMemo(() => {
     const res = [];
