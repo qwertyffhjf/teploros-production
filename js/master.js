@@ -281,7 +281,14 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
               h('input', { type: 'checkbox', style: { width: 18, height: 18, cursor: 'pointer', accentColor: AM }, checked: selectedOps.has(op.id), onChange: () => toggleOpSelection(op.id) })
             ),
               h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 10 } }, op.id),
-              h('td', { style: { ...S.td, fontWeight: 500 } }, op.name, op.defectNote && h('div', { style: { fontSize: 10, color: RD } }, op.defectNote)),
+              h('td', { style: { ...S.td, fontWeight: 500 }, title: [
+                op.name,
+                op.defectNote ? '⚠ ' + op.defectNote : null,
+                op.plannedHours ? 'Плановое время: ' + op.plannedHours + ' ч' : null,
+                op.sectionId ? 'Участок: ' + (data.sections.find(s=>s.id===op.sectionId)?.name||'') : null,
+              ].filter(Boolean).join('\n') },
+              op.name,
+              op.defectNote && h('div', { style: { fontSize: 10, color: RD } }, op.defectNote)),
               h('td', { style: { ...S.td, fontSize: 11 } },
                 onOrderClick && ord
                   ? h('span', { style: { color: AM, fontWeight: 500, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => onOrderClick(ord.id), title: 'Открыть карточку заказа' }, ord.number)
@@ -864,14 +871,14 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
               h('td', { style: S.td }, h(Badge, { st: ord.shipped ? 'shipped' : st })),
               h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
                 !ord.archived ? [
-                  h('button', { key: 'edit', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Редактировать', onClick: () => edit(ord) }, '✎'),
-                  h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'В архив', onClick: () => del(ord.id) }, '✕'),
-                  h('button', { key: 'passport', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Паспорт PDF', onClick: () => generateFullPassport(ord, data) }, '📄'),
-                  h('button', { key: 'route', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Маршрутный лист PDF', onClick: () => generateRouteSheet(ord, data) }, '📋'),
-                  h('button', { key: 'deps', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Зависимости операций', onClick: () => setDepEditorOrderId(ord.id) }, '🔗'),
-                  !ord.shipped && h('button', { key: 'ship', style: { ...gbtn({ fontSize: 11, padding: '4px 8px' }), color: GN2, borderColor: GN }, 'aria-label': 'Отгрузить заказ', onClick: () => shipOrder(ord.id) }, '🚚'),
+                  h('button', { key: 'edit', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Редактировать', title: 'Редактировать заказ', onClick: () => edit(ord) }, '✎'),
+                  h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'В архив', title: 'Переместить в архив', onClick: () => del(ord.id) }, '✕'),
+                  h('button', { key: 'passport', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Паспорт PDF', title: 'Сформировать паспорт изделия (PDF)', onClick: () => generateFullPassport(ord, data) }, '📄'),
+                  h('button', { key: 'route', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Маршрутный лист PDF', title: 'Распечатать маршрутный лист (PDF)', onClick: () => generateRouteSheet(ord, data) }, '📋'),
+                  h('button', { key: 'deps', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Зависимости операций', title: 'Настроить зависимости операций', onClick: () => setDepEditorOrderId(ord.id) }, '🔗'),
+                  !ord.shipped && h('button', { key: 'ship', style: { ...gbtn({ fontSize: 11, padding: '4px 8px' }), color: GN2, borderColor: GN }, 'aria-label': 'Отгрузить заказ', title: 'Отметить заказ как отгруженный', onClick: () => shipOrder(ord.id) }, '🚚'),
                   ord.shipped && h('span', { key: 'shipped', style: { fontSize: 10, padding: '3px 6px', background: GN3, color: GN2, borderRadius: 4, fontWeight: 500 } }, `✓ Отгружен${ord.shippedAt ? ' ' + new Date(ord.shippedAt).toLocaleDateString('ru') : ''}`)
-                ] : h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Восстановить', onClick: () => restore(ord.id) }, '↩ Восстановить')
+                ] : h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Восстановить', title: 'Восстановить из архива', onClick: () => restore(ord.id) }, '↩ Восстановить')
               ))
             );
           }))
