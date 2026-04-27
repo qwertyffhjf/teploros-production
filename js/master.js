@@ -185,7 +185,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
         h('div', { style: { minWidth: 200 } },
           h('div', { style: { fontSize: 10, color: '#888', marginBottom: 4 } }, 'Исполнители'),
           h('div', { className: 'checkbox-group', style: { display: 'flex', flexDirection: 'column', gap: 6 } }, (() => {
-            const allWorkers = data.workers.filter(w => !w.archived && (w.status || 'working') === 'working');
+            const allWorkers = data.workers.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet));
             // Сортировка: 1) Есть нужная компетенция, 2) Без ограничений, 3) Нет компетенции
             const hasComp = allWorkers.filter(w => form.name && w.competences?.length > 0 && w.competences.includes(form.name));
             const noRestriction = allWorkers.filter(w => !w.competences || w.competences.length === 0);
@@ -1112,7 +1112,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
     const defectOps   = data.ops.filter(o => (o.status === 'defect' || o.status === 'rework') && !o.archived);
     const onCheckOps  = data.ops.filter(o => o.status === 'on_check' && !o.archived);
     const wipOrders   = data.orders.filter(o => !o.archived && data.ops.some(op => op.orderId === o.id && op.status === 'in_progress'));
-    const freeWorkers = data.workers.filter(w => (w.status || 'working') === 'working' && !data.ops.some(op => op.status === 'in_progress' && op.workerIds?.includes(w.id)));
+    const freeWorkers = data.workers.filter(w => isWorkerOnShift(w, data.timesheet) && !data.ops.some(op => op.status === 'in_progress' && op.workerIds?.includes(w.id)));
     return { activeOps, pendingOps, defectOps, onCheckOps, wipOrders, freeWorkers };
   }, [data.ops, data.orders, data.workers]);
   return h('div', { style: { padding:'0 0 24px' } },
