@@ -1213,23 +1213,17 @@ function generateRouteSheet(order, data) {
       { columns: [
         { width: '33%', stack: [
           { text: 'Выдал мастер:', fontSize: 9, bold: true },
-          { text: '
-
-_________________________', fontSize: 9 },
+          { text: '\n\n_________________________', fontSize: 9 },
           { text: '(подпись / дата)', fontSize: 8, color: '#888', margin: [0, 2, 0, 0] }
         ]},
         { width: '33%', stack: [
           { text: 'Принял рабочий:', fontSize: 9, bold: true },
-          { text: '
-
-_________________________', fontSize: 9 },
+          { text: '\n\n_________________________', fontSize: 9 },
           { text: '(подпись / дата)', fontSize: 8, color: '#888', margin: [0, 2, 0, 0] }
         ]},
         { width: '34%', stack: [
           { text: 'Принял ОТК:', fontSize: 9, bold: true },
-          { text: '
-
-_________________________', fontSize: 9 },
+          { text: '\n\n_________________________', fontSize: 9 },
           { text: '(подпись / дата)', fontSize: 8, color: '#888', margin: [0, 2, 0, 0] }
         ]}
       ]},
