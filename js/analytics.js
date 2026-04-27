@@ -196,7 +196,7 @@ const FullAnalyticsModal = memo(({ section, data, onClose }) => {
     }
     if (section === 'hr') {
       const activeW = data.workers.filter(w => !w.archived);
-      const working = activeW.filter(w => (w.status || 'working') === 'working').length;
+      const working = activeW.filter(w => isWorkerOnShift(w, data.timesheet)).length;
       const absent  = activeW.filter(w => w.status === 'absent').length;
       const workerStats = activeW.map(w => {
         const ops = data.ops.filter(o => (o.workerIds || []).includes(w.id) && o.finishedAt >= periodStart);
@@ -205,7 +205,7 @@ const FullAnalyticsModal = memo(({ section, data, onClose }) => {
         return { name: w.name?.split(' ')[0] || '?', done, def, rate: done + def > 0 ? Math.round(def / (done + def) * 100) : 0 };
       }).sort((a, b) => b.done - a.done).slice(0, 7);
       const statusCounts = { working: 0, absent: 0, sick: 0, vacation: 0 };
-      activeW.forEach(w => { const s = w.status || 'working'; if (statusCounts[s] !== undefined) statusCounts[s]++; });
+      activeW.forEach(w => { const s = getWorkerStatusToday(w.id, data.timesheet) || w.status || 'working'; if (statusCounts[s] !== undefined) statusCounts[s]++; });
       return { total: activeW.length, working, absent, statusCounts, workerStats };
     }
     if (section === 'quality') {
@@ -359,8 +359,8 @@ const SectionAnalytics = memo(({ section, data }) => {
     }
     if (section === 'hr') {
       const active  = data.workers.filter(w => !w.archived);
-      const working = active.filter(w => (w.status || 'working') === 'working').length;
-      const absent  = active.filter(w => w.status !== 'working').length;
+      const working = active.filter(w => isWorkerOnShift(w, data.timesheet)).length;
+      const absent  = active.filter(w => !isWorkerOnShift(w, data.timesheet)).length;
       const avgDone = active.length > 0 ? Math.round(data.ops.filter(o => o.status === 'done' && o.finishedAt >= periodStart).length / Math.max(working, 1)) : 0;
       return [
         { label: 'Сотрудников', value: active.length, delta: 'в системе', deltaDir: 'neu' },
@@ -455,7 +455,7 @@ const KPIReport = memo(({ data, onWorkerClick }) => {
       const bonusPct = bonusLevel === 'A' ? 30 : bonusLevel === 'B' ? 15 : bonusLevel === 'C' ? 0 : -10;
 
       return { ...w, level, levelTitle, doneCount: doneInPeriod.length, defectCount: defectInPeriod.length, productivity, quality, downtimeHrs, uniqueOps, achievements, kpiScore, bonusLevel, bonusPct };
-    }).filter(w => (w.status || 'working') === 'working' || w.doneCount > 0).sort((a, b) => b.kpiScore - a.kpiScore);
+    }).filter(w => isWorkerOnShift(w, data.timesheet) || w.doneCount > 0).sort((a, b) => b.kpiScore - a.kpiScore);
   }, [data, periodStart]);
 
   const exportKPI = useCallback(() => {
@@ -974,7 +974,7 @@ const computeWidgetData = (metricId, data, periodDays) => {
       const active = data.workers.filter(w => !w.archived);
       const groups = { 'На смене': 0, 'Отсутствует': 0, 'Больничный': 0, 'Отпуск': 0 };
       active.forEach(w => {
-        const s = w.status || 'working';
+        const s = getWorkerStatusToday(w.id, data.timesheet) || w.status || 'working';
         if (s === 'working') groups['На смене']++;
         else if (s === 'absent') groups['Отсутствует']++;
         else if (s === 'sick') groups['Больничный']++;
