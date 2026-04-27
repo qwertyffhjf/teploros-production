@@ -662,10 +662,17 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
   const competencies = useMemo(() => {
     // Новая структура: worker.competencies = [{operationType, level, certifiedAt, expiresAt, canTeach}]
     if (worker.competencies && worker.competencies.length > 0) return worker.competencies;
-    // Старая структура: competences[] + competenceLevels{}
+    // Старая структура: competences[] + competenceLevels{} + competenceMeta{}
     const names  = worker.competences || [];
     const levels = worker.competenceLevels || {};
-    return names.map(opName => ({ operationType: opName, level: levels[opName] || 1, certifiedAt: null, expiresAt: null, canTeach: false }));
+    const meta   = worker.competenceMeta  || {};
+    return names.map(opName => ({
+      operationType: opName,
+      level: levels[opName] || 1,
+      certifiedAt: meta[opName]?.certifiedAt || null,
+      expiresAt:   meta[opName]?.expiresAt   || null,
+      canTeach:    meta[opName]?.canTeach    || false
+    }));
   }, [worker.competencies, worker.competences, worker.competenceLevels]);
 
   // Операции из productionStages которых нет в компетенциях — показываем как "нет допуска"
