@@ -806,9 +806,19 @@ const MasterNotifications = memo(({ data }) => {
 const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
   const [newName, setNewName] = useState('');
   const [editingChecklist, setEditingChecklist] = useState(null);
+  const [editingMaterials, setEditingMaterials] = useState(null);
   const [newCheckItem, setNewCheckItem] = useState('');
   const [stageType, setStageType] = useState('boiler');
   const { ask: askConfirm, confirmEl } = useConfirm();
+
+  const toggleStageMaterial = async (stageId, matId) => {
+    const stage = (data.productionStages || []).find(s => s.id === stageId);
+    if (!stage) return;
+    const current = stage.requiredMaterialIds || [];
+    const updated = current.includes(matId) ? current.filter(id => id !== matId) : [...current, matId];
+    const d = { ...data, productionStages: data.productionStages.map(s => s.id === stageId ? { ...s, requiredMaterialIds: updated } : s) };
+    await DB.save(d); onUpdate(d);
+  };
   const productTypes = data.settings?.productTypes || [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }];
   const allStages = data.productionStages || [];
   const typeStages = allStages.filter(s => s.productType === stageType);
@@ -876,15 +886,37 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
               h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
                 h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
                   h('span', { style: { fontSize: 13, fontWeight: 500 } }, stage.name),
-                  (stage.checklist?.length > 0) && h('span', { style: { fontSize: 10, color: AM, background: AM3, padding: '1px 6px', borderRadius: 6 } }, `${stage.checklist.length} пунктов`)
+                  (stage.checklist?.length > 0) && h('span', { style: { fontSize: 10, color: AM, background: AM3, padding: '1px 6px', borderRadius: 6 } }, `${stage.checklist.length} пунктов`),
+                  (stage.requiredMaterialIds?.length > 0) && h('span', { style: { fontSize: 10, color: GN2, background: GN3, padding: '1px 6px', borderRadius: 6 } }, `📦 ${stage.requiredMaterialIds.length} материала`)
                 ),
                 h('div', { style: { display: 'flex', gap: 4 } },
                   h('button', { style: gbtn({ fontSize: 10, padding: '4px 6px' }), onClick: () => setEditingChecklist(editingChecklist === stage.id ? null : stage.id) }, editingChecklist === stage.id ? '▾ Чек-лист' : '▸ Чек-лист'),
+                  h('button', { style: { ...gbtn({ fontSize: 10, padding: '4px 6px' }), ...(stage.requiredMaterialIds?.length > 0 ? { color: GN2, borderColor: GN } : {}) }, onClick: () => setEditingMaterials(editingMaterials === stage.id ? null : stage.id) }, editingMaterials === stage.id ? '▾ Материалы' : `▸ Материалы${stage.requiredMaterialIds?.length ? ` (${stage.requiredMaterialIds.length})` : ''}`),
                   h('button', { style: gbtn({ fontSize: 11, padding: '4px 6px' }), onClick: () => moveUp(index), disabled: index === 0 }, '↑'),
                   h('button', { style: gbtn({ fontSize: 11, padding: '4px 6px' }), onClick: () => moveDown(index), disabled: index === (data.productionStages || []).length-1 }, '↓'),
                   h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => deleteStage(stage.id) }, '✕')
                 )
               ),
+              // Редактор материалов
+              editingMaterials === stage.id && h('div', { style: { marginTop: 8, padding: '10px 12px', background: '#f0f8f0', borderRadius: 8, border: `1px solid ${GN}` } },
+                h('div', { style: { fontSize: 10, color: GN2, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8, fontWeight: 500 } }, '📦 Материалы необходимые для начала этого этапа'),
+                h('div', { style: { fontSize: 11, color: '#666', marginBottom: 8 } }, 'Отмеченные материалы должны поступить на склад прежде чем операция станет доступна рабочему'),
+                (data.materials || []).length === 0
+                  ? h('div', { style: { fontSize: 12, color: '#888', padding: 8 } }, 'Нет материалов в справочнике. Сначала добавьте материалы в раздел Материалы.')
+                  : h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 6 } },
+                      (data.materials || []).map(mat => {
+                        const checked = (stage.requiredMaterialIds || []).includes(mat.id);
+                        return h('label', { key: mat.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, background: checked ? GN3 : '#fff', border: `1px solid ${checked ? GN : '#ddd'}`, cursor: 'pointer', fontSize: 12 } },
+                          h('input', { type: 'checkbox', checked, onChange: () => toggleStageMaterial(stage.id, mat.id), style: { width: 16, height: 16, accentColor: GN, cursor: 'pointer' } }),
+                          h('div', null,
+                            h('div', { style: { fontWeight: checked ? 500 : 400, color: checked ? GN2 : '#333' } }, mat.name),
+                            mat.unit && h('div', { style: { fontSize: 10, color: '#888' } }, mat.unit)
+                          )
+                        );
+                      })
+                    )
+              ),
+
               // Редактор чек-листа
               editingChecklist === stage.id && h('div', { style: { marginTop: 8, padding: '10px 12px', background: '#f8f8f5', borderRadius: 8 } },
                 h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 } }, 'Чек-лист (при запуске операции копируется рабочему)'),
