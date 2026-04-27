@@ -648,7 +648,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
           const isUrgent  = daysLeft !== null && daysLeft <= 2;
           const isOverdue = daysLeft !== null && daysLeft < 0;
           const depsComplete = !op.dependsOn || op.dependsOn.length === 0 ||
-            op.dependsOn.every(depId => { const d = data.ops.find(x => x.id === depId); return d && d.status === 'done'; });
+            op.dependsOn.every(depId => { const d = data.ops.find(x => x.id === depId); return d && (d.status === 'done' || d.status === 'on_check' || d.status === 'approved'); });
 
           // Проверка: все материалы для этого этапа поставлены?
           const stage = (data.productionStages || []).find(s => s.name === op.name);
