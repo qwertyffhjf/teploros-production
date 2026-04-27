@@ -14,9 +14,9 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
   const [thanksModal, setThanksModal] = useState(null);
   const { ask: askConfirm, confirmEl } = useConfirm();
   const [thanksNote, setThanksNote] = useState('');
-  const [form, setForm] = useState({ name: '', position: '', grade: '', tabNumber: '', pin: '', sectionId: '', competences: [], competenceLevels: {}, status: 'working', phone: '', hireDate: '', email: '', emergencyContact: '', medicalExamDate: '', medicalExamNextDate: '', licences: [] });
+  const [form, setForm] = useState({ name: '', position: '', grade: '', tabNumber: '', pin: '', sectionId: '', competences: [], competenceLevels: {}, competenceMeta: {}, status: 'working', phone: '', hireDate: '', email: '', emergencyContact: '', medicalExamDate: '', medicalExamNextDate: '', licences: [] });
 
-  const resetForm = () => { setForm({ name: '', position: '', grade: '', tabNumber: '', pin: '', sectionId: '', competences: [], competenceLevels: {}, status: 'working', phone: '', hireDate: '', email: '', emergencyContact: '', medicalExamDate: '', medicalExamNextDate: '', licences: [] }); setEditingWorker(null); setShowAddForm(false); };
+  const resetForm = () => { setForm({ name: '', position: '', grade: '', tabNumber: '', pin: '', sectionId: '', competences: [], competenceLevels: {}, competenceMeta: {}, status: 'working', phone: '', hireDate: '', email: '', emergencyContact: '', medicalExamDate: '', medicalExamNextDate: '', licences: [] }); setEditingWorker(null); setShowAddForm(false); };
 
   const addOrUpdate = useCallback(async () => {
     if (!form.name.trim()) { addToast('Введите имя сотрудника', 'error'); return; }
@@ -24,10 +24,10 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
     const pinExists = data.workers.some(w => w.id !== editingWorker && pinMatch(form.pin.trim(), w.pin));
     if (pinExists) { addToast('Такой PIN-код уже занят', 'error'); return; }
     if (editingWorker) {
-      const d = { ...data, workers: data.workers.map(w => w.id === editingWorker ? { ...w, name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: hashPin(form.pin.trim()), sectionId: form.sectionId || null, competences: form.competences, competenceLevels: form.competenceLevels || {}, status: form.status, phone: form.phone.trim(), hireDate: form.hireDate || null, email: form.email.trim(), emergencyContact: form.emergencyContact.trim(), medicalExamDate: form.medicalExamDate || null, medicalExamNextDate: form.medicalExamNextDate || null, licences: form.licences || [] } : w) };
+      const d = { ...data, workers: data.workers.map(w => w.id === editingWorker ? { ...w, name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: hashPin(form.pin.trim()), sectionId: form.sectionId || null, competences: form.competences, competenceLevels: form.competenceLevels || {}, competenceMeta: form.competenceMeta || {}, status: form.status, phone: form.phone.trim(), hireDate: form.hireDate || null, email: form.email.trim(), emergencyContact: form.emergencyContact.trim(), medicalExamDate: form.medicalExamDate || null, medicalExamNextDate: form.medicalExamNextDate || null, licences: form.licences || [] } : w) };
       await DB.save(d); onUpdate(d); addToast('Сотрудник обновлён', 'success');
     } else {
-      const w = { id: uid(), name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: hashPin(form.pin.trim()), sectionId: form.sectionId || null, competences: form.competences, competenceLevels: form.competenceLevels || {}, status: form.status, phone: form.phone.trim(), hireDate: form.hireDate || null, email: form.email.trim(), emergencyContact: form.emergencyContact.trim(), medicalExamDate: form.medicalExamDate || null, medicalExamNextDate: form.medicalExamNextDate || null, licences: form.licences || [] };
+      const w = { id: uid(), name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: hashPin(form.pin.trim()), sectionId: form.sectionId || null, competences: form.competences, competenceLevels: form.competenceLevels || {}, competenceMeta: form.competenceMeta || {}, status: form.status, phone: form.phone.trim(), hireDate: form.hireDate || null, email: form.email.trim(), emergencyContact: form.emergencyContact.trim(), medicalExamDate: form.medicalExamDate || null, medicalExamNextDate: form.medicalExamNextDate || null, licences: form.licences || [] };
       const d = { ...data, workers: [...data.workers, w] };
       await DB.save(d); onUpdate(d); addToast('Сотрудник добавлен', 'success');
     }
@@ -57,7 +57,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
     await DB.save(d); onUpdate(d); addToast('Сотрудник удалён', 'info');
   }, [data, onUpdate, addToast]);
 
-  const edit = useCallback(w => { setForm({ name: w.name, position: w.position || '', grade: w.grade || '', tabNumber: w.tabNumber || '', pin: w.pin || '', sectionId: w.sectionId || '', competences: w.competences || [], competenceLevels: w.competenceLevels || {}, status: w.status || 'working', phone: w.phone || '', hireDate: w.hireDate || '', email: w.email || '', emergencyContact: w.emergencyContact || '', medicalExamDate: w.medicalExamDate || '', medicalExamNextDate: w.medicalExamNextDate || '', licences: w.licences || [] }); setEditingWorker(w.id); setShowAddForm(false); }, []);
+  const edit = useCallback(w => { setForm({ name: w.name, position: w.position || '', grade: w.grade || '', tabNumber: w.tabNumber || '', pin: w.pin || '', sectionId: w.sectionId || '', competences: w.competences || [], competenceLevels: w.competenceLevels || {}, competenceMeta: w.competenceMeta || {}, status: w.status || 'working', phone: w.phone || '', hireDate: w.hireDate || '', email: w.email || '', emergencyContact: w.emergencyContact || '', medicalExamDate: w.medicalExamDate || '', medicalExamNextDate: w.medicalExamNextDate || '', licences: w.licences || [] }); setEditingWorker(w.id); setShowAddForm(false); }, []);
   const updateStatus = useCallback(async (id, status) => {
     let d = { ...data, workers: data.workers.map(w => w.id === id ? { ...w, status } : w) };
     // При выходе на смену ("working") — записываем 8ч в табель за сегодня если ещё пусто
@@ -222,24 +222,55 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
       )
     ),
     h('div', { style: { marginBottom: 12 } },
-      h('div', { style: { fontSize: 11, color: '#888', marginBottom: 6 } }, 'Допуск к операциям (нажмите для выбора уровня)'),
-      h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } }, stagesForMatrix.map(s => {
+      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 } },
+        h('div', { style: { fontSize: 11, color: '#888' } }, 'Допуск к операциям (нажмите для выбора уровня)'),
+        h('div', { style: { display: 'flex', gap: 8, fontSize: 10, color: '#888' } },
+          h('span', { style: { padding: '1px 6px', background: '#FFF8E1', color: '#F57F17', borderRadius: 4 } }, 'Нов.'),
+          h('span', { style: { padding: '1px 6px', background: AM3, color: AM2, borderRadius: 4 } }, 'Ком.'),
+          h('span', { style: { padding: '1px 6px', background: GN3, color: GN2, borderRadius: 4 } }, 'Эксп.')
+        )
+      ),
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } }, stagesForMatrix.map(s => {
         const level = (form.competenceLevels || {})[s.name] || 0;
+        const meta  = (form.competenceMeta  || {})[s.name] || {};
         const levelColors = { 0: { bg:'#fff', cl:'#888', border:'rgba(0,0,0,0.15)', label:'—' }, 1: { bg:'#FFF8E1', cl:'#F57F17', border:'#F57F17', label:'Нов.' }, 2: { bg:AM3, cl:AM2, border:AM, label:'Ком.' }, 3: { bg:GN3, cl:GN2, border:GN, label:'Эксп.' } };
         const lc = levelColors[level];
-        return h('button', { key: s.id, type:'button',
-          style: { padding:'3px 10px', fontSize:11, borderRadius:8, border:`0.5px solid ${lc.border}`, background:lc.bg, color:lc.cl, cursor:'pointer' },
-          title: `Уровень: ${lc.label} — нажмите для переключения`,
-          onClick: () => {
-            const newLevel = (level + 1) % 4;
-            const newLevels = { ...(form.competenceLevels || {}), [s.name]: newLevel };
-            if (newLevel === 0) delete newLevels[s.name];
-            const newComps = newLevel > 0
-              ? [...new Set([...form.competences, s.name])]
-              : form.competences.filter(c => c !== s.name);
-            setForm(p => ({ ...p, competences: newComps, competenceLevels: newLevels }));
-          }
-        }, s.name, level > 0 && h('span', { style: { marginLeft: 4, fontSize: 10 } }, lc.label));
+        const expiresAt = meta.expiresAt ? new Date(meta.expiresAt) : null;
+        const daysLeft  = expiresAt ? Math.ceil((expiresAt - Date.now()) / 86400000) : null;
+        const expired   = daysLeft !== null && daysLeft < 0;
+        const expiring  = daysLeft !== null && !expired && daysLeft <= 30;
+        return h('div', { key: s.id, style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+          // Кнопка уровня
+          h('button', { type:'button',
+            style: { padding:'4px 12px', fontSize:11, borderRadius:8, border:`0.5px solid ${lc.border}`, background:lc.bg, color:lc.cl, cursor:'pointer', minWidth: 80 },
+            title: `Уровень: ${lc.label} — нажмите для переключения`,
+            onClick: () => {
+              const newLevel = (level + 1) % 4;
+              const newLevels = { ...(form.competenceLevels || {}), [s.name]: newLevel };
+              if (newLevel === 0) delete newLevels[s.name];
+              const newComps = newLevel > 0
+                ? [...new Set([...form.competences, s.name])]
+                : form.competences.filter(c => c !== s.name);
+              setForm(p => ({ ...p, competences: newComps, competenceLevels: newLevels }));
+            }
+          }, s.name, level > 0 && h('span', { style: { marginLeft: 4, fontSize: 10 } }, lc.label)),
+          // Дата сертификации (только если есть допуск)
+          level > 0 && h('input', { type: 'date', title: 'Дата сертификации',
+            style: { ...S.inp, fontSize: 10, padding: '2px 6px', width: 130 },
+            value: meta.certifiedAt ? new Date(meta.certifiedAt).toISOString().slice(0,10) : '',
+            onChange: e => setForm(p => ({ ...p, competenceMeta: { ...(p.competenceMeta||{}), [s.name]: { ...(p.competenceMeta?.[s.name]||{}), certifiedAt: e.target.value ? new Date(e.target.value).getTime() : null } } }))
+          }),
+          // Срок действия
+          level > 0 && h('div', { style: { display: 'flex', alignItems: 'center', gap: 4 } },
+            h('input', { type: 'date', title: 'Срок действия допуска',
+              style: { ...S.inp, fontSize: 10, padding: '2px 6px', width: 130, ...(expired ? { borderColor: RD } : expiring ? { borderColor: AM } : {}) },
+              value: meta.expiresAt ? new Date(meta.expiresAt).toISOString().slice(0,10) : '',
+              onChange: e => setForm(p => ({ ...p, competenceMeta: { ...(p.competenceMeta||{}), [s.name]: { ...(p.competenceMeta?.[s.name]||{}), expiresAt: e.target.value ? new Date(e.target.value).getTime() : null } } }))
+            }),
+            expired  && h('span', { style: { fontSize:10, color:RD2, background:RD3, padding:'1px 5px', borderRadius:4 } }, 'Просрочен'),
+            expiring && h('span', { style: { fontSize:10, color:AM2, background:AM3, padding:'1px 5px', borderRadius:4 } }, `${daysLeft}дн.`)
+          )
+        );
       }))
     ),
     h('div', { style: { display: 'flex', gap: 8 } },
@@ -290,7 +321,12 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
     ),
     h('div', { style: { display:'flex', gap:8, marginBottom:16 } },
       h('button', { style: viewMode === 'list' ? abtn() : gbtn(), onClick: () => setViewMode('list') }, 'Список'),
-      h('button', { style: viewMode === 'matrix' ? abtn() : gbtn(), onClick: () => setViewMode('matrix') }, 'Матрица компетенций')
+      h('button', { style: viewMode === 'matrix' ? abtn() : gbtn(), onClick: () => setViewMode('matrix') }, 'Матрица компетенций'),
+      viewMode === 'matrix' && h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', marginLeft: 8 } },
+        [{ label: 'Новичок', bg:'#FFF8E1', cl:'#F57F17' }, { label:'Компетентен', bg:AM3, cl:AM2 }, { label:'Эксперт', bg:GN3, cl:GN2 }].map(l =>
+          h('span', { key:l.label, style:{ padding:'2px 8px', fontSize:10, background:l.bg, color:l.cl, borderRadius:8 } }, l.label)
+        )
+      )
     ),
     h(PasteImportWidget, { addToast, hint: 'Вставить сотрудников из Excel',
       columns: [
@@ -467,6 +503,9 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
           stagesForMatrix.map(s => {
             const level = (w.competenceLevels || {})[s.name] || 0;
             const has = (w.competences || []).includes(s.name);
+              const meta = (w.competenceMeta || {})[s.name] || {};
+              const expired = meta.expiresAt && meta.expiresAt < Date.now();
+              const expiring = meta.expiresAt && !expired && Math.ceil((meta.expiresAt - Date.now()) / 86400000) <= 30;
             const levelColors = { 0: { bg: '#f5f5f2', cl: '#ccc', label: '—' }, 1: { bg: '#FFF8E1', cl: '#F57F17', label: 'Нов.' }, 2: { bg: AM3, cl: AM2, label: 'Ком.' }, 3: { bg: GN3, cl: GN2, label: 'Эксп.' } };
             const lc = levelColors[level] || levelColors[0];
             return h('td', { key: s.id, style: { ...S.td, textAlign:'center', padding: '4px', cursor: 'pointer' }, onClick: async () => {
