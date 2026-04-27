@@ -993,7 +993,7 @@ const migrateData = (d) => {
       return true;
     });
     if (deduped.length < d.events.length) {
-      console.log(\`Дедупликация событий: убрано \${d.events.length - deduped.length} дублей\`);
+      console.log('Дедупликация событий: убрано ' + (d.events.length - deduped.length) + ' дублей');
       d = { ...d, events: deduped };
     }
   }
