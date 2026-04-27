@@ -1140,23 +1140,106 @@ const OrderDetailModal = memo(({ orderId, data, onClose, onUpdate }) => {
 
 function generateRouteSheet(order, data) {
   const orderOps = (data?.ops || []).filter(op => op.orderId === order.id && !op.archived);
+  const workerName = (id) => (data?.workers || []).find(w => w.id === id)?.name || '—';
+
   const docDefinition = {
     content: [
-      { text: 'Маршрутный лист', style: 'header' },
-      { text: `Заказ №: ${order.number}`, style: 'subheader' },
-      { text: `Изделие: ${order.product}`, margin: [0,0,0,10] },
-      { text: `Количество: ${order.qty}`, margin: [0,0,0,20] },
-      { table: { headerRows: 1, widths: ['auto','auto','auto','auto'], body: [
-        ['Операция','Исполнитель','План. время','Отметка'],
-        ...orderOps.map(op => [
-          op.name,
-          (op.workerIds||[]).map(id => (data?.workers||[]).find(w=>w.id===id)?.name).filter(Boolean).join(', ') || '—',
-          op.plannedHours ? `${op.plannedHours} ч` : '—',
-          { text: '' }
-        ])
-      ]}}
+      // Шапка
+      { columns: [
+        { width: '*', stack: [
+          { text: 'МАРШРУТНЫЙ ЛИСТ', style: 'header' },
+          { text: `Заказ №: ${order.number}`, style: 'subheader' },
+        ]},
+        { width: 'auto', stack: [
+          { text: `Дата выдачи: ${new Date().toLocaleDateString('ru')}`, fontSize: 9, color: '#666' },
+          { text: `Страниц: 1`, fontSize: 9, color: '#666' },
+        ], alignment: 'right' }
+      ], margin: [0, 0, 0, 8] },
+      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1 }], margin: [0, 0, 0, 10] },
+
+      // Данные изделия
+      { table: { widths: ['25%','25%','25%','25%'], body: [
+        [
+          { text: 'Изделие:', bold: true, fontSize: 9 }, { text: order.product || '—', fontSize: 9, colSpan: 3 }, {}, {}
+        ],
+        [
+          { text: 'Заказчик:', bold: true, fontSize: 9 }, { text: order.customer || '—', fontSize: 9, colSpan: 3 }, {}, {}
+        ],
+        [
+          { text: 'Количество:', bold: true, fontSize: 9 }, { text: `${order.qty || 1} шт`, fontSize: 9 },
+          { text: 'Срок отгрузки:', bold: true, fontSize: 9 }, { text: order.deadline ? new Date(order.deadline).toLocaleDateString('ru') : '—', fontSize: 9 }
+        ],
+      ]}, layout: 'lightHorizontalLines', margin: [0, 0, 0, 16] },
+
+      // Таблица операций
+      { text: 'ТЕХНОЛОГИЧЕСКИЙ МАРШРУТ', style: 'subheader', margin: [0, 0, 0, 6] },
+      { table: {
+        headerRows: 1,
+        widths: ['auto', '*', 'auto', 'auto', 'auto', 60],
+        body: [
+          [
+            { text: '№', bold: true, fontSize: 9, alignment: 'center' },
+            { text: 'Операция', bold: true, fontSize: 9 },
+            { text: 'Исполнитель', bold: true, fontSize: 9 },
+            { text: 'План. время', bold: true, fontSize: 9, alignment: 'center' },
+            { text: 'Факт. время', bold: true, fontSize: 9, alignment: 'center' },
+            { text: 'Подпись / Дата', bold: true, fontSize: 9, alignment: 'center' }
+          ],
+          ...orderOps.map((op, i) => {
+            const actualH = (op.finishedAt && op.startedAt)
+              ? ((op.finishedAt - op.startedAt) / 3600000).toFixed(1) + ' ч'
+              : '';
+            const workers = (op.workerIds || []).map(id => workerName(id)).filter(Boolean).join(', ');
+            const statusMark = op.status === 'done' ? '✓' : op.status === 'defect' ? '✗' : '';
+            return [
+              { text: String(i + 1), fontSize: 9, alignment: 'center' },
+              { text: op.name, fontSize: 9 },
+              { text: workers || '—', fontSize: 8, color: workers ? '#000' : '#aaa' },
+              { text: op.plannedHours ? `${op.plannedHours} ч` : '—', fontSize: 9, alignment: 'center' },
+              { text: actualH, fontSize: 9, alignment: 'center', color: actualH ? '#333' : '#aaa' },
+              { text: statusMark, fontSize: 14, alignment: 'center', color: op.status === 'done' ? '#2d6a2d' : op.status === 'defect' ? '#a32d2d' : '#aaa' }
+            ];
+          })
+        ]
+      }, layout: {
+        hLineWidth: (i) => i === 0 || i === 1 ? 1 : 0.5,
+        vLineWidth: () => 0.5,
+        hLineColor: () => '#ccc',
+        vLineColor: () => '#ccc',
+      }, margin: [0, 0, 0, 20] },
+
+      // Подписи
+      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, color: '#ccc' }], margin: [0, 0, 0, 10] },
+      { columns: [
+        { width: '33%', stack: [
+          { text: 'Выдал мастер:', fontSize: 9, bold: true },
+          { text: '
+
+_________________________', fontSize: 9 },
+          { text: '(подпись / дата)', fontSize: 8, color: '#888', margin: [0, 2, 0, 0] }
+        ]},
+        { width: '33%', stack: [
+          { text: 'Принял рабочий:', fontSize: 9, bold: true },
+          { text: '
+
+_________________________', fontSize: 9 },
+          { text: '(подпись / дата)', fontSize: 8, color: '#888', margin: [0, 2, 0, 0] }
+        ]},
+        { width: '34%', stack: [
+          { text: 'Принял ОТК:', fontSize: 9, bold: true },
+          { text: '
+
+_________________________', fontSize: 9 },
+          { text: '(подпись / дата)', fontSize: 8, color: '#888', margin: [0, 2, 0, 0] }
+        ]}
+      ]},
     ],
-    styles: { header: { fontSize: 18, bold: true, margin:[0,0,0,10] }, subheader: { fontSize: 14, bold: true, margin:[0,10,0,5] } }
+    styles: {
+      header:    { fontSize: 16, bold: true, margin: [0, 0, 0, 4] },
+      subheader: { fontSize: 11, bold: true, margin: [0, 4, 0, 4], color: '#333' }
+    },
+    defaultStyle: { fontSize: 9 },
+    pageMargins: [36, 36, 36, 36]
   };
   pdfMake.createPdf(docDefinition).download(`route_${order.number}.pdf`);
 }
