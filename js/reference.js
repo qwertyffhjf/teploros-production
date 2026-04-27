@@ -1447,10 +1447,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         const kept = (data.events || []).filter(e => (e.ts || 0) >= cutoff);
         const removed = (data.events || []).length - kept.length;
         if (removed === 0) { addToast('Нечего удалять', 'info'); return; }
-        if (!(await askConfirm({ message: `Удалить ${removed} событий старше ${days} дней?`, detail: 'Это действие нельзя отменить', danger: true }))) return;
-        if (removed > 100) {
-          if (!(await askConfirm({ message: `Подтвердите: удалить ${removed} записей?`, detail: 'Большое количество. Сохраните резервную копию перед удалением', danger: true }))) return;
-        }
+        if (!window.confirm(`Удалить ${removed} событий старше ${days} дней? Нельзя отменить.`)) return;
         let d = { ...data, events: kept };
         d = logAction(d, 'cleanup_events', { counts: `${removed} событий`, days });
         await DB.save(d); onUpdate(d);
@@ -1462,10 +1459,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         const kept = (data.messages || []).filter(m => (m.ts || 0) >= cutoff);
         const removed = (data.messages || []).length - kept.length;
         if (removed === 0) { addToast('Нечего удалять', 'info'); return; }
-        if (!(await askConfirm({ message: `Удалить ${removed} сообщений старше ${days} дней?`, danger: true }))) return;
-        if (removed > 100) {
-          if (!(await askConfirm({ message: `Подтвердите: удалить ${removed} сообщений?`, detail: 'Большое количество', danger: true }))) return;
-        }
+        if (!window.confirm(`Удалить ${removed} сообщений старше ${days} дней?`)) return;
         let d = { ...data, messages: kept };
         d = logAction(d, 'cleanup_messages', { counts: `${removed} сообщений`, days });
         await DB.save(d); onUpdate(d);
@@ -1474,10 +1468,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
       const cleanArchived = async () => {
         const archived = (data.orders || []).filter(o => o.archived);
         if (archived.length === 0) { addToast('Нет архивных заказов', 'info'); return; }
-        if (!(await askConfirm({ message: `Удалить ${archived.length} архивных заказов?`, detail: 'Вместе с операциями этих заказов. Нельзя отменить', danger: true }))) return;
-        if (archived.length > 100) {
-          if (!(await askConfirm({ message: `Подтвердите: удалить ${archived.length} заказов?`, detail: 'Большое количество', danger: true }))) return;
-        }
+        if (!window.confirm(`Удалить ${archived.length} архивных заказов вместе с операциями? Нельзя отменить.`)) return;
         const archivedIds = new Set(archived.map(o => o.id));
         let d = { ...data,
           orders: (data.orders || []).filter(o => !o.archived),
@@ -1540,7 +1531,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
           h('button', { style: gbtn({ fontSize: 12 }), onClick: async () => {
             const hidden = (data.ops || []).filter(o => o.hiddenFromFeed && o.status === 'done');
             if (hidden.length === 0) { addToast('Нет скрытых завершённых операций', 'info'); return; }
-            if (!(await askConfirm({ message: `Архивировать ${hidden.length} скрытых завершённых операций?`, detail: 'Они исчезнут из списков окончательно', danger: false }))) return;
+            if (!window.confirm(`Архивировать ${hidden.length} скрытых завершённых операций?`)) return;
             const ids = new Set(hidden.map(o => o.id));
             const d = { ...data, ops: data.ops.map(o => ids.has(o.id) ? { ...o, archived: true } : o) };
             await DB.save(d); onUpdate(d);
