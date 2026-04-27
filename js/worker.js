@@ -346,6 +346,15 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     addToast(`«${op.name}» отменена`, 'info');
   }, [data, workerId, activeOp, onUpdate, addToast]);
 
+  // Автосброс activeOp если операция завершена внешним действием (напр. ОТК принял)
+  useEffect(() => {
+    if (!activeOp) return;
+    const opInData = data.ops.find(o => o.id === activeOp.id);
+    if (!opInData || opInData.status === 'done' || opInData.status === 'on_check' || opInData.status === 'defect' || opInData.status === 'approved') {
+      setActiveOp(null);
+    }
+  }, [data.ops, activeOp]);
+
   const active = activeOp ? data.ops.find(o => o.id === activeOp.id) : null;
   const elapsed = active?.startedAt ? now() - active.startedAt : 0;
   const qrOp = initialOpId ? data.ops.find(o => o.id === initialOpId) : null;
