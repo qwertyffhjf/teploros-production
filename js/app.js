@@ -528,10 +528,14 @@ class ErrorBoundary extends React.Component {
 // Парсер заявки из 1С (Excel/XLSX)
 // Разделяет строки на: изделие (производство) и комплектующие
 
-const PRODUCT_KEYWORDS = ['котёл', 'котел', 'teplofor', 'теплофор', 'vv', 'кв-', 'boiler', 'дупл', 'duplex', 'агрегат'];
+const PRODUCT_KEYWORDS = ['котёл', 'котел', 'teplofor', 'теплофор', 'vv2', 'кв-', 'boiler', 'duplex', 'агрегат'];
+const ACCESSORY_MARKERS = ['для котла', 'под котёл', 'под котел', 'к котлу', 'фланец', 'блок автоматики', 'под горелку', 'переходной', 'арматура', 'манометр', 'термометр', 'насос', 'клапан', 'горелка', 'горелку'];
 const isProductRow = (name) => {
   if (!name) return false;
   const lower = name.toLowerCase();
+  // Если это явно аксессуар — не изделие
+  if (ACCESSORY_MARKERS.some(m => lower.includes(m))) return false;
+  // Если содержит ключевое слово изделия
   return PRODUCT_KEYWORDS.some(kw => lower.includes(kw));
 };
 
@@ -573,51 +577,66 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
       const components = [];
 
       rows.forEach(row => {
-        const cells = row.map(c => String(c || '').trim());
+        const cells = row.map(c => String(c === null || c === undefined ? '' : c).trim());
         const fullText = cells.join(' ');
 
         // Заголовок заказа
         if (fullText.includes('Заказ покупателя')) {
-          const h = parseOrderHeader(fullText);
-          if (h.number) orderNumber = h.number;
+          const hdr = parseOrderHeader(fullText);
+          if (hdr.number) orderNumber = hdr.number;
         }
 
-        // Заказчик
-        if (cells[0] === 'Заказчик:' || fullText.startsWith('Заказчик:')) {
-          const idx = cells.findIndex(c => c === 'Заказчик:');
-          const raw = cells.slice(idx + 1).join(' ');
-          const m = raw.match(/ООО\s*["«]([^"»]+)["»]/);
-          customer = m ? `ООО "${m[1]}"` : raw.slice(0, 60).trim();
+        // Заказчик — ищем по любой ячейке
+        const custIdx = cells.findIndex(c => c === 'Заказчик:' || c.startsWith('Заказчик:'));
+        if (custIdx >= 0) {
+          const raw = cells.slice(custIdx + 1).join(' ');
+          const m = raw.match(/ООО\s*["«]([^"»,]+)["»]/);
+          customer = m ? `ООО "${m[1].trim()}"` : raw.replace(/ИНН.*/, '').trim().slice(0, 60);
         }
 
-        // Строки товаров: первая ячейка — число (порядковый номер)
-        const num = parseInt(cells[0]);
-        if (!isNaN(num) && num > 0 && num < 100 && cells[1]) {
-          const name = cells[1] || cells[2] || '';
-          // Ищем код, кол-во, ед, цену, сумму по позиции в строке
-          // Типичная структура: [№, дата, название, ..., код, кол-во, ед, цена, сумма]
-          const code    = cells.find(c => /^НФ-\d+$/i.test(c)) || '';
-          const qtyIdx  = cells.findIndex(c => /^НФ-\d+$/i.test(c));
-          const qty     = qtyIdx >= 0 && cells[qtyIdx + 1] ? Number(cells[qtyIdx + 1]) || 1 : 1;
-          const unit    = qtyIdx >= 0 && cells[qtyIdx + 2] ? cells[qtyIdx + 2] : 'шт';
-          const price   = cells.map(c => Number(c)).find(n => n > 1000) || 0;
+        // Строки товаров: ищем ячейку с числом 1-99 (порядковый номер позиции)
+        const numIdx = cells.findIndex(c => { const n = parseInt(c); return !isNaN(n) && n > 0 && n < 100 && c === String(n); });
+        if (numIdx >= 0) {
+          // Название = самая длинная строка в строке (надёжнее чем фиксированный индекс)
+          const name = cells.reduce((best, c) => c.length > best.length ? c : best, '');
+          if (!name || name.length < 5) return;
 
-          // Извлекаем спецификацию из скобок: "VV2-D 400 (400 кВт, 6 бар, 115С)"
-          const specsMatch = name.match(/\(([^)]+)\)/);
-          const specs = specsMatch ? specsMatch[1] : '';
-          const cleanName = name.replace(/\([^)]+\)/, '').trim();
+          // Код НФ-XXXXXXX
+          const code   = cells.find(c => /^НФ-\d+$/i.test(c)) || '';
+          const codeIdx = cells.findIndex(c => /^НФ-\d+$/i.test(c));
 
-          // Срок — первая дата в строке
-          const dateCell = cells.find(c => /\d{2}\.\d{2}\.\d{2,4}/.test(c));
+          // Кол-во — числовое значение после кода
+          let qty = 1;
+          if (codeIdx >= 0) {
+            for (let i = codeIdx + 1; i < cells.length; i++) {
+              const n = Number(cells[i]);
+              if (!isNaN(n) && n > 0 && n < 10000 && cells[i] !== '') { qty = n; break; }
+            }
+          }
+
+          // Единица измерения — ищем 'шт', 'кг', 'м', 'л' и т.д.
+          const unit = cells.find(c => /^(шт|кг|м|л|компл|пара|упак|шт\.)$/i.test(c)) || 'шт';
+
+          // Цена — число > 1000 (не сумма, поэтому берём меньшее из двух крупных чисел)
+          const prices = cells.map(c => Number(c)).filter(n => n > 1000 && !isNaN(n)).sort((a, b) => a - b);
+          const price = prices[0] || 0;
+
+          // Дата срока
+          const dateCell = cells.find(c => /^\d{2}\.\d{2}\.\d{2,4}$/.test(c));
           if (dateCell && !deadline) deadline = parseDate1C(dateCell);
+
+          // Спецификация из скобок
+          const specsMatch = name.match(/\(([^)]{5,})\)/);
+          const specs = specsMatch ? specsMatch[1] : '';
+          const cleanName = name.replace(/\s*\([^)]*\)\s*/g, ' ').trim();
 
           if (isProductRow(name) && !product) {
             product = cleanName;
             productCode = code;
-            productQty = qty;
+            productQty = Math.round(qty);
             productSpecs = specs;
-          } else {
-            components.push({ id: uid(), name: cleanName, code, qty, unit, price, status: 'pending' });
+          } else if (cleanName.length > 3) {
+            components.push({ id: uid(), name: cleanName, code, qty: Math.round(qty), unit, price, status: 'pending' });
           }
         }
       });
