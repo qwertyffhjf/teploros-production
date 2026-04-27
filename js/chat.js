@@ -269,7 +269,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
     showThanks && h('div', { style: { ...S.card, marginBottom: 8, padding: 10 } },
       h('div', { style: { fontSize: 11, fontWeight: 500, marginBottom: 6 } }, '🤝 Кому сказать спасибо?'),
       h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
-        data.workers.filter(w => w.id !== myId && (w.status || 'working') === 'working').map(w =>
+        data.workers.filter(w => w.id !== myId && isWorkerOnShift(w, data.timesheet)).map(w =>
           h('button', { key: w.id, style: { padding: '8px 14px', fontSize: 12, borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)', background: '#fff', cursor: 'pointer', minHeight: 40 }, onClick: () => sendThanks(w.id) }, w.name)
         ),
         h('button', { style: gbtn({ fontSize: 11 }), onClick: () => setShowThanks(false) }, '✕ Отмена')
@@ -284,7 +284,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
           h('div', { style: S.lbl }, 'Соперник'),
           h('select', { style: { ...S.inp, width: '100%', fontSize: 12 }, value: duelTarget, onChange: e => setDuelTarget(e.target.value) },
             h('option', { value: '' }, '— выберите —'),
-            data.workers.filter(w => w.id !== myId && !w.archived && (w.status || 'working') === 'working').map(w => h('option', { key: w.id, value: w.id }, w.name))
+            data.workers.filter(w => w.id !== myId && !w.archived && isWorkerOnShift(w, data.timesheet)).map(w => h('option', { key: w.id, value: w.id }, w.name))
           )
         ),
         h('div', { style: { minWidth: 80 } },
