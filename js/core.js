@@ -286,7 +286,7 @@ const autoAssignWorker = (data, opName) => {
   const anyHasCompetences = data.workers.some(w => !w.archived && w.competences?.length > 0);
   const candidates = data.workers.filter(w =>
     !w.archived &&
-    (w.status || 'working') === 'working' &&
+    isWorkerOnShift(w, data.timesheet) &&
     (anyHasCompetences ? w.competences?.includes(opName) : true) &&
     !data.ops.some(op => op.status === 'in_progress' && op.workerIds?.includes(w.id))
   );
@@ -301,7 +301,7 @@ const getAssignmentRecommendations = (data) => {
   return pendingOps.map(op => {
     const order = data.orders.find(o => o.id === op.orderId);
     const anyHasCompetences = data.workers.some(w => !w.archived && w.competences?.length > 0);
-    const activeWorkers = data.workers.filter(w => !w.archived && (w.status || 'working') === 'working');
+    const activeWorkers = data.workers.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet));
 
     const qualified = activeWorkers
       .filter(w => !anyHasCompetences || w.competences?.includes(op.name))
@@ -469,6 +469,30 @@ const getComponentsStatus = (order) => {
   const total = components.length;
   if (confirmed === total) return { label: `✓ Все комплектующие (${total})`, color: GN, ok: true };
   return { label: `📦 Комплектующие: ${confirmed}/${total}`, color: AM, ok: false };
+};
+
+// ==================== getWorkerStatusToday ====================
+// Единый источник истины — статус сотрудника из табеля за сегодня
+// Возвращает: 'working' | 'sick' | 'vacation' | 'absent'
+const getWorkerStatusToday = (workerId, timesheet) => {
+  const day = new Date().getDate();
+  const cell = timesheet?.[workerId]?.[day];
+  if (!cell) return null; // нет записи в табеле
+  if (cell.code === 'Б')                          return 'sick';
+  if (cell.code === 'ОТ' || cell.code === 'ОЗ')  return 'vacation';
+  if (cell.code === 'К')                          return 'vacation'; // командировка
+  if (cell.code === 'НН')                         return 'absent';
+  if (cell.code === 'У')                          return 'absent';
+  if (cell.h > 0)                                 return 'working';
+  return 'absent';
+};
+
+// Проверяет что сотрудник сейчас на смене (источник — табель, fallback — w.status)
+const isWorkerOnShift = (worker, timesheet) => {
+  const fromTs = getWorkerStatusToday(worker.id, timesheet);
+  if (fromTs !== null) return fromTs === 'working';
+  // Нет записи в табеле — смотрим w.status
+  return (worker.status || 'working') === 'working';
 };
 
 // ==================== useTheme ====================
