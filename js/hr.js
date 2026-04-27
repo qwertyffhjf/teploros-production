@@ -107,21 +107,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
     let list = workersEnriched.filter(w => showArchivedWorkers ? w.archived : !w.archived);
     if (search) list = list.filter(w => w.name.toLowerCase().includes(search.toLowerCase()));
     if (statusFilter !== 'all') {
-      const todayDay = new Date().getDate();
-      list = list.filter(w => {
-        const cell = data.timesheet?.[w.id]?.[todayDay];
-        let status;
-        if (cell) {
-          if (cell.code === 'Б')                            status = 'sick';
-          else if (cell.code === 'ОТ' || cell.code === 'ОЗ') status = 'vacation';
-          else if (cell.code === 'НН')                      status = 'absent';
-          else if (cell.h > 0)                              status = 'working';
-          else                                              status = 'absent';
-        } else {
-          status = w.status || 'absent';
-        }
-        return status === statusFilter;
-      });
+      list = list.filter(w => (getWorkerStatusToday(w.id, data.timesheet) || w.status || 'absent') === statusFilter);
     }
     if (sectionFilter) list = list.filter(w => w.sectionId === sectionFilter);
     if (positionFilter) list = list.filter(w => w.position === positionFilter);
@@ -136,33 +122,15 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
 
   const summary = useMemo(() => {
     const active = data.workers.filter(w => !w.archived);
-    const todayDay = new Date().getDate();
     const s = { total: active.length, working: 0, absent: 0, sick: 0, vacation: 0 };
-
     active.forEach(w => {
-      // Источник истины — табель за сегодня
-      const cell = data.timesheet?.[w.id]?.[todayDay];
-      if (cell) {
-        if (cell.code === 'Б')                       s.sick++;
-        else if (cell.code === 'ОТ' || cell.code === 'ОЗ') s.vacation++;
-        else if (cell.code === 'НН')                 s.absent++;
-        else if (cell.code === 'У')                  { /* уволен — не считаем */ }
-        else if (cell.h > 0)                         s.working++;
-        else                                         s.absent++;
-      } else {
-        // Нет записи в табеле — смотрим статус карточки как запасной вариант
-        const k = w.status || 'absent';
-        if (k === 'sick')     s.sick++;
-        else if (k === 'vacation') s.vacation++;
-        else if (k === 'working')  s.working++;
-        else                       s.absent++;
-      }
+      const st = getWorkerStatusToday(w.id, data.timesheet) || w.status || 'absent';
+      if (st === 'sick')          s.sick++;
+      else if (st === 'vacation') s.vacation++;
+      else if (st === 'working')  s.working++;
+      else                        s.absent++;
     });
-
-    const workingWorkers = workersEnriched.filter(w => !w.archived && (() => {
-      const cell = data.timesheet?.[w.id]?.[todayDay];
-      return cell ? cell.h > 0 : (w.status || 'absent') === 'working';
-    })());
+    const workingWorkers = workersEnriched.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet));
     const avgLoad = workingWorkers.length > 0
       ? Math.round(workingWorkers.reduce((sum, w) => sum + w.opsActive, 0) / workingWorkers.length * 100) || 0
       : 0;
@@ -175,12 +143,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
   // Покрытие навыков: Map<stageName, count> — мемоизируем чтобы не пересчитывать в render
   const competenceCoverage = useMemo(() => {
     const map = {};
-    const todayDayCC = new Date().getDate();
-    const active = data.workers.filter(w => {
-      if (w.archived) return false;
-      const cell = data.timesheet?.[w.id]?.[todayDayCC];
-      return cell ? cell.h > 0 : (w.status || 'absent') === 'working';
-    });
+    const active = data.workers.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet));
     (data.productionStages || []).forEach(s => {
       map[s.name] = active.filter(w => (w.competences || []).includes(s.name)).length;
     });
