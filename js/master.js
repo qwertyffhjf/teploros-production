@@ -621,6 +621,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [depEditorOrderId, setDepEditorOrderId] = useState(null);
   const [printOrderId, setPrintOrderId] = useState(null);
   const [filterType, setFilterType] = useState('');
+  const [showImport1C, setShowImport1C] = useState(false);
   const productTypes = data.settings?.productTypes || [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }];
 
   const validate = () => {
@@ -729,6 +730,12 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     if (!allDone) {
       if (!(await askConfirm({ message: `Отгрузить заказ ${order?.number}?`, detail: 'Не все операции завершены. Отгрузить всё равно?', danger: false }))) return;
     }
+    const ord = data.orders.find(o => o.id === id);
+    if (!canShipOrder(ord)) {
+      const st = getComponentsStatus(ord);
+      addToast(`Нельзя отгрузить — ${st?.label || 'не все комплектующие подтверждены'}`, 'error');
+      return;
+    }
     let d = { ...data, orders: data.orders.map(o => o.id === id ? { ...o, shipped: true, shippedAt: Date.now() } : o) };
     d = logAction(d, 'order_shipped', { orderId: id, orderNumber: order?.number });
     await DB.save(d); onUpdate(d); addToast(`Заказ ${order?.number} отгружен ✓`, 'success');
@@ -784,6 +791,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       if (!pOrder || pOps.length === 0 || !hasAssignedWorkers) return null;
       return h(QRModal, { ops: pOps, order: pOrder, worker: null, onClose: () => setPrintOrderId(null) });
     })(),
+    showImport1C && h(Import1CModal, { data, onUpdate, addToast, onClose: () => setShowImport1C(false) }),
     h('div', { style: S.card },
       h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
         h('div', { style: { minWidth: 120 } }, h('input', { style: S.inp, placeholder: 'Номер', value: form.number, onChange: e => setForm(p => ({ ...p, number: e.target.value })) }), fieldErrors.number && h('div', { className: 'error-message' }, fieldErrors.number)),
@@ -794,7 +802,8 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
         h('div', { style: { minWidth: 100 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.productType, onChange: e => setForm(p => ({ ...p, productType: e.target.value })) }, h('option', { value: '' }, 'Тип'), productTypes.map(pt => h('option', { key: pt.id, value: pt.id }, pt.label)))),
         h('div', { style: { minWidth: 140 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.bomId, onChange: e => setForm(p => ({ ...p, bomId: e.target.value })) }, h('option', { value: '' }, '— без BOM —'), data.bomTemplates.filter(b => !form.productType || b.productType === form.productType || !b.productType).map(b => h('option', { key: b.id, value: b.id }, b.productName)))),
         h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, editingId ? '✓' : '+'),
-        editingId && h('button', { type: 'button', style: gbtn(), onClick: () => { setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({}); } }, 'Отмена')
+        editingId && h('button', { type: 'button', style: gbtn(), onClick: () => { setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({}); } }, 'Отмена'),
+        !editingId && h('button', { type: 'button', style: { ...gbtn(), borderColor: AM, color: AM2 }, onClick: () => setShowImport1C(true), title: 'Импортировать заказ из файла 1С (Excel)' }, '📥 Импорт из 1С')
       ),
       // Проверка остатков при выборе BOM
       form.bomId && form.qty && (() => {
