@@ -713,6 +713,49 @@ const DB = {
     try {
       let toSave = { ...data };
 
+      // ── Стрипаем null/false/пустые поля из операций — экономит ~60% размера ops ──
+      const OP_DEFAULTS = {
+        workerQty: '{}', plannedHours: null, archived: false, sectionId: null,
+        equipmentId: null, plannedStartDate: null, drawingUrl: null,
+        defectNote: null, defectReasonId: null, defectSource: null,
+        hiddenFromFeed: false, checklistDone: '[]', weldParams: null,
+        finishedAt: null, startedAt: null, dependsOn: '[]', photos: '[]'
+      };
+      if (toSave.ops?.length > 0) {
+        toSave.ops = toSave.ops.map(op => {
+          const stripped = {};
+          for (const [k, v] of Object.entries(op)) {
+            const def = OP_DEFAULTS[k];
+            if (def === null && v === null) continue;
+            if (def === false && v === false) continue;
+            if (def === '{}' && (v === null || (typeof v === 'object' && Object.keys(v||{}).length === 0))) continue;
+            if (def === '[]' && (v === null || (Array.isArray(v) && v.length === 0))) continue;
+            stripped[k] = v;
+          }
+          return stripped;
+        });
+      }
+
+      // ── Стрипаем null поля из заказов ──
+      const ORDER_DEFAULTS = {
+        archived: false, shipped: false, autoArchived: false,
+        bomId: null, productCode: null, specs: null, customer: null,
+        source: null, components: '[]', archivedAt: null, shippedAt: null
+      };
+      if (toSave.orders?.length > 0) {
+        toSave.orders = toSave.orders.map(order => {
+          const stripped = {};
+          for (const [k, v] of Object.entries(order)) {
+            const def = ORDER_DEFAULTS[k];
+            if (def === null && v === null) continue;
+            if (def === false && v === false) continue;
+            if (def === '[]' && (v === null || (Array.isArray(v) && v.length === 0))) continue;
+            stripped[k] = v;
+          }
+          return stripped;
+        });
+      }
+
       // Ограничиваем размер массивов
       if (toSave.events?.length > 2000)               toSave.events               = toSave.events.slice(-2000);
       if (toSave.materialConsumptions?.length > 2000)  toSave.materialConsumptions = toSave.materialConsumptions.slice(-2000);
@@ -983,6 +1026,15 @@ const migrateData = (d) => {
       return o;
     })};
   }
+  // Удаляем операции с orderId: null (осиротевшие операции)
+  if (d.ops?.some(op => !op.orderId)) {
+    const before = d.ops.length;
+    d = { ...d, ops: d.ops.filter(op => op.orderId) };
+    if (d.ops.length < before) {
+      console.log('Удалено осиротевших операций: ' + (before - d.ops.length));
+    }
+  }
+
   // Дедупликация событий по id (убираем дубликаты material_receive и других)
   if (d.events?.length > 0) {
     const seen = new Set();
