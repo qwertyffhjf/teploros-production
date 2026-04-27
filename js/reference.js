@@ -1528,8 +1528,24 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
           )
         ),
         // Архивные заказы
-        h('div', { style: { display: 'flex', gap: 8 } },
-          h('button', { style: gbtn({ fontSize: 12 }), onClick: cleanArchived }, '🗑 Удалить архивные заказы')
+        h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+          h('button', { style: gbtn({ fontSize: 12 }), onClick: cleanArchived }, '🗑 Удалить архивные заказы'),
+          h('button', { style: gbtn({ fontSize: 12 }), onClick: async () => {
+            const hidden = (data.ops || []).filter(o => o.hiddenFromFeed);
+            if (hidden.length === 0) { addToast('Нет скрытых операций', 'info'); return; }
+            const d = { ...data, ops: data.ops.map(o => o.hiddenFromFeed ? { ...o, hiddenFromFeed: false } : o) };
+            await DB.save(d); onUpdate(d);
+            addToast(`Восстановлено ${hidden.length} скрытых операций`, 'success');
+          }}, `👁 Показать скрытые операции (${(data.ops || []).filter(o => o.hiddenFromFeed).length})`),
+          h('button', { style: gbtn({ fontSize: 12 }), onClick: async () => {
+            const hidden = (data.ops || []).filter(o => o.hiddenFromFeed && o.status === 'done');
+            if (hidden.length === 0) { addToast('Нет скрытых завершённых операций', 'info'); return; }
+            if (!(await askConfirm({ message: `Архивировать ${hidden.length} скрытых завершённых операций?`, detail: 'Они исчезнут из списков окончательно', danger: false }))) return;
+            const ids = new Set(hidden.map(o => o.id));
+            const d = { ...data, ops: data.ops.map(o => ids.has(o.id) ? { ...o, archived: true } : o) };
+            await DB.save(d); onUpdate(d);
+            addToast(`Архивировано ${hidden.length} операций`, 'info');
+          }}, `📁 Архивировать скрытые`)
         )
       );
     })(),
