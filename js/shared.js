@@ -258,18 +258,9 @@ const generateFullPassport = (order, data) => {
       { table: {
         widths: ['33%', '33%', '34%'],
         body: [[
-          { text: 'Начальник производства
-
-
-_________________', alignment: 'center' },
-          { text: 'Контролёр ОТК
-
-
-_________________', alignment: 'center' },
-          { text: 'Ответственный за отгрузку
-
-
-_________________', alignment: 'center' }
+          { text: 'Начальник производства\n\n\n_________________', alignment: 'center' },
+          { text: 'Контролёр ОТК\n\n\n_________________', alignment: 'center' },
+          { text: 'Ответственный за отгрузку\n\n\n_________________', alignment: 'center' }
         ]]
       }, layout: 'noBorders', margin: [0, 0, 0, 16] },
 
