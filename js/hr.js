@@ -1,6 +1,19 @@
 // teploros · hr.js
 // Автоматически извлечено из монолита
 
+// ==================== Helpers ====================
+
+// Вычисляет новые competences + competenceLevels при переключении уровня одной компетенции.
+// Используется и в форме редактирования, и в матрице.
+const applyCompetenceLevel = (currentLevels = {}, currentComps = [], stageName, newLevel) => {
+  const newLevels = { ...currentLevels, [stageName]: newLevel };
+  if (newLevel === 0) delete newLevels[stageName];
+  const newComps = newLevel > 0
+    ? [...new Set([...currentComps, stageName])]
+    : currentComps.filter(c => c !== stageName);
+  return { newLevels, newComps };
+};
+
 // ==================== MasterWorkers ====================
 const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
   const [search, setSearch] = useState('');
@@ -113,7 +126,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
     autoMark();
     const interval = setInterval(autoMark, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [checkAutoShift, data.workers, data.timesheet]);
 
   // Показываем текущую смену в шапке
   const currentShiftInfo = useMemo(() => {
@@ -294,11 +307,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
             title: `Уровень: ${lc.label} — нажмите для переключения`,
             onClick: () => {
               const newLevel = (level + 1) % 4;
-              const newLevels = { ...(form.competenceLevels || {}), [s.name]: newLevel };
-              if (newLevel === 0) delete newLevels[s.name];
-              const newComps = newLevel > 0
-                ? [...new Set([...form.competences, s.name])]
-                : form.competences.filter(c => c !== s.name);
+              const { newLevels, newComps } = applyCompetenceLevel(form.competenceLevels, form.competences, s.name, newLevel);
               setForm(p => ({ ...p, competences: newComps, competenceLevels: newLevels }));
             }
           }, s.name, level > 0 && h('span', { style: { marginLeft: 4, fontSize: 10 } }, lc.label)),
@@ -423,7 +432,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
         const existing = new Set(data.workers.map(w => w.name.toLowerCase()));
         const items = rows.filter(r => r.name && !existing.has(r.name.toLowerCase()))
           .map(r => ({ id: uid(), name: r.name, position: r.position || '',
-            grade: r.grade || '', pin: r.pin || '', tabNumber: '',
+            grade: r.grade || '', pin: r.pin ? hashPin(r.pin) : '', tabNumber: '',
             sectionId: '', competences: [], status: 'working', achievements: [] }));
         if (!items.length) { addToast('Все сотрудники уже существуют', 'info'); return; }
         const d = { ...data, workers: [...data.workers, ...items] };
@@ -484,7 +493,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
                   // Часы из табеля за текущий месяц
                   (() => {
                     const now = new Date();
-                    const ym = `${now.getFullYear()}-${String(now.getMonth()).padStart(2,'0')}`;
+                    const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,'0')}`;
                     const tsMonth = data.timesheet?.[w.id] || {};
                     const totalH = Object.values(tsMonth).reduce((s, cell) => s + (cell?.h || 0), 0);
                     return totalH > 0 ? h('div', { style: { marginBottom: 8, padding: '6px 10px', background: GN3, borderRadius: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
@@ -594,9 +603,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
             const lc = levelColors[level] || levelColors[0];
             return h('td', { key: s.id, style: { ...S.td, textAlign:'center', padding: '4px', cursor: 'pointer' }, onClick: async () => {
               const newLevel = (level + 1) % 4;
-              const newLevels = { ...(w.competenceLevels || {}), [s.name]: newLevel };
-              const newComps = newLevel > 0 ? [...new Set([...(w.competences || []), s.name])] : (w.competences || []).filter(c => c !== s.name);
-              if (newLevel === 0) delete newLevels[s.name];
+              const { newLevels, newComps } = applyCompetenceLevel(w.competenceLevels, w.competences, s.name, newLevel);
               const d = { ...data, workers: data.workers.map(ww => ww.id === w.id ? { ...ww, competences: newComps, competenceLevels: newLevels } : ww) };
               await DB.save(d); onUpdate(d);
             }},
@@ -926,6 +933,11 @@ const MonthlyReport = memo(({ data }) => {
       const oOps = data.ops.filter(op => op.orderId === o.id);
       return oOps.length > 0 && oOps.every(op => op.status === 'done' || op.status === 'defect');
     });
+    // Заказы закрытые без брака (все операции done)
+    const completedClean = orders.filter(o => {
+      const oOps = data.ops.filter(op => op.orderId === o.id);
+      return oOps.length > 0 && oOps.every(op => op.status === 'done');
+    });
     const overdue = orders.filter(o => o.deadline && new Date(o.deadline) < new Date() && !completed.find(c => c.id === o.id));
 
     const downtimeMs = data.events.filter(e => e.type==='downtime' && e.ts>=periodStart && e.ts<=periodEnd).reduce((s,e) => s+(e.duration||0), 0);
@@ -944,7 +956,7 @@ const MonthlyReport = memo(({ data }) => {
       return { name, avgH, samples: n.samples };
     }).sort((a,b) => b.samples - a.samples).slice(0,5);
 
-    return { done, defect, total, quality, orders: orders.length, completed: completed.length, overdue: overdue.length, downtimeH: Math.round(downtimeMs/3600000*10)/10, topWorkers, normsAlert };
+    return { done, defect, total, quality, orders: orders.length, completed: completed.length, completedClean: completedClean.length, overdue: overdue.length, downtimeH: Math.round(downtimeMs/3600000*10)/10, topWorkers, normsAlert };
   }, [data, month, year]);
 
   const exportReport = useCallback(() => {
@@ -972,9 +984,9 @@ const MonthlyReport = memo(({ data }) => {
     [report.done, 'Операций выполнено', report.done > 0 ? GN : '#888'],
     [`${report.quality}%`, 'Качество', report.quality>=95?GN:report.quality>=85?AM:RD],
     [`${report.downtimeH}ч`, 'Простоев', report.downtimeH > 0 ? AM2 : '#888'],
-    [report.completed+'/'+report.orders, 'Заказов завершено', GN2],
+    [report.completedClean+'/'+report.orders, 'Заказов без брака', GN2],
+    [report.completed - report.completedClean > 0 ? report.completed - report.completedClean : 0, 'Закрыто с браком', (report.completed - report.completedClean) > 0 ? RD : '#888'],
     [report.overdue, 'Просрочено', report.overdue > 0 ? RD : '#888'],
-    [report.defect, 'Брак', report.defect > 0 ? RD : '#888'],
   ];
 
   return h('div', null,
