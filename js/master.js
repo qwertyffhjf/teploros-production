@@ -638,7 +638,7 @@ const DependencyEditorInline = memo(({ data, orderId, onUpdate, addToast }) => {
 
 const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [form, setForm] = useState({ number: '', product: '',
- qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' });
+ qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '' });
   const { ask: askConfirm, confirmEl } = useConfirm();
   const [editingId, setEditingId] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -664,9 +664,9 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     return Object.keys(errors).length === 0;
   };
 
-  const createDefaultOps = useCallback((orderId, productType, orderQty) => {
+  const createDefaultOps = useCallback((orderId, productType, orderQty, drawingUrl) => {
     const stages = (data.productionStages || []).filter(s => !productType || s.productType === productType);
-    return stages.map(stage => ({ id: uid(), orderId, name: stage.name, qty: orderQty, workerIds: [], workerQty: {}, status: 'pending', createdAt: now(), plannedHours: undefined, archived: false, sectionId: null, equipmentId: null, plannedStartDate: undefined, requiresQC: stage.name.includes('свар') || stage.name.includes('Опресовка') }));
+    return stages.map(stage => ({ id: uid(), orderId, name: stage.name, qty: orderQty, workerIds: [], workerQty: {}, status: 'pending', createdAt: now(), plannedHours: undefined, archived: false, sectionId: null, equipmentId: null, plannedStartDate: undefined, drawingUrl: drawingUrl || undefined, requiresQC: stage.name.includes('свар') || stage.name.includes('Опресовка') }));
   }, [data.productionStages]);
 
   // Создаём поставки материалов по всем этапам у которых есть requiredMaterialIds
@@ -714,10 +714,10 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     if (editingId) {
       const updatedOrders = data.orders.map(o => o.id === editingId ? { ...o, ...form, qty: Number(form.qty), priority: form.priority } : o);
       const d = { ...data, orders: updatedOrders };
-      await DB.save(d); onUpdate(d); setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({}); addToast('Заказ обновлён', 'success');
+      await DB.save(d); onUpdate(d); setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '' }); setFieldErrors({}); addToast('Заказ обновлён', 'success');
     } else {
       const newOrder = { id: uid(), ...form, qty: Number(form.qty), createdAt: now(), archived: false };
-      const newOps = createDefaultOps(newOrder.id, form.productType, Number(form.qty));
+      const newOps = createDefaultOps(newOrder.id, form.productType, Number(form.qty), form.drawingUrl.trim() || undefined);
       // BOM: предупреждение о дефиците (не блокирует создание)
       if (form.bomId) {
         const bom = data.bomTemplates.find(b => b.id === form.bomId);
@@ -736,7 +736,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
           if (reservations.length > 0) {
             const newDeliveries = createMaterialDeliveries(newOrder.id, form.productType, Number(form.qty), form.bomId);
             const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps], materialReservations: [...(data.materialReservations || []), ...reservations], materialDeliveries: [...(data.materialDeliveries || []), ...newDeliveries] };
-            await DB.save(d); onUpdate(d); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({});
+            await DB.save(d); onUpdate(d); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '' }); setFieldErrors({});
             addToast(`Заказ создан, зарезервированы материалы${newDeliveries.length > 0 ? `, ожидается ${newDeliveries.length} поставок` : ''}`, 'success');
             if (newOps.length > 0) setPrintOrderId(newOrder.id);
             return;
@@ -745,7 +745,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       }
       const newDeliveries = createMaterialDeliveries(newOrder.id, form.productType, Number(form.qty), form.bomId);
       const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps], materialDeliveries: [...(data.materialDeliveries || []), ...newDeliveries] };
-      await DB.save(d); onUpdate(d); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({});
+      await DB.save(d); onUpdate(d); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '' }); setFieldErrors({});
       addToast(newDeliveries.length > 0 ? `Заказ создан, ожидается ${newDeliveries.length} поставок материалов` : 'Заказ создан', 'success');
       if (newOps.length > 0) setPrintOrderId(newOrder.id);
     }
@@ -782,7 +782,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     await DB.save(d); onUpdate(d); addToast('Заказ восстановлен', 'success');
   }, [data, onUpdate, addToast]);
 
-  const edit = useCallback(ord => { setForm({ number: ord.number, product: ord.product, qty: String(ord.qty), deadline: ord.deadline || '', priority: ord.priority || 'medium', bomId: '', productType: ord.productType || '' }); setEditingId(ord.id); }, []);
+  const edit = useCallback(ord => { setForm({ number: ord.number, product: ord.product, qty: String(ord.qty), deadline: ord.deadline || '', priority: ord.priority || 'medium', bomId: '', productType: ord.productType || '', drawingUrl: ord.drawingUrl || '' }); setEditingId(ord.id); }, []);
 
   const ordersToShow = useMemo(() => data.orders.filter(o => (showArchived ? true : !o.archived) && (!o.shipped || showShipped) && (!filterType || o.productType === filterType)).sort((a,b) => { const priorityOrder = { critical:0, high:1, medium:2, low:3 }; return (priorityOrder[a.priority]||4) - (priorityOrder[b.priority]||4) || (b.createdAt||0) - (a.createdAt||0); }), [data.orders, showArchived, showShipped, filterType]);
   const paginated = useMemo(() => { const start = (page-1)*pageSize; return ordersToShow.slice(start, start+pageSize); }, [ordersToShow, page]);
@@ -829,8 +829,9 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
         h('div', { style: { minWidth: 120 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.priority, onChange: e => setForm(p => ({ ...p, priority: e.target.value })) }, h('option', { value: 'low' }, 'Низкий'), h('option', { value: 'medium' }, 'Средний'), h('option', { value: 'high' }, 'Высокий'), h('option', { value: 'critical' }, 'Критический'))),
         h('div', { style: { minWidth: 100 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.productType, onChange: e => setForm(p => ({ ...p, productType: e.target.value })) }, h('option', { value: '' }, 'Тип'), productTypes.map(pt => h('option', { key: pt.id, value: pt.id }, pt.label)))),
         h('div', { style: { minWidth: 140 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.bomId, onChange: e => setForm(p => ({ ...p, bomId: e.target.value })) }, h('option', { value: '' }, '— без BOM —'), data.bomTemplates.filter(b => !form.productType || b.productType === form.productType || !b.productType).map(b => h('option', { key: b.id, value: b.id }, b.productName)))),
+        h('div', { style: { minWidth: 180, flex: 1 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: '🔗 Ссылка (чертёж, ТЗ…)', value: form.drawingUrl, onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value })) })),
         h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, editingId ? '✓' : '+'),
-        editingId && h('button', { type: 'button', style: gbtn(), onClick: () => { setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '' }); setFieldErrors({}); } }, 'Отмена'),
+        editingId && h('button', { type: 'button', style: gbtn(), onClick: () => { setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '' }); setFieldErrors({}); } }, 'Отмена'),
         !editingId && h('button', { type: 'button', style: { ...gbtn(), borderColor: AM, color: AM2 }, onClick: () => setShowImport1C(true), title: 'Импортировать заказ из файла 1С (Excel)' }, '📥 Импорт из 1С')
       ),
       // Проверка остатков при выборе BOM
