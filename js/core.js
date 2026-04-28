@@ -373,8 +373,12 @@ firebase.initializeApp({
   appId: "1:151146225873:web:f37d7ce9f9859dcb5de5f0"
 });
 const firestore = firebase.firestore();
-const DOC_REF = firestore.collection('app').doc('production_v14');
+const DOC_REF    = firestore.collection('app').doc('production_v14');
+const WH_DOC_REF = firestore.collection('app').doc('warehouse_v1');   // Склад — отдельный документ
 const PRESENCE_REF = firestore.collection('presence');
+
+// Поля которые живут в warehouse_v1 (не в production_v14)
+const WH_FIELDS = ['materials','bomTemplates','materialConsumptions','materialReservations','materialDeliveries','equipment'];
 
 // ==================== Presence (онлайн пользователи) ====================
 const Presence = {
@@ -431,6 +435,7 @@ const EMPTY_DATA = {
 };
 
 const CACHE_KEY    = 'prod_app_v14_cache';
+const WH_CACHE_KEY = 'prod_wh_v1_cache';   // Кэш склада
 const CACHE_TTL    = 12 * 3600000;  // 12 часов
 const QUEUE_KEY    = 'prod_app_v14_queue'; // офлайн-очередь
 const VERSION_KEY  = 'prod_app_v14_version'; // версия для optimistic locking
@@ -665,15 +670,25 @@ const DB = {
   // ── Загрузка ──────────────────────────────────────────────────────────────
   async load() {
     cleanStaleLocalStorageKeys();
-    // Пытаемся отправить накопленную офлайн-очередь
     await DB._flushQueue();
     try {
-      const snap = await DOC_REF.get();
+      // Загружаем оба документа параллельно
+      const [snap, whSnap] = await Promise.all([
+        DOC_REF.get(),
+        WH_DOC_REF.get()
+      ]);
       if (snap.exists) {
         let parsed = typeof snap.data().payload === 'string'
           ? JSON.parse(snap.data().payload)
           : snap.data();
-        // Запоминаем версию документа (для optimistic locking)
+        // Подмешиваем данные склада
+        if (whSnap.exists) {
+          let whParsed = typeof whSnap.data().payload === 'string'
+            ? JSON.parse(whSnap.data().payload)
+            : whSnap.data();
+          WH_FIELDS.forEach(f => { if (whParsed[f] !== undefined) parsed[f] = whParsed[f]; });
+          try { localStorage.setItem(WH_CACHE_KEY, JSON.stringify({ data: whParsed, savedAt: Date.now() })); } catch(e) {}
+        }
         DB._version = snap.data().updatedAt?.toMillis?.() || snap.data()._version || Date.now();
         DB._online = true;
         try {
@@ -689,16 +704,25 @@ const DB = {
       console.warn('Firebase load failed, using cache:', e);
       DB._online = false;
     }
-    // Firebase недоступен — используем кэш
+    // Firebase недоступен — объединяем оба кэша
     try {
       const raw = localStorage.getItem(CACHE_KEY);
       if (raw) {
         const cached = JSON.parse(raw);
-        const cacheData = cached.data || cached;
-        const savedAt   = cached.savedAt || 0;
+        let cacheData = cached.data || cached;
+        // Подмешиваем кэш склада
+        try {
+          const whRaw = localStorage.getItem(WH_CACHE_KEY);
+          if (whRaw) {
+            const whCached = JSON.parse(whRaw);
+            const whData = whCached.data || whCached;
+            WH_FIELDS.forEach(f => { if (whData[f] !== undefined) cacheData[f] = whData[f]; });
+          }
+        } catch(e) {}
+        const savedAt = cached.savedAt || 0;
         const age = Date.now() - savedAt;
         if (age > CACHE_TTL) {
-          console.warn(`Cache TTL expired (${Math.round(age/3600000)}h old)`);
+          console.warn('Cache TTL expired (' + Math.round(age/3600000) + 'h old)');
           localStorage.removeItem(CACHE_KEY);
         }
         return { ...EMPTY_DATA, ...cacheData };
@@ -865,11 +889,35 @@ const DB = {
                 }
               }
             }
-            await DOC_REF.set({
-              payload:   JSON.stringify(toSave),
-              _version:  newVersion,
-              updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            // Разделяем данные: складские → warehouse_v1, остальное → production_v14
+            const whData = {};
+            const mainData = { ...toSave };
+            WH_FIELDS.forEach(f => {
+              if (mainData[f] !== undefined) {
+                whData[f] = mainData[f];
+                delete mainData[f];
+              }
             });
+
+            // Сохраняем параллельно
+            const savePromises = [
+              DOC_REF.set({
+                payload:   JSON.stringify(mainData),
+                _version:  newVersion,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+              })
+            ];
+            if (Object.keys(whData).length > 0) {
+              savePromises.push(
+                WH_DOC_REF.set({
+                  payload:   JSON.stringify(whData),
+                  updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                })
+              );
+              // Обновляем кэш склада
+              try { localStorage.setItem(WH_CACHE_KEY, JSON.stringify({ data: whData, savedAt: Date.now() })); } catch(e) {}
+            }
+            await Promise.all(savePromises);
             DB._version = newVersion;
             localStorage.setItem(VERSION_KEY, String(newVersion));
             DB._online = true;
@@ -963,18 +1011,46 @@ const DB = {
 
   // ── Realtime listener ─────────────────────────────────────────────────────
   onSnapshot(callback) {
-    return DOC_REF.onSnapshot(
+    // Храним последние данные из обоих документов для слияния
+    let lastMain = null;
+    let lastWh   = null;
+
+    const merge = () => {
+      if (!lastMain) return;
+      const merged = { ...EMPTY_DATA, ...lastMain };
+      if (lastWh) WH_FIELDS.forEach(f => { if (lastWh[f] !== undefined) merged[f] = lastWh[f]; });
+      callback(migrateData(merged));
+    };
+
+    const unsubMain = DOC_REF.onSnapshot(
       snap => {
         DB._online = true;
+        if (DB._saving) return; // Блокируем входящие пока сами сохраняем
         if (snap.exists) {
-          let parsed = typeof snap.data().payload === 'string'
+          lastMain = typeof snap.data().payload === 'string'
             ? JSON.parse(snap.data().payload)
             : snap.data();
-          callback(migrateData({ ...EMPTY_DATA, ...parsed }));
+          merge();
         }
       },
       err => { DB._online = false; console.warn('Snapshot error:', err); }
     );
+
+    const unsubWh = WH_DOC_REF.onSnapshot(
+      snap => {
+        if (DB._saving) return;
+        if (snap.exists) {
+          lastWh = typeof snap.data().payload === 'string'
+            ? JSON.parse(snap.data().payload)
+            : snap.data();
+          merge();
+        }
+      },
+      err => console.warn('WH Snapshot error:', err)
+    );
+
+    // Возвращаем функцию отписки от обоих
+    return () => { unsubMain(); unsubWh(); };
   },
 
   // ── Загрузка архива ───────────────────────────────────────────────────────
