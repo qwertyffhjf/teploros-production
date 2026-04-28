@@ -1,5 +1,5 @@
 // teploros Service Worker v2 — модульная структура
-const CACHE_NAME = 'teploros-v2';
+const CACHE_NAME = 'teploros-v3';
 const ASSETS = [
   './',
   './index.html',
