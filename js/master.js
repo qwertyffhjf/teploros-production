@@ -792,23 +792,26 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     confirmEl,
     h(PasteImportWidget, { addToast, hint: 'Вставить заказы из Excel',
       columns: [
-        { key: 'number',   label: 'Номер заказа', required: true },
-        { key: 'product',  label: 'Изделие',       required: true },
-        { key: 'qty',      label: 'Количество',    required: false, default: '1' },
-        { key: 'deadline', label: 'Срок (дата)',   required: false, default: '' },
-        { key: 'priority', label: 'Приоритет',     required: false, default: 'medium' },
+        { key: 'number',     label: 'Номер заказа', required: true },
+        { key: 'product',    label: 'Изделие',       required: true },
+        { key: 'qty',        label: 'Количество',    required: false, default: '1' },
+        { key: 'deadline',   label: 'Срок (дата)',   required: false, default: '' },
+        { key: 'priority',   label: 'Приоритет',     required: false, default: 'medium' },
+        { key: 'drawingUrl', label: 'Ссылка',        required: false, default: '' },
       ],
       onImport: async (rows) => {
         const existing = new Set(data.orders.map(o => o.number.toLowerCase()));
-        const items = rows.filter(r => r.number && r.product && !existing.has(r.number.toLowerCase()))
+        const newOrders = rows.filter(r => r.number && r.product && !existing.has(r.number.toLowerCase()))
           .map(r => ({ id: uid(), number: r.number, product: r.product,
             qty: Number(r.qty) || 1, deadline: r.deadline || '',
             priority: ['critical','high','medium','low'].includes(r.priority) ? r.priority : 'medium',
+            drawingUrl: r.drawingUrl || '',
             status: 'active', createdAt: now() }));
-        if (!items.length) { addToast('Все номера заказов уже существуют', 'info'); return; }
-        let d = { ...data, orders: [...data.orders, ...items] };
-        d = logAction(d, 'orders_batch_import', { count: items.length });
-        await DB.save(d); onUpdate(d); addToast(`Добавлено заказов: ${items.length}`, 'success');
+        if (!newOrders.length) { addToast('Все номера заказов уже существуют', 'info'); return; }
+        const newOps = newOrders.flatMap(o => createDefaultOps(o.id, o.productType || '', o.qty, o.drawingUrl || undefined));
+        let d = { ...data, orders: [...data.orders, ...newOrders], ops: [...data.ops, ...newOps] };
+        d = logAction(d, 'orders_batch_import', { count: newOrders.length });
+        await DB.save(d); onUpdate(d); addToast(`Добавлено заказов: ${newOrders.length}`, 'success');
       }}),
     depEditorOrderId && h(DependencyEditor, { data, orderId: depEditorOrderId, onUpdate, addToast, onClose: () => setDepEditorOrderId(null) }),
     printOrderId && (() => {
