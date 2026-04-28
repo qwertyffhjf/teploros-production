@@ -76,6 +76,54 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
     await DB.save(d); onUpdate(d);
     if (status === 'working') addToast('На смене — 8ч записано в табель', 'info');
   }, [data, onUpdate, addToast]);
+  // Автоопределение смены по времени (+3 МСК)
+  // Если текущее время попадает в рамки любой смены — предлагаем отметить явку
+  const checkAutoShift = useCallback(() => {
+    const shifts = data.settings?.shifts || [{ id: 1, name: 'Смена 1', start: 8, end: 17 }];
+    const now = new Date();
+    const mskHour = (now.getUTCHours() + 3) % 24; // UTC+3
+    const activeShift = shifts.find(s => {
+      const start = s.start ?? 8;
+      const end   = s.end   ?? 17;
+      if (start < end) return mskHour >= start && mskHour < end;
+      return mskHour >= start || mskHour < end; // ночная смена через полночь
+    });
+    return activeShift || null;
+  }, [data.settings?.shifts]);
+
+  // Запускаем проверку раз в минуту — автоматически ставим статус "на смене" 
+  // тем кто без статуса и пришёл в рабочее время
+  useEffect(() => {
+    const autoMark = async () => {
+      const shift = checkAutoShift();
+      if (!shift) return;
+      const today = new Date();
+      const tsKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+      const day = today.getDate();
+      // Находим активных сотрудников без записи в табеле сегодня
+      const toMark = data.workers.filter(w => {
+        if (w.archived || w.status === 'sick' || w.status === 'vacation') return false;
+        const cell = data.timesheet?.[tsKey]?.[w.id]?.[day];
+        return !cell; // нет записи — кандидат на автометку
+      });
+      if (toMark.length === 0) return;
+      // Не делаем автоматически — только показываем тост подсказку
+      // Реальная запись идёт только при явном нажатии кнопки
+    };
+    autoMark();
+    const interval = setInterval(autoMark, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Показываем текущую смену в шапке
+  const currentShiftInfo = useMemo(() => {
+    const shift = checkAutoShift();
+    if (!shift) return null;
+    const now = new Date();
+    const mskHour = (now.getUTCHours() + 3) % 24;
+    return { name: shift.name, start: shift.start, end: shift.end, hour: mskHour };
+  }, [checkAutoShift]);
+
   const sendThanks = useCallback(async (toWorkerId, note) => {
     const newEvent = { id: uid(), type: 'thanks', toWorkerId, fromWorkerId: null, ts: now(), note: note || '' };
     const updated = { ...data, events: [...data.events, newEvent] };
@@ -298,21 +346,48 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
       h(MC, { v: summary.absent+summary.sick+summary.vacation, l: 'Отсутствуют', c: RD }),
       h(MC, { v: `${summary.avgLoad}%`, l: 'Загрузка, ср.', c: AM })
     ),
+    currentShiftInfo && h('div', { style: { display:'flex', alignItems:'center', gap:12, padding:'8px 14px', background: GN3, borderRadius:8, marginBottom:10, border:`0.5px solid ${GN}` } },
+      h('span', { style: { fontSize:13, color: GN2, fontWeight:500 } },
+        `🕐 Сейчас ${currentShiftInfo.hour}:00 МСК · ${currentShiftInfo.name} (${currentShiftInfo.start}:00–${currentShiftInfo.end}:00)`
+      ),
+      h('button', { style: { ...abtn({ fontSize:11, padding:'4px 12px' }), background: GN, borderColor: GN }, onClick: async () => {
+        const today = new Date();
+        const tsKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+        const day = today.getDate();
+        const toMark = data.workers.filter(w => {
+          if (w.archived || w.status === 'sick' || w.status === 'vacation') return false;
+          const cell = data.timesheet?.[tsKey]?.[w.id]?.[day];
+          return !cell;
+        });
+        if (toMark.length === 0) { addToast('Все уже отмечены', 'info'); return; }
+        let d = { ...data };
+        toMark.forEach(w => {
+          const workerTs = d.timesheet?.[tsKey]?.[w.id] || {};
+          d = { ...d, timesheet: { ...(d.timesheet || {}), [tsKey]: { ...((d.timesheet || {})[tsKey] || {}), [w.id]: { ...workerTs, [day]: { h: 8 } } } } };
+          d = { ...d, workers: d.workers.map(x => x.id === w.id ? { ...x, status: 'working' } : x) };
+        });
+        await DB.save(d); onUpdate(d);
+        addToast(`✓ Явка отмечена: ${toMark.length} сотрудников`, 'success');
+      }}, `✓ Отметить явку (${data.workers.filter(w => { if (w.archived || w.status === 'sick' || w.status === 'vacation') return false; const today = new Date(); const tsKey2 = \`\${today.getFullYear()}-\${String(today.getMonth()+1).padStart(2,'0')}\`; const cell = data.timesheet?.[tsKey2]?.[w.id]?.[today.getDate()]; return !cell; }).length})`
+    )),
+
     h('div', { style: { display:'flex', gap:8, marginBottom:16, alignItems:'center', flexWrap:'wrap' } },
       h('input', { style: { ...S.inp, flex:1, minWidth:180 }, placeholder:'Поиск по имени...', value: search, onChange: e => setSearch(e.target.value) }),
       h('div', { style: { display:'flex', gap:4, flexWrap:'wrap' } }, [['all','Все'],['working','На смене'],['absent','Отсутствуют'],['sick','Больничный'],['vacation','Отпуск']].map(([id,label]) => h('button', { key: id, style: statusFilter === id ? abtn({ fontSize:11, padding:'5px 10px' }) : gbtn({ fontSize:11, padding:'5px 10px' }), onClick: () => setStatusFilter(id) }, label))),
-      h('select', { style: { ...S.inp, minWidth: 130 }, value: sectionFilter, onChange: e => setSectionFilter(e.target.value) },
-        h('option', { value: '' }, '— все участки —'),
-        (data.sections || []).map(s => h('option', { key: s.id, value: s.id }, s.name))
+      h('div', { style: { display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' } },
+        h('select', { style: { ...S.inp, fontSize:13, padding:'6px 10px', minHeight:36, minWidth:140 }, value: sectionFilter, onChange: e => setSectionFilter(e.target.value) },
+          h('option', { value: '' }, 'Все участки'),
+          (data.sections || []).map(s => h('option', { key: s.id, value: s.id }, s.name))
+        ),
+        (() => {
+          const positions = [...new Set(data.workers.filter(w => w.position).map(w => w.position))].sort();
+          return h('select', { style: { ...S.inp, fontSize:13, padding:'6px 10px', minHeight:36, minWidth:160 }, value: positionFilter, onChange: e => setPositionFilter(e.target.value) },
+            h('option', { value: '' }, 'Все должности'),
+            positions.map(p => h('option', { key: p, value: p }, p))
+          );
+        })(),
+        (sectionFilter || positionFilter) && h('button', { style: { ...gbtn({ fontSize:11, padding:'4px 8px', minHeight:36 }), color:'var(--fg)' }, onClick: () => { setSectionFilter(''); setPositionFilter(''); } }, '✕')
       ),
-      (() => {
-        const positions = [...new Set(data.workers.filter(w => w.position).map(w => w.position))].sort();
-        return h('select', { style: { ...S.inp, minWidth: 130 }, value: positionFilter, onChange: e => setPositionFilter(e.target.value) },
-          h('option', { value: '' }, '— все должности —'),
-          positions.map(p => h('option', { key: p, value: p }, p))
-        );
-      })(),
-      (sectionFilter || positionFilter) && h('button', { style: gbtn({ fontSize: 11, padding: '5px 8px' }), onClick: () => { setSectionFilter(''); setPositionFilter(''); } }, '✕ Сбросить'),
       h('label', { style: { display:'flex', alignItems:'center', gap:4, fontSize:12, cursor:'pointer', whiteSpace:'nowrap' } },
         h('input', { type:'checkbox', checked: showArchivedWorkers, onChange: e => setShowArchivedWorkers(e.target.checked) }),
         `Архив (${archivedCount})`
@@ -375,7 +450,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
                   h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:8 } },
                     h('div', null,
                       h('div', { style: { display:'flex', alignItems:'center', gap:8 } },
-                        h('div', { style: { fontSize:15, fontWeight:500, cursor:'pointer', color: AM2, textDecoration:'underline', textDecorationStyle:'dotted' }, onClick: () => setCardWorker(w) }, w.name),
+                        h('div', { style: { fontSize:15, fontWeight:500, cursor:'pointer', color: 'var(--fg)', textDecoration:'underline', textDecorationStyle:'dotted', textDecorationColor: AM }, onClick: () => setCardWorker(w) }, w.name),
                         h('span', { style: { display:'inline-block', padding:'1px 8px', fontSize:10, borderRadius:8, background:AM3, color:AM2, fontWeight:500 } }, `Ур. ${w.level} · ${getLevelTitle(w.level)}`),
                         h('button', { style: gbtn({ fontSize:11, padding:'2px 6px' }), 'aria-label': `Поблагодарить ${w.name}`, onClick: () => setThanksModal({ id: w.id, name: w.name }) }, '👏')
                       ),
