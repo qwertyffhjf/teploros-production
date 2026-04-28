@@ -368,7 +368,16 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
         });
         await DB.save(d); onUpdate(d);
         addToast(`✓ Явка отмечена: ${toMark.length} сотрудников`, 'success');
-      }}, `✓ Отметить явку (${data.workers.filter(w => { if (w.archived || w.status === 'sick' || w.status === 'vacation') return false; const today = new Date(); const tsKey2 = \`\${today.getFullYear()}-\${String(today.getMonth()+1).padStart(2,'0')}\`; const cell = data.timesheet?.[tsKey2]?.[w.id]?.[today.getDate()]; return !cell; }).length})`
+      }}, (() => {
+          const t = new Date();
+          const tk = t.getFullYear() + '-' + String(t.getMonth()+1).padStart(2,'0');
+          const dd = t.getDate();
+          const n = data.workers.filter(w => {
+            if (w.archived || w.status === 'sick' || w.status === 'vacation') return false;
+            return !data.timesheet?.[tk]?.[w.id]?.[dd];
+          }).length;
+          return '✓ Отметить явку (' + n + ')';
+        })()
     )),
 
     h('div', { style: { display:'flex', gap:8, marginBottom:16, alignItems:'center', flexWrap:'wrap' } },
