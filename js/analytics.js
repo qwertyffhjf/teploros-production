@@ -1252,3 +1252,7 @@ const ReportsBuilder = memo(({ data }) => {
 
 
 
+// Экспорт глобально для доступа из других модулей
+if (typeof window !== 'undefined') {
+  window.SectionAnalytics = SectionAnalytics;
+}
