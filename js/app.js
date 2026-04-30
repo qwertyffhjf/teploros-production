@@ -1,6 +1,12 @@
 // teploros · app.js
 // Автоматически извлечено из монолита
 
+// ==================== Утилиты логирования (только в dev) ====================
+const isDev = () => window.location.hostname === 'localhost' || window.location.port !== '';
+const log = (...args) => { if (isDev()) log(...args); };
+const warn = (...args) => { if (isDev()) warn(...args); };
+const err = (...args) => { if (isDev()) err(...args); };
+
 // ==================== Таблица лидеров ====================
 const Leaderboard = memo(({ data }) => {
   const workers = useMemo(() => data.workers.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet)), [data.workers]);
@@ -495,7 +501,7 @@ class ErrorBoundary extends React.Component {
     return { hasError: true, error };
   }
   componentDidCatch(error, info) {
-    console.error('App error:', error, info);
+    err('App error:', error, info);
   }
   render() {
     if (this.state.hasError) {
@@ -1257,6 +1263,7 @@ const InstallPromptBanner = memo(() => {
     if (ios) { setIsIOS(true); setShow(true); return; }
 
     // Проверяем глобально пойманный prompt (из core.js)
+    // Используем глобальный prompt из core.js (не дублируем обработчик)
     if (window._pwaPrompt) {
       promptRef.current = window._pwaPrompt;
       setHasPrompt(true);
@@ -1264,13 +1271,9 @@ const InstallPromptBanner = memo(() => {
       return;
     }
 
-    // Слушаем если ещё не пойман
-    const handler = (e) => { e.preventDefault(); promptRef.current = e; window._pwaPrompt = e; setHasPrompt(true); setShow(true); };
-    window.addEventListener('beforeinstallprompt', handler);
-    window.addEventListener('appinstalled', () => { setShow(false); window._pwaPrompt = null; });
     // Fallback — показываем инструкцию через 2 сек
-    const fallback = setTimeout(() => { if (!promptRef.current) setShow(true); }, 2000);
-    return () => { window.removeEventListener('beforeinstallprompt', handler); clearTimeout(fallback); };
+    const fallback = setTimeout(() => { if (!window._pwaPrompt) setShow(true); }, 2000);
+    return () => { clearTimeout(fallback); };
   }, []);
 
   const handleInstall = async () => {
@@ -1625,7 +1628,7 @@ function App() {
         if (allDone && lastFinished > 0 && lastFinished < threshold) { archiveCount++; return { ...order, archived: true, autoArchived: true }; }
         return order;
       })};
-      if (archiveCount > 0) { await DB.save(updated); console.log(`Автоархивация: ${archiveCount} заказов`); }
+      if (archiveCount > 0) { await DB.save(updated); log(`Автоархивация: ${archiveCount} заказов`); }
       setData(archiveCount > 0 ? updated : d);
       setLoading(false); setSynced(true);
     });
@@ -1910,7 +1913,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').then(reg => {
-      console.log('SW registered:', reg.scope);
+      log('SW registered:', reg.scope);
       // Проверка обновлений каждые 30 минут
       setInterval(() => reg.update(), 30 * 60 * 1000);
       // Уведомление о новой версии
@@ -1925,7 +1928,7 @@ if ('serviceWorker' in navigator) {
           }
         });
       });
-    }).catch(err => console.log('SW registration failed:', err));
+    }).catch(err => log('SW registration failed:', err));
   });
   // Перезагрузка после активации нового SW
   let refreshing = false;
