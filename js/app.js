@@ -570,6 +570,7 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
   const [parsed, setParsed] = useState(null);  // { orderNumber, customer, deadline, product, productCode, qty, specs, components[] }
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState('');
+  const [drawingUrl, setDrawingUrl] = useState('');
   const fileInputRef = React.useRef(null);
 
   const parseExcel = (arrayBuffer) => {
@@ -700,15 +701,17 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
       archived: false,
       createdAt: now(),
       source: '1c_import',
+      drawingUrl: drawingUrl.trim() || undefined,  // ← ссылка на чертёж/источник
       components: parsed.components   // ← комплектующие сохраняются в заказ
     };
 
-    // Создаём операции по умолчанию
+    // Создаём операции по умолчанию (с ссылкой из поля)
     const stages = (data.productionStages || []).filter(s => !s.productType || s.productType === productType);
     const newOps = stages.map(stage => ({
       id: uid(), orderId, name: stage.name, qty: parsed.productQty,
       workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
       archived: false, sectionId: null, equipmentId: null,
+      drawingUrl: drawingUrl.trim() || undefined,  // ← ссылка передаётся во все операции
       requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.includes('Опресовка')
     }));
 
@@ -821,6 +824,17 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
           )
         ),
 
+        // Поле ввода ссылки (опционально)
+        h('div', { style: { marginBottom: 16 } },
+          h('div', { style: { fontSize: 11, color: '#888', marginBottom: 6 } }, '🔗 Ссылка на источник (чертёж, ТЗ…)'),
+          h('input', {
+            style: { ...S.inp, width: '100%' },
+            placeholder: 'https://…',
+            value: drawingUrl,
+            onChange: e => setDrawingUrl(e.target.value)
+          })
+        ),
+
         // Комплектующие
         parsed.components.length > 0 && h('div', { style: { marginBottom: 16 } },
           h('div', { style: { fontSize: 11, color: '#888', textTransform: 'uppercase', marginBottom: 8 } },
@@ -857,7 +871,7 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
         // Кнопки
         h('div', { style: { display: 'flex', gap: 8 } },
           h('button', { style: { ...abtn({ flex: 1 }), fontSize: 14 }, onClick: handleCreate }, '✓ Создать заказ'),
-          h('button', { style: gbtn({ flex: 0 }), onClick: () => { setStep('upload'); setParsed(null); } }, '← Назад')
+          h('button', { style: gbtn({ flex: 0 }), onClick: () => { setStep('upload'); setParsed(null); setDrawingUrl(''); } }, '← Назад')
         )
       ),
 
