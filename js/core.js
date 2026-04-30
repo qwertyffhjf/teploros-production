@@ -852,6 +852,7 @@ const DB = {
 
       return new Promise((resolve) => {
         DB._saveResolve = resolve;
+        const delay = toSave._urgent ? 50 : 300; // 50ms для срочных операций (приемка ОТК/склад), 300ms для обычных
         DB._saveTimer = setTimeout(async () => {
           DB._saveResolve = null;
           if (!DB._online) {
@@ -942,7 +943,7 @@ const DB = {
           }
           resolve({ ...toSave, _version: newVersion });
           setTimeout(() => { DB._saving = false; }, 500);
-        }, 800); // Уменьшаем debounce: 800ms вместо 1000ms — быстрее сохраняет
+        }, delay);
       });
     } catch(e) { err(e); DB._lastError = e.message; DB._saving = false; }
   },
