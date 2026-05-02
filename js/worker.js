@@ -1,6 +1,116 @@
 // teploros · worker.js
 // WorkerScreen, WorkerOnboarding, доп. работы
 
+// ==================== LiveOperationTimer ====================
+const LiveOperationTimer = memo(({ startedAt, plannedHours }) => {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!startedAt) return;
+    const id = setInterval(() => setTick(n => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+
+  if (!startedAt) return null;
+
+  const elapsedMs  = Date.now() - startedAt;
+  const totalSecs  = Math.max(0, Math.floor(elapsedMs / 1000));
+  const hh = String(Math.floor(totalSecs / 3600)).padStart(2, '0');
+  const mm = String(Math.floor((totalSecs % 3600) / 60)).padStart(2, '0');
+  const ss = String(totalSecs % 60).padStart(2, '0');
+
+  const plannedSecs = (plannedHours || 0) * 3600;
+  const isOvertime  = plannedHours > 0 && totalSecs > plannedSecs;
+  const progress    = plannedHours > 0 ? Math.min(totalSecs / plannedSecs, 1) : null;
+
+  const overSecs = isOvertime ? totalSecs - plannedSecs : 0;
+  const oHH = String(Math.floor(overSecs / 3600)).padStart(2, '0');
+  const oMM = String(Math.floor((overSecs % 3600) / 60)).padStart(2, '0');
+  const oSS = String(overSecs % 60).padStart(2, '0');
+
+  // Вибрация при достижении нормы — один раз
+  const overtimeFiredRef = React.useRef(false);
+  useEffect(() => {
+    if (isOvertime && !overtimeFiredRef.current) {
+      overtimeFiredRef.current = true;
+      navigator.vibrate?.([100, 60, 100, 60, 200]);
+    }
+    if (!isOvertime) overtimeFiredRef.current = false;
+  }, [isOvertime]);
+
+  return h('div', { style: { marginBottom: 14 } },
+
+    // Большие цифры таймера
+    h('div', {
+      style: {
+        fontSize: 48,
+        fontWeight: 600,
+        fontVariantNumeric: 'tabular-nums',
+        letterSpacing: '-0.02em',
+        color: isOvertime ? RD : AM2,
+        lineHeight: 1,
+        transition: 'color .4s',
+      }
+    }, `${hh}:${mm}:${ss}`),
+
+    // Подпись под цифрами
+    h('div', {
+      style: {
+        fontSize: 11,
+        color: isOvertime ? RD : AM4,
+        textTransform: 'uppercase',
+        letterSpacing: '0.08em',
+        marginTop: 4,
+        marginBottom: progress !== null ? 10 : 0,
+        fontWeight: isOvertime ? 600 : 400,
+      }
+    }, isOvertime
+      ? `⚠ +${oHH}:${oMM}:${oSS} сверх нормы`
+      : plannedHours > 0
+        ? `норма ${plannedHours}ч`
+        : 'время операции'
+    ),
+
+    // Прогресс-бар (только если задано плановое время)
+    progress !== null && h('div', null,
+      h('div', {
+        style: {
+          height: 5,
+          background: 'rgba(0,0,0,0.1)',
+          borderRadius: 3,
+          overflow: 'hidden',
+          marginBottom: 4,
+        }
+      },
+        h('div', {
+          style: {
+            height: '100%',
+            width: `${Math.round(progress * 100)}%`,
+            borderRadius: 3,
+            background: isOvertime ? RD : AM,
+            transition: 'width 1s linear, background .4s',
+          }
+        })
+      ),
+      h('div', {
+        style: {
+          display: 'flex',
+          justifyContent: 'space-between',
+          fontSize: 10,
+          color: AM4,
+          opacity: 0.7,
+        }
+      },
+        h('span', null, '0'),
+        h('span', null, isOvertime
+          ? `${Math.round(progress * 100)}% — превышена`
+          : `${Math.round(progress * 100)}% из ${plannedHours}ч`
+        )
+      )
+    )
+  );
+});
+
 // ==================== WorkerOnboarding ====================
 const WorkerOnboarding = memo(({ worker, myOps, onDone }) => {
   const [step, setStep] = useState(1);
@@ -201,7 +311,6 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   [data.ops, workerId]);
 
   const [activeOp, setActiveOp] = useState(null);
-  const [, setTick] = useState(0);
   const [defNote, setDefNote] = useState('');
   const [defectReasonId, setDefectReasonId] = useState('');
   const [showDefForm, setShowDefForm] = useState(false);
@@ -235,13 +344,6 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     })};
     await DB.save(d); onUpdate(d);
   }, [data, onUpdate]);
-
-  // Таймер только когда есть активная операция
-  useEffect(() => {
-    if (!activeOp) return;
-    const t = setInterval(() => setTick(n => n + 1), 1000);
-    return () => clearInterval(t);
-  }, [activeOp]);
 
   useEffect(() => {
     if (initialOpId && workerId) {
@@ -579,7 +681,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
           `📦 Ваша доля: ${active.workerQty?.[workerId] || '—'} из ${active.qty} шт`
         ),
         h('div', { style: { fontSize: 12, color: AM4, marginBottom: 14, opacity: .8 } }, data.orders.find(o => o.id === active.orderId)?.number || ''),
-        h(ElapsedTimer, { startedAt: active.startedAt, style: { fontSize: 36, fontWeight: 600, color: AM2, marginBottom: 14, display: 'block', fontFamily: 'monospace', letterSpacing: '-0.02em' } }),
+        h(LiveOperationTimer, { startedAt: active.startedAt, plannedHours: active.plannedHours }),
         active.drawingUrl && h('a', { href: active.drawingUrl, target: '_blank', rel: 'noopener', style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: BL, textDecoration: 'none', padding: '6px 10px', background: 'rgba(255,255,255,0.8)', borderRadius: 6, marginBottom: 12 } }, '📐 Чертёж'),
         // Чек-лист
         active.checklist?.length > 0 && h('div', { style: { background: 'rgba(255,255,255,0.7)', borderRadius: 8, padding: '10px 12px', marginBottom: 14 } },
@@ -966,4 +1068,3 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   confirmEl
   );
 });
-
