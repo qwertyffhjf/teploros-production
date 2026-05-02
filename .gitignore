@@ -1,1 +1,1 @@
-(js/core.js, js/quality.js, js/warehouse.js are source files, no build artifacts, dependencies, or temp files in the changes)
+Nothing needs to be added to .gitignore since only a single HTML file (ui-concept.html) was added, which is a source code file and should not be ignored.

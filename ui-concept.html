@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MES System UI Concept</title>
+    <style>
+        :root {
+            --bg-color: #f0f2f5;
+            --card-bg: rgba(255, 255, 255, 0.7);
+            --card-border: rgba(255, 255, 255, 0.9);
+            --text-primary: #1a1a18;
+            --text-secondary: #6b7280;
+            --accent: #EF9F27;
+            --success: #1D9E75;
+            --danger: #E24B4A;
+            --info: #378ADD;
+            --shadow-sm: 0 2px 4px rgba(0,0,0,0.05);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+            --shadow-lg: 0 10px 25px rgba(0,0,0,0.1);
+            --radius: 16px;
+            --font-main: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-color: #121212;
+                --card-bg: rgba(30, 30, 30, 0.6);
+                --card-border: rgba(255, 255, 255, 0.1);
+                --text-primary: #e8e6e0;
+                --text-secondary: #9ca3af;
+                --shadow-sm: 0 2px 4px rgba(0,0,0,0.2);
+                --shadow-md: 0 4px 12px rgba(0,0,0,0.3);
+                --shadow-lg: 0 10px 25px rgba(0,0,0,0.4);
+            }
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: var(--font-main);
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(239, 159, 39, 0.1) 0%, transparent 20%),
+                radial-gradient(circle at 90% 80%, rgba(55, 138, 221, 0.1) 0%, transparent 20%);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 2rem;
+            transition: background 0.3s ease;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            animation: slideDown 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        h1 { font-size: 1.8rem; font-weight: 700; letter-spacing: -0.02em; }
+        
+        .user-badge {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--card-border);
+            border-radius: 50px;
+            box-shadow: var(--shadow-sm);
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            box-shadow: 0 0 0 2px rgba(29, 158, 117, 0.2);
+            animation: pulse 2s infinite;
+        }
+
+        /* Grid Layout */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+
+        /* Glassmorphism Card */
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            box-shadow: var(--shadow-md);
+            transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            opacity: 0;
+            animation: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        .card:nth-child(1) { animation-delay: 0.1s; }
+        .card:nth-child(2) { animation-delay: 0.2s; }
+        .card:nth-child(3) { animation-delay: 0.3s; }
+        .card:nth-child(4) { animation-delay: 0.4s; }
+
+        .card:hover {
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+        }
+
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-size: 0.85rem;
+        }
+
+        .card-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            margin-bottom: 0.5rem;
+            font-family: var(--font-mono);
+        }
+
+        .card-sub {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        /* Status Badges */
+        .badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .badge-success { background: rgba(29, 158, 117, 0.15); color: var(--success); }
+        .badge-warning { background: rgba(239, 159, 39, 0.15); color: var(--accent); }
+        .badge-danger { background: rgba(226, 75, 74, 0.15); color: var(--danger); }
+        .badge-info { background: rgba(55, 138, 221, 0.15); color: var(--info); }
+
+        /* Interactive List */
+        .task-list {
+            list-style: none;
+            margin-top: 1rem;
+        }
+
+        .task-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid rgba(128,128,128,0.1);
+            transition: background 0.2s;
+            border-radius: 8px;
+            padding: 0.5rem;
+            margin: 0 -0.5rem;
+        }
+
+        .task-item:hover {
+            background: rgba(128,128,128,0.05);
+        }
+
+        .task-info {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .task-name { font-weight: 500; font-size: 0.95rem; }
+        .task-meta { font-size: 0.8rem; color: var(--text-secondary); font-family: var(--font-mono); }
+
+        /* Buttons with Micro-interactions */
+        .btn {
+            border: none;
+            padding: 0.6rem 1.2rem;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn:active { transform: scale(0.95); }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+            box-shadow: 0 4px 12px rgba(239, 159, 39, 0.3);
+        }
+        
+        .btn-primary:hover {
+            box-shadow: 0 6px 16px rgba(239, 159, 39, 0.4);
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: rgba(128,128,128,0.1);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(128,128,128,0.2);
+        }
+
+        /* Skeleton Loader */
+        .skeleton {
+            background: linear-gradient(90deg, rgba(128,128,128,0.1) 25%, rgba(128,128,128,0.2) 50%, rgba(128,128,128,0.1) 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+            border-radius: 4px;
+            color: transparent !important;
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(29, 158, 117, 0.4); }
+            70% { box-shadow: 0 0 0 6px rgba(29, 158, 117, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(29, 158, 117, 0); }
+        }
+
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        /* Progress Bar */
+        .progress-container {
+            width: 100%;
+            height: 6px;
+            background: rgba(128,128,128,0.1);
+            border-radius: 10px;
+            margin-top: 1rem;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: var(--success);
+            border-radius: 10px;
+            width: 0%;
+            transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+        }
+        
+        .progress-bar::after {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+            animation: shimmer 2s infinite;
+        }
+
+        /* Tooltip demo */
+        .tooltip-demo {
+            position: relative;
+            display: inline-block;
+            cursor: help;
+            border-bottom: 1px dashed var(--text-secondary);
+        }
+        
+        .tooltip-demo::after {
+            content: attr(data-tip);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%) translateY(-5px);
+            background: var(--text-primary);
+            color: var(--bg-color);
+            padding: 0.4rem 0.8rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: all 0.2s ease;
+            box-shadow: var(--shadow-md);
+        }
+        
+        .tooltip-demo:hover::after {
+            opacity: 1;
+            transform: translateX(-50%) translateY(-8px);
+        }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>Производственная MES</h1>
+                <p style="color: var(--text-secondary); margin-top: 0.25rem;">Панель управления цехом</p>
+            </div>
+            <div class="user-badge">
+                <div class="status-dot"></div>
+                <span>3 оператора онлайн</span>
+            </div>
+        </header>
+
+        <div class="dashboard-grid">
+            <!-- Card 1: Active Orders with Progress -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Активные заказы</span>
+                    <span class="badge badge-info">В работе</span>
+                </div>
+                <div class="card-value">12</div>
+                <div class="card-sub">
+                    <span>Завершено сегодня: </span>
+                    <strong style="color: var(--success)">4</strong>
+                </div>
+                <div class="progress-container">
+                    <div class="progress-bar" id="progress1"></div>
+                </div>
+                <ul class="task-list">
+                    <li class="task-item">
+                        <div class="task-info">
+                            <span class="task-name">Котёл КВ-500</span>
+                            <span class="task-meta">Сборка • 85%</span>
+                        </div>
+                        <button class="btn btn-secondary" onclick="animateBtn(this)">📐</button>
+                    </li>
+                    <li class="task-item">
+                        <div class="task-info">
+                            <span class="task-name">Теплофор Т-12</span>
+                            <span class="task-meta">Сварка • 40%</span>
+                        </div>
+                        <button class="btn btn-secondary" onclick="animateBtn(this)">📐</button>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Card 2: Warehouse Alert -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Складская логистика</span>
+                    <span class="badge badge-warning">Внимание</span>
+                </div>
+                <div class="card-value" style="font-size: 1.8rem; color: var(--accent);">5 поставок</div>
+                <div class="card-sub" style="margin-bottom: 1rem;">
+                    Ожидают приемки на воротах №2
+                </div>
+                <button class="btn btn-primary" style="width: 100%; justify-content: center;" onclick="animateBtn(this)">
+                    📦 Начать приемку (QR)
+                </button>
+                <div style="margin-top: 1rem; font-size: 0.8rem; color: var(--text-secondary); text-align: center;">
+                    <span class="tooltip-demo" data-tip="Двойное сканирование: Заказ + Деталь">Как это работает?</span>
+                </div>
+            </div>
+
+            <!-- Card 3: Quality Control -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Контроль качества (ОТК)</span>
+                    <span class="badge badge-success">Норма</span>
+                </div>
+                <div class="card-value">98.5%</div>
+                <div class="card-sub">
+                    Процент прохождения с первого раза
+                </div>
+                <ul class="task-list">
+                    <li class="task-item">
+                        <div class="task-info">
+                            <span class="task-name">Проверка швов</span>
+                            <span class="task-meta">Оператор: Иванов А.</span>
+                        </div>
+                        <span class="badge badge-success">OK</span>
+                    </li>
+                    <li class="task-item">
+                        <div class="task-info">
+                            <span class="task-name">Гидротест</span>
+                            <span class="task-meta">Ожидает...</span>
+                        </div>
+                        <div class="skeleton" style="width: 60px; height: 24px;"></div>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Card 4: Loading State Demo -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Загрузка данных 1С</span>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 0.8rem; margin-top: 1rem;">
+                    <div class="skeleton" style="height: 16px; width: 80%;"></div>
+                    <div class="skeleton" style="height: 16px; width: 60%;"></div>
+                    <div class="skeleton" style="height: 16px; width: 90%;"></div>
+                    <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
+                        <div class="skeleton" style="height: 36px; width: 100px; border-radius: 8px;"></div>
+                        <div class="skeleton" style="height: 36px; width: 100px; border-radius: 8px;"></div>
+                    </div>
+                </div>
+                <button class="btn btn-secondary" style="margin-top: 1rem; width: 100%; justify-content: center;" onclick="stopSkeletons(this)">
+                    🔄 Имитация загрузки
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Animate Progress Bars on Load
+        setTimeout(() => {
+            document.getElementById('progress1').style.width = '65%';
+        }, 500);
+
+        // Button Click Animation Effect
+        function animateBtn(btn) {
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '✓';
+            btn.style.transform = 'scale(0.9)';
+            setTimeout(() => {
+                btn.innerHTML = originalText;
+                btn.style.transform = '';
+            }, 800);
+        }
+
+        // Skeleton Loader Interaction
+        function stopSkeletons(btn) {
+            const skeletons = btn.parentElement.querySelectorAll('.skeleton');
+            btn.innerHTML = 'Загружено!';
+            btn.classList.remove('btn-secondary');
+            btn.classList.add('btn-primary');
+            
+            skeletons.forEach((skel, index) => {
+                setTimeout(() => {
+                    skel.classList.remove('skeleton');
+                    skel.style.background = 'transparent';
+                    skel.style.color = 'var(--text-primary)';
+                    if(index === 0) skel.textContent = 'Заказ №4592 импортирован';
+                    if(index === 1) skel.textContent = '12 комплектующих добавлено';
+                    if(index === 2) skel.textContent = 'Ссылка на чертеж привязана';
+                    if(index > 2) {
+                        skel.style.height = '36px';
+                        skel.style.width = '100px';
+                        skel.style.borderRadius = '8px';
+                        skel.textContent = 'Открыть';
+                        skel.style.display = 'inline-flex';
+                        skel.style.alignItems = 'center';
+                        skel.style.justifyContent = 'center';
+                        skel.style.background = 'rgba(128,128,128,0.1)';
+                        skel.style.cursor = 'pointer';
+                    }
+                }, index * 200);
+            });
+        }
+    </script>
+</body>
+</html>
