@@ -237,6 +237,24 @@
   <button onclick="document.getElementById('update-banner').style.display='none'" style="background:transparent;color:#888;border:0.5px solid #555;padding:8px 14px;border-radius:8px;font-size:13px;cursor:pointer">Позже</button>
 </div>
 <div id="root"></div>
+<script>
+// Принудительная регистрация Service Worker с новой версией
+if('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js?v=20260427m').then(reg => {
+      console.log('SW registered:', reg.scope);
+      reg.onupdatefound = () => {
+        const installing = reg.installing;
+        installing.onstatechange = () => {
+          if(installing.state === 'installed' && navigator.serviceWorker.controller) {
+            document.getElementById('update-banner').style.display = 'flex';
+          }
+        };
+      };
+    }).catch(err => console.log('SW registration failed:', err));
+  });
+}
+</script>
 <!-- Core: константы, DB, утилиты, общие компоненты -->
 <script src="js/core.js?v=20260427m"></script>
 <!-- Shared: QR, PDF, LoadForecast, WorkerCardModal, MasterOnboarding -->
