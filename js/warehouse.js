@@ -52,7 +52,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId }) => {
       note: confirmNote
     };
 
-    const d = { ...data, materialDeliveries: updDeliveries, materials: updMaterials, events: [...data.events, event] };
+    const d = { ...data, materialDeliveries: updDeliveries, materials: updMaterials, events: [...data.events, event], _urgent: true };
     await DB.save(d); onUpdate(d);
 
     const label = isPartial ? `Частичная поставка: ${qty} ${confirmModal.unit}` : `Поставка подтверждена: ${qty} ${confirmModal.unit}`;
@@ -449,7 +449,7 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
         }
       }
     });
-    const d = { ...data, materials, events: newEvents };
+    const d = { ...data, materials, events: newEvents, _urgent: true };
     await DB.save(d); onUpdate(d);
     const nc = preview.filter(r => r.matchType === 'new').length;
     const uc = preview.filter(r => r.matchType !== 'new').length;
@@ -734,7 +734,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
     const qty = Number(receiveForm.qty);
     const updatedMaterials = data.materials.map(m => m.id === receiveForm.materialId ? { ...m, quantity: m.quantity + qty, batch: receiveForm.batch || m.batch } : m);
     const event = { id: uid(), type: 'material_receive', materialId: receiveForm.materialId, qty, batch: receiveForm.batch, ts: now() };
-    const d = { ...data, materials: updatedMaterials, events: [...data.events, event] };
+    const d = { ...data, materials: updatedMaterials, events: [...data.events, event], _urgent: true };
     await DB.save(d); onUpdate(d);
     const mat = data.materials.find(m => m.id === receiveForm.materialId);
     setReceiveForm({ materialId: '', qty: '', batch: '' });
@@ -743,7 +743,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
 
   // Выдача по заявке
   const fulfillRequest = useCallback(async (eventId) => {
-    const d = { ...data, events: data.events.map(e => e.id === eventId ? { ...e, fulfilled: true, fulfilledAt: now() } : e) };
+    const d = { ...data, events: data.events.map(e => e.id === eventId ? { ...e, fulfilled: true, fulfilledAt: now() } : e), _urgent: true };
     await DB.save(d); onUpdate(d); addToast('Заявка выполнена', 'success');
   }, [data, onUpdate, addToast]);
 

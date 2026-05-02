@@ -3,6 +3,12 @@
 
 const { useState, useEffect, useRef, useMemo, useCallback, memo, createElement: h } = React;
 
+// ==================== Утилиты логирования (только в dev) ====================
+const isDev = () => window.location.hostname === 'localhost' || window.location.port !== '';
+const log = (...args) => { if (isDev()) log(...args); };
+const warn = (...args) => { if (isDev()) warn(...args); };
+const err = (...args) => { if (isDev()) err(...args); };
+
 // ==================== PWA: ловим beforeinstallprompt глобально (до монтирования React) ====================
 window._pwaPrompt = null;
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); window._pwaPrompt = e; });
@@ -701,7 +707,7 @@ const DB = {
         return migrateData({ ...EMPTY_DATA, ...parsed });
       }
     } catch(e) {
-      console.warn('Firebase load failed, using cache:', e);
+      warn('Firebase load failed, using cache:', e);
       DB._online = false;
     }
     // Firebase недоступен — объединяем оба кэша
@@ -722,7 +728,7 @@ const DB = {
         const savedAt = cached.savedAt || 0;
         const age = Date.now() - savedAt;
         if (age > CACHE_TTL) {
-          console.warn('Cache TTL expired (' + Math.round(age/3600000) + 'h old)');
+          warn('Cache TTL expired (' + Math.round(age/3600000) + 'h old)');
           localStorage.removeItem(CACHE_KEY);
         }
         return { ...EMPTY_DATA, ...cacheData };
@@ -810,12 +816,12 @@ const DB = {
                      ops:    firebase.firestore.FieldValue.arrayUnion(...chunk.ops),
                      updatedAt: firebase.firestore.FieldValue.serverTimestamp() },
                    { merge: true })
-              .catch(e => console.warn('Archive save error:', e));
+              .catch(e => warn('Archive save error:', e));
           });
         }
         toSave.orders = toSave.orders.filter(o => !archiveIds.has(o.id));
         toSave.ops    = (toSave.ops || []).filter(o => !archiveIds.has(o.orderId));
-        console.log(`Архивировано: ${toArchive.length} заказов → ${Object.keys(byMonth).join(', ')}`);
+        log(`Архивировано: ${toArchive.length} заказов → ${Object.keys(byMonth).join(', ')}`);
       }
 
       // ── Контроль размера ──
@@ -825,7 +831,7 @@ const DB = {
         toSave.events               = (toSave.events || []).slice(-1000);
         toSave.materialConsumptions = (toSave.materialConsumptions || []).slice(-1000);
         DB._lastError = `⚠ Данных ${sizeKb} КБ — лимит 1 МБ. Старые заказы архивируются автоматически.`;
-        console.warn(`Payload: ${sizeKb} KB`);
+        warn(`Payload: ${sizeKb} KB`);
       } else if (sizeKb > 700) {
         DB._sizeWarning = sizeKb;
       } else {
@@ -846,6 +852,7 @@ const DB = {
 
       return new Promise((resolve) => {
         DB._saveResolve = resolve;
+        const delay = toSave._urgent ? 50 : 300; // 50ms для срочных операций (приемка ОТК/склад), 300ms для обычных
         DB._saveTimer = setTimeout(async () => {
           DB._saveResolve = null;
           if (!DB._online) {
@@ -861,7 +868,7 @@ const DB = {
               const remoteVersion = snap.data().updatedAt?.toMillis?.() || snap.data()._version || 0;
               const localVersion  = Number(localStorage.getItem(VERSION_KEY)) || 0;
               if (remoteVersion > localVersion && remoteVersion !== newVersion) {
-                console.log('📝 Conflict detected: remote version is newer — merging changes');
+                log('📝 Conflict detected: remote version is newer — merging changes');
                 // ── Мержим вместо перезаписи: берём удалённые данные как базу, накладываем наши изменения ──
                 try {
                   const remoteData = typeof snap.data().payload === 'string' ? JSON.parse(snap.data().payload) : snap.data();
@@ -884,7 +891,7 @@ const DB = {
                   toSave.messages = mergeEvents(remoteData.messages, toSave.messages).slice(-200);
                   DB._lastError = '⚠ Данные объединены с изменениями другого пользователя.';
                 } catch(mergeErr) {
-                  console.warn('Merge failed, using last-write-wins:', mergeErr);
+                  warn('Merge failed, using last-write-wins:', mergeErr);
                   DB._lastError = '⚠ Данные обновились — ваши изменения применены поверх.';
                 }
               }
@@ -929,23 +936,23 @@ const DB = {
             DB._saveHistory.unshift({ ts: newVersion, version: newVersion, summary: `${orderCount}заказ ${opCount}опер ${workerCount}раб` });
             if (DB._saveHistory.length > 10) DB._saveHistory.pop();
           } catch(e) {
-            console.error('Firebase save error:', e);
+            err('Firebase save error:', e);
             DB._lastError = e.message;
             DB._online = false;
             DB._enqueue(toSave);
           }
           resolve({ ...toSave, _version: newVersion });
           setTimeout(() => { DB._saving = false; }, 500);
-        }, 800); // Уменьшаем debounce: 800ms вместо 1000ms — быстрее сохраняет
+        }, delay);
       });
-    } catch(e) { console.error(e); DB._lastError = e.message; DB._saving = false; }
+    } catch(e) { err(e); DB._lastError = e.message; DB._saving = false; }
   },
 
   // ── Офлайн-очередь ────────────────────────────────────────────────────────
   _enqueue(data) {
     try {
       localStorage.setItem(QUEUE_KEY, JSON.stringify({ data, ts: Date.now() }));
-      console.log('Сохранено в офлайн-очередь');
+      log('Сохранено в офлайн-очередь');
     } catch(e) {}
   },
   _clearQueue() {
@@ -958,7 +965,7 @@ const DB = {
       const { data, ts } = JSON.parse(raw);
       if (!data) return;
       const age = Date.now() - ts;
-      console.log(`Офлайн-очередь: отправляем данные (${Math.round(age/60000)} мин назад)...`);
+      log(`Офлайн-очередь: отправляем данные (${Math.round(age/60000)} мин назад)...`);
       await DOC_REF.set({
         payload:   JSON.stringify(data),
         _version:  Date.now(),
@@ -966,7 +973,7 @@ const DB = {
       });
       DB._clearQueue();
       DB._online = true;
-      console.log('Офлайн-очередь отправлена успешно');
+      log('Офлайн-очередь отправлена успешно');
     } catch(e) {
       // Firebase всё ещё недоступен — очередь остаётся
       DB._online = false;
@@ -1033,7 +1040,7 @@ const DB = {
           merge();
         }
       },
-      err => { DB._online = false; console.warn('Snapshot error:', err); }
+      err => { DB._online = false; warn('Snapshot error:', err); }
     );
 
     const unsubWh = WH_DOC_REF.onSnapshot(
@@ -1046,7 +1053,7 @@ const DB = {
           merge();
         }
       },
-      err => console.warn('WH Snapshot error:', err)
+      err => warn('WH Snapshot error:', err)
     );
 
     // Возвращаем функцию отписки от обоих
@@ -1058,7 +1065,7 @@ const DB = {
     try {
       const snap = await firebase.firestore().collection(ARCHIVE_COLL).doc(month).get();
       if (snap.exists) return snap.data();
-    } catch(e) { console.warn('Archive load error:', e); }
+    } catch(e) { warn('Archive load error:', e); }
     return null;
   },
   async listArchiveMonths() {
@@ -1107,7 +1114,7 @@ const migrateData = (d) => {
     const before = d.ops.length;
     d = { ...d, ops: d.ops.filter(op => op.orderId) };
     if (d.ops.length < before) {
-      console.log('Удалено осиротевших операций: ' + (before - d.ops.length));
+      log('Удалено осиротевших операций: ' + (before - d.ops.length));
     }
   }
 
@@ -1121,7 +1128,7 @@ const migrateData = (d) => {
       return true;
     });
     if (deduped.length < d.events.length) {
-      console.log('Дедупликация событий: убрано ' + (d.events.length - deduped.length) + ' дублей');
+      log('Дедупликация событий: убрано ' + (d.events.length - deduped.length) + ' дублей');
       d = { ...d, events: deduped };
     }
   }
@@ -1140,6 +1147,9 @@ const S = {
 const abtn = (e) => ({ padding: '10px 16px', background: AM, color: AM2, border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e });
 const gbtn = (e) => ({ padding: '10px 16px', background: 'transparent', color: 'var(--fg)', border: '0.5px solid var(--border)', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e });
 const rbtn = (e) => ({ padding: '10px 16px', background: RD3, color: RD2, border: `0.5px solid ${RD}`, borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e });
+
+// Экспорт стилей для глобального доступа (после объявления S)
+window.S = S;
 
 // ==================== useConfirm (заменяет все confirm()) ====================
 const useConfirm = () => {

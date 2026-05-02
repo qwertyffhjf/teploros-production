@@ -7,14 +7,14 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
   const [rejectNote, setRejectNote] = useState('');
 
   const acceptOp = useCallback(async (op) => {
-    const updated = { ...data, ops: data.ops.map(o => o.id === op.id ? { ...o, status: 'done' } : o), events: [...data.events, { id: uid(), type: 'qc_pass', opId: op.id, ts: now() }] };
+    const updated = { ...data, ops: data.ops.map(o => o.id === op.id ? { ...o, status: 'done' } : o), events: [...data.events, { id: uid(), type: 'qc_pass', opId: op.id, ts: now() }], _urgent: true };
     await DB.save(updated); onUpdate(updated); addToast('Операция принята', 'success');
   }, [data, onUpdate, addToast]);
 
   const confirmReject = useCallback(async () => {
     if (!rejectModal) return;
     const note = rejectNote.trim();
-    const updated = { ...data, ops: data.ops.map(o => o.id === rejectModal.op.id ? { ...o, status: 'defect', defectNote: note || 'Не прошло контроль качества' } : o), events: [...data.events, { id: uid(), type: 'qc_reject', opId: rejectModal.op.id, ts: now(), note }] };
+    const updated = { ...data, ops: data.ops.map(o => o.id === rejectModal.op.id ? { ...o, status: 'defect', defectNote: note || 'Не прошло контроль качества' } : o), events: [...data.events, { id: uid(), type: 'qc_reject', opId: rejectModal.op.id, ts: now(), note }], _urgent: true };
     await DB.save(updated); onUpdate(updated);
     addToast('Операция забракована', 'info');
     setRejectModal(null); setRejectNote('');

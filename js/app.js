@@ -1,6 +1,12 @@
 // teploros · app.js
 // Автоматически извлечено из монолита
 
+// ==================== Утилиты логирования (только в dev) ====================
+const isDev = () => window.location.hostname === 'localhost' || window.location.port !== '';
+const log = (...args) => { if (isDev()) log(...args); };
+const warn = (...args) => { if (isDev()) warn(...args); };
+const err = (...args) => { if (isDev()) err(...args); };
+
 // ==================== Таблица лидеров ====================
 const Leaderboard = memo(({ data }) => {
   const workers = useMemo(() => data.workers.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet)), [data.workers]);
@@ -495,7 +501,7 @@ class ErrorBoundary extends React.Component {
     return { hasError: true, error };
   }
   componentDidCatch(error, info) {
-    console.error('App error:', error, info);
+    err('App error:', error, info);
   }
   render() {
     if (this.state.hasError) {
@@ -564,6 +570,7 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
   const [parsed, setParsed] = useState(null);  // { orderNumber, customer, deadline, product, productCode, qty, specs, components[] }
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState('');
+  const [drawingUrl, setDrawingUrl] = useState('');
   const fileInputRef = React.useRef(null);
 
   const parseExcel = (arrayBuffer) => {
@@ -694,15 +701,17 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
       archived: false,
       createdAt: now(),
       source: '1c_import',
+      drawingUrl: drawingUrl.trim() || undefined,  // ← ссылка на чертёж/источник
       components: parsed.components   // ← комплектующие сохраняются в заказ
     };
 
-    // Создаём операции по умолчанию
+    // Создаём операции по умолчанию (с ссылкой из поля)
     const stages = (data.productionStages || []).filter(s => !s.productType || s.productType === productType);
     const newOps = stages.map(stage => ({
       id: uid(), orderId, name: stage.name, qty: parsed.productQty,
       workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
       archived: false, sectionId: null, equipmentId: null,
+      drawingUrl: drawingUrl.trim() || undefined,  // ← ссылка передаётся во все операции
       requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.includes('Опресовка')
     }));
 
@@ -815,6 +824,17 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
           )
         ),
 
+        // Поле ввода ссылки (опционально)
+        h('div', { style: { marginBottom: 16 } },
+          h('div', { style: { fontSize: 11, color: '#888', marginBottom: 6 } }, '🔗 Ссылка на источник (чертёж, ТЗ…)'),
+          h('input', {
+            style: { ...S.inp, width: '100%' },
+            placeholder: 'https://…',
+            value: drawingUrl,
+            onChange: e => setDrawingUrl(e.target.value)
+          })
+        ),
+
         // Комплектующие
         parsed.components.length > 0 && h('div', { style: { marginBottom: 16 } },
           h('div', { style: { fontSize: 11, color: '#888', textTransform: 'uppercase', marginBottom: 8 } },
@@ -851,7 +871,7 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
         // Кнопки
         h('div', { style: { display: 'flex', gap: 8 } },
           h('button', { style: { ...abtn({ flex: 1 }), fontSize: 14 }, onClick: handleCreate }, '✓ Создать заказ'),
-          h('button', { style: gbtn({ flex: 0 }), onClick: () => { setStep('upload'); setParsed(null); } }, '← Назад')
+          h('button', { style: gbtn({ flex: 0 }), onClick: () => { setStep('upload'); setParsed(null); setDrawingUrl(''); } }, '← Назад')
         )
       ),
 
@@ -1257,6 +1277,7 @@ const InstallPromptBanner = memo(() => {
     if (ios) { setIsIOS(true); setShow(true); return; }
 
     // Проверяем глобально пойманный prompt (из core.js)
+    // Используем глобальный prompt из core.js (не дублируем обработчик)
     if (window._pwaPrompt) {
       promptRef.current = window._pwaPrompt;
       setHasPrompt(true);
@@ -1264,13 +1285,9 @@ const InstallPromptBanner = memo(() => {
       return;
     }
 
-    // Слушаем если ещё не пойман
-    const handler = (e) => { e.preventDefault(); promptRef.current = e; window._pwaPrompt = e; setHasPrompt(true); setShow(true); };
-    window.addEventListener('beforeinstallprompt', handler);
-    window.addEventListener('appinstalled', () => { setShow(false); window._pwaPrompt = null; });
     // Fallback — показываем инструкцию через 2 сек
-    const fallback = setTimeout(() => { if (!promptRef.current) setShow(true); }, 2000);
-    return () => { window.removeEventListener('beforeinstallprompt', handler); clearTimeout(fallback); };
+    const fallback = setTimeout(() => { if (!window._pwaPrompt) setShow(true); }, 2000);
+    return () => { clearTimeout(fallback); };
   }, []);
 
   const handleInstall = async () => {
@@ -1625,7 +1642,7 @@ function App() {
         if (allDone && lastFinished > 0 && lastFinished < threshold) { archiveCount++; return { ...order, archived: true, autoArchived: true }; }
         return order;
       })};
-      if (archiveCount > 0) { await DB.save(updated); console.log(`Автоархивация: ${archiveCount} заказов`); }
+      if (archiveCount > 0) { await DB.save(updated); log(`Автоархивация: ${archiveCount} заказов`); }
       setData(archiveCount > 0 ? updated : d);
       setLoading(false); setSynced(true);
     });
@@ -1910,7 +1927,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').then(reg => {
-      console.log('SW registered:', reg.scope);
+      log('SW registered:', reg.scope);
       // Проверка обновлений каждые 30 минут
       setInterval(() => reg.update(), 30 * 60 * 1000);
       // Уведомление о новой версии
@@ -1925,7 +1942,7 @@ if ('serviceWorker' in navigator) {
           }
         });
       });
-    }).catch(err => console.log('SW registration failed:', err));
+    }).catch(err => log('SW registration failed:', err));
   });
   // Перезагрузка после активации нового SW
   let refreshing = false;
