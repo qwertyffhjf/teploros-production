@@ -1,217 +1,342 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-  <meta name="theme-color" content="#EF9F27">
-  <meta name="mobile-web-app-capable" content="yes">
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23EF9F27'/%3E%3Ctext x='16' y='24' text-anchor='middle' font-family='system-ui' font-size='22' font-weight='600' fill='%23412402'%3Et%3C/text%3E%3C/svg%3E">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>Производственный учёт · НТ</title>
-  <link rel="manifest" href="manifest.json">
-  <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23EF9F27' width='100' height='100' rx='20'/><text x='50' y='68' font-size='50' text-anchor='middle' fill='%23412402'>НТ</text></svg>">
-  <!-- Google Analytics 4 — G-DYPZ3BJ7FX -->
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-DYPZ3BJ7FX"></script>
-  <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    gtag('js', new Date());
-    gtag('config', 'G-DYPZ3BJ7FX', {
-      page_title: 'teploros · НТ',
-      send_page_view: true
-    });
-  </script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-  <style>
-    *{box-sizing:border-box}
-    :root{
-      --fs-xs:11px;--fs-sm:12px;--fs-base:14px;--fs-md:15px;--fs-lg:17px;
-      --fw-normal:400;--fw-medium:500;
-      --r-sm:8px;--r-md:10px;--r-lg:12px;--r-xl:14px;
-      --bg:#f5f5f2;--fg:#1a1a18;--card:#fff;--border:rgba(0,0,0,.25);--border-soft:rgba(0,0,0,.08);--muted:#888;
-    }
-    /* Системная тёмная тема */
-    @media (prefers-color-scheme: dark){
-      :root:not([data-theme="light"]){
-        --bg:#1a1a18;--fg:#e8e6e0;--card:#26262c;--border:rgba(255,255,255,.2);--border-soft:rgba(255,255,255,.08);--muted:#999;
-      }
-    }
-    /* Принудительная тёмная тема */
-    [data-theme="dark"]{
-      --bg:#1a1a18;--fg:#e8e6e0;--card:#26262c;--border:rgba(255,255,255,.2);--border-soft:rgba(255,255,255,.08);--muted:#999;
-    }
-    /* Принудительная светлая тема */
-    [data-theme="light"]{
-      --bg:#f5f3ef;--fg:#1a1a18;--card:#ffffff;--border:rgba(0,0,0,.15);--border-soft:rgba(0,0,0,.08);--muted:#666;
-    }
-    body{margin:0;padding:16px;font-family:system-ui,sans-serif;background:var(--bg);color:var(--fg);-webkit-text-size-adjust:100%}
-    input,select,textarea,button{font-family:inherit}
-    input,select,textarea{font-size:16px;background:var(--card);color:var(--fg);border:.5px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;outline:none;width:100%}
-    button{cursor:pointer;border-radius:var(--r-sm);font-size:14px;font-weight:500;padding:10px 16px;background:transparent;border:.5px solid var(--border);color:var(--fg);min-height:44px}
-    button:disabled{opacity:.4;cursor:not-allowed}
-    button:active:not(:disabled){opacity:.85;transform:scale(0.98)}
-    #root{max-width:1200px;margin:0 auto}
-    .deadline-warning{color:#E24B4A;font-weight:500;margin-left:4px}
-    .priority-critical{color:#E24B4A;font-weight:700}
-    .priority-high{color:#EF9F27;font-weight:600}
-    .priority-medium{color:#378ADD}
-    .toast{position:fixed;bottom:calc(20px + env(safe-area-inset-bottom,0px));right:20px;left:20px;background:#333;color:#fff;padding:12px 20px;border-radius:var(--r-md);z-index:1000;animation:slideIn .3s;font-size:14px}
-    @keyframes slideIn{from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1}}
-    .error-message{color:#E24B4A;font-size:11px;margin-top:2px}
-    .pagination{display:flex;gap:8px;justify-content:center;margin-top:12px;align-items:center;flex-wrap:wrap}
-    .notification-badge{background:#E24B4A;color:#fff;border-radius:50%;padding:2px 6px;font-size:10px;margin-left:4px}
-    .gantt-container{overflow-x:auto;background:#fff;border-radius:var(--r-sm);padding:12px;-webkit-overflow-scrolling:touch}
-    .gantt-row{display:flex;border-bottom:1px solid #eee}
-    .gantt-label{width:150px;flex-shrink:0;padding:8px;font-weight:500;background:#f8f8f5;border-right:1px solid #eee}
-    .gantt-timeline{display:flex;flex:1;position:relative;min-height:50px}
-    .gantt-cell{flex:1;border-left:1px solid #f0f0f0;text-align:center;font-size:10px;color:#888;padding-top:4px}
-    .gantt-bar{position:absolute;background:#EF9F27;border-radius:4px;padding:2px 4px;font-size:10px;color:#412402;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
-    .worker-calendar-table{border-collapse:collapse;width:100%;font-size:12px}
-    .worker-calendar-table th,.worker-calendar-table td{border:1px solid #ddd;padding:6px 4px;text-align:center}
-    .worker-calendar-table th{background:#f8f8f5;font-weight:500}
-    .worker-cell{background:#fff}
-    .worker-cell.overload{background:#fcebeb;color:#e24b4a;font-weight:500}
-    .worker-cell.vacation{background:#e6f1fb;color:#042c53}
-    .worker-cell.sick{background:#fcebeb;color:#e24b4a}
-    .checkbox-group{display:flex;flex-wrap:wrap;gap:8px;max-height:120px;overflow-y:auto;border:.5px solid rgba(0,0,0,.15);border-radius:var(--r-sm);padding:8px;background:#fff}
-    .checkbox-group label{display:flex;align-items:center;gap:4px;font-size:13px;min-height:36px}
-    .report-builder{background:#fff;border-radius:var(--r-lg);padding:16px;margin-bottom:16px}
-    .chart-container{background:#fff;border-radius:var(--r-lg);padding:16px;margin-bottom:16px}
-    canvas{max-height:300px;width:100%}
-    .table-responsive{overflow-x:auto;-webkit-overflow-scrolling:touch}
-    @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(1.3)}}
-    .empty-state{text-align:center;padding:32px 16px;color:#888;font-size:14px}
-    .tabs-scroll{display:flex;gap:0;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none}
-    .tabs-scroll::-webkit-scrollbar{display:none}
-    .tabs-scroll button{flex-shrink:0;white-space:nowrap}
-    .modal-content{background:#fff;border-radius:var(--r-lg);padding:24px;width:min(680px, calc(100vw - 32px));max-height:85vh;overflow-y:auto}
-    .metrics-grid{display:grid;gap:10px;margin-bottom:16px}
-    /* Кнопки рабочего — сверхкрупные */
-    .worker-btn{display:block;width:100%;border:none;border-radius:var(--r-xl);cursor:pointer;font-weight:500;font-family:inherit;transition:opacity .12s,transform .1s}
-    .worker-btn:active{opacity:.87;transform:scale(0.985)}
-    .worker-btn-start{padding:22px 16px;font-size:18px;background:#EF9F27;color:#412402;min-height:68px}
-    .worker-btn-stop{padding:22px 16px;font-size:18px;background:#E24B4A;color:#fff;min-height:68px}
-    .worker-btn-defect{padding:18px 12px;font-size:15px;background:#FCEBEB;color:#791F1F;border:0.5px solid #F09595;border-radius:var(--r-lg);min-height:58px;cursor:pointer;font-family:inherit;font-weight:500;flex:1}
-    .worker-btn-pause{padding:16px;font-size:14px;background:#fff;color:#666;border:0.5px solid rgba(0,0,0,0.18);border-radius:var(--r-lg);min-height:52px;cursor:pointer;font-family:inherit;font-weight:500;width:100%}
-    @media(max-width:600px){
-      body{padding:8px;padding-bottom:calc(8px + env(safe-area-inset-bottom,0px))}
-      .metrics-grid{grid-template-columns:repeat(2,1fr)!important}
-      .m-card{padding:12px!important;margin-bottom:8px!important}
-      .modal-content{width:100vw!important;max-height:100vh!important;border-radius:0!important;padding:16px!important;margin:0!important}
-      table{font-size:11px}
-      th,td{padding:6px 4px!important}
-      .form-row{flex-direction:column!important}
-      .form-row>div{min-width:0!important;width:100%!important}
-      .header-bar{padding:6px 0!important;gap:8px!important}
-      .header-bar button{font-size:12px!important;padding:6px 10px!important;min-height:40px!important}
-      .action-btns{flex-direction:column!important}
-      .action-btns button{width:100%!important}
-      .tab-groups{gap:4px!important}
-      .tab-groups button{font-size:11px!important;padding:6px 10px!important;min-height:40px}
-      .forecast-grid{grid-template-columns:repeat(4,1fr)!important}
-      .kanban-col{flex:0 0 120px!important}
-      .toast{left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px))}
-    }
-    @media(min-width:601px) and (max-width:900px){
-      body{padding:12px}
-      .metrics-grid{grid-template-columns:repeat(3,1fr)!important}
-      .forecast-grid{grid-template-columns:repeat(7,1fr)!important}
-    }
-    @media(min-width:901px){
-      .metrics-grid{grid-template-columns:repeat(5,1fr)!important}
-      .forecast-grid{grid-template-columns:repeat(7,1fr)!important}
-    }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Teploros MES</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#EF9F27">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     
-    /* ══════ MOBILE & DARK THEME IMPROVEMENTS ══════ */
-    /* Typography hierarchy */
-    h1, .h1{font-size:20px;font-weight:700;line-height:1.3;margin:0}
-    h2, .h2{font-size:16px;font-weight:600;line-height:1.3;margin:0}
-    h3, .h3{font-size:14px;font-weight:600;line-height:1.4;margin:0}
-    h4, .h4{font-size:12px;font-weight:500;line-height:1.4;text-transform:uppercase;color:var(--muted);margin:0}
+    <!-- Шрифты и иконки -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    /* Safe area for notches (iPhone, Android) */
-    @supports(padding-top:max(0px)){
-      body{padding-top:max(16px, env(safe-area-inset-top, 0px))}
-      .header-safe{padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
-    }
-    
-    /* Input min-size for touch */
-    input[type="checkbox"], input[type="radio"]{min-height:24px;min-width:24px}
-    
-    /* Better dark mode for interactive elements */
-    @media(prefers-color-scheme:dark){
-      input,select,textarea{background:var(--card);border-color:var(--border)}
-      button{background:transparent;color:var(--fg);border-color:var(--border)}
-      .modal-content{background:var(--card)}
-      .gantt-container{background:var(--card)}
-      .checkbox-group{background:var(--card);border-color:var(--border)}
-      .worker-btn-pause{background:var(--card);color:var(--fg);border-color:var(--border)}
+    <!-- Сторонние библиотеки -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.css"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
-      /* Таблица операций */
-      table td, table th { color: var(--fg) !important; }
-      table tr { border-color: var(--border-soft) !important; }
-      table tbody tr:hover { background: rgba(255,255,255,0.04) !important; }
+    <style>
+        :root {
+            /* Palette */
+            --primary: #EF9F27;
+            --primary-hover: #d68b1f;
+            --success: #1D9E75;
+            --danger: #E24B4A;
+            --info: #378ADD;
+            --warning: #F5C542;
+            
+            /* Light Theme */
+            --bg-body: #f0f2f5;
+            --bg-gradient: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            --bg-card: rgba(255, 255, 255, 0.85);
+            --bg-card-hover: rgba(255, 255, 255, 0.95);
+            --text-main: #1a1a18;
+            --text-secondary: #666;
+            --border: rgba(0, 0, 0, 0.08);
+            --shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.1);
+            --shadow-hover: 0 12px 40px 0 rgba(31, 38, 135, 0.15);
+            --backdrop: blur(12px);
+            
+            /* Fonts */
+            --font-main: 'Inter', system-ui, -apple-system, sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+            
+            /* Spacing & Radius */
+            --radius-sm: 8px;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+            --radius-xl: 24px;
+        }
 
-      /* Исполнители в строке операции */
-      details summary { color: #EF9F27 !important; }
-      details > div > div { background: var(--card) !important; color: var(--fg) !important; border-color: var(--border) !important; }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-body: #0f0f10;
+                --bg-gradient: linear-gradient(135deg, #1a1a1d 0%, #0d0d10 100%);
+                --bg-card: rgba(30, 30, 35, 0.7);
+                --bg-card-hover: rgba(40, 40, 45, 0.8);
+                --text-main: #e8e6e0;
+                --text-secondary: #999;
+                --border: rgba(255, 255, 255, 0.1);
+                --shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+            }
+        }
 
-      /* Панель выбранных операций */
-      .selected-ops-panel { background: rgba(239,159,39,0.15) !important; border-color: #EF9F27 !important; }
+        * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
+        
+        body {
+            margin: 0;
+            font-family: var(--font-main);
+            background: var(--bg-gradient);
+            background-attachment: fixed;
+            color: var(--text-main);
+            min-height: 100vh;
+            overflow-x: hidden;
+            transition: color 0.3s ease;
+        }
 
-      /* Карточки (.card в JS) */
-      .dark-card { background: var(--card) !important; border-color: var(--border) !important; }
-    }
-    
-    /* Responsive header */
-    @media(max-width:600px){
-      h1, .h1{font-size:18px}
-      h2, .h2{font-size:14px}
-      h3, .h3{font-size:12px}
-    }
-  </style>
+        /* Glassmorphism Utilities */
+        .glass {
+            background: var(--bg-card);
+            backdrop-filter: var(--backdrop);
+            -webkit-backdrop-filter: var(--backdrop);
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
+            border-radius: var(--radius-md);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .glass:hover {
+            background: var(--bg-card-hover);
+            box-shadow: var(--shadow-hover);
+            transform: translateY(-2px);
+        }
+
+        /* Layout */
+        #app { display: flex; flex-direction: column; height: 100vh; }
+        
+        header {
+            padding: 1rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: rgba(255,255,255,0.05);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .brand {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary);
+            text-shadow: 0 2px 10px rgba(239, 159, 39, 0.3);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        main {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1.5rem;
+            max-width: 1400px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        /* Typography & Elements */
+        h1, h2, h3 { margin-top: 0; font-weight: 600; letter-spacing: -0.02em; }
+        h1 { font-size: 2rem; margin-bottom: 1.5rem; }
+        
+        .btn {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: var(--radius-sm);
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 15px rgba(239, 159, 39, 0.3);
+        }
+        
+        .btn:hover {
+            background: var(--primary-hover);
+            transform: translateY(-1px);
+            box-shadow: 0 6px 20px rgba(239, 159, 39, 0.4);
+        }
+        
+        .btn:active { transform: translateY(1px); }
+        
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            box-shadow: none;
+        }
+        .btn-outline:hover { background: rgba(0,0,0,0.05); }
+
+        /* Cards & Grid */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            padding: 1.5rem;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; width: 4px; height: 100%;
+            background: var(--primary);
+            opacity: 0.5;
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            margin: 0.5rem 0;
+            background: linear-gradient(45deg, var(--text-main), var(--text-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        /* Lists & Items */
+        .list-item {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background 0.2s;
+        }
+        .list-item:last-child { border-bottom: none; }
+        .list-item:hover { background: rgba(0,0,0,0.02); }
+
+        /* Badges */
+        .badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .badge-success { background: rgba(29, 158, 117, 0.15); color: var(--success); }
+        .badge-danger { background: rgba(226, 75, 74, 0.15); color: var(--danger); }
+        .badge-info { background: rgba(55, 138, 221, 0.15); color: var(--info); }
+        .badge-warning { background: rgba(245, 197, 66, 0.15); color: #b58a1e; }
+
+        /* Animations */
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-in { animation: fadeIn 0.4s ease-out forwards; }
+        
+        /* Loader */
+        .loader {
+            border: 3px solid rgba(0,0,0,0.1);
+            border-left-color: var(--primary);
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+
+        /* Mobile Nav */
+        .bottom-nav {
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: space-around;
+            padding: 0.8rem;
+            z-index: 1000;
+            display: none; /* Enabled via JS if mobile */
+        }
+        .nav-item {
+            color: var(--text-secondary);
+            text-align: center;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+        .nav-item.active { color: var(--primary); }
+        .nav-item i { font-size: 1.2rem; display: block; margin-bottom: 4px; }
+
+        @media (max-width: 768px) {
+            .bottom-nav { display: flex; }
+            main { padding-bottom: 80px; }
+            h1 { font-size: 1.5rem; }
+        }
+    </style>
 </head>
 <body>
-<div id="update-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#1a1a18;color:#fff;padding:12px 20px;z-index:9999;align-items:center;gap:12px;font-family:system-ui,sans-serif;font-size:14px;box-shadow:0 -2px 12px rgba(0,0,0,0.2)">
-  <span style="flex:1">🔄 Доступна новая версия приложения</span>
-  <button onclick="navigator.serviceWorker.getRegistration().then(r=>{if(r?.waiting){r.waiting.postMessage({type:'SKIP_WAITING'})}else{window.location.reload()}})" style="background:#EF9F27;color:#412402;border:none;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer">Обновить</button>
-  <button onclick="document.getElementById('update-banner').style.display='none'" style="background:transparent;color:#888;border:0.5px solid #555;padding:8px 14px;border-radius:8px;font-size:13px;cursor:pointer">Позже</button>
-</div>
-<div id="root"></div>
-<!-- Core: константы, DB, утилиты, общие компоненты -->
-<script src="js/core.js?v=20260427m"></script>
-<!-- Shared: QR, PDF, LoadForecast, WorkerCardModal, MasterOnboarding -->
-<script defer src="js/shared.js?v=20260427m"></script>
-<script defer src="js/qms.js?v=20260427m"></script>
-<!-- Аналитика: графики, SectionAnalytics, ReportsBuilder -->
-<script defer src="js/analytics.js?v=20260427m"></script>
-<!-- Табель: isWorkday, calcDayData, MasterTimeTracking -->
-<script defer src="js/timesheet.js?v=20260427m"></script>
-<!-- Доп. работы: AuxOpsViewer -->
-<script defer src="js/auxops.js?v=20260427m"></script>
-<!-- Справочники: PasteImport, Sections, Equipment, Materials, BOM, Stages, Admin -->
-<script defer src="js/reference.js?v=20260427m"></script>
-<!-- Качество: ControllerScreen, MasterReclamations -->
-<script defer src="js/quality.js?v=20260427m"></script>
-<!-- Сотрудники: HR, Workers, Instructions, Vacations, MonthlyReport -->
-<script defer src="js/hr.js?v=20260427m"></script>
-<!-- Чат -->
-<script defer src="js/chat.js?v=20260427m"></script>
-<!-- Склад: MaterialImport, WarehouseScreen -->
-<script defer src="js/warehouse.js?v=20260427m"></script>
-<!-- Производство: MasterOps, MasterOrders, Kanban, Gantt, MasterScreen -->
-<script defer src="js/master.js?v=20260427m"></script>
-<!-- Рабочий: WorkerScreen -->
-<script defer src="js/worker.js?v=20260427m"></script>
-<!-- Приложение: App, Login, Dashboard, роутинг, PWA -->
-<script defer src="js/app.js?v=20260427m"></script>
+    <div id="app">
+        <header class="glass">
+            <div class="brand">
+                <i class="fa-solid fa-fire-flame-curved"></i>
+                TEPLOROS
+            </div>
+            <div id="user-info" style="font-size: 0.9rem; font-weight: 500;">
+                <span class="loader" id="auth-loader"></span>
+            </div>
+        </header>
+
+        <main id="main-content">
+            <!-- Content injected by app.js -->
+            <div style="text-align: center; margin-top: 50px; opacity: 0.5;">
+                <div class="loader" style="width: 40px; height: 40px; margin: 0 auto 20px;"></div>
+                <p>Загрузка системы...</p>
+            </div>
+        </main>
+
+        <nav class="bottom-nav glass" id="bottom-nav">
+            <div class="nav-item active" data-view="dashboard">
+                <i class="fa-solid fa-chart-pie"></i> Обзор
+            </div>
+            <div class="nav-item" data-view="orders">
+                <i class="fa-solid fa-list-check"></i> Заказы
+            </div>
+            <div class="nav-item" data-view="warehouse">
+                <i class="fa-solid fa-boxes-stacked"></i> Склад
+            </div>
+            <div class="nav-item" data-view="profile">
+                <i class="fa-solid fa-user"></i> Профиль
+            </div>
+        </nav>
+    </div>
+
+    <!-- Core Logic -->
+    <script src="js/core.js?v=20241027"></script>
+    <script src="js/shared.js?v=20241027"></script>
+    <script src="js/app.js?v=20241027"></script>
+    
+    <!-- Modules -->
+    <script src="js/analytics.js?v=20241027"></script>
+    <script src="js/timesheet.js?v=20241027"></script>
+    <script src="js/auxops.js?v=20241027"></script>
+    <script src="js/reference.js?v=20241027"></script>
+    <script src="js/quality.js?v=20241027"></script>
+    <script src="js/hr.js?v=20241027"></script>
+    <script src="js/chat.js?v=20241027"></script>
+    <script src="js/warehouse.js?v=20241027"></script>
+    <script src="js/master.js?v=20241027"></script>
+    <script src="js/worker.js?v=20241027"></script>
+
+    <script>
+        // Service Worker Registration with Cache Busting
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js?v=' + Date.now())
+                    .then(reg => console.log('SW registered:', reg))
+                    .catch(err => console.log('SW failed:', err));
+            });
+        }
+    </script>
 </body>
 </html>
