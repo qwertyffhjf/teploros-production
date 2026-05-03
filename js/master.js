@@ -1019,12 +1019,119 @@ const ResourceCalendar = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
   );
 });
 
-// ==================== MasterKanban (с WIP-лимитами) ====================
+// ==================== MasterKanban (с WIP-лимитами + Drag-and-Drop) ====================
 const MasterKanban = memo(({ data, onUpdate, addToast }) => {
   const stagesList = useMemo(() => (data.productionStages || []).map(s => s.name), [data.productionStages]);
   const wipLimits = data.settings?.wipLimits || {};
   const [editingWip, setEditingWip] = useState(null);
   const [wipValue, setWipValue] = useState('');
+
+  // ── Drag-and-Drop state ──────────────────────────────────────────────────
+  // dragItem: { opId, fromStatus } — что тащим
+  // dragOver: stageName — над какой колонкой находимся
+  const [dragItem, setDragItem]   = useState(null);
+  const [dragOver, setDragOver]   = useState(null);
+  const [dropping, setDropping]   = useState(false); // блокируем повторные drop
+
+  // Допустимые переходы статусов через DnD (не даём делать невалидные переходы)
+  const ALLOWED_TRANSITIONS = {
+    pending:     ['in_progress'],
+    in_progress: ['pending', 'on_check', 'done'],
+    on_check:    ['in_progress', 'done', 'defect'],
+    done:        [],   // завершённые — только просмотр
+    defect:      ['in_progress', 'rework'],
+    rework:      ['in_progress'],
+  };
+
+  // Что показывать в колонке как drop-цель: только карточки с допустимым переходом
+  const canDrop = useCallback((fromStatus, toStatus) => {
+    return ALLOWED_TRANSITIONS[fromStatus]?.includes(toStatus) ?? false;
+  }, []);
+
+  const handleDragStart = useCallback((e, op) => {
+    setDragItem({ opId: op.id, fromStatus: op.status });
+    // Полупрозрачный drag-ghost через dataTransfer
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', op.id);
+    navigator.vibrate?.([20]);
+  }, []);
+
+  const handleDragOver = useCallback((e, stageName) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOver(stageName);
+  }, []);
+
+  const handleDragLeave = useCallback((e) => {
+    // Проверяем что уходим именно за пределы колонки, а не на дочерний элемент
+    if (!e.currentTarget.contains(e.relatedTarget)) {
+      setDragOver(null);
+    }
+  }, []);
+
+  const handleDrop = useCallback(async (e, col) => {
+    e.preventDefault();
+    setDragOver(null);
+    if (!dragItem || dropping) return;
+
+    const { opId, fromStatus } = dragItem;
+    setDragItem(null);
+
+    // Определяем целевой статус: для колонки — in_progress (перетащили в этап)
+    // Для drop-зон внутри колонки — конкретный статус
+    const targetStatus = e.currentTarget.dataset.targetStatus || 'in_progress';
+
+    if (fromStatus === targetStatus) return;
+    if (!canDrop(fromStatus, targetStatus)) {
+      addToast(`Нельзя перевести из "${STATUS[fromStatus]?.label}" в "${STATUS[targetStatus]?.label}"`, 'error');
+      navigator.vibrate?.([80, 40, 80]);
+      return;
+    }
+
+    setDropping(true);
+    try {
+      const op = data.ops.find(o => o.id === opId);
+      if (!op) return;
+
+      const now = Date.now();
+      let updatedOp = { ...op, status: targetStatus };
+
+      // Устанавливаем startedAt при переводе в in_progress
+      if (targetStatus === 'in_progress' && !op.startedAt) {
+        updatedOp.startedAt = now;
+      }
+      // Устанавливаем finishedAt при переводе в done/defect
+      if ((targetStatus === 'done' || targetStatus === 'defect') && !op.finishedAt) {
+        updatedOp.finishedAt = now;
+      }
+
+      const event = {
+        id: uid(), type: `kanban_move_${targetStatus}`,
+        opId, fromStatus, toStatus: targetStatus,
+        ts: now, shift: getCurrentShift()
+      };
+
+      const d = {
+        ...data,
+        ops: data.ops.map(o => o.id === opId ? updatedOp : o),
+        events: [...data.events, event],
+      };
+
+      await DB.save(d);
+      onUpdate(d);
+      navigator.vibrate?.([30]);
+      addToast(`${op.name} → ${STATUS[targetStatus]?.label || targetStatus}`, 'success');
+    } catch(err) {
+      addToast('Ошибка при перемещении', 'error');
+    } finally {
+      setTimeout(() => setDropping(false), 300);
+    }
+  }, [dragItem, dropping, data, canDrop, onUpdate, addToast]);
+
+  const handleDragEnd = useCallback(() => {
+    setDragItem(null);
+    setDragOver(null);
+  }, []);
 
   const saveWipLimit = useCallback(async (stage, limit) => {
     const val = Number(limit);
@@ -1046,42 +1153,188 @@ const MasterKanban = memo(({ data, onUpdate, addToast }) => {
 
   const overWipStages = columns.filter(c => c.overWip);
 
-  return h('div', { style: { overflowX:'auto', paddingBottom:16 } },
+  // Вспомогательный компонент: перетаскиваемая карточка операции
+  const KanbanCard = ({ op, bgColor, borderColor, textColor, subColor }) => {
+    const order = data.orders.find(o => o.id === op.orderId);
+    const workerNames = op.workerIds?.map(id => data.workers.find(w => w.id === id)?.name).filter(Boolean).join(', ') || '';
+    const isDragging = dragItem?.opId === op.id;
+
+    return h('div', {
+      key: op.id,
+      draggable: true,
+      onDragStart: (e) => handleDragStart(e, op),
+      onDragEnd:   handleDragEnd,
+      style: {
+        padding: '6px 8px',
+        background: bgColor,
+        borderRadius: 6,
+        marginBottom: 4,
+        borderLeft: `3px solid ${borderColor}`,
+        cursor: 'grab',
+        opacity: isDragging ? 0.4 : 1,
+        transform: isDragging ? 'scale(0.97)' : 'scale(1)',
+        transition: 'opacity 0.15s, transform 0.15s, box-shadow 0.15s',
+        boxShadow: isDragging ? 'none' : '0 1px 3px rgba(0,0,0,0.06)',
+        userSelect: 'none',
+        WebkitUserSelect: 'none',
+      }
+    },
+      h('div', { style: { fontSize: 11, fontWeight: 500, color: textColor } }, order?.number || op.name || '—'),
+      workerNames && h('div', { style: { fontSize: 10, color: subColor } }, workerNames),
+      op.startedAt && h('div', { style: { fontSize: 9, color: '#888' } }, fmtDur(now() - op.startedAt))
+    );
+  };
+
+  // Drop-зона внутри колонки для конкретного целевого статуса
+  const DropZone = ({ col, targetStatus, label, children }) => {
+    const isValidTarget = dragItem && canDrop(dragItem.fromStatus, targetStatus);
+    const isHovered     = dragOver === `${col.stage}__${targetStatus}`;
+
+    return h('div', {
+      'data-target-status': targetStatus,
+      onDragOver:  isValidTarget ? (e) => { e.preventDefault(); setDragOver(`${col.stage}__${targetStatus}`); } : undefined,
+      onDragLeave: isValidTarget ? (e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(null); } : undefined,
+      onDrop:      isValidTarget ? (e) => handleDrop(e, col) : undefined,
+      style: {
+        minHeight: children?.length ? undefined : (isValidTarget ? 32 : 0),
+        borderRadius: 6,
+        border: isHovered
+          ? `1.5px dashed ${borderColor(targetStatus)}`
+          : isValidTarget
+            ? `1px dashed rgba(0,0,0,0.12)`
+            : 'none',
+        background: isHovered ? `${bgColor(targetStatus)}cc` : 'transparent',
+        transition: 'border 0.15s, background 0.15s, min-height 0.2s',
+        marginBottom: isValidTarget ? 4 : 0,
+        display: 'flex',
+        flexDirection: 'column',
+        padding: isValidTarget ? '2px' : 0,
+      }
+    },
+      isHovered && !children?.length && h('div', {
+        style: { fontSize: 10, color: '#999', textAlign: 'center', padding: '6px 0', pointerEvents: 'none' }
+      }, `→ ${label}`),
+      children
+    );
+  };
+
+  // Цвета по статусу для drop-зон
+  const bgColor     = (s) => ({ in_progress: AM3, on_check: '#E1F5FE', done: GN3, defect: RD3, pending: '#f0ede8', rework: '#F3E5F5' }[s] || '#f8f8f5');
+  const borderColor = (s) => ({ in_progress: AM, on_check: '#0277BD', done: GN, defect: RD, pending: '#bbb', rework: '#7B1FA2' }[s] || '#ccc');
+  const textColor   = (s) => ({ in_progress: AM2, on_check: '#0277BD', done: GN2, defect: RD2, pending: '#666', rework: '#4A148C' }[s] || '#555');
+  const subColor    = (s) => ({ in_progress: AM4, on_check: '#01579B', done: GN2, defect: RD, pending: '#999', rework: '#6A1B9A' }[s] || '#888');
+
+  return h('div', { style: { overflowX: 'auto', paddingBottom: 16 } },
     h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 } },
       h('div', { style: S.sec }, 'Канбан-доска производства'),
-      h('div', { style: { fontSize: 10, color: '#888' } }, 'Нажмите на лимит для изменения')
+      h('div', { style: { fontSize: 10, color: '#888' } },
+        dragItem ? '↓ Перетащите в нужную колонку' : 'Перетаскивайте карточки · нажмите на лимит для изменения'
+      )
     ),
+
     // Алерт превышения WIP
     overWipStages.length > 0 && h('div', { role: 'alert', style: { padding: '8px 12px', background: RD3, border: `0.5px solid ${RD}`, borderRadius: 8, marginBottom: 10, fontSize: 11 } },
       h('span', { style: { fontWeight: 500, color: RD } }, '⚠ Превышен WIP-лимит: '),
       h('span', { style: { color: RD2 } }, overWipStages.map(c => `${c.stage} (${c.activeCount}/${c.wipLimit})`).join(', '))
     ),
-    h('div', { style: { display:'flex', gap:8, minWidth: columns.length*160 } },
-      columns.map(col => h('div', { key: col.stage, className: 'kanban-col', style: { flex:'0 0 150px', background: col.overWip ? '#FFF0F0' : '#fff', border: col.overWip ? `1px solid ${RD}` : '0.5px solid rgba(0,0,0,0.1)', borderRadius:10, padding:10, fontSize:11 } },
-        h('div', { style: { fontSize:10, fontWeight:500, color:AM4, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 } }, col.stage),
-        // WIP-лимит
-        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 } },
-          editingWip === col.stage
-            ? h('div', { style: { display: 'flex', gap: 4 } },
-                h('input', { type: 'number', style: { ...S.inp, width: 40, padding: '2px 4px', fontSize: 11 }, value: wipValue, onChange: e => setWipValue(e.target.value), onKeyDown: e => e.key === 'Enter' && saveWipLimit(col.stage, wipValue), autoFocus: true }),
-                h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: GN }, onClick: () => saveWipLimit(col.stage, wipValue) }, '✓'),
-                h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: '#888' }, onClick: () => setEditingWip(null) }, '✕')
-              )
-            : h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: col.overWip ? RD : col.wipLimit ? AM : '#bbb', padding: 0 }, onClick: () => { setEditingWip(col.stage); setWipValue(col.wipLimit || ''); } },
-                col.wipLimit ? `WIP: ${col.activeCount}/${col.wipLimit}` : 'Лимит: ∞'
-              )
-        ),
-        h('div', { style: { display:'flex', gap:4, flexWrap:'wrap', marginBottom:8 } },
-          col.pending.length>0 && h('span', { style:{ padding:'2px 6px', fontSize:10, borderRadius:6, background:'#f0ede8', color:'#666' } }, `⏳ ${col.pending.length}`),
-          col.in_progress.length>0 && h('span', { style:{ padding:'2px 6px', fontSize:10, borderRadius:6, background:AM3, color:AM2 } }, `▶ ${col.in_progress.length}`),
-          col.on_check.length>0 && h('span', { style:{ padding:'2px 6px', fontSize:10, borderRadius:6, background:'#E1F5FE', color:'#0277BD' } }, `🔍 ${col.on_check.length}`),
-          col.done.length>0 && h('span', { style:{ padding:'2px 6px', fontSize:10, borderRadius:6, background:GN3, color:GN2 } }, `✓ ${col.done.length}`),
-          col.defect.length>0 && h('span', { style:{ padding:'2px 6px', fontSize:10, borderRadius:6, background:RD3, color:RD2 } }, `⚠ ${col.defect.length}`)
-        ),
-        col.total>0 && h('div', { style: { height:4, background:'#eee', borderRadius:2, overflow:'hidden', marginBottom:6 } }, h('div', { style: { width: `${(col.done.length/col.total)*100}%`, height:4, background:GN, borderRadius:2 } })),
-        col.in_progress.map(op => { const order = data.orders.find(o => o.id === op.orderId); const workerNames = op.workerIds?.map(id => data.workers.find(w => w.id === id)?.name).filter(Boolean).join(', ') || '—'; return h('div', { key: op.id, style: { padding:'6px 8px', background:AM3, borderRadius:6, marginBottom:4, borderLeft:`3px solid ${AM}` } }, h('div', { style: { fontSize:11, fontWeight:500, color:AM2 } }, order?.number || '—'), workerNames && h('div', { style: { fontSize:10, color:AM4 } }, workerNames), op.startedAt && h('div', { style: { fontSize:9, color:'#888' } }, fmtDur(now() - op.startedAt))); }),
-        col.defect.map(op => { const order = data.orders.find(o => o.id === op.orderId); return h('div', { key: op.id, style: { padding:'6px 8px', background:RD3, borderRadius:6, marginBottom:4, borderLeft:`3px solid ${RD}` } }, h('div', { style: { fontSize:11, fontWeight:500, color:RD2 } }, order?.number || '—'), h('div', { style: { fontSize:10, color:RD } }, op.defectNote || 'Брак')); })
-      ))
+
+    h('div', { style: { display: 'flex', gap: 8, minWidth: columns.length * 160 } },
+      columns.map(col => {
+        const colIsTarget = dragOver?.startsWith(col.stage + '__') || dragOver === col.stage;
+        return h('div', {
+          key: col.stage,
+          className: 'kanban-col',
+          style: {
+            flex: '0 0 150px',
+            background: col.overWip ? '#FFF0F0' : colIsTarget ? '#FAFAF7' : '#fff',
+            border: colIsTarget
+              ? `1px solid ${AM}`
+              : col.overWip
+                ? `1px solid ${RD}`
+                : '0.5px solid rgba(0,0,0,0.1)',
+            borderRadius: 10,
+            padding: 10,
+            fontSize: 11,
+            transition: 'border 0.15s, background 0.15s',
+          }
+        },
+          // Заголовок колонки
+          h('div', { style: { fontSize: 10, fontWeight: 500, color: AM4, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 } }, col.stage),
+
+          // WIP-лимит
+          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 } },
+            editingWip === col.stage
+              ? h('div', { style: { display: 'flex', gap: 4 } },
+                  h('input', { type: 'number', style: { ...S.inp, width: 40, padding: '2px 4px', fontSize: 11 }, value: wipValue, onChange: e => setWipValue(e.target.value), onKeyDown: e => e.key === 'Enter' && saveWipLimit(col.stage, wipValue), autoFocus: true }),
+                  h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: GN }, onClick: () => saveWipLimit(col.stage, wipValue) }, '✓'),
+                  h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: '#888' }, onClick: () => setEditingWip(null) }, '✕')
+                )
+              : h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: col.overWip ? RD : col.wipLimit ? AM : '#bbb', padding: 0 }, onClick: () => { setEditingWip(col.stage); setWipValue(col.wipLimit || ''); } },
+                  col.wipLimit ? `WIP: ${col.activeCount}/${col.wipLimit}` : 'Лимит: ∞'
+                )
+          ),
+
+          // Счётчики статусов
+          h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 } },
+            col.pending.length > 0     && h('span', { style: { padding: '2px 6px', fontSize: 10, borderRadius: 6, background: '#f0ede8', color: '#666' } }, `⏳ ${col.pending.length}`),
+            col.in_progress.length > 0 && h('span', { style: { padding: '2px 6px', fontSize: 10, borderRadius: 6, background: AM3, color: AM2 } }, `▶ ${col.in_progress.length}`),
+            col.on_check.length > 0    && h('span', { style: { padding: '2px 6px', fontSize: 10, borderRadius: 6, background: '#E1F5FE', color: '#0277BD' } }, `🔍 ${col.on_check.length}`),
+            col.done.length > 0        && h('span', { style: { padding: '2px 6px', fontSize: 10, borderRadius: 6, background: GN3, color: GN2 } }, `✓ ${col.done.length}`),
+            col.defect.length > 0      && h('span', { style: { padding: '2px 6px', fontSize: 10, borderRadius: 6, background: RD3, color: RD2 } }, `⚠ ${col.defect.length}`)
+          ),
+
+          // Прогресс-бар выполнения колонки
+          col.total > 0 && h('div', { style: { height: 4, background: '#eee', borderRadius: 2, overflow: 'hidden', marginBottom: 6 } },
+            h('div', { style: { width: `${(col.done.length / col.total) * 100}%`, height: 4, background: GN, borderRadius: 2, transition: 'width 0.6s ease-out' } })
+          ),
+
+          // ── Карточки в работе → drop-зона для on_check и done ──
+          h(DropZone, { col, targetStatus: 'in_progress', label: 'В работу' },
+            col.in_progress.map(op => h(KanbanCard, { key: op.id, op,
+              bgColor: AM3, borderColor: AM, textColor: AM2, subColor: AM4 }))
+          ),
+
+          // ── Drop-зона «На проверку» ──
+          h(DropZone, { col, targetStatus: 'on_check', label: 'На проверку' },
+            col.on_check.map(op => h(KanbanCard, { key: op.id, op,
+              bgColor: '#E1F5FE', borderColor: '#0277BD', textColor: '#0277BD', subColor: '#01579B' }))
+          ),
+
+          // ── Drop-зона «Готово» ──
+          h(DropZone, { col, targetStatus: 'done', label: 'Готово' },
+            col.done.slice(0, 3).map(op => h(KanbanCard, { key: op.id, op,
+              bgColor: GN3, borderColor: GN, textColor: GN2, subColor: GN2 }))
+          ),
+
+          // ── Карточки брака → drop-зона «В переделку» ──
+          h(DropZone, { col, targetStatus: 'defect', label: 'Брак' },
+            col.defect.map(op => {
+              const order = data.orders.find(o => o.id === op.orderId);
+              return h('div', {
+                key: op.id,
+                draggable: true,
+                onDragStart: (e) => handleDragStart(e, op),
+                onDragEnd: handleDragEnd,
+                style: {
+                  padding: '6px 8px', background: RD3, borderRadius: 6,
+                  marginBottom: 4, borderLeft: `3px solid ${RD}`,
+                  cursor: 'grab', opacity: dragItem?.opId === op.id ? 0.4 : 1,
+                  transition: 'opacity 0.15s', userSelect: 'none',
+                }
+              },
+                h('div', { style: { fontSize: 11, fontWeight: 500, color: RD2 } }, order?.number || '—'),
+                h('div', { style: { fontSize: 10, color: RD } }, op.defectNote || 'Брак')
+              );
+            })
+          ),
+
+          // ── Drop-зона «Ожидание» (pending) — принимает из in_progress ──
+          h(DropZone, { col, targetStatus: 'pending', label: 'Отложить' },
+            col.pending.map(op => h(KanbanCard, { key: op.id, op,
+              bgColor: '#f0ede8', borderColor: '#bbb', textColor: '#666', subColor: '#999' }))
+          )
+        );
+      })
     )
   );
 });
@@ -1558,6 +1811,3 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
     )
   );
 });
-
-
-
