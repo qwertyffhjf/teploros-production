@@ -1169,9 +1169,42 @@ const Badge = memo(({ st }) => {
   return h('span', { style: { display: 'inline-block', padding: '2px 8px', fontSize: 10, borderRadius: 8, fontWeight: 500, background: s.bg, color: s.cl, border: `0.5px solid ${s.br}` } }, s.label);
 });
 
-const Toast = memo(({ message, onClose }) => {
-  useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, [onClose]);
-  return h('div', { className: 'toast', role: 'status', 'aria-live': 'polite' }, message);
+const Toast = memo(({ message, onClose, type = 'info' }) => {
+  const [exiting, setExiting] = useState(false);
+
+  useEffect(() => {
+    // За 400ms до исчезновения запускаем exit-анимацию
+    const exitTimer  = setTimeout(() => setExiting(true), 2600);
+    const closeTimer = setTimeout(onClose, 3000);
+    return () => { clearTimeout(exitTimer); clearTimeout(closeTimer); };
+  }, [onClose]);
+
+  // Цвет левой полоски по типу
+  const accent = type === 'success' ? GN : type === 'error' ? RD : type === 'info' ? BL : AM;
+
+  return h('div', {
+    className: 'toast',
+    role: 'status',
+    'aria-live': 'polite',
+    style: {
+      borderLeft: `3px solid ${accent}`,
+      animation: exiting
+        ? '_tpToastOut 0.35s cubic-bezier(0.4,0,1,1) forwards'
+        : '_tpToastIn  0.3s  cubic-bezier(0.2,0,0,1) both',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+    }
+  },
+    // Цветная иконка слева
+    h('span', {
+      style: {
+        width: 6, height: 6, borderRadius: '50%',
+        background: accent, flexShrink: 0,
+      }
+    }),
+    message
+  );
 });
 
 const ElapsedTimer = memo(({ startedAt, style }) => {
@@ -1182,6 +1215,343 @@ const ElapsedTimer = memo(({ startedAt, style }) => {
     return () => clearInterval(t);
   }, [startedAt]);
   return h('div', { style }, startedAt ? fmtDur(now() - startedAt) : '—');
+});
+
+// ==================== useCountUp — анимированный счётчик цифр ====================
+// Принимает target (число) и duration (мс). Возвращает текущее значение анимации.
+// Использует requestAnimationFrame + easeOutCubic — плавно «набегает» до target.
+// Перезапускается при изменении target (новые данные из Firebase).
+const useCountUp = (target, duration = 900) => {
+  const [val, setVal] = React.useState(0);
+  const rafRef = React.useRef(null);
+  const startRef = React.useRef(null);
+  const fromRef = React.useRef(0);
+
+  React.useEffect(() => {
+    if (typeof target !== 'number' || isNaN(target)) return;
+    // Анимируем от текущего значения к новому (плавная дельта при обновлении данных)
+    fromRef.current = val;
+    startRef.current = null;
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+
+    const tick = (ts) => {
+      if (!startRef.current) startRef.current = ts;
+      const elapsed = ts - startRef.current;
+      const p = Math.min(elapsed / duration, 1);
+      // easeOutCubic
+      const ease = 1 - Math.pow(1 - p, 3);
+      setVal(Math.round(fromRef.current + (target - fromRef.current) * ease));
+      if (p < 1) rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [target]);
+
+  return val;
+};
+
+// ==================== AnimatedBar — прогресс-бар с анимацией от 0 ====================
+// Монтируется с width:0, через 1 кадр переключается на target — CSS transition делает остальное.
+// Это безопаснее чем JS-анимация width (не вызывает reflow при каждом кадре).
+const AnimatedBar = memo(({ pct, color, height = 6, delay = 0 }) => {
+  const [width, setWidth] = React.useState(0);
+
+  React.useEffect(() => {
+    // Два кадра: первый — убедиться что браузер нарисовал width:0, второй — переключить
+    const id = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setWidth(pct);
+      });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [pct]);
+
+  return h('div', { style: { height, background: 'rgba(0,0,0,0.08)', borderRadius: height / 2, overflow: 'hidden' } },
+    h('div', {
+      style: {
+        height: '100%',
+        width: `${width}%`,
+        borderRadius: height / 2,
+        background: color,
+        transition: `width 1.1s cubic-bezier(0.4, 0, 0.2, 1) ${delay}s`,
+        willChange: 'width',
+      }
+    })
+  );
+});
+
+// ==================== AppSkeleton (загрузочный экран вместо «Загрузка...») ====================
+// Показывается пока App ждёт DB.load(). Имитирует структуру LoginScreen —
+// пользователь сразу видит «форму» и понимает что система загружается.
+// Использует только transform/opacity — никакого reflow.
+
+const AppSkeleton = memo(() => {
+  // Shimmer-анимация через inline keyframes (не требует изменений в CSS-файлах)
+  React.useEffect(() => {
+    if (document.getElementById('_tp_skel_style')) return;
+    const style = document.createElement('style');
+    style.id = '_tp_skel_style';
+    style.textContent = `
+      @keyframes _tpShimmer {
+        0%   { opacity: 0.35 }
+        50%  { opacity: 0.75 }
+        100% { opacity: 0.35 }
+      }
+      @keyframes _tpFadeIn {
+        from { opacity: 0; transform: translateY(6px) }
+        to   { opacity: 1; transform: translateY(0) }
+      }
+      @keyframes _tpSpinner {
+        to { transform: rotate(360deg) }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        ._tpSkel, ._tpFadeIn, ._tpSpinner { animation: none !important; }
+      }
+
+      /* ── Тактильная обратная связь на кнопках WorkerScreen ── */
+      /* Только transform + opacity — никакого reflow */
+      .worker-btn,
+      .worker-btn-start,
+      .worker-btn-stop,
+      .worker-btn-defect,
+      .worker-btn-pause {
+        transition: transform 0.08s ease-out, opacity 0.1s ease-out, background-color 0.15s;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+      }
+      .worker-btn:active,
+      .worker-btn-start:active,
+      .worker-btn-stop:active,
+      .worker-btn-defect:active,
+      .worker-btn-pause:active {
+        transform: scale(0.96);
+        opacity: 0.82;
+      }
+
+      /* ── Появление карточек заданий (staggered fadeUp) ── */
+      @keyframes _tpCardIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      .op-card-anim {
+        animation: _tpCardIn 0.22s ease-out both;
+      }
+
+      /* ── Hover на строках таблиц (мастер, ОТК, склад) ── */
+      table tbody tr {
+        transition: background-color 0.12s;
+      }
+      table tbody tr:hover {
+        background-color: rgba(239,159,39,0.06);
+        cursor: pointer;
+      }
+
+      /* ── Плавные переходы цвета/фона — не затрагивает layout ── */
+      * { transition: color 0.12s, background-color 0.12s, border-color 0.12s, opacity 0.12s; }
+      /* Кнопки воркера переопределяют wildcard для более быстрого отклика */
+      .worker-btn, .worker-btn-start, .worker-btn-stop,
+      .worker-btn-defect, .worker-btn-pause {
+        transition: transform 0.08s ease-out, opacity 0.1s ease-out, background-color 0.15s !important;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          transition-duration: 0ms !important;
+          animation-duration: 0ms !important;
+        }
+      }
+
+      /* ── Kanban Drag-and-Drop ── */
+      /* grab-курсор только на draggable картах, не на всей доске */
+      [draggable="true"] { cursor: grab; }
+      [draggable="true"]:active { cursor: grabbing; }
+
+      /* Канбан-колонка подсвечивается при наведении с картой */
+      .kanban-col {
+        transition: border 0.15s, background 0.15s, box-shadow 0.15s;
+      }
+
+      /* Карточка поднимается при hover (без drag) */
+      .kanban-col [draggable="true"]:not(:active):hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        transition: transform 0.15s, box-shadow 0.15s;
+      }
+
+      /* Drop-зона мигает рамкой при валидном dragover */
+      @keyframes _tpDropPulse {
+        0%, 100% { border-color: rgba(239,159,39,0.4); }
+        50%       { border-color: rgba(239,159,39,0.9); }
+      }
+
+      /* ── Toast enter / exit анимации ── */
+      @keyframes _tpToastIn {
+        from { opacity: 0; transform: translateY(12px) scale(0.96); }
+        to   { opacity: 1; transform: translateY(0)    scale(1); }
+      }
+      @keyframes _tpToastOut {
+        from { opacity: 1; transform: translateY(0)  scale(1)    maxHeight: 80px; }
+        to   { opacity: 0; transform: translateY(8px) scale(0.95); }
+      }
+
+      /* ── Пульсирующая точка активных операций ── */
+      @keyframes _tpPulseRing {
+        0%   { transform: scale(1); opacity: 1; }
+        100% { transform: scale(2.6); opacity: 0; }
+      }
+      .pulse-dot-wrap {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 10px;
+        height: 10px;
+        flex-shrink: 0;
+      }
+      .pulse-dot-ring {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        animation: _tpPulseRing 1.8s ease-out infinite;
+      }
+      .pulse-dot-core {
+        position: absolute;
+        inset: 2px;
+        border-radius: 50%;
+      }
+
+      /* ── Мигание просроченных дедлайнов ── */
+      @keyframes _tpOverdueBlink {
+        0%, 100% { opacity: 1; }
+        50%       { opacity: 0.4; }
+      }
+      .overdue-blink {
+        animation: _tpOverdueBlink 1.3s ease-in-out infinite;
+      }
+
+      /* ── Появление KPI-карточек дашборда ── */
+      @keyframes _tpMetricIn {
+        from { opacity: 0; transform: scale(0.92); }
+        to   { opacity: 1; transform: scale(1); }
+      }
+      .metric-card-anim {
+        animation: _tpMetricIn 0.28s ease-out both;
+      }
+    `;
+    document.head.appendChild(style);
+  }, []);
+
+  // Одна блок-кость skeleton
+  const Bone = ({ w = '100%', h = 14, r = 6, mb = 0, delay = 0 }) =>
+    React.createElement('div', {
+      className: '_tpSkel',
+      style: {
+        width: w, height: h, borderRadius: r,
+        background: 'var(--border-soft, rgba(0,0,0,0.08))',
+        marginBottom: mb,
+        animation: `_tpShimmer 1.5s ease-in-out ${delay}s infinite`,
+        flexShrink: 0,
+      }
+    });
+
+  // Карточка-скелет: имитирует S.card
+  const SkelCard = ({ children, delay = 0, mt = 0 }) =>
+    React.createElement('div', {
+      style: {
+        background: 'var(--card, #fff)',
+        border: '0.5px solid var(--border, rgba(0,0,0,0.1))',
+        borderRadius: 12,
+        padding: 16,
+        marginTop: mt,
+        animation: `_tpFadeIn 0.3s ease-out ${delay}s both`,
+      }
+    }, children);
+
+  return React.createElement('div', {
+    style: {
+      minHeight: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '24px 20px',
+      gap: 0,
+    }
+  },
+    // Логотип / заголовок — имитирует «teploros / надежная техника»
+    React.createElement('div', {
+      style: {
+        textAlign: 'center',
+        marginBottom: 28,
+        animation: '_tpFadeIn 0.4s ease-out both',
+      }
+    },
+      React.createElement(Bone, { w: 140, h: 28, r: 8, mb: 8 }),
+      React.createElement('div', { style: { display: 'flex', justifyContent: 'center' } },
+        React.createElement(Bone, { w: 100, h: 12, r: 6, delay: 0.05 })
+      )
+    ),
+
+    // Блок выбора роли — имитирует 2 ряда кнопок
+    React.createElement(SkelCard, { delay: 0.08 },
+      React.createElement('div', { style: { display: 'flex', justifyContent: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 8 } },
+        [0, 0.04, 0.08, 0.12].map((d, i) =>
+          React.createElement(Bone, { key: i, w: 110, h: 40, r: 8, delay: d })
+        )
+      ),
+      React.createElement('div', { style: { display: 'flex', justifyContent: 'center', gap: 6, flexWrap: 'wrap' } },
+        [0.05, 0.09, 0.13, 0.17, 0.21].map((d, i) =>
+          React.createElement(Bone, { key: i, w: 110, h: 40, r: 8, delay: d })
+        )
+      )
+    ),
+
+    // Поле PIN-кода
+    React.createElement('div', {
+      style: {
+        marginTop: 16,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 10,
+        animation: '_tpFadeIn 0.3s ease-out 0.15s both',
+      }
+    },
+      React.createElement(Bone, { w: 220, h: 48, r: 8, delay: 0.1 }),
+      React.createElement(Bone, { w: 120, h: 44, r: 8, delay: 0.12 })
+    ),
+
+    // Спиннер + подпись внизу
+    React.createElement('div', {
+      style: {
+        marginTop: 36,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 8,
+        animation: '_tpFadeIn 0.3s ease-out 0.2s both',
+      }
+    },
+      React.createElement('div', {
+        style: {
+          width: 22,
+          height: 22,
+          border: `2px solid var(--border-soft, rgba(0,0,0,0.1))`,
+          borderTopColor: AM,
+          borderRadius: '50%',
+          animation: '_tpSpinner 0.75s linear infinite',
+        }
+      }),
+      React.createElement('div', {
+        style: {
+          fontSize: 11,
+          color: 'var(--muted, #999)',
+          letterSpacing: '0.05em',
+          textTransform: 'uppercase',
+        }
+      }, 'Подключение к серверу')
+    )
+  );
 });
 
 // ==================== Общие компоненты: MC (MetricCard), TabBar ====================
