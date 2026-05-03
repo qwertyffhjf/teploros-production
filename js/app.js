@@ -1759,10 +1759,7 @@ function App() {
     return { id: 'system', name: 'Система', role: 'system' };
   }, [role, workerId, data.workers]);
 
-  if (loading) return h('div', { style: { padding:48, textAlign:'center' } },
-    h('div', { style: { fontSize:16, marginBottom:8 } }, 'Загрузка...'),
-    h('div', { style: { fontSize:12, color:'#888' } }, 'Подключение к Firebase')
-  );
+  if (loading) return h(AppSkeleton);
 
   // QR-режим
   if (initialOpId && !role) return h('div', null,
