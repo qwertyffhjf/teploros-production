@@ -66,7 +66,7 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
             h('tbody', null, pendingQC.map(op => {
               const order = data.orders.find(o => o.id === op.orderId);
               const workerIds = op.workerIds || [];
-              return h('tr', { key: op.id },
+              return h('tr', { key: op.id, style: { transition: 'background 0.12s' }, onMouseEnter: e => e.currentTarget.style.background = 'rgba(239,159,39,0.05)', onMouseLeave: e => e.currentTarget.style.background = '' },
                 h('td', { style: S.td },
                   onOrderClick && order
                     ? h('span', { style: { color: AM, fontWeight: 500, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => onOrderClick(order.id), title: 'Открыть карточку' }, order.number)
@@ -81,8 +81,8 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
                 ),
                 h('td', { style: S.td }, op.weldParams ? `Шов: ${op.weldParams.seamNumber}, Электрод: ${op.weldParams.electrode}` : '—'),
                 h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
-                  h('button', { style: abtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Принять операцию', onClick: () => acceptOp(op) }, 'Принять'),
-                  h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Забраковать операцию', onClick: () => { setRejectModal({ op }); setRejectNote(''); } }, 'Брак')
+                  h('button', { style: abtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Принять операцию', onClick: () => { vibrateAction('finish'); acceptOp(op); } }, 'Принять'),
+                  h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Забраковать операцию', onClick: () => { navigator.vibrate?.([40]); setRejectModal({ op }); setRejectNote(''); } }, 'Брак')
                 ))
               );
             }))
@@ -328,11 +328,11 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
     confirmEl,
     // Сводка
     h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 10, marginBottom: 12 } },
-      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: allRecs.length > 0 ? AM : GN } }, allRecs.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Всего')),
-      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: openCount > 0 ? RD : GN } }, openCount), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Открытых')),
-      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: '#0277BD' } }, externalCount), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Внешних')),
-      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: '#E65100' } }, internalCount), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Внутренних')),
-      h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: '#888' } }, allRecs.filter(r => r.severity === 'critical').length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Критических'))
+      h(MC, { v: allRecs.length,   l: 'Всего',      c: allRecs.length > 0 ? AM : GN, fs: 28 }),
+      h(MC, { v: openCount,        l: 'Открытых',   c: openCount > 0 ? RD : GN,       fs: 28 }),
+      h(MC, { v: externalCount,    l: 'Внешних',    c: '#0277BD',                      fs: 28 }),
+      h(MC, { v: internalCount,    l: 'Внутренних', c: '#E65100',                      fs: 28 }),
+      h(MC, { v: allRecs.filter(r => r.severity === 'critical').length, l: 'Критических', c: '#888', fs: 28 })
     ),
     // Фильтры
     h('div', { style: { display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' } },
@@ -388,7 +388,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
     // Список
     filtered.length === 0
       ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888', padding: 32 } }, 'Нет рекламаций')
-      : filtered.map(rec => {
+      : filtered.map((rec, idx) => {
           const order = data.orders.find(o => o.id === rec.orderId);
           const sev = severityStyle[rec.severity] || severityStyle.minor;
           const st = statusStyle[rec.status] || statusStyle.open;
@@ -398,7 +398,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
           const d8Step = d8Steps[rec.id] ?? (d8.currentStep || 0);
           const completedSteps = d8.currentStep || 0;
 
-          return h('div', { key: rec.id, style: { ...S.card, padding: 0, marginBottom: 10, borderLeft: `4px solid ${sev.border}`, overflow: 'hidden' } },
+          return h('div', { key: rec.id, className: 'op-card-anim', style: { ...S.card, padding: 0, marginBottom: 10, borderLeft: `4px solid ${sev.border}`, overflow: 'hidden', animationDelay: `${idx * 0.04}s`, transition: 'box-shadow 0.15s, transform 0.15s' }, onMouseEnter: e => { e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.08)'; e.currentTarget.style.transform = 'translateY(-1px)'; }, onMouseLeave: e => { e.currentTarget.style.boxShadow = ''; e.currentTarget.style.transform = ''; } },
             // Шапка
             h('div', { style: { padding: '12px 14px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }, onClick: () => {
               setExpandedId(isExpanded ? null : rec.id);
@@ -458,6 +458,3 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
         })
   );
 });
-
-
-
