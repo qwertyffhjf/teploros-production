@@ -1211,6 +1211,59 @@ const AppSkeleton = memo(() => {
       @media (prefers-reduced-motion: reduce) {
         ._tpSkel, ._tpFadeIn, ._tpSpinner { animation: none !important; }
       }
+
+      /* ── Тактильная обратная связь на кнопках WorkerScreen ── */
+      /* Только transform + opacity — никакого reflow */
+      .worker-btn,
+      .worker-btn-start,
+      .worker-btn-stop,
+      .worker-btn-defect,
+      .worker-btn-pause {
+        transition: transform 0.08s ease-out, opacity 0.1s ease-out, background-color 0.15s;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+      }
+      .worker-btn:active,
+      .worker-btn-start:active,
+      .worker-btn-stop:active,
+      .worker-btn-defect:active,
+      .worker-btn-pause:active {
+        transform: scale(0.96);
+        opacity: 0.82;
+      }
+
+      /* ── Появление карточек заданий (staggered fadeUp) ── */
+      @keyframes _tpCardIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      .op-card-anim {
+        animation: _tpCardIn 0.22s ease-out both;
+      }
+
+      /* ── Hover на строках таблиц (мастер, ОТК, склад) ── */
+      table tbody tr {
+        transition: background-color 0.12s;
+      }
+      table tbody tr:hover {
+        background-color: rgba(239,159,39,0.06);
+        cursor: pointer;
+      }
+
+      /* ── Плавные переходы цвета/фона — не затрагивает layout ── */
+      * { transition: color 0.12s, background-color 0.12s, border-color 0.12s, opacity 0.12s; }
+      /* Кнопки воркера переопределяют wildcard для более быстрого отклика */
+      .worker-btn, .worker-btn-start, .worker-btn-stop,
+      .worker-btn-defect, .worker-btn-pause {
+        transition: transform 0.08s ease-out, opacity 0.1s ease-out, background-color 0.15s !important;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          transition-duration: 0ms !important;
+          animation-duration: 0ms !important;
+        }
+      }
     `;
     document.head.appendChild(style);
   }, []);
