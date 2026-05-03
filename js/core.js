@@ -1184,6 +1184,69 @@ const ElapsedTimer = memo(({ startedAt, style }) => {
   return h('div', { style }, startedAt ? fmtDur(now() - startedAt) : '—');
 });
 
+// ==================== useCountUp — анимированный счётчик цифр ====================
+// Принимает target (число) и duration (мс). Возвращает текущее значение анимации.
+// Использует requestAnimationFrame + easeOutCubic — плавно «набегает» до target.
+// Перезапускается при изменении target (новые данные из Firebase).
+const useCountUp = (target, duration = 900) => {
+  const [val, setVal] = React.useState(0);
+  const rafRef = React.useRef(null);
+  const startRef = React.useRef(null);
+  const fromRef = React.useRef(0);
+
+  React.useEffect(() => {
+    if (typeof target !== 'number' || isNaN(target)) return;
+    // Анимируем от текущего значения к новому (плавная дельта при обновлении данных)
+    fromRef.current = val;
+    startRef.current = null;
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+
+    const tick = (ts) => {
+      if (!startRef.current) startRef.current = ts;
+      const elapsed = ts - startRef.current;
+      const p = Math.min(elapsed / duration, 1);
+      // easeOutCubic
+      const ease = 1 - Math.pow(1 - p, 3);
+      setVal(Math.round(fromRef.current + (target - fromRef.current) * ease));
+      if (p < 1) rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [target]);
+
+  return val;
+};
+
+// ==================== AnimatedBar — прогресс-бар с анимацией от 0 ====================
+// Монтируется с width:0, через 1 кадр переключается на target — CSS transition делает остальное.
+// Это безопаснее чем JS-анимация width (не вызывает reflow при каждом кадре).
+const AnimatedBar = memo(({ pct, color, height = 6, delay = 0 }) => {
+  const [width, setWidth] = React.useState(0);
+
+  React.useEffect(() => {
+    // Два кадра: первый — убедиться что браузер нарисовал width:0, второй — переключить
+    const id = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setWidth(pct);
+      });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [pct]);
+
+  return h('div', { style: { height, background: 'rgba(0,0,0,0.08)', borderRadius: height / 2, overflow: 'hidden' } },
+    h('div', {
+      style: {
+        height: '100%',
+        width: `${width}%`,
+        borderRadius: height / 2,
+        background: color,
+        transition: `width 1.1s cubic-bezier(0.4, 0, 0.2, 1) ${delay}s`,
+        willChange: 'width',
+      }
+    })
+  );
+});
+
 // ==================== AppSkeleton (загрузочный экран вместо «Загрузка...») ====================
 // Показывается пока App ждёт DB.load(). Имитирует структуру LoginScreen —
 // пользователь сразу видит «форму» и понимает что система загружается.
@@ -1263,6 +1326,50 @@ const AppSkeleton = memo(() => {
           transition-duration: 0ms !important;
           animation-duration: 0ms !important;
         }
+      }
+
+      /* ── Пульсирующая точка активных операций ── */
+      @keyframes _tpPulseRing {
+        0%   { transform: scale(1); opacity: 1; }
+        100% { transform: scale(2.6); opacity: 0; }
+      }
+      .pulse-dot-wrap {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 10px;
+        height: 10px;
+        flex-shrink: 0;
+      }
+      .pulse-dot-ring {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        animation: _tpPulseRing 1.8s ease-out infinite;
+      }
+      .pulse-dot-core {
+        position: absolute;
+        inset: 2px;
+        border-radius: 50%;
+      }
+
+      /* ── Мигание просроченных дедлайнов ── */
+      @keyframes _tpOverdueBlink {
+        0%, 100% { opacity: 1; }
+        50%       { opacity: 0.4; }
+      }
+      .overdue-blink {
+        animation: _tpOverdueBlink 1.3s ease-in-out infinite;
+      }
+
+      /* ── Появление KPI-карточек дашборда ── */
+      @keyframes _tpMetricIn {
+        from { opacity: 0; transform: scale(0.92); }
+        to   { opacity: 1; transform: scale(1); }
+      }
+      .metric-card-anim {
+        animation: _tpMetricIn 0.28s ease-out both;
       }
     `;
     document.head.appendChild(style);
