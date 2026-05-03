@@ -628,7 +628,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
             return h('th', { key: s.id, style: { ...S.th, borderBottom: `3px solid ${color}`, position: 'sticky', top: 0, zIndex: 2, background: '#f8f8f5', whiteSpace: 'nowrap', minWidth: 90 } }, s.name);
           })
         )),
-        h('tbody', null, data.workers.filter(w => !w.archived).map(w => h('tr', { key: w.id },
+        h('tbody', null, data.workers.filter(w => !w.archived).map((w, idx) => h('tr', { key: w.id, style: { transition: 'background 0.12s' }, onMouseEnter: e => e.currentTarget.style.background = 'rgba(239,159,39,0.05)', onMouseLeave: e => e.currentTarget.style.background = '' },
           h('td', { style: { ...S.td, fontWeight:500, position: 'sticky', left: 0, zIndex: 1, background: '#fff', boxShadow: '2px 0 4px rgba(0,0,0,0.06)', minWidth: 160 } }, w.name),
           stagesForMatrix.map(s => {
             const level = (w.competenceLevels || {})[s.name] || 0;
@@ -789,7 +789,7 @@ const InstructionsTracker = memo(({ data, onUpdate, addToast }) => {
           INSTRUCTION_TYPES.map(t => h('th', { key:t.id, style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:90, fontSize:10 } }, t.label))
         )),
         h('tbody', null, shown.map(({ worker: w, byType }) =>
-          h('tr', { key:w.id },
+          h('tr', { key:w.id, style: { transition: 'background 0.12s' }, onMouseEnter: e => e.currentTarget.style.background = 'rgba(239,159,39,0.05)', onMouseLeave: e => e.currentTarget.style.background = '' },
             h('td', { style:{ ...S.td, position:'sticky', left:0, background:'#fff', zIndex:1, padding:'6px 10px', fontWeight:500, boxShadow:'2px 0 4px rgba(0,0,0,0.04)' } }, w.name),
             INSTRUCTION_TYPES.map(t => {
               const instr = byType[t.id];
@@ -941,7 +941,7 @@ const VacationPlanner = memo(({ data, onUpdate, addToast }) => {
           const w = data.workers.find(x => x.id === v.workerId);
           const st = getVacStatus(v);
           const [bg, cl] = statusColors[st];
-          return h('tr', { key:v.id },
+          return h('tr', { key:v.id, style: { transition: 'background 0.12s' }, onMouseEnter: e => e.currentTarget.style.background = 'rgba(239,159,39,0.05)', onMouseLeave: e => e.currentTarget.style.background = '' },
             h('td', { style:S.td }, w?.name || '—'),
             h('td', { style:S.td }, v.startDate),
             h('td', { style:S.td }, v.endDate),
@@ -1046,7 +1046,7 @@ const MonthlyReport = memo(({ data }) => {
     ),
 
     h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10, marginBottom:16 } },
-      kpi.map(([v,l,c]) => h(MC, { key: l, v, l, c, fs: 26 }))
+      kpi.map(([v,l,c], idx) => h(MC, { key: l, v, l, c, fs: 26, style: { animationDelay: `${idx * 0.06}s` } }))
     ),
 
     report.topWorkers.length > 0 && h('div', { style:S.card },
