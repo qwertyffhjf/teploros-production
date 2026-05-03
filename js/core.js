@@ -1184,6 +1184,150 @@ const ElapsedTimer = memo(({ startedAt, style }) => {
   return h('div', { style }, startedAt ? fmtDur(now() - startedAt) : '—');
 });
 
+// ==================== AppSkeleton (загрузочный экран вместо «Загрузка...») ====================
+// Показывается пока App ждёт DB.load(). Имитирует структуру LoginScreen —
+// пользователь сразу видит «форму» и понимает что система загружается.
+// Использует только transform/opacity — никакого reflow.
+
+const AppSkeleton = memo(() => {
+  // Shimmer-анимация через inline keyframes (не требует изменений в CSS-файлах)
+  React.useEffect(() => {
+    if (document.getElementById('_tp_skel_style')) return;
+    const style = document.createElement('style');
+    style.id = '_tp_skel_style';
+    style.textContent = `
+      @keyframes _tpShimmer {
+        0%   { opacity: 0.35 }
+        50%  { opacity: 0.75 }
+        100% { opacity: 0.35 }
+      }
+      @keyframes _tpFadeIn {
+        from { opacity: 0; transform: translateY(6px) }
+        to   { opacity: 1; transform: translateY(0) }
+      }
+      @keyframes _tpSpinner {
+        to { transform: rotate(360deg) }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        ._tpSkel, ._tpFadeIn, ._tpSpinner { animation: none !important; }
+      }
+    `;
+    document.head.appendChild(style);
+  }, []);
+
+  // Одна блок-кость skeleton
+  const Bone = ({ w = '100%', h = 14, r = 6, mb = 0, delay = 0 }) =>
+    React.createElement('div', {
+      className: '_tpSkel',
+      style: {
+        width: w, height: h, borderRadius: r,
+        background: 'var(--border-soft, rgba(0,0,0,0.08))',
+        marginBottom: mb,
+        animation: `_tpShimmer 1.5s ease-in-out ${delay}s infinite`,
+        flexShrink: 0,
+      }
+    });
+
+  // Карточка-скелет: имитирует S.card
+  const SkelCard = ({ children, delay = 0, mt = 0 }) =>
+    React.createElement('div', {
+      style: {
+        background: 'var(--card, #fff)',
+        border: '0.5px solid var(--border, rgba(0,0,0,0.1))',
+        borderRadius: 12,
+        padding: 16,
+        marginTop: mt,
+        animation: `_tpFadeIn 0.3s ease-out ${delay}s both`,
+      }
+    }, children);
+
+  return React.createElement('div', {
+    style: {
+      minHeight: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '24px 20px',
+      gap: 0,
+    }
+  },
+    // Логотип / заголовок — имитирует «teploros / надежная техника»
+    React.createElement('div', {
+      style: {
+        textAlign: 'center',
+        marginBottom: 28,
+        animation: '_tpFadeIn 0.4s ease-out both',
+      }
+    },
+      React.createElement(Bone, { w: 140, h: 28, r: 8, mb: 8 }),
+      React.createElement('div', { style: { display: 'flex', justifyContent: 'center' } },
+        React.createElement(Bone, { w: 100, h: 12, r: 6, delay: 0.05 })
+      )
+    ),
+
+    // Блок выбора роли — имитирует 2 ряда кнопок
+    React.createElement(SkelCard, { delay: 0.08 },
+      React.createElement('div', { style: { display: 'flex', justifyContent: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 8 } },
+        [0, 0.04, 0.08, 0.12].map((d, i) =>
+          React.createElement(Bone, { key: i, w: 110, h: 40, r: 8, delay: d })
+        )
+      ),
+      React.createElement('div', { style: { display: 'flex', justifyContent: 'center', gap: 6, flexWrap: 'wrap' } },
+        [0.05, 0.09, 0.13, 0.17, 0.21].map((d, i) =>
+          React.createElement(Bone, { key: i, w: 110, h: 40, r: 8, delay: d })
+        )
+      )
+    ),
+
+    // Поле PIN-кода
+    React.createElement('div', {
+      style: {
+        marginTop: 16,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 10,
+        animation: '_tpFadeIn 0.3s ease-out 0.15s both',
+      }
+    },
+      React.createElement(Bone, { w: 220, h: 48, r: 8, delay: 0.1 }),
+      React.createElement(Bone, { w: 120, h: 44, r: 8, delay: 0.12 })
+    ),
+
+    // Спиннер + подпись внизу
+    React.createElement('div', {
+      style: {
+        marginTop: 36,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 8,
+        animation: '_tpFadeIn 0.3s ease-out 0.2s both',
+      }
+    },
+      React.createElement('div', {
+        style: {
+          width: 22,
+          height: 22,
+          border: `2px solid var(--border-soft, rgba(0,0,0,0.1))`,
+          borderTopColor: AM,
+          borderRadius: '50%',
+          animation: '_tpSpinner 0.75s linear infinite',
+        }
+      }),
+      React.createElement('div', {
+        style: {
+          fontSize: 11,
+          color: 'var(--muted, #999)',
+          letterSpacing: '0.05em',
+          textTransform: 'uppercase',
+        }
+      }, 'Подключение к серверу')
+    )
+  );
+});
+
 // ==================== Общие компоненты: MC (MetricCard), TabBar ====================
 // MC — карточка метрики (KPI). Использование: h(MC, { v: '42', l: 'Заказов', c: GN, onClick: fn })
 const MC = memo(({ v, l, c, onClick, fs }) => h('div', {
