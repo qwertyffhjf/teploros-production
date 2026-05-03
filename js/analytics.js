@@ -122,7 +122,7 @@ const MiniSparkline = memo(({ values, color, height = 36 }) => {
     draw({
       type: 'line',
       data: { labels: values.map((_, i) => i), datasets: [{ data: values, borderColor: color, borderWidth: 2, fill: true, backgroundColor: color + '22', tension: 0.4, pointRadius: 0 }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { enabled: false } }, scales: { x: { display: false }, y: { display: false } }, animation: { duration: 400 } }
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { enabled: false } }, scales: { x: { display: false }, y: { display: false } }, animation: { duration: 800, easing: 'easeOutQuart' }, animations: { y: { duration: 800, easing: 'easeOutQuart', from: (ctx) => ctx.chart?.height ?? 0 } } }
     });
   }, [values, color, draw]);
   return h('canvas', { ref: canvasRef, style: { height, width: '100%', display: 'block' } });
@@ -233,7 +233,41 @@ const FullAnalyticsModal = memo(({ section, data, onClose }) => {
 
   // ── Рисуем графики ──
   useEffect(() => {
-    const co = { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, animation: { duration: 300 } };
+    // Общие опции — красивая анимация с easing
+    // delay: каждый столбец появляется с задержкой 40ms × индекс (stagger)
+    const co = {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      animation: {
+        duration: 700,
+        easing: 'easeOutQuart',
+      },
+      animations: {
+        // Столбцы растут снизу вверх
+        y: {
+          from: (ctx) => {
+            if (ctx.type === 'data' && ctx.mode === 'default') {
+              return ctx.chart.scales.y?.getPixelForValue(0) ?? ctx.chart.height;
+            }
+          },
+          duration: 700,
+          easing: 'easeOutQuart',
+          delay: (ctx) => ctx.dataIndex * 40, // stagger 40ms на каждый столбец
+        },
+        // Горизонтальные (indexAxis: 'y') — растут слева
+        x: {
+          from: (ctx) => {
+            if (ctx.type === 'data' && ctx.mode === 'default' && ctx.chart.options?.indexAxis === 'y') {
+              return ctx.chart.scales.x?.getPixelForValue(0) ?? 0;
+            }
+          },
+          duration: 650,
+          easing: 'easeOutQuart',
+          delay: (ctx) => ctx.dataIndex * 50,
+        },
+      },
+    };
     if (section === 'production' || section === 'dashboard') {
       if (computed.dayLabels) {
         c1.draw({ type: 'bar', data: { labels: computed.dayLabels, datasets: [{ label: 'Выполнено', data: computed.doneByDay, backgroundColor: GN, borderRadius: 4 }, { label: 'Брак', data: computed.defByDay, backgroundColor: RD, borderRadius: 4 }] }, options: { ...co, scales: { x: { stacked: false }, y: { beginAtZero: true } }, plugins: { legend: { display: true, position: 'bottom', labels: { font: { size: 10 } } } } } });
@@ -303,7 +337,7 @@ const FullAnalyticsModal = memo(({ section, data, onClose }) => {
               section === 'hr' ? 'Выработка сотрудников' :
               section === 'quality' ? 'Качество по дням (%)' : 'Выполнение по дням'
             ),
-            h('div', { style: { height: 200 } }, h('canvas', { ref: c1.canvasRef }))
+            h('div', { className: 'op-card-anim', style: { height: 200, animationDelay: '0.05s' } }, h('canvas', { ref: c1.canvasRef }))
           ),
           h('div', { style: { background: '#fff', borderRadius: 10, padding: '12px 14px', border: '0.5px solid rgba(0,0,0,0.08)' } },
             h('div', { style: { fontSize: 11, fontWeight: 500, color: '#555', marginBottom: 8 } },
@@ -311,13 +345,13 @@ const FullAnalyticsModal = memo(({ section, data, onClose }) => {
               section === 'hr' ? 'Статус сотрудников' :
               section === 'quality' ? 'Брак по причинам' : 'Выработка по сотрудникам'
             ),
-            h('div', { style: { height: 200 } }, h('canvas', { ref: c2.canvasRef }))
+            h('div', { className: 'op-card-anim', style: { height: 200, animationDelay: '0.12s' } }, h('canvas', { ref: c2.canvasRef }))
           ),
           (section === 'production' || section === 'dashboard' || section === 'quality') && h('div', { style: { background: '#fff', borderRadius: 10, padding: '12px 14px', border: '0.5px solid rgba(0,0,0,0.08)', gridColumn: '1 / -1' } },
             h('div', { style: { fontSize: 11, fontWeight: 500, color: '#555', marginBottom: 8 } },
               section === 'quality' ? 'Брак по исполнителям' : 'Брак по причинам'
             ),
-            h('div', { style: { height: 160 } }, h('canvas', { ref: c3.canvasRef }))
+            h('div', { className: 'op-card-anim', style: { height: 160, animationDelay: '0.18s' } }, h('canvas', { ref: c3.canvasRef }))
           )
         )
       )
@@ -1249,6 +1283,3 @@ const ReportsBuilder = memo(({ data }) => {
         )
   );
 });
-
-
-
