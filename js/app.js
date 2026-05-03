@@ -62,14 +62,14 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
   const resolvePin = (inputPin) => {
     const p = inputPin.trim();
     if (!p) return null;
-    if (pinMatch(p, settings.masterPin || 'H_18D7OAL')) return { role: 'master', workerId: null, sectionId: null, name: 'Начальник цеха' };
-    if (pinMatch(p, settings.controllerPin || 'H_18D8GW1')) return { role: 'controller', workerId: null, sectionId: null, name: 'Контролёр' };
-    if (pinMatch(p, settings.warehousePin || 'H_18D99HH')) return { role: 'warehouse', workerId: null, sectionId: null, name: 'Склад' };
-    if (pinMatch(p, settings.pdoPin || 'H_18DA22X')) return { role: 'pdo', workerId: null, sectionId: null, name: 'ПДО' };
-    if (pinMatch(p, settings.directorPin || 'H_18DAUOD')) return { role: 'director', workerId: null, sectionId: null, name: 'Руководитель' };
-    if (pinMatch(p, settings.hrPin || 'H_18DBN9T')) return { role: 'hr', workerId: null, sectionId: null, name: 'HR' };
-    if (pinMatch(p, settings.shopMasterPin || 'H_18DCFV9')) return { role: 'shop_master', workerId: null, sectionId: null, name: 'Сменный мастер' };
-    if (pinMatch(p, settings.adminPin || 'H_18DD8GP')) return { role: 'admin', workerId: null, sectionId: null, name: 'Администратор' };
+    if (pinMatch(p, settings.masterPin)) return { role: 'master', workerId: null, sectionId: null, name: 'Начальник цеха' };
+    if (pinMatch(p, settings.controllerPin)) return { role: 'controller', workerId: null, sectionId: null, name: 'Контролёр' };
+    if (pinMatch(p, settings.warehousePin)) return { role: 'warehouse', workerId: null, sectionId: null, name: 'Склад' };
+    if (pinMatch(p, settings.pdoPin)) return { role: 'pdo', workerId: null, sectionId: null, name: 'ПДО' };
+    if (pinMatch(p, settings.directorPin)) return { role: 'director', workerId: null, sectionId: null, name: 'Руководитель' };
+    if (pinMatch(p, settings.hrPin)) return { role: 'hr', workerId: null, sectionId: null, name: 'HR' };
+    if (pinMatch(p, settings.shopMasterPin)) return { role: 'shop_master', workerId: null, sectionId: null, name: 'Сменный мастер' };
+    if (pinMatch(p, settings.adminPin)) return { role: 'admin', workerId: null, sectionId: null, name: 'Администратор' };
     const worker = data.workers.find(w => pinMatch(p, w.pin));
     if (worker) return { role: 'worker', workerId: worker.id, sectionId: worker.sectionId || null, name: worker.name };
     return null;
@@ -94,7 +94,7 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
 
   const handleMasterKeyReset = () => {
     setResetError(''); setResetSuccess('');
-    if (!pinMatch(resetKey.trim(), settings.masterKey || 'H_18DETNL')) { setResetError('Неверный мастер-ключ'); return; }
+    if (!pinMatch(resetKey.trim(), settings.masterKey)) { setResetError('Неверный мастер-ключ'); return; }
     if (!resetTarget) { setResetError('Выберите сотрудника'); return; }
     if (!resetNewPin.trim() || resetNewPin.trim().length < 4) { setResetError('Новый PIN — минимум 4 цифры'); return; }
     // Проверяем что новый PIN не занят
