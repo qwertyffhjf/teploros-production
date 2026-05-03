@@ -100,7 +100,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId }) => {
             : 'Нет поставок'
         )
       : h('div', null,
-          deliveries.map(del => {
+          deliveries.map((del, idx) => {
             const mat = data.materials.find(m => m.id === del.materialId);
             const order = data.orders.find(o => o.id === del.orderId);
             const isPending = del.status === 'pending';
@@ -108,7 +108,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId }) => {
             const isDone    = del.status === 'confirmed';
             const borderColor = isDone ? GN : isPartial ? AM : '#dedad3';
 
-            return h('div', { key: del.id, style: { ...S.card, borderLeft: `4px solid ${borderColor}`, marginBottom: 10 } },
+            return h('div', { key: del.id, className: 'op-card-anim', style: { ...S.card, borderLeft: `4px solid ${borderColor}`, marginBottom: 10, animationDelay: `${idx * 0.05}s`, transition: 'box-shadow 0.15s, transform 0.15s' }, onMouseEnter: e => { e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.08)'; e.currentTarget.style.transform = 'translateY(-1px)'; }, onMouseLeave: e => { e.currentTarget.style.boxShadow = ''; e.currentTarget.style.transform = ''; } },
               h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 } },
                 h('div', { style: { flex: 1 } },
                   h('div', { style: { fontSize: 14, fontWeight: 500, marginBottom: 3 } }, mat?.name || del.materialId),
@@ -131,7 +131,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId }) => {
                     background: isDone ? GN3 : isPartial ? AM3 : '#f0ede8',
                     color: isDone ? GN2 : isPartial ? AM2 : '#888'
                   }}, isDone ? '✓ Поставлено' : isPartial ? '⚡ Частично' : '⏳ Ожидаем'),
-                  !isDone && h('button', { style: abtn({ fontSize: 12 }), onClick: () => openConfirm(del) }, '📥 Подтвердить'),
+                  !isDone && h('button', { style: abtn({ fontSize: 12 }), onClick: () => { navigator.vibrate?.([30]); openConfirm(del); } }, '📥 Подтвердить'),
                   h('button', { style: gbtn({ fontSize: 12 }), onClick: () => printQR(del) }, '🖨 QR-код')
                 )
               )
@@ -177,11 +177,11 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId }) => {
 
         h('div', { style: { display: 'flex', gap: 8 } },
           Number(partialQty) < confirmModal.requiredQty && Number(partialQty) > 0 &&
-            h('button', { style: { ...gbtn({ flex: 1 }), borderColor: AM, color: AM2 }, onClick: () => handleConfirm(true) },
+            h('button', { style: { ...gbtn({ flex: 1 }), borderColor: AM, color: AM2 }, onClick: () => { navigator.vibrate?.([30]); handleConfirm(true); } },
               `⚡ Частично (${partialQty} ${confirmModal.unit})`
             ),
           Number(partialQty) >= confirmModal.requiredQty &&
-            h('button', { style: { ...abtn({ flex: 1 }) }, onClick: () => handleConfirm(false) },
+            h('button', { style: { ...abtn({ flex: 1 }) }, onClick: () => { vibrateAction('finish'); handleConfirm(false); } },
               `✓ Подтвердить полностью`
             ),
           Number(partialQty) > 0 && Number(partialQty) < confirmModal.requiredQty &&
@@ -871,6 +871,3 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
     tab === 'bom'       && h(MasterBOM,       { data, onUpdate, addToast })
   );
 });
-
-
-
