@@ -416,16 +416,16 @@ const EMPTY_DATA = {
   materialDeliveries: [],  // поставки материалов: [{id, orderId, materialId, stageName, requiredQty, deliveredQty, unit, status, confirmedAt, confirmedBy}]
   // components хранятся внутри каждого order: order.components = [{id, name, qty, unit, code, price, status}]
   settings: {
-    // Единый PIN-вход: все роли входят по PIN (хеши DJB2, дефолтные значения: 0000, 1111, 2222, 3333, 4444, 5555, 6666, 7777)
-    masterPin: 'H_18D7OAL',
-    controllerPin: 'H_18D8GW1',
-    warehousePin: 'H_18D99HH',
-    pdoPin: 'H_18DA22X',
-    directorPin: 'H_18DAUOD',
-    hrPin: 'H_18DBN9T',
-    shopMasterPin: 'H_18DCFV9',
-    adminPin: 'H_18DD8GP',
-    masterKey: 'H_18DETNL',       // Мастер-ключ: сброс PIN (дефолт: 9999), сменить при первом запуске
+    // Единый PIN-вход: хранить только хеши PIN, без дефолтных fallback-значений.
+    masterPin: '',
+    controllerPin: '',
+    warehousePin: '',
+    pdoPin: '',
+    directorPin: '',
+    hrPin: '',
+    shopMasterPin: '',
+    adminPin: '',
+    masterKey: '',       // Мастер-ключ должен быть задан администратором при развёртывании
     welcomeTitle: 'teploros', welcomeSubtitle: 'надежная техника',
     welcomeLabel: 'Производственный учёт · НТ',
     labelWidth: 50,    // ширина этикетки мм
