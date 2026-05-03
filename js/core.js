@@ -1169,9 +1169,42 @@ const Badge = memo(({ st }) => {
   return h('span', { style: { display: 'inline-block', padding: '2px 8px', fontSize: 10, borderRadius: 8, fontWeight: 500, background: s.bg, color: s.cl, border: `0.5px solid ${s.br}` } }, s.label);
 });
 
-const Toast = memo(({ message, onClose }) => {
-  useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, [onClose]);
-  return h('div', { className: 'toast', role: 'status', 'aria-live': 'polite' }, message);
+const Toast = memo(({ message, onClose, type = 'info' }) => {
+  const [exiting, setExiting] = useState(false);
+
+  useEffect(() => {
+    // За 400ms до исчезновения запускаем exit-анимацию
+    const exitTimer  = setTimeout(() => setExiting(true), 2600);
+    const closeTimer = setTimeout(onClose, 3000);
+    return () => { clearTimeout(exitTimer); clearTimeout(closeTimer); };
+  }, [onClose]);
+
+  // Цвет левой полоски по типу
+  const accent = type === 'success' ? GN : type === 'error' ? RD : type === 'info' ? BL : AM;
+
+  return h('div', {
+    className: 'toast',
+    role: 'status',
+    'aria-live': 'polite',
+    style: {
+      borderLeft: `3px solid ${accent}`,
+      animation: exiting
+        ? '_tpToastOut 0.35s cubic-bezier(0.4,0,1,1) forwards'
+        : '_tpToastIn  0.3s  cubic-bezier(0.2,0,0,1) both',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+    }
+  },
+    // Цветная иконка слева
+    h('span', {
+      style: {
+        width: 6, height: 6, borderRadius: '50%',
+        background: accent, flexShrink: 0,
+      }
+    }),
+    message
+  );
 });
 
 const ElapsedTimer = memo(({ startedAt, style }) => {
@@ -1326,6 +1359,16 @@ const AppSkeleton = memo(() => {
           transition-duration: 0ms !important;
           animation-duration: 0ms !important;
         }
+      }
+
+      /* ── Toast enter / exit анимации ── */
+      @keyframes _tpToastIn {
+        from { opacity: 0; transform: translateY(12px) scale(0.96); }
+        to   { opacity: 1; transform: translateY(0)    scale(1); }
+      }
+      @keyframes _tpToastOut {
+        from { opacity: 1; transform: translateY(0)  scale(1)    maxHeight: 80px; }
+        to   { opacity: 0; transform: translateY(8px) scale(0.95); }
       }
 
       /* ── Пульсирующая точка активных операций ── */
