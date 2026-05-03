@@ -62,14 +62,14 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
   const resolvePin = (inputPin) => {
     const p = inputPin.trim();
     if (!p) return null;
-    if (pinMatch(p, settings.masterPin)) return { role: 'master', workerId: null, sectionId: null, name: 'Начальник цеха' };
-    if (pinMatch(p, settings.controllerPin)) return { role: 'controller', workerId: null, sectionId: null, name: 'Контролёр' };
-    if (pinMatch(p, settings.warehousePin)) return { role: 'warehouse', workerId: null, sectionId: null, name: 'Склад' };
-    if (pinMatch(p, settings.pdoPin)) return { role: 'pdo', workerId: null, sectionId: null, name: 'ПДО' };
-    if (pinMatch(p, settings.directorPin)) return { role: 'director', workerId: null, sectionId: null, name: 'Руководитель' };
-    if (pinMatch(p, settings.hrPin)) return { role: 'hr', workerId: null, sectionId: null, name: 'HR' };
-    if (pinMatch(p, settings.shopMasterPin)) return { role: 'shop_master', workerId: null, sectionId: null, name: 'Сменный мастер' };
-    if (pinMatch(p, settings.adminPin)) return { role: 'admin', workerId: null, sectionId: null, name: 'Администратор' };
+    if (pinMatch(p, settings.masterPin || 'H_18D7OAL')) return { role: 'master', workerId: null, sectionId: null, name: 'Начальник цеха' };
+    if (pinMatch(p, settings.controllerPin || 'H_18D8GW1')) return { role: 'controller', workerId: null, sectionId: null, name: 'Контролёр' };
+    if (pinMatch(p, settings.warehousePin || 'H_18D99HH')) return { role: 'warehouse', workerId: null, sectionId: null, name: 'Склад' };
+    if (pinMatch(p, settings.pdoPin || 'H_18DA22X')) return { role: 'pdo', workerId: null, sectionId: null, name: 'ПДО' };
+    if (pinMatch(p, settings.directorPin || 'H_18DAUOD')) return { role: 'director', workerId: null, sectionId: null, name: 'Руководитель' };
+    if (pinMatch(p, settings.hrPin || 'H_18DBN9T')) return { role: 'hr', workerId: null, sectionId: null, name: 'HR' };
+    if (pinMatch(p, settings.shopMasterPin || 'H_18DCFV9')) return { role: 'shop_master', workerId: null, sectionId: null, name: 'Сменный мастер' };
+    if (pinMatch(p, settings.adminPin || 'H_18DD8GP')) return { role: 'admin', workerId: null, sectionId: null, name: 'Администратор' };
     const worker = data.workers.find(w => pinMatch(p, w.pin));
     if (worker) return { role: 'worker', workerId: worker.id, sectionId: worker.sectionId || null, name: worker.name };
     return null;
@@ -94,7 +94,7 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
 
   const handleMasterKeyReset = () => {
     setResetError(''); setResetSuccess('');
-    if (!pinMatch(resetKey.trim(), settings.masterKey)) { setResetError('Неверный мастер-ключ'); return; }
+    if (!pinMatch(resetKey.trim(), settings.masterKey || 'H_18DETNL')) { setResetError('Неверный мастер-ключ'); return; }
     if (!resetTarget) { setResetError('Выберите сотрудника'); return; }
     if (!resetNewPin.trim() || resetNewPin.trim().length < 4) { setResetError('Новый PIN — минимум 4 цифры'); return; }
     // Проверяем что новый PIN не занят
@@ -312,14 +312,6 @@ const Dashboard = memo(({ data, addToast, onOrderClick }) => {
   const qualityToday = doneToday.length + defectsToday.length > 0 ? Math.round(doneToday.length / (doneToday.length + defectsToday.length) * 100) : 100;
   const mc = (color) => ({ ...S.card, textAlign: 'center', padding: '12px 8px', marginBottom: 0 });
 
-  // ── Анимированные счётчики KPI (useCountUp из core.js) ──
-  const cntDone      = useCountUp(doneToday.length, 800);
-  const cntActive    = useCountUp(activeOps.length, 700);
-  const cntDefects   = useCountUp(defectsToday.length, 750);
-  const cntQuality   = useCountUp(qualityToday, 1000);
-  const cntDowntime  = useCountUp(totalDowntimeMin, 900);
-  const cntOnline    = useCountUp(onlineUsers.length, 600);
-
   const exportToExcel = useCallback(() => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.orders.map(o => ({ Номер: o.number, Изделие: o.product, Количество: o.qty, Дедлайн: o.deadline, Приоритет: PRIORITY[o.priority]?.label }))), 'Заказы');
@@ -341,21 +333,21 @@ const Dashboard = memo(({ data, addToast, onOrderClick }) => {
       )
     ),
 
-    // Блок 1: Ключевые метрики дня (анимированные счётчики + stagger)
+    // Блок 1: Ключевые метрики дня
     h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 8, marginBottom: 12 } },
-      h('div', { className: 'metric-card-anim', style: { ...mc(), animationDelay: '0s' } }, h('div', { style: { fontSize: 32, fontWeight: 500, color: GN } }, cntDone), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Выполнено')),
-      h('div', { className: 'metric-card-anim', style: { ...mc(), animationDelay: '0.05s' } }, h('div', { style: { fontSize: 32, fontWeight: 500, color: AM } }, cntActive), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'В работе')),
-      h('div', { className: 'metric-card-anim', style: { ...mc(), animationDelay: '0.1s' } }, h('div', { style: { fontSize: 32, fontWeight: 500, color: defectsToday.length > 0 ? RD : GN } }, cntDefects), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Брак')),
-      h('div', { className: 'metric-card-anim', style: { ...mc(), animationDelay: '0.15s' } }, h('div', { style: { fontSize: 32, fontWeight: 500, color: qualityToday >= 95 ? GN : qualityToday >= 80 ? AM : RD } }, `${cntQuality}%`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Качество')),
-      h('div', { className: 'metric-card-anim', style: { ...mc(), animationDelay: '0.2s' } }, h('div', { style: { fontSize: 32, fontWeight: 500, color: totalDowntimeMin > 60 ? RD : AM } }, `${cntDowntime}м`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Простои')),
-      h('div', { className: 'metric-card-anim', style: { ...mc(), animationDelay: '0.25s' } }, h('div', { style: { fontSize: 32, fontWeight: 500, color: freeWorkers.length > 0 ? GN : AM } }, `${busyWorkers.size}/${activeWorkers.length}`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Загрузка')),
-      h('div', { className: 'metric-card-anim', style: { ...mc(), cursor: 'default', position: 'relative', animationDelay: '0.3s' }, title: onlineUsers.map(u => u.userName).join(', ') || 'Никого нет онлайн' },
-        h('div', { style: { fontSize: 32, fontWeight: 500, color: onlineUsers.length > 0 ? GN : '#ccc' } }, cntOnline),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: GN } }, doneToday.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Выполнено')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: AM } }, activeOps.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'В работе')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: defectsToday.length > 0 ? RD : GN } }, defectsToday.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Брак')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: qualityToday >= 95 ? GN : qualityToday >= 80 ? AM : RD } }, `${qualityToday}%`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Качество')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: totalDowntimeMin > 60 ? RD : AM } }, `${totalDowntimeMin}м`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Простои')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: freeWorkers.length > 0 ? GN : AM } }, `${busyWorkers.size}/${activeWorkers.length}`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Загрузка')),
+      h('div', { style: { ...mc(), cursor: 'default', position: 'relative' }, title: onlineUsers.map(u => u.userName).join(', ') || 'Никого нет онлайн' },
+        h('div', { style: { fontSize: 32, fontWeight: 500, color: onlineUsers.length > 0 ? GN : '#ccc' } }, onlineUsers.length),
         h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Онлайн'),
         onlineUsers.length > 0 && h('div', { style: { position: 'absolute', bottom: 4, left: 0, right: 0, fontSize: 9, color: '#aaa', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '0 4px' } }, onlineUsers.map(u => u.userName).join(', '))
       ),
       // Проверка сроков
-      expiryIssues.length > 0 && h('div', { className: 'metric-card-anim', style: { ...mc(), position: 'relative', animationDelay: '0.35s' }, title: expiryIssues.map(i => `${i.worker.name}: ${i.type === 'licence' ? i.detail : i.type === 'medical' ? 'медосмотр' : 'инструктаж'}`).join(', ') },
+      expiryIssues.length > 0 && h('div', { style: { ...mc(), position: 'relative' }, title: expiryIssues.map(i => `${i.worker.name}: ${i.type === 'licence' ? i.detail : i.type === 'medical' ? 'медосмотр' : 'инструктаж'}`).join(', ') },
         h('div', { style: { fontSize: 28, fontWeight: 600, color: RD2 } }, '⚠'),
         h('div', { style: { fontSize: 9, color: RD, textTransform: 'uppercase', fontWeight: 600 } }, 'Сроки'),
         h('div', { style: { position: 'absolute', top: -8, right: -8, width: 24, height: 24, borderRadius: '50%', background: RD, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600 } }, expiryIssues.length)
@@ -397,10 +389,7 @@ const Dashboard = memo(({ data, addToast, onOrderClick }) => {
               const elapsed = op.startedAt ? fmtDur(now() - op.startedAt) : '—';
               const isLong = op.plannedHours && op.startedAt && (now() - op.startedAt) > op.plannedHours * 3600000;
               return h('div', { key: op.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8, background: isLong ? RD3 : '#f8f8f5', fontSize: 12 } },
-                h('div', { className: 'pulse-dot-wrap' },
-                  h('div', { className: 'pulse-dot-ring', style: { background: isLong ? RD : GN } }),
-                  h('div', { className: 'pulse-dot-core', style: { background: isLong ? RD : GN } })
-                ),
+                h('div', { style: { width: 8, height: 8, borderRadius: '50%', background: isLong ? RD : GN, flexShrink: 0 } }),
                 h('span', { style: { fontWeight: 500, minWidth: 100 } }, workers.join(', ') || '—'),
                 h('span', { style: { color: AM, flex: 1 } }, op.name),
                 h('span', { style: { fontSize: 10, color: '#888' } }, order?.number),
@@ -430,16 +419,13 @@ const Dashboard = memo(({ data, addToast, onOrderClick }) => {
                   : h('span', { style: { fontWeight: 500 } }, o.number),
                 h('span', { style: { color: '#888' } }, o.product),
                 o.hasDefect && h('span', { style: { fontSize: 10, color: RD, fontWeight: 500 } }, '⚠'),
-                o.daysLeft !== null && h('span', { className: o.daysLeft <= 0 ? 'overdue-blink' : '', style: { fontSize: 10, padding: '1px 6px', borderRadius: 4, background: o.daysLeft <= 0 ? RD3 : o.daysLeft <= 3 ? AM3 : GN3, color: o.daysLeft <= 0 ? RD : o.daysLeft <= 3 ? AM2 : GN2 } }, o.daysLeft <= 0 ? 'просрочен' : `${o.daysLeft}д`)
+                o.daysLeft !== null && h('span', { style: { fontSize: 10, padding: '1px 6px', borderRadius: 4, background: o.daysLeft <= 0 ? RD3 : o.daysLeft <= 3 ? AM3 : GN3, color: o.daysLeft <= 0 ? RD : o.daysLeft <= 3 ? AM2 : GN2 } }, o.daysLeft <= 0 ? 'просрочен' : `${o.daysLeft}д`)
               ),
               h('span', { style: { fontSize: 11, fontWeight: 500, color: o.pct === 100 ? GN : AM } }, `${o.done}/${o.total}`)
             ),
-            h(AnimatedBar, {
-              pct: o.pct,
-              color: o.pct === 100 ? GN : o.hasDefect ? RD : AM,
-              height: 6,
-              delay: ordersProgress.indexOf(o) * 0.06,
-            })
+            h('div', { style: { height: 6, background: '#eee', borderRadius: 3, overflow: 'hidden' } },
+              h('div', { style: { height: 6, background: o.pct === 100 ? GN : o.hasDefect ? RD : AM, borderRadius: 3, width: `${o.pct}%`, transition: 'width 0.3s' } })
+            )
           ))
     ),
 
@@ -1947,3 +1933,5 @@ if ('serviceWorker' in navigator) {
     if (!refreshing) { refreshing = true; window.location.reload(); }
   });
 }
+
+
