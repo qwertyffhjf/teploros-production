@@ -1555,24 +1555,52 @@ const AppSkeleton = memo(() => {
 });
 
 // ==================== Общие компоненты: MC (MetricCard), TabBar ====================
-// MC — карточка метрики (KPI). Использование: h(MC, { v: '42', l: 'Заказов', c: GN, onClick: fn })
-const MC = memo(({ v, l, c, onClick, fs }) => h('div', {
-  style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0, cursor: onClick ? 'pointer' : 'default' },
-  onClick
-}, h('div', { style: { fontSize: fs || 24, fontWeight: 500, color: c || 'inherit' } }, v),
-   h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase', marginTop: 2 } }, l)
-));
+// MC — карточка метрики (KPI) с анимацией появления и счётчиком для чисел.
+// Использование: h(MC, { v: 42, l: 'Заказов', c: GN, onClick: fn })
+const MC = memo(({ v, l, c, onClick, fs }) => {
+  // Анимируем только числа — строки ('42%', '—') оставляем как есть
+  const isNum   = typeof v === 'number' && isFinite(v);
+  const counted = useCountUp(isNum ? v : 0, 750);
+  const display = isNum ? counted : v;
 
-// TabBar — горизонтальные вкладки. Использование: h(TabBar, { tabs: [['id','Label']], tab, setTab })
+  return h('div', {
+    className: 'metric-card-anim',
+    style: {
+      ...S.card,
+      textAlign: 'center',
+      padding: 10,
+      marginBottom: 0,
+      cursor: onClick ? 'pointer' : 'default',
+      transition: 'transform 0.15s, box-shadow 0.15s',
+    },
+    onClick,
+    onMouseEnter: onClick ? (e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)'; } : undefined,
+    onMouseLeave: onClick ? (e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = ''; } : undefined,
+  },
+    h('div', { style: { fontSize: fs || 24, fontWeight: 500, color: c || 'inherit', fontVariantNumeric: isNum ? 'tabular-nums' : 'normal' } }, display),
+    h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase', marginTop: 2 } }, l)
+  );
+});
+
+// TabBar — горизонтальные вкладки с анимированным индикатором активной вкладки.
+// Использование: h(TabBar, { tabs: [['id','Label']], tab, setTab })
 const TabBar = memo(({ tabs, tab, setTab }) => h('div', {
   style: { display: 'flex', gap: 4, marginBottom: 14, overflowX: 'auto', borderBottom: '0.5px solid rgba(0,0,0,0.08)', paddingBottom: 8 }
-}, h('div', { className: 'tabs-scroll', style: { display: 'flex', gap: 4 } },
-  tabs.map(([id, label]) => h('button', {
-    key: id,
-    style: tab === id ? abtn({ fontSize: 12 }) : gbtn({ fontSize: 12 }),
-    onClick: () => setTab(id)
-  }, label))
-)));
+},
+  h('div', { className: 'tabs-scroll', style: { display: 'flex', gap: 4 } },
+    tabs.map(([id, label]) => h('button', {
+      key: id,
+      style: {
+        ...(tab === id ? abtn({ fontSize: 12 }) : gbtn({ fontSize: 12 })),
+        position: 'relative',
+        transition: 'background 0.18s, color 0.18s, transform 0.12s',
+      },
+      onClick: () => { navigator.vibrate?.([15]); setTab(id); },
+      onMouseEnter: (e) => { if (tab !== id) e.currentTarget.style.transform = 'translateY(-1px)'; },
+      onMouseLeave: (e) => { e.currentTarget.style.transform = ''; },
+    }, label))
+  )
+));
 
 const vibrateOnAchievement = () => { try { if (navigator.vibrate) navigator.vibrate([100, 50, 200, 50, 100]); } catch(e) {} };
 const vibrateAction = (type = 'start') => {
