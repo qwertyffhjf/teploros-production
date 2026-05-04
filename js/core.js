@@ -166,27 +166,43 @@ const calcWorkerStats = (workerId, data, nowTime) => {
 
 const checkAchievements = (workerId, data) => {
   const worker = data.workers.find(w => w.id === workerId);
-  if (!worker) return data;
+  // Возвращает { data, justEarned: [] } — всегда, даже если ничего не заработано
+  if (!worker) return { data, justEarned: [] };
+
   const nowTime = Date.now();
-  const stats = calcWorkerStats(workerId, data, nowTime);
-  const current = worker.achievements || [];
-  const newAch = [...current];
+  const stats   = calcWorkerStats(workerId, data, nowTime);
+
+  // FIX: используем Set для O(1) lookup и защиты от дублей из Firebase
+  const currentSet = new Set(worker.achievements || []);
   const justEarned = [];
+
+  // Итерируем в фиксированном порядке ключей ACHIEVEMENTS
   for (const [id, ach] of Object.entries(ACHIEVEMENTS)) {
-    if (!newAch.includes(id) && ach.condition(stats)) { newAch.push(id); justEarned.push(id); }
+    if (!currentSet.has(id) && ach.condition(stats)) {
+      currentSet.add(id);
+      justEarned.push(id);
+    }
   }
-  if (justEarned.length > 0) {
-    let d = { ...data, workers: data.workers.map(w => w.id === workerId ? { ...w, achievements: newAch } : w) };
-    // Публикация в чат
-    const achMessages = justEarned.map(aid => ({
-      id: uid(), senderId: 'system', senderName: 'Система', senderRole: 'system',
-      text: `${ACHIEVEMENTS[aid].icon} ${worker.name} получил награду «${ACHIEVEMENTS[aid].title}»! ${ACHIEVEMENTS[aid].desc}`,
-      type: 'achievement', timestamp: nowTime
-    }));
-    d.messages = [...(d.messages || []), ...achMessages].slice(-200);
-    return d;
-  }
-  return data;
+
+  if (justEarned.length === 0) return { data, justEarned: [] };
+
+  const newAchArray = [...currentSet]; // порядок: старые + новые
+  let d = {
+    ...data,
+    workers: data.workers.map(w =>
+      w.id === workerId ? { ...w, achievements: newAchArray } : w
+    ),
+  };
+
+  // Публикация в чат — одно сообщение на достижение
+  const achMessages = justEarned.map(aid => ({
+    id: uid(), senderId: 'system', senderName: 'Система', senderRole: 'system',
+    text: `${ACHIEVEMENTS[aid].icon} ${worker.name} получил награду «${ACHIEVEMENTS[aid].title}»! ${ACHIEVEMENTS[aid].desc}`,
+    type: 'achievement', timestamp: nowTime,
+  }));
+  d.messages = [...(d.messages || []), ...achMessages].slice(-200);
+
+  return { data: d, justEarned };
 };
 
 // ==================== Автоподбор исполнителя (уровень, опыт, качество, загрузка) ====================
