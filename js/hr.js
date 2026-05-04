@@ -145,8 +145,8 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
   const sendThanks = useCallback(async (toWorkerId, note) => {
     const newEvent = { id: uid(), type: 'thanks', toWorkerId, fromWorkerId: null, ts: now(), note: note || '' };
     const updated = { ...data, events: [...data.events, newEvent] };
-    const withAch = checkAchievements(toWorkerId, updated);
-    const final = withAch !== updated ? withAch : updated;
+    const { data: achData } = checkAchievements(toWorkerId, updated);
+    const final = achData;
     await DB.save(final); onUpdate(final); setThanksModal(null); setThanksNote(''); addToast('Благодарность отправлена', 'success');
   }, [data, onUpdate, addToast]);
 
@@ -619,7 +619,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
         h('span', { style: { color: '#aaa', fontSize: 10, alignSelf: 'center' } }, '· Нажмите ячейку для переключения')
       ),
       // Матрица с уровнями
-      h('div', { style: { ...S.card, padding: 0, overflowX: 'auto', overflowY: 'auto', maxHeight: '70vh', WebkitOverflowScrolling: 'touch' } }, h('table', { style: { borderCollapse:'collapse', minWidth: 600, fontSize:12 } },
+      h('div', { style: { ...S.card, padding: 0, overflow: 'auto', maxHeight: '70vh' } }, h('table', { style: { borderCollapse:'collapse', width:'100%', fontSize:12 } },
         h('thead', null, h('tr', null,
           h('th', { style: { ...S.th, position: 'sticky', top: 0, left: 0, zIndex: 3, background: '#f8f8f5', minWidth: 160, boxShadow: '2px 0 4px rgba(0,0,0,0.06)' }, scope: 'col' }, 'Сотрудник'),
           stagesForMatrix.map(s => {
@@ -628,7 +628,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
             return h('th', { key: s.id, style: { ...S.th, borderBottom: `3px solid ${color}`, position: 'sticky', top: 0, zIndex: 2, background: '#f8f8f5', whiteSpace: 'nowrap', minWidth: 90 } }, s.name);
           })
         )),
-        h('tbody', null, data.workers.filter(w => !w.archived).map((w, idx) => h('tr', { key: w.id, style: { transition: 'background 0.12s' }, onMouseEnter: e => e.currentTarget.style.background = 'rgba(239,159,39,0.05)', onMouseLeave: e => e.currentTarget.style.background = '' },
+        h('tbody', null, data.workers.filter(w => !w.archived).map(w => h('tr', { key: w.id },
           h('td', { style: { ...S.td, fontWeight:500, position: 'sticky', left: 0, zIndex: 1, background: '#fff', boxShadow: '2px 0 4px rgba(0,0,0,0.06)', minWidth: 160 } }, w.name),
           stagesForMatrix.map(s => {
             const level = (w.competenceLevels || {})[s.name] || 0;
@@ -783,14 +783,13 @@ const InstructionsTracker = memo(({ data, onUpdate, addToast }) => {
 
     // Матрица: сотрудник × виды инструктажей
     h('div', { style:{ ...S.card, padding:0, overflow:'auto', maxHeight:'60vh' } },
-      h('div', { style: { overflowX: 'auto', WebkitOverflowScrolling: 'touch', borderRadius: 'inherit' } },
-      h('table', { style:{ borderCollapse:'collapse', fontSize:11, minWidth: 560 } },
+      h('table', { style:{ borderCollapse:'collapse', fontSize:11, width:'100%' } },
         h('thead', null, h('tr', null,
-          h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'#f8f8f5', minWidth:160, textAlign:'left', padding:'6px 10px', boxShadow: '2px 0 4px rgba(0,0,0,0.06)' } }, 'Сотрудник'),
+          h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'#f8f8f5', minWidth:160, textAlign:'left', padding:'6px 10px' } }, 'Сотрудник'),
           INSTRUCTION_TYPES.map(t => h('th', { key:t.id, style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:90, fontSize:10 } }, t.label))
         )),
         h('tbody', null, shown.map(({ worker: w, byType }) =>
-          h('tr', { key:w.id, style: { transition: 'background 0.12s' }, onMouseEnter: e => e.currentTarget.style.background = 'rgba(239,159,39,0.05)', onMouseLeave: e => e.currentTarget.style.background = '' },
+          h('tr', { key:w.id },
             h('td', { style:{ ...S.td, position:'sticky', left:0, background:'#fff', zIndex:1, padding:'6px 10px', fontWeight:500, boxShadow:'2px 0 4px rgba(0,0,0,0.04)' } }, w.name),
             INSTRUCTION_TYPES.map(t => {
               const instr = byType[t.id];
@@ -808,7 +807,6 @@ const InstructionsTracker = memo(({ data, onUpdate, addToast }) => {
           )
         ))
       )
-      ) // конец scroll-wrapper
     ),
 
     // Последние записи с пагинацией
@@ -935,8 +933,7 @@ const VacationPlanner = memo(({ data, onUpdate, addToast }) => {
     ),
 
     h('div', { style:{ ...S.card, padding:0 } },
-      h('div', { style: { overflowX: 'auto', WebkitOverflowScrolling: 'touch' } },
-      h('table', { style:{ borderCollapse:'collapse', minWidth: 520, fontSize:12 } },
+      h('table', { style:{ borderCollapse:'collapse', width:'100%', fontSize:12 } },
         h('thead', null, h('tr', null,
           ['Сотрудник','Начало','Конец','Дней','Статус','Утверждён',''].map((t,i) => h('th', { key:i, style:S.th }, t))
         )),
@@ -944,7 +941,7 @@ const VacationPlanner = memo(({ data, onUpdate, addToast }) => {
           const w = data.workers.find(x => x.id === v.workerId);
           const st = getVacStatus(v);
           const [bg, cl] = statusColors[st];
-          return h('tr', { key:v.id, style: { transition: 'background 0.12s' }, onMouseEnter: e => e.currentTarget.style.background = 'rgba(239,159,39,0.05)', onMouseLeave: e => e.currentTarget.style.background = '' },
+          return h('tr', { key:v.id },
             h('td', { style:S.td }, w?.name || '—'),
             h('td', { style:S.td }, v.startDate),
             h('td', { style:S.td }, v.endDate),
@@ -958,7 +955,6 @@ const VacationPlanner = memo(({ data, onUpdate, addToast }) => {
         })),
         vacations.length === 0 && h('tr', null, h('td', { colSpan:7, style:{ ...S.td, textAlign:'center', color:'#888', padding:24 } }, 'Нет записей об отпусках'))
       )
-      ) // конец scroll-wrapper
     )
   );
 });
@@ -1050,7 +1046,7 @@ const MonthlyReport = memo(({ data }) => {
     ),
 
     h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10, marginBottom:16 } },
-      kpi.map(([v,l,c], idx) => h(MC, { key: l, v, l, c, fs: 26, style: { animationDelay: `${idx * 0.06}s` } }))
+      kpi.map(([v,l,c]) => h(MC, { key: l, v, l, c, fs: 26 }))
     ),
 
     report.topWorkers.length > 0 && h('div', { style:S.card },
