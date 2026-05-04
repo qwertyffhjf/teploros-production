@@ -272,11 +272,32 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     }
     const result = buildStartUpdate(data, op, workerId);
     const updated = { ...data, ops: result.ops, events: result.events };
-    await DB.save(updated); onUpdate(updated);
-    setActiveOp({ ...op, status: 'in_progress', startedAt: result._startedAt, workerIds: [...(op.workerIds || []), workerId] });
+
+    // ── Optimistic update: обновляем UI мгновенно, не ждём Firebase ──
+    const optimisticOp = { ...op, status: 'in_progress', startedAt: result._startedAt, workerIds: [...(op.workerIds || []), workerId] };
+    setActiveOp(optimisticOp);
+    onUpdate(updated);  // UI обновляется немедленно
     vibrateAction('start');
     addToast(`Операция "${op.name}" начата` + (!result._hasCheckin ? ' · Рабочий день начат' : ''), 'success');
+
+    // Сохраняем в Firebase в фоне — при ошибке откатываем
+    DB.save(updated).catch(err => {
+      setActiveOp(null);
+      onUpdate(data);  // откат к предыдущему состоянию
+      addToast('Ошибка сохранения — проверьте соединение', 'error');
+      vibrateAction('error');
+    });
   }, [data, workerId, worker, onUpdate, addToast]);
+
+  // Валидация формы дефекта перед отправкой
+  const [defFormErrors, setDefFormErrors] = useState({});
+  const validateDefectForm = useCallback(() => {
+    const errors = {};
+    if (!defectReasonId) errors.defectReasonId = 'Выберите тип дефекта';
+    if (!defNote.trim())  errors.defNote = 'Опишите дефект';
+    setDefFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  }, [defectReasonId, defNote]);
 
   const doFinish = useCallback(async (op, isDefect = false, isRework = false, source = 'current') => {
     if (op.status !== 'in_progress') return;
@@ -295,11 +316,20 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
         if (achInfo) { vibrateOnAchievement(); addToast(`${achInfo.icon} Достижение: ${achInfo.title}!`, 'success'); }
       }
     }
-    await DB.save(final); onUpdate(final);
+    // ── Optimistic update: сбрасываем UI немедленно ──
+    const prevData = data;
+    onUpdate(final);
     vibrateAction('finish');
     setActiveOp(null); setShowDefForm(false); setDefNote(''); setDefectReasonId('');
     setWeldParams({ seamNumber: '', electrode: '', result: 'ok' });
     addToast(`Операция "${op.name}" завершена (${STATUS[status]?.label || status})`, 'info');
+
+    // Сохраняем в Firebase в фоне
+    DB.save(final).catch(err => {
+      onUpdate(prevData);  // откат
+      addToast('Ошибка сохранения — данные не записаны', 'error');
+      vibrateAction('error');
+    });
     // Показать модал расхода материалов только если функция включена в настройках
     if ((status === 'done' || status === 'on_check') && data.materials.length > 0
         && data.settings?.materialTrackingEnabled) {
@@ -330,9 +360,15 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     const ts = now(); const shift = getCurrentShift(data?.settings?.shifts); const duration = downtimeStartedAt ? ts - downtimeStartedAt : 0;
     const newEvent = { id: uid(), type: 'downtime', workerId, opId: activeOp?.id || null, ts, downtimeTypeId: selectedDowntimeType, shift, startedAt: downtimeStartedAt || ts, duration, equipmentId: downtimeEquipmentId || undefined };
     const updated = { ...data, events: [...data.events, newEvent] };
-    await DB.save(updated); onUpdate(updated);
+    // ── Optimistic update для простоя ──
+    const prevDataDowntime = data;
+    onUpdate(updated);
     setShowDowntimeModal(false); setSelectedDowntimeType(''); setDowntimeStartedAt(null); setDowntimeEquipmentId('');
     addToast(`Простой зафиксирован (${fmtDur(duration)})`, 'success');
+    DB.save(updated).catch(() => {
+      onUpdate(prevDataDowntime);
+      addToast('Ошибка сохранения простоя', 'error');
+    });
   }, [data, workerId, activeOp, selectedDowntimeType, downtimeStartedAt, onUpdate, addToast]);
 
   // Отмена вспомогательной операции (только свои, pending/in_progress)
@@ -372,11 +408,17 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
           h('button', { type: 'button', style: defectFromPrev ? rbtn({ flex: 1, fontSize: 11 }) : gbtn({ flex: 1, fontSize: 11 }), onClick: () => setDefectFromPrev(true) }, 'С предыдущего участка'),
           h('button', { type: 'button', style: !defectFromPrev ? rbtn({ flex: 1, fontSize: 11 }) : gbtn({ flex: 1, fontSize: 11 }), onClick: () => setDefectFromPrev(false) }, 'Текущий этап')
         ),
-        h('select', { style: { ...S.inp, width: '100%', marginBottom: 8 }, value: defectReasonId, onChange: e => setDefectReasonId(e.target.value) },
+        h('div', { className: defFormErrors.defectReasonId ? 'field-error' : defectReasonId ? 'field-valid' : '' },
+          h('select', { style: { ...S.inp, width: '100%', marginBottom: defFormErrors.defectReasonId ? 2 : 8 }, value: defectReasonId, onChange: e => { setDefectReasonId(e.target.value); setDefFormErrors(p => ({ ...p, defectReasonId: '' })); } },
           h('option', { value: '' }, '— выберите причину —'),
           (data.defectReasons || []).map(r => h('option', { key: r.id, value: r.id }, r.name))
+          ),
+          defFormErrors.defectReasonId && h('div', { className: 'error-hint', style: { marginBottom: 6 } }, defFormErrors.defectReasonId)
         ),
-        h('textarea', { style: { ...S.inp, width: '100%', marginBottom: 8 }, rows: 2, placeholder: 'Опишите дефект...', value: defNote, onChange: e => setDefNote(e.target.value) }),
+        h('div', { className: defFormErrors.defNote ? 'field-error' : defNote.trim() ? 'field-valid' : '' },
+          h('textarea', { style: { ...S.inp, width: '100%', marginBottom: defFormErrors.defNote ? 2 : 8 }, rows: 2, placeholder: 'Опишите дефект...', value: defNote, onChange: e => { setDefNote(e.target.value); setDefFormErrors(p => ({ ...p, defNote: '' })); } }),
+          defFormErrors.defNote && h('div', { className: 'error-hint', style: { marginBottom: 6 } }, defFormErrors.defNote)
+        ),
         h('div', { style: { display: 'flex', gap: 6 } },
           h('button', { type: 'button', style: rbtn({ flex: 1 }), onClick: () => doFinish(op, true, false, source) }, 'Зафиксировать брак'),
           h('button', { type: 'button', style: { ...gbtn({ flex: 1 }), color: AM2, borderColor: AM4 }, onClick: () => doFinish(op, false, true, source) }, 'На переделку'),
@@ -617,9 +659,9 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
                 ),
                 h('textarea', { style: { ...S.inp, marginBottom: 10 }, rows: 2, placeholder: 'Опишите дефект...', value: defNote, onChange: e => setDefNote(e.target.value) }),
                 h('div', { style: { display: 'flex', gap: 8 } },
-                  h('button', { style: rbtn({ flex: 1, minHeight: 52, fontSize: 14 }), onClick: () => { vibrateAction('error'); doFinish(active, true, false, defectFromPrev ? 'previous_stage' : 'current'); } }, 'Зафиксировать брак'),
-                  h('button', { style: { ...gbtn({ flex: 1, minHeight: 52, fontSize: 14 }), color: AM2, borderColor: AM4 }, onClick: () => { navigator.vibrate?.([30]); doFinish(active, false, true, defectFromPrev ? 'previous_stage' : 'current'); } }, 'На переделку'),
-                  h('button', { style: gbtn({ minHeight: 52, padding: '8px 14px' }), onClick: () => { navigator.vibrate?.([20]); setShowDefForm(false); setDefectFromPrev(false); } }, 'Отмена')
+                  h('button', { style: rbtn({ flex: 1, minHeight: 52, fontSize: 14 }), onClick: () => { if (!validateDefectForm()) { vibrateAction('error'); return; } vibrateAction('error'); doFinish(active, true, false, defectFromPrev ? 'previous_stage' : 'current'); } }, 'Зафиксировать брак'),
+                  h('button', { style: { ...gbtn({ flex: 1, minHeight: 52, fontSize: 14 }), color: AM2, borderColor: AM4 }, onClick: () => { if (!validateDefectForm()) { vibrateAction('error'); return; } navigator.vibrate?.([30]); doFinish(active, false, true, defectFromPrev ? 'previous_stage' : 'current'); } }, 'На переделку'),
+                  h('button', { style: gbtn({ minHeight: 52, padding: '8px 14px' }), onClick: () => { navigator.vibrate?.([20]); setShowDefForm(false); setDefectFromPrev(false); setDefFormErrors({}); } }, 'Отмена')
                 )
               )
             : h('div', null,
@@ -967,4 +1009,3 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   confirmEl
   );
 });
-
