@@ -43,11 +43,13 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
     const newPin = pinChanged ? hashPin(form.pin.trim()) : (existingWorker?.pin || '');
     if (editingWorker) {
       const d = { ...data, workers: data.workers.map(w => w.id === editingWorker ? { ...w, name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: newPin, sectionId: form.sectionId || null, competences: form.competences, competenceLevels: form.competenceLevels || {}, competenceMeta: form.competenceMeta || {}, status: form.status, phone: form.phone.trim(), hireDate: form.hireDate || null, email: form.email.trim(), emergencyContact: form.emergencyContact.trim(), medicalExamDate: form.medicalExamDate || null, medicalExamNextDate: form.medicalExamNextDate || null, licences: form.licences || [] } : w) };
-      await DB.save(d); onUpdate(d); addToast('Сотрудник обновлён', 'success');
+      onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+      addToast(`Данные ${form.name.trim()} обновлены`, 'success');
     } else {
       const w = { id: uid(), name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: newPin, sectionId: form.sectionId || null, competences: form.competences, competenceLevels: form.competenceLevels || {}, competenceMeta: form.competenceMeta || {}, status: form.status, phone: form.phone.trim(), hireDate: form.hireDate || null, email: form.email.trim(), emergencyContact: form.emergencyContact.trim(), medicalExamDate: form.medicalExamDate || null, medicalExamNextDate: form.medicalExamNextDate || null, licences: form.licences || [] };
       const d = { ...data, workers: [...data.workers, w] };
-      await DB.save(d); onUpdate(d); addToast('Сотрудник добавлен', 'success');
+      onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+      addToast(`${form.name.trim()} добавлен в систему`, 'success');
     }
     resetForm();
   }, [form, editingWorker, data, onUpdate, addToast]);
@@ -60,7 +62,9 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
       ops: data.ops.map(o => (o.status === 'pending' && o.workerIds?.includes(id)) ? { ...o, workerIds: o.workerIds.filter(wid => wid !== id) } : o)
     };
     d = logAction(d, 'worker_archive', { workerId: id, workerName: name });
-    await DB.save(d); onUpdate(d); addToast('Сотрудник архивирован (история сохранена)', 'info');
+    const prevWorker = data;
+    onUpdate(d); DB.save(d).catch(() => onUpdate(prevWorker));
+    addToast(`${name} архивирован — история сохранена`, 'info', { label: 'Отменить', action: () => { onUpdate(prevWorker); DB.save(prevWorker).catch(()=>{}); }, ttl: 5000 });
   }, [data, onUpdate, addToast]);
 
   const permanentDelete = useCallback(async id => {
@@ -72,7 +76,8 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
       workers: data.workers.filter(w => w.id !== id),
       ops: data.ops.map(o => o.workerIds?.includes(id) ? { ...o, workerIds: o.workerIds.filter(wid => wid !== id) } : o)
     };
-    await DB.save(d); onUpdate(d); addToast('Сотрудник удалён', 'info');
+    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    addToast(`${data.workers.find(w=>w.id===id)?.name || 'Сотрудник'} удалён из системы`, 'info');
   }, [data, onUpdate, addToast]);
 
   const edit = useCallback(w => { setForm({ name: w.name, position: w.position || '', grade: w.grade || '', tabNumber: w.tabNumber || '', pin: '', sectionId: w.sectionId || '', competences: w.competences || [], competenceLevels: w.competenceLevels || {}, competenceMeta: w.competenceMeta || {}, status: w.status || 'working', phone: w.phone || '', hireDate: w.hireDate || '', email: w.email || '', emergencyContact: w.emergencyContact || '', medicalExamDate: w.medicalExamDate || '', medicalExamNextDate: w.medicalExamNextDate || '', licences: w.licences || [] }); setEditingWorker(w.id); setShowAddForm(false); }, []);
@@ -91,7 +96,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
       }
     }
     d = logAction(d, 'worker_status', { workerId: id, workerName: data.workers.find(w => w.id === id)?.name, newStatus: status });
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
     if (status === 'working') addToast('На смене — 8ч записано в табель', 'info');
   }, [data, onUpdate, addToast]);
   // Автоопределение смены по времени (+3 МСК)
@@ -147,7 +152,9 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
     const updated = { ...data, events: [...data.events, newEvent] };
     const { data: achData } = checkAchievements(toWorkerId, updated);
     const final = achData;
-    await DB.save(final); onUpdate(final); setThanksModal(null); setThanksNote(''); addToast('Благодарность отправлена', 'success');
+    onUpdate(final); DB.save(final).catch(() => onUpdate(data));
+    setThanksModal(null); setThanksNote('');
+    addToast('Благодарность отправлена 🤝', 'success');
   }, [data, onUpdate, addToast]);
 
   const [showArchivedWorkers, setShowArchivedWorkers] = useState(false);
@@ -183,7 +190,8 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
   const restoreWorker = useCallback(async id => {
     let d = { ...data, workers: data.workers.map(w => w.id === id ? { ...w, archived: false, status: 'working', dismissedAt: null } : w) };
     d = logAction(d, 'worker_restore', { workerId: id, workerName: data.workers.find(w => w.id === id)?.name });
-    await DB.save(d); onUpdate(d); addToast('Сотрудник восстановлен', 'success');
+    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    addToast(`${data.workers.find(w=>w.id===id)?.name || 'Сотрудник'} восстановлен`, 'success');
   }, [data, onUpdate, addToast]);
 
   const summary = useMemo(() => {
@@ -398,7 +406,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
           d = { ...d, timesheet: { ...(d.timesheet || {}), [tsKey]: { ...((d.timesheet || {})[tsKey] || {}), [w.id]: { ...workerTs, [day]: { h: 8 } } } } };
           d = { ...d, workers: d.workers.map(x => x.id === w.id ? { ...x, status: 'working' } : x) };
         });
-        await DB.save(d); onUpdate(d);
+        onUpdate(d); DB.save(d).catch(() => onUpdate(data));
         addToast(`✓ Явка отмечена: ${toMark.length} сотрудников`, 'success');
       }}, (() => {
           const t = new Date();
@@ -473,7 +481,8 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
           });
         if (!items.length) { addToast('Все сотрудники уже существуют', 'info'); return; }
         const d = { ...data, workers: [...data.workers, ...items] };
-        await DB.save(d); onUpdate(d); addToast(`Добавлено: ${items.length}`, 'success');
+        onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+        addToast(`Добавлено сотрудников: ${items.length}`, 'success');
       }}),
     viewMode === 'list' ? h('div', null,
       showAddForm && renderWorkerForm(),
@@ -642,7 +651,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
               const newLevel = (level + 1) % 4;
               const { newLevels, newComps } = applyCompetenceLevel(w.competenceLevels, w.competences, s.name, newLevel);
               const d = { ...data, workers: data.workers.map(ww => ww.id === w.id ? { ...ww, competences: newComps, competenceLevels: newLevels } : ww) };
-              await DB.save(d); onUpdate(d);
+              onUpdate(d); DB.save(d).catch(() => onUpdate(data));
             }},
               h('span', { style: { display: 'inline-block', padding: '3px 8px', borderRadius: 6, fontSize: 10, fontWeight: 500, background: lc.bg, color: lc.cl, minWidth: 36 } }, lc.label)
             );
@@ -681,7 +690,7 @@ const InstructionsTracker = memo(({ data, onUpdate, addToast }) => {
     const nextDate = type?.months ? new Date(form.date).setMonth(new Date(form.date).getMonth() + type.months) : null;
     const entry = { id: uid(), workerId: form.workerId, type: form.type, date: form.date, dateMs, nextDate, conductedBy: form.conductedBy.trim(), note: form.note.trim(), createdAt: now() };
     const d = { ...data, instructions: [...instructions, entry] };
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
     setForm({ workerId: '', type: 'workplace', date: new Date().toISOString().slice(0,10), conductedBy: '', note: '' });
     setShowForm(false); addToast('Инструктаж записан', 'success');
   }, [data, instructions, form, onUpdate, addToast]);
@@ -689,7 +698,9 @@ const InstructionsTracker = memo(({ data, onUpdate, addToast }) => {
   const del = useCallback(async (id) => {
     if (!(await askConfirm({ message: 'Удалить запись об инструктаже?' }))) return;
     const d = { ...data, instructions: instructions.filter(i => i.id !== id) };
-    await DB.save(d); onUpdate(d); addToast('Удалено', 'info');
+    const prevInstr = data;
+    onUpdate(d); DB.save(d).catch(() => onUpdate(prevInstr));
+    addToast('Инструктаж удалён', 'info', { label: 'Отменить', action: () => { onUpdate(prevInstr); DB.save(prevInstr).catch(()=>{}); }, ttl: 5000 });
   }, [data, instructions, onUpdate, addToast]);
 
   // Статус инструктажа
@@ -857,20 +868,22 @@ const VacationPlanner = memo(({ data, onUpdate, addToast }) => {
     const days = Math.ceil((end - start) / 86400000) + 1;
     const entry = { id: uid(), workerId: form.workerId, startDate: form.startDate, endDate: form.endDate, days, note: form.note.trim(), createdAt: now(), approved: false };
     const d = { ...data, vacations: [...vacations, entry] };
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
     setForm({ workerId:'', startDate:'', endDate:'', note:'' }); setShowForm(false);
     addToast(`Отпуск ${days} дней записан`, 'success');
   }, [data, vacations, form, onUpdate, addToast]);
 
   const toggle = useCallback(async (id) => {
     const d = { ...data, vacations: vacations.map(v => v.id === id ? { ...v, approved: !v.approved } : v) };
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
   }, [data, vacations, onUpdate]);
 
   const del = useCallback(async (id) => {
     if (!(await askConfirm({ message: 'Удалить запись об отпуске?' }))) return;
     const d = { ...data, vacations: vacations.filter(v => v.id !== id) };
-    await DB.save(d); onUpdate(d); addToast('Удалено', 'info');
+    const prevVac = data;
+    onUpdate(d); DB.save(d).catch(() => onUpdate(prevVac));
+    addToast('Отпуск удалён', 'info', { label: 'Отменить', action: () => { onUpdate(prevVac); DB.save(prevVac).catch(()=>{}); }, ttl: 5000 });
   }, [data, vacations, onUpdate, addToast]);
 
   const getVacStatus = (v) => {
