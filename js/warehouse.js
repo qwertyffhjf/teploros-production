@@ -53,7 +53,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId }) => {
     };
 
     const d = { ...data, materialDeliveries: updDeliveries, materials: updMaterials, events: [...data.events, event] };
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
 
     const label = isPartial ? `Частичная поставка: ${qty} ${confirmModal.unit}` : `Поставка подтверждена: ${qty} ${confirmModal.unit}`;
     addToast(`✓ ${label}`, 'success');
@@ -94,10 +94,10 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId }) => {
     ),
 
     deliveries.length === 0
-      ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888', padding: 32 } },
+      ? h('div', { style: S.card },
           filterStatus === 'pending'
-            ? h('div', null, h('div', { style: { fontSize: 24, marginBottom: 8 } }, '✅'), 'Все поставки подтверждены')
-            : 'Нет поставок'
+            ? h(EmptyState, { icon: '✅', title: 'Все поставки подтверждены', desc: 'Ожидающих поставок нет', positive: true })
+            : h(EmptyState, { icon: '📦', title: 'Нет поставок', desc: 'Добавьте первую поставку материалов', action: 'Добавить поставку', onAction: () => setShowForm(true) })
         )
       : h('div', null,
           deliveries.map((del, idx) => {
@@ -450,7 +450,7 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
       }
     });
     const d = { ...data, materials, events: newEvents };
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
     const nc = preview.filter(r => r.matchType === 'new').length;
     const uc = preview.filter(r => r.matchType !== 'new').length;
     addToast(`${mode === 'receipt' ? 'Приход' : 'Обновление'}: ${uc} обновлено, ${nc} новых`, 'success');
@@ -735,7 +735,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
     const updatedMaterials = data.materials.map(m => m.id === receiveForm.materialId ? { ...m, quantity: m.quantity + qty, batch: receiveForm.batch || m.batch } : m);
     const event = { id: uid(), type: 'material_receive', materialId: receiveForm.materialId, qty, batch: receiveForm.batch, ts: now() };
     const d = { ...data, materials: updatedMaterials, events: [...data.events, event] };
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
     const mat = data.materials.find(m => m.id === receiveForm.materialId);
     setReceiveForm({ materialId: '', qty: '', batch: '' });
     addToast(`Принято: ${mat?.name} +${qty} ${mat?.unit}`, 'success');
@@ -744,7 +744,8 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
   // Выдача по заявке
   const fulfillRequest = useCallback(async (eventId) => {
     const d = { ...data, events: data.events.map(e => e.id === eventId ? { ...e, fulfilled: true, fulfilledAt: now() } : e) };
-    await DB.save(d); onUpdate(d); addToast('Заявка выполнена', 'success');
+    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    addToast('Заявка выполнена ✓', 'success');
   }, [data, onUpdate, addToast]);
 
   const totalValue = data.materials.reduce((s, m) => s + m.quantity * (m.unitCost || 0), 0);
@@ -785,7 +786,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
         }}, '📥 Экспорт Excel')
       ),
       // Таблица
-      data.materials.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888' } }, 'Нет материалов') :
+      data.materials.length === 0 ? h('div', { style: S.card }, h(EmptyState, { icon: '🗄️', title: 'Нет материалов', desc: 'Добавьте первый материал на склад', action: 'Добавить материал', onAction: () => setShowMatForm(true) })) :
         h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
           h('thead', null, h('tr', null, ['Материал', 'Остаток', 'Зарезерв.', 'Свободно', 'Мин.', 'Цена', 'Стоимость'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
           h('tbody', null, [...data.materials].sort((a, b) => {
@@ -812,7 +813,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
 
     // Заявки
     tab === 'requests' && h('div', null,
-      materialRequests.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888', padding: 24 } }, 'Нет открытых заявок') :
+      materialRequests.length === 0 ? h('div', { style: S.card }, h(EmptyState, { icon: '✓', title: 'Нет открытых заявок', desc: 'Все заявки выполнены', positive: true, compact: true })) :
         materialRequests.map(req => h('div', { key: req.id, style: { ...S.card, padding: 12, borderLeft: `4px solid ${AM}` } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
             h('div', null,
@@ -855,7 +856,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
 
     // Движение
     tab === 'history' && h('div', null,
-      movements.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888' } }, 'Нет движений') :
+      movements.length === 0 ? h('div', { style: S.card }, h(EmptyState, { icon: '📊', title: 'Нет движений', desc: 'История приходов и расходов пуста', compact: true })) :
         h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
           h('thead', null, h('tr', null, ['Дата', 'Тип', 'Материал', 'Кол-во', 'Контекст'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
           h('tbody', null, movements.map((m, i) => h('tr', { key: i },
