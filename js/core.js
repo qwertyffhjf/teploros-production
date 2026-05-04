@@ -1254,6 +1254,114 @@ const ElapsedTimer = memo(({ startedAt, style }) => {
 });
 
 
+// ==================== useDebounce — дебаунс значения ====================
+// Возвращает значение которое обновляется только после паузы в delay мс.
+// Использование: const debouncedSearch = useDebounce(search, 400);
+const useDebounce = (value, delay = 500) => {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(id);
+  }, [value, delay]);
+  return debounced;
+};
+
+// ==================== useDebouncedSave — дебаунс сохранения ====================
+// Откладывает DB.save на delay мс после последнего изменения.
+// Полезно для часто обновляемых полей (поиск, матрица компетенций).
+// Использование:
+//   const scheduleSave = useDebouncedSave(data, onUpdate, 800);
+//   scheduleSave(newData); // вызывать при каждом изменении
+const useDebouncedSave = (data, onUpdate, delay = 800) => {
+  const timerRef  = useRef(null);
+  const pendingRef = useRef(null);
+
+  // При размонтировании — сбрасываем таймер (НЕ сохраняем — это намеренно,
+  // финальное сохранение должно идти через явный save)
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+
+  return useCallback((newData) => {
+    // Optimistic update — мгновенно
+    onUpdate(newData);
+    pendingRef.current = newData;
+
+    // Сбрасываем предыдущий таймер
+    if (timerRef.current) clearTimeout(timerRef.current);
+
+    // Откладываем сохранение
+    timerRef.current = setTimeout(async () => {
+      const toSave = pendingRef.current;
+      if (!toSave) return;
+      pendingRef.current = null;
+      window._tpSaveCount = (window._tpSaveCount || 0) + 1;
+      window.dispatchEvent(new CustomEvent('_tpSaveStart'));
+      try {
+        await DB.save(toSave);
+      } catch {
+        onUpdate(data); // откат при ошибке
+      } finally {
+        window._tpSaveCount = Math.max(0, (window._tpSaveCount || 1) - 1);
+        window.dispatchEvent(new CustomEvent('_tpSaveEnd'));
+      }
+    }, delay);
+  }, [data, onUpdate, delay]);
+};
+
+// ==================== useIsDirty — отслеживание несохранённых изменений ====================
+// Сравнивает текущее значение формы с исходным.
+// Использование:
+//   const isDirty = useIsDirty(form, initialForm);
+const useIsDirty = (current, initial) => {
+  return useMemo(() => {
+    if (!initial) return false;
+    return JSON.stringify(current) !== JSON.stringify(initial);
+  }, [current, initial]);
+};
+
+// ==================== useDirtyGuard — защита от потери несохранённых данных ====================
+// Оборачивает функцию закрытия формы — спрашивает подтверждение если есть изменения.
+// Использование:
+//   const guardedClose = useDirtyGuard(isDirty, resetForm, 'Закрыть без сохранения?');
+const useDirtyGuard = (isDirty, onClose, message = 'Есть несохранённые изменения. Закрыть без сохранения?') => {
+  return useCallback(async () => {
+    if (!isDirty) { onClose(); return; }
+    const ok = await askConfirm({
+      message,
+      detail: 'Введённые данные будут потеряны',
+      danger: true,
+      confirmText: 'Закрыть',
+      cancelText: 'Остаться',
+    });
+    if (ok) onClose();
+  }, [isDirty, onClose, message]);
+};
+
+// ==================== DirtyBadge — индикатор несохранённых изменений ====================
+// Маленькая метка рядом с заголовком формы.
+// Использование: isDirty && h(DirtyBadge)
+const DirtyBadge = memo(() =>
+  h('span', {
+    style: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 3,
+      fontSize: 10,
+      color: AM2,
+      background: AM3,
+      border: `0.5px solid ${AM4}`,
+      borderRadius: 10,
+      padding: '1px 7px',
+      fontWeight: 500,
+      animation: '_tpFadeIn 0.2s ease-out both',
+      verticalAlign: 'middle',
+      marginLeft: 6,
+    }
+  },
+    h('span', { style: { width: 5, height: 5, borderRadius: '50%', background: AM, display: 'inline-block' } }),
+    'Не сохранено'
+  )
+);
+
 // ==================== EmptyState — пустое состояние с подсказкой ====================
 // Использование:
 //   h(EmptyState, { icon: '📋', title: 'Нет заказов', desc: 'Создайте первый заказ', action: 'Создать заказ', onAction: () => setShowForm(true) })
