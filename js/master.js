@@ -1661,8 +1661,11 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
     const workerId = op.workerIds?.[0];
     const result = buildFinishUpdate(data, op, workerId, { isDefect, isRework, source, defNote, defectReasonId, weldParams });
     const updated = { ...data, ops: result.ops, events: result.events, reclamations: result.reclamations };
-    const allAchUpdated = (op.workerIds || []).reduce((acc, wid) => { const r = checkAchievements(wid, acc); return r; }, updated);
-    const final = allAchUpdated !== updated ? allAchUpdated : updated;
+    const allAchUpdated = (op.workerIds || []).reduce((acc, wid) => {
+      const { data: d } = checkAchievements(wid, acc);
+      return d;
+    }, updated);
+    const final = allAchUpdated;
     await DB.save(final); onUpdate(final);
     setShowDefForm(false); setDefNote(''); setDefectReasonId(''); setWeldParams({ seamNumber:'', electrode:'', result:'ok' });
     addToast('Операция завершена', 'info');
