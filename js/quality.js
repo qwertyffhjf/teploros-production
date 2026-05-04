@@ -154,7 +154,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
     const thankEvents = realWorkerIds.map(wid => ({ id: uid(), type: 'thanks', toWorkerId: wid, fromWorkerId: 'master', ts: now(), note: '8D расследование' }));
     if (thankEvents.length) d.events = [...d.events, ...thankEvents];
     let final = d;
-    realWorkerIds.forEach(wid => { const checked = checkAchievements(wid, final); if (checked !== final) final = checked; });
+    realWorkerIds.forEach(wid => { const { data: checked } = checkAchievements(wid, final); final = checked; });
     await DB.save(final); onUpdate(final);
     addToast(`Рекламация закрыта. Благодарность отправлена: ${realWorkerIds.length} сотр.${realWorkerIds.length === 0 ? ' (в команде только мастер)' : ''}`, 'success');
   }, [data, onUpdate, addToast]);
@@ -458,3 +458,6 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
         })
   );
 });
+
+
+
