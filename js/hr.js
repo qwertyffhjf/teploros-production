@@ -17,6 +17,7 @@ const applyCompetenceLevel = (currentLevels = {}, currentComps = [], stageName, 
 // ==================== MasterWorkers ====================
 const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 300); // 300мс — быстрый поиск без лагов
   const [statusFilter, setStatusFilter] = useState('all');
   const [sectionFilter, setSectionFilter] = useState('');
   const [positionFilter, setPositionFilter] = useState('');
@@ -30,6 +31,11 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
   const [form, setForm] = useState({ name: '', position: '', grade: '', tabNumber: '', pin: '', sectionId: '', competences: [], competenceLevels: {}, competenceMeta: {}, status: 'working', phone: '', hireDate: '', email: '', emergencyContact: '', medicalExamDate: '', medicalExamNextDate: '', licences: [] });
 
   const resetForm = () => { setForm({ name: '', position: '', grade: '', tabNumber: '', pin: '', sectionId: '', competences: [], competenceLevels: {}, competenceMeta: {}, status: 'working', phone: '', hireDate: '', email: '', emergencyContact: '', medicalExamDate: '', medicalExamNextDate: '', licences: [] }); setEditingWorker(null); setShowAddForm(false); };
+
+  // Защита формы от случайного закрытия
+  const EMPTY_WORKER_FORM = { name: '', position: '', grade: '', tabNumber: '', pin: '', sectionId: '', competences: [], competenceLevels: {}, competenceMeta: {}, status: 'working', phone: '', hireDate: '', email: '', emergencyContact: '', medicalExamDate: '', medicalExamNextDate: '', licences: [] };
+  const isDirtyWorker = useIsDirty(form, EMPTY_WORKER_FORM) && form.name !== '';
+  const guardedResetWorker = useDirtyGuard(isDirtyWorker, resetForm, 'Данные сотрудника не сохранены. Закрыть форму?');
 
   const addOrUpdate = useCallback(async () => {
     if (!form.name.trim()) { addToast('Введите имя сотрудника', 'error'); return; }
@@ -178,7 +184,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
 
   const filtered = useMemo(() => {
     let list = workersEnriched.filter(w => showArchivedWorkers ? w.archived : !w.archived);
-    if (search) list = list.filter(w => w.name.toLowerCase().includes(search.toLowerCase()));
+    if (debouncedSearch) list = list.filter(w => w.name.toLowerCase().includes(debouncedSearch.toLowerCase()) || w.tabNumber?.includes(debouncedSearch) || w.position?.toLowerCase().includes(debouncedSearch.toLowerCase()));
     if (statusFilter !== 'all') {
       list = list.filter(w => (getWorkerStatusToday(w.id, data.timesheet) || w.status || 'absent') === statusFilter);
     }
@@ -213,6 +219,8 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
 
   const toggleCompetence = (comp) => { setForm(p => ({ ...p, competences: p.competences.includes(comp) ? p.competences.filter(c => c !== comp) : [...p.competences, comp] })); };
   const stagesForMatrix = useMemo(() => data.productionStages || [], [data.productionStages]);
+  // Debounce для матрицы компетенций — быстрые клики не вызывают шквал запросов к Firebase
+  const scheduleCompSave = useDebouncedSave(data, onUpdate, 600);
   const archivedCount = useMemo(() => data.workers.filter(w => w.archived).length, [data.workers]);
   // Покрытие навыков: Map<stageName, count> — мемоизируем чтобы не пересчитывать в render
   const competenceCoverage = useMemo(() => {
@@ -233,7 +241,10 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
       { id: 'competences', label: 'Компетенции' + (form.competences?.length > 0 ? ` (${form.competences.length})` : '') },
     ];
     return h('div', { style: isInline ? {} : { ...S.card, border: `1px solid ${AM}`, marginBottom: 16 } },
-      !isInline && h('div', { style: S.sec }, editingWorker ? 'Редактировать сотрудника' : 'Новый сотрудник'),
+      !isInline && h('div', { style: { ...S.sec, display: 'flex', alignItems: 'center' } },
+        editingWorker ? 'Редактировать сотрудника' : 'Новый сотрудник',
+        isDirtyWorker && h(DirtyBadge)
+      ),
 
       // Вкладки формы
       h('div', { style: { display:'flex', gap:4, marginBottom:14, borderBottom:`1px solid var(--border-soft)`, paddingBottom:8 } },
@@ -362,7 +373,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
 
       h('div', { style: { display:'flex', gap:8, marginTop:14 } },
         h('button', { style: abtn(), onClick: addOrUpdate }, editingWorker ? '✓ Сохранить' : '+ Добавить'),
-        h('button', { style: gbtn(), onClick: resetForm }, 'Отмена')
+        h('button', { style: gbtn(), onClick: guardedResetWorker }, 'Отмена')
       )
     );
   };
@@ -653,11 +664,11 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
               const expiring = meta.expiresAt && !expired && Math.ceil((meta.expiresAt - Date.now()) / 86400000) <= 30;
             const levelColors = { 0: { bg: '#f5f5f2', cl: '#ccc', label: '—' }, 1: { bg: '#FFF8E1', cl: '#F57F17', label: 'Нов.' }, 2: { bg: AM3, cl: AM2, label: 'Ком.' }, 3: { bg: GN3, cl: GN2, label: 'Эксп.' } };
             const lc = levelColors[level] || levelColors[0];
-            return h('td', { key: s.id, style: { ...S.td, textAlign:'center', padding: '4px', cursor: 'pointer' }, onClick: async () => {
+            return h('td', { key: s.id, style: { ...S.td, textAlign:'center', padding: '4px', cursor: 'pointer' }, onClick: () => {
               const newLevel = (level + 1) % 4;
               const { newLevels, newComps } = applyCompetenceLevel(w.competenceLevels, w.competences, s.name, newLevel);
               const d = { ...data, workers: data.workers.map(ww => ww.id === w.id ? { ...ww, competences: newComps, competenceLevels: newLevels } : ww) };
-              onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+              scheduleCompSave(d); // debounce 600мс — быстрые клики → 1 запрос
             }},
               h('span', { style: { display: 'inline-block', padding: '3px 8px', borderRadius: 6, fontSize: 10, fontWeight: 500, background: lc.bg, color: lc.cl, minWidth: 36 } }, lc.label)
             );
