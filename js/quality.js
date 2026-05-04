@@ -8,14 +8,15 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
 
   const acceptOp = useCallback(async (op) => {
     const updated = { ...data, ops: data.ops.map(o => o.id === op.id ? { ...o, status: 'done' } : o), events: [...data.events, { id: uid(), type: 'qc_pass', opId: op.id, ts: now() }] };
-    await DB.save(updated); onUpdate(updated); addToast('Операция принята', 'success');
+    onUpdate(updated); DB.save(updated).catch(() => onUpdate(data));
+    addToast('Операция принята ОТК ✓', 'success');
   }, [data, onUpdate, addToast]);
 
   const confirmReject = useCallback(async () => {
     if (!rejectModal) return;
     const note = rejectNote.trim();
     const updated = { ...data, ops: data.ops.map(o => o.id === rejectModal.op.id ? { ...o, status: 'defect', defectNote: note || 'Не прошло контроль качества' } : o), events: [...data.events, { id: uid(), type: 'qc_reject', opId: rejectModal.op.id, ts: now(), note }] };
-    await DB.save(updated); onUpdate(updated);
+    onUpdate(updated); DB.save(updated).catch(() => onUpdate(data));
     addToast('Операция забракована', 'info');
     setRejectModal(null); setRejectNote('');
   }, [data, onUpdate, addToast, rejectModal, rejectNote]);
@@ -118,7 +119,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
     const rec = { id: uid(), orderId: form.orderId, description: form.description.trim(), severity: form.severity, detectedDate: form.detectedDate || new Date().toISOString().slice(0, 10), operationName: form.operationName, status: 'open', createdAt: now(), defectSource: form.defectSource, d8: { team: autoTeam, containment: '', whys: ['', '', '', '', ''], rootCause: '', corrective: '', correctiveOwner: '', correctiveDeadline: '', validation: '', validationDate: '', preventive: '', preventiveDocs: '', closedNote: '', currentStep: 0 } };
     let d = { ...data, reclamations: [...(data.reclamations || []), rec] };
     d = logAction(d, 'reclamation_add', { orderId: form.orderId, type: form.defectSource });
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
     setForm({ orderId: '', description: '', severity: 'minor', detectedDate: '', operationName: '', defectSource: 'external' }); setShowForm(false);
     addToast(`Рекламация зарегистрирована. Команда: ${autoTeam.length} чел.`, 'success');
   }, [data, form, onUpdate, addToast]);
@@ -126,7 +127,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
   // Сохранить поле D8
   const saveD8 = useCallback(async (recId, field, value) => {
     const d = { ...data, reclamations: (data.reclamations || []).map(r => r.id === recId ? { ...r, d8: { ...(r.d8 || {}), [field]: value } } : r) };
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
   }, [data, onUpdate]);
 
   // Перейти на следующий шаг D8
@@ -136,7 +137,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
     const step = (rec.d8?.currentStep || 0) + 1;
     const newStatus = step >= 1 && rec.status === 'open' ? 'in_work' : rec.status;
     const d = { ...data, reclamations: data.reclamations.map(r => r.id === recId ? { ...r, status: newStatus, d8: { ...(r.d8 || {}), currentStep: step } } : r) };
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
     setD8Steps(p => ({ ...p, [recId]: step }));
   }, [data, onUpdate]);
 
@@ -155,14 +156,16 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
     if (thankEvents.length) d.events = [...d.events, ...thankEvents];
     let final = d;
     realWorkerIds.forEach(wid => { const { data: checked } = checkAchievements(wid, final); final = checked; });
-    await DB.save(final); onUpdate(final);
+    onUpdate(final); DB.save(final).catch(() => onUpdate(data));
     addToast(`Рекламация закрыта. Благодарность отправлена: ${realWorkerIds.length} сотр.${realWorkerIds.length === 0 ? ' (в команде только мастер)' : ''}`, 'success');
   }, [data, onUpdate, addToast]);
 
   const delRec = useCallback(async (id) => {
     if (!(await askConfirm({ message: 'Удалить рекламацию?' }))) return;
     const d = { ...data, reclamations: (data.reclamations || []).filter(r => r.id !== id) };
-    await DB.save(d); onUpdate(d); addToast('Удалена', 'info');
+    const prevRec = data;
+    onUpdate(d); DB.save(d).catch(() => onUpdate(prevRec));
+    addToast('Рекламация удалена', 'info', { label: 'Отменить', action: () => { onUpdate(prevRec); DB.save(prevRec).catch(()=>{}); }, ttl: 5000 });
   }, [data, onUpdate, addToast]);
 
   const allRecs = useMemo(() => (data.reclamations || [])
@@ -367,7 +370,8 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
         }));
         if (!items.length) { addToast('Нет данных для импорта', 'error'); return; }
         const d = { ...data, reclamations: [...(data.reclamations||[]), ...items] };
-        await DB.save(d); onUpdate(d); addToast(`Добавлено рекламаций: ${items.length}`, 'success');
+        onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+        addToast(`Импортировано рекламаций: ${items.length}`, 'success');
       }}),
     // Форма создания
     showForm && h('div', { style: { ...S.card, marginBottom: 12, border: `0.5px solid ${AM}` } },
@@ -458,6 +462,3 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
         })
   );
 });
-
-
-
