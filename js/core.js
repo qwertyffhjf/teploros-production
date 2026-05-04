@@ -1185,17 +1185,18 @@ const Badge = memo(({ st }) => {
   return h('span', { style: { display: 'inline-block', padding: '2px 8px', fontSize: 10, borderRadius: 8, fontWeight: 500, background: s.bg, color: s.cl, border: `0.5px solid ${s.br}` } }, s.label);
 });
 
-const Toast = memo(({ message, onClose, type = 'info' }) => {
+const Toast = memo(({ message, onClose, type = 'info', action = null }) => {
   const [exiting, setExiting] = useState(false);
 
-  useEffect(() => {
-    // За 400ms до исчезновения запускаем exit-анимацию
-    const exitTimer  = setTimeout(() => setExiting(true), 2600);
-    const closeTimer = setTimeout(onClose, 3000);
-    return () => { clearTimeout(exitTimer); clearTimeout(closeTimer); };
-  }, [onClose]);
+  // ttl: если у action есть ttl — используем его, иначе 3000мс
+  const ttl = action?.ttl || 3000;
 
-  // Цвет левой полоски по типу
+  useEffect(() => {
+    const exitTimer  = setTimeout(() => setExiting(true), ttl - 400);
+    const closeTimer = setTimeout(onClose, ttl);
+    return () => { clearTimeout(exitTimer); clearTimeout(closeTimer); };
+  }, [onClose, ttl]);
+
   const accent = type === 'success' ? GN : type === 'error' ? RD : type === 'info' ? BL : AM;
 
   return h('div', {
@@ -1212,14 +1213,33 @@ const Toast = memo(({ message, onClose, type = 'info' }) => {
       gap: 8,
     }
   },
-    // Цветная иконка слева
-    h('span', {
+    // Цветная точка
+    h('span', { style: { width: 6, height: 6, borderRadius: '50%', background: accent, flexShrink: 0 } }),
+    // Текст
+    h('span', { style: { flex: 1 } }, message),
+    // Кнопка Undo (если передана)
+    action && h('button', {
+      onClick: (e) => {
+        e.stopPropagation();
+        action.action?.();
+        onClose();
+      },
       style: {
-        width: 6, height: 6, borderRadius: '50%',
-        background: accent, flexShrink: 0,
-      }
-    }),
-    message
+        background: 'none',
+        border: `0.5px solid ${accent}88`,
+        borderRadius: 4,
+        padding: '2px 8px',
+        fontSize: 11,
+        fontWeight: 500,
+        color: accent,
+        cursor: 'pointer',
+        flexShrink: 0,
+        fontFamily: 'inherit',
+        transition: 'background 0.12s',
+      },
+      onMouseEnter: e => e.currentTarget.style.background = accent + '18',
+      onMouseLeave: e => e.currentTarget.style.background = 'none',
+    }, action.label || 'Отменить')
   );
 });
 
@@ -1231,6 +1251,148 @@ const ElapsedTimer = memo(({ startedAt, style }) => {
     return () => clearInterval(t);
   }, [startedAt]);
   return h('div', { style }, startedAt ? fmtDur(now() - startedAt) : '—');
+});
+
+
+// ==================== useSave — универсальный хук сохранения ====================
+// Заменяет паттерн: await DB.save(d); onUpdate(d); addToast(...)
+// Использование:
+//   const save = useSave(data, onUpdate, addToast);
+//   save(newData, { msg: 'Заказ сохранён', undo: () => save(data, { msg: 'Отменено' }) });
+//
+// Возвращает функцию save(newData, opts) где opts:
+//   msg     {string}   — текст toast при успехе
+//   type    {string}   — тип toast ('success'|'info'|'error')
+//   undo    {function} — если передана, toast показывает кнопку «Отменить» 5 сек
+//   silent  {boolean}  — не показывать toast
+//   onDone  {function} — колбэк после успешного сохранения
+const useSave = (data, onUpdate, addToast) => {
+  // Глобальный счётчик незавершённых сохранений
+  // Используем window чтобы SaveStatusBar мог читать состояние
+  const save = useCallback(async (newData, opts = {}) => {
+    const { msg, type = 'success', undo, silent = false, onDone } = opts;
+
+    // 1. Optimistic update — UI реагирует мгновенно
+    onUpdate(newData);
+
+    // 2. Сигнализируем о начале сохранения
+    window._tpSaveCount = (window._tpSaveCount || 0) + 1;
+    window.dispatchEvent(new CustomEvent('_tpSaveStart'));
+
+    try {
+      await DB.save(newData);
+
+      // 3. Успех — показываем toast с опциональным Undo
+      if (!silent && msg) {
+        addToast(msg, type, undo ? { label: 'Отменить', action: undo, ttl: 5000 } : null);
+      }
+      onDone?.();
+    } catch (err) {
+      // 4. Ошибка — откатываем и сообщаем
+      onUpdate(data);
+      addToast('Не удалось сохранить — проверьте соединение', 'error');
+    } finally {
+      window._tpSaveCount = Math.max(0, (window._tpSaveCount || 1) - 1);
+      window.dispatchEvent(new CustomEvent('_tpSaveEnd'));
+    }
+  }, [data, onUpdate, addToast]);
+
+  return save;
+};
+
+// ==================== SaveStatusBar — строка статуса сохранения ====================
+// Крепится в нижнем правом углу экрана. Показывает:
+//   • «Сохранение...» пока идут запросы
+//   • «✓ Сохранено» на 2 секунды после последнего сохранения
+//   • «Нет соединения» если офлайн (синергия с индикатором сети из shared.js)
+// Монтируется один раз в App, не требует пропсов.
+const SaveStatusBar = memo(() => {
+  const [status, setStatus] = useState('idle'); // 'idle' | 'saving' | 'saved' | 'error'
+
+  useEffect(() => {
+    let savedTimer = null;
+
+    const onStart = () => {
+      clearTimeout(savedTimer);
+      setStatus('saving');
+    };
+
+    const onEnd = () => {
+      if ((window._tpSaveCount || 0) > 0) return; // ещё есть незавершённые
+      setStatus('saved');
+      savedTimer = setTimeout(() => setStatus('idle'), 2500);
+    };
+
+    const onOffline = () => setStatus('error');
+    const onOnline  = () => {
+      if (status === 'error') setStatus('idle');
+    };
+
+    window.addEventListener('_tpSaveStart', onStart);
+    window.addEventListener('_tpSaveEnd',   onEnd);
+    window.addEventListener('offline',      onOffline);
+    window.addEventListener('online',       onOnline);
+
+    return () => {
+      clearTimeout(savedTimer);
+      window.removeEventListener('_tpSaveStart', onStart);
+      window.removeEventListener('_tpSaveEnd',   onEnd);
+      window.removeEventListener('offline',      onOffline);
+      window.removeEventListener('online',       onOnline);
+    };
+  }, []);
+
+  if (status === 'idle') return null;
+
+  const configs = {
+    saving: { icon: '◌', text: 'Сохранение...', color: AM,   bg: AM3,   pulse: true  },
+    saved:  { icon: '✓', text: 'Сохранено',     color: GN2,  bg: GN3,   pulse: false },
+    error:  { icon: '!', text: 'Нет соединения', color: RD2,  bg: RD3,   pulse: true  },
+  };
+  const cfg = configs[status];
+
+  return h('div', {
+    style: {
+      position: 'fixed',
+      bottom: 72, // над нижней навигацией
+      right: 16,
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6,
+      padding: '5px 12px',
+      borderRadius: 20,
+      background: cfg.bg,
+      border: `0.5px solid ${cfg.color}44`,
+      fontSize: 12,
+      fontWeight: 500,
+      color: cfg.color,
+      zIndex: 800,
+      pointerEvents: 'none',
+      animation: '_tpFadeIn 0.2s ease-out both',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+      userSelect: 'none',
+    }
+  },
+    h('span', {
+      style: {
+        fontSize: 13,
+        animation: cfg.pulse ? '_tpSpinner 1s linear infinite' : 'none',
+        display: 'inline-block',
+        opacity: status === 'saving' ? 1 : 1,
+      }
+    }, status === 'saving' ? null : cfg.icon),
+    status === 'saving' && h('span', {
+      style: {
+        width: 12, height: 12,
+        border: `1.5px solid ${AM}44`,
+        borderTopColor: AM,
+        borderRadius: '50%',
+        animation: '_tpSpinner 0.65s linear infinite',
+        flexShrink: 0,
+      }
+    }),
+    cfg.text
+  );
 });
 
 // ==================== useCountUp — анимированный счётчик цифр ====================
@@ -1667,6 +1829,11 @@ const AppSkeleton = memo(() => {
       @keyframes _tpDropPulse {
         0%, 100% { border-color: rgba(239,159,39,0.4); }
         50%       { border-color: rgba(239,159,39,0.9); }
+      }
+
+      /* ── SaveStatusBar ── */
+      #_tp_save_bar {
+        transition: opacity 0.25s, transform 0.25s;
       }
 
       /* ── Toast enter / exit анимации ── */
