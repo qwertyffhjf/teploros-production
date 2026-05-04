@@ -1280,6 +1280,212 @@ const AnimatedBar = memo(({ pct, color, height = 6, delay = 0 }) => {
   );
 });
 
+// ==================== AchievementPopup — pop-up достижения с конфетти ====================
+// Вызов: h(AchievementPopup, { achievement: ACHIEVEMENTS['ops_10'], onClose: fn })
+// achievement = { icon, title, desc } из объекта ACHIEVEMENTS
+// Конфетти — чистый Canvas без библиотек, ~80 частиц, 3 секунды
+const AchievementPopup = memo(({ achievement, onClose, workerName }) => {
+  const canvasRef = React.useRef(null);
+  const rafRef    = React.useRef(null);
+  const [visible, setVisible] = React.useState(false);
+
+  // Запуск анимации появления через 1 кадр
+  React.useEffect(() => {
+    const id = requestAnimationFrame(() => setVisible(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  // Конфетти на canvas
+  React.useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width  = window.innerWidth;
+    const H = canvas.height = window.innerHeight;
+
+    const COLORS = ['#EF9F27','#1D9E75','#378ADD','#E24B4A','#9B59B6','#F39C12','#2ECC71','#3498DB'];
+    const SHAPES = ['rect', 'circle', 'line'];
+
+    // Генерируем 90 частиц — стартуют сверху с разбросом
+    const particles = Array.from({ length: 90 }, (_, i) => ({
+      x:  Math.random() * W,
+      y: -Math.random() * H * 0.3,
+      w:  6 + Math.random() * 8,
+      h:  4 + Math.random() * 6,
+      vx: (Math.random() - 0.5) * 4,
+      vy: 2 + Math.random() * 4,
+      rot: Math.random() * Math.PI * 2,
+      vr: (Math.random() - 0.5) * 0.2,
+      color: COLORS[Math.floor(Math.random() * COLORS.length)],
+      shape: SHAPES[Math.floor(Math.random() * SHAPES.length)],
+      opacity: 1,
+      gravity: 0.12 + Math.random() * 0.08,
+      drag: 0.99,
+    }));
+
+    let startTime = null;
+    const DURATION = 3500; // мс
+
+    const tick = (ts) => {
+      if (!startTime) startTime = ts;
+      const elapsed = ts - startTime;
+      ctx.clearRect(0, 0, W, H);
+
+      let alive = 0;
+      for (const p of particles) {
+        // Физика
+        p.vy += p.gravity;
+        p.vx *= p.drag;
+        p.x  += p.vx;
+        p.y  += p.vy;
+        p.rot += p.vr;
+
+        // Fade-out в последнюю секунду
+        if (elapsed > DURATION - 1000) {
+          p.opacity = Math.max(0, p.opacity - 0.012);
+        }
+
+        if (p.y < H + 20 && p.opacity > 0.01) {
+          alive++;
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate(p.rot);
+          ctx.globalAlpha = p.opacity;
+          ctx.fillStyle = p.color;
+          ctx.strokeStyle = p.color;
+
+          if (p.shape === 'rect') {
+            ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+          } else if (p.shape === 'circle') {
+            ctx.beginPath();
+            ctx.arc(0, 0, p.w / 2, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(-p.w / 2, 0);
+            ctx.lineTo(p.w / 2, 0);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+      }
+
+      if (alive > 0 && elapsed < DURATION + 500) {
+        rafRef.current = requestAnimationFrame(tick);
+      }
+    };
+
+    rafRef.current = requestAnimationFrame(tick);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, []);
+
+  // Автозакрытие через 4 секунды
+  React.useEffect(() => {
+    const id = setTimeout(() => {
+      setVisible(false);
+      setTimeout(onClose, 350); // ждём exit-анимацию
+    }, 4000);
+    return () => clearTimeout(id);
+  }, [onClose]);
+
+  if (!achievement) return null;
+
+  return h('div', {
+    style: {
+      position: 'fixed', inset: 0, zIndex: 9998,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      pointerEvents: 'none', // клики проходят сквозь
+    }
+  },
+    // Canvas конфетти — полный экран
+    h('canvas', {
+      ref: canvasRef,
+      style: {
+        position: 'absolute', inset: 0,
+        width: '100%', height: '100%',
+        pointerEvents: 'none',
+      }
+    }),
+
+    // Карточка достижения
+    h('div', {
+      onClick: onClose,
+      style: {
+        position: 'relative', zIndex: 1,
+        background: '#fff',
+        borderRadius: 20,
+        padding: '28px 32px',
+        textAlign: 'center',
+        boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+        maxWidth: 320, width: 'calc(100vw - 48px)',
+        pointerEvents: 'auto',
+        transform: visible ? 'scale(1) translateY(0)' : 'scale(0.7) translateY(20px)',
+        opacity: visible ? 1 : 0,
+        transition: 'transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease-out',
+        cursor: 'pointer',
+      }
+    },
+      // Иконка в кружке
+      h('div', {
+        style: {
+          width: 80, height: 80,
+          borderRadius: '50%',
+          background: AM3,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 40, margin: '0 auto 16px',
+          boxShadow: `0 0 0 4px ${AM3}, 0 0 0 8px ${AM}44`,
+          animation: visible ? '_tpAchIcon 0.5s cubic-bezier(0.34,1.56,0.64,1) 0.2s both' : 'none',
+        }
+      }, achievement.icon),
+
+      // Надпись «Новое достижение!»
+      h('div', {
+        style: {
+          fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+          letterSpacing: '0.12em', color: AM2,
+          marginBottom: 6,
+          animation: visible ? '_tpFadeIn 0.3s ease-out 0.3s both' : 'none',
+        }
+      }, '🎉 Новое достижение!'),
+
+      // Название
+      h('div', {
+        style: {
+          fontSize: 22, fontWeight: 600, color: '#1a1a1a',
+          marginBottom: 8, lineHeight: 1.2,
+          animation: visible ? '_tpFadeIn 0.3s ease-out 0.35s both' : 'none',
+        }
+      }, achievement.title),
+
+      // Описание
+      h('div', {
+        style: {
+          fontSize: 13, color: '#666', lineHeight: 1.5,
+          marginBottom: 16,
+          animation: visible ? '_tpFadeIn 0.3s ease-out 0.4s both' : 'none',
+        }
+      }, achievement.desc),
+
+      // Имя рабочего (если передано)
+      workerName && h('div', {
+        style: {
+          fontSize: 12, color: AM4, fontWeight: 500,
+          animation: visible ? '_tpFadeIn 0.3s ease-out 0.45s both' : 'none',
+        }
+      }, workerName),
+
+      // Подсказка «нажмите чтобы закрыть»
+      h('div', {
+        style: {
+          marginTop: 16, fontSize: 11, color: '#bbb',
+          animation: visible ? '_tpFadeIn 0.3s ease-out 1.5s both' : 'none',
+        }
+      }, 'Нажмите чтобы закрыть')
+    )
+  );
+});
+
 // ==================== AppSkeleton (загрузочный экран вместо «Загрузка...») ====================
 // Показывается пока App ждёт DB.load(). Имитирует структуру LoginScreen —
 // пользователь сразу видит «форму» и понимает что система загружается.
@@ -1455,6 +1661,13 @@ const AppSkeleton = memo(() => {
       @keyframes _tpToastOut {
         from { opacity: 1; transform: translateY(0)  scale(1)    maxHeight: 80px; }
         to   { opacity: 0; transform: translateY(8px) scale(0.95); }
+      }
+
+      /* ── Achievement icon bounce ── */
+      @keyframes _tpAchIcon {
+        0%   { transform: scale(0) rotate(-15deg); }
+        60%  { transform: scale(1.2) rotate(5deg); }
+        100% { transform: scale(1) rotate(0deg); }
       }
 
       /* ── Пульсирующая точка активных операций ── */
