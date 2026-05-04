@@ -36,6 +36,11 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
 
   const resetForm = () => { setForm({ orderId: '', name: '', workerIds: [], plannedHours: '', sectionId: '', equipmentId: '', plannedStartDate: '', drawingUrl: '' }); setFieldErrors({}); setEditingId(null); };
 
+  // Отслеживаем несохранённые изменения в форме операции
+  const EMPTY_OP_FORM = { orderId: '', name: '', workerIds: [], plannedHours: '', sectionId: '', equipmentId: '', plannedStartDate: '', drawingUrl: '' };
+  const isDirtyOp = useIsDirty(form, editingId ? null : EMPTY_OP_FORM) && (form.name !== '' || form.orderId !== '' || form.plannedHours !== '');
+  const guardedResetOp = useDirtyGuard(isDirtyOp, resetForm, 'Операция не сохранена. Закрыть форму?');
+
   const addOrUpdate = useCallback(async () => {
     if (!validate()) return;
     // Проверка компетенций назначенных рабочих
@@ -189,7 +194,10 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
       }}),
     // Форма создания/редактирования операции
     h('div', { style: S.card },
-      h('div', { style: S.sec }, editingId ? '📝 Редактировать операцию' : 'Создать операцию'),
+      h('div', { style: { ...S.sec, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4 } },
+        editingId ? '📝 Редактировать операцию' : 'Создать операцию',
+        isDirtyOp && h(DirtyBadge)
+      ),
       h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
         !editingId && h('div', { className: fieldErrors.orderId ? 'field-error' : form.orderId ? 'field-valid' : '', style: { minWidth: 150 } },
           h('select', { style: { ...S.inp, width: '100%' }, value: form.orderId, onChange: e => { setForm(p => ({ ...p, orderId: e.target.value })); setFieldErrors(p => ({ ...p, orderId: '' })); } },
@@ -256,7 +264,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
         ),
         h('div', { style: { minWidth: 140 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Ссылка на чертёж', value: form.drawingUrl, onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value })) })),
         h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, editingId ? '✓' : '+'),
-        editingId && h('button', { type: 'button', style: gbtn(), onClick: () => resetForm() }, 'Отмена')
+        editingId && h('button', { type: 'button', style: gbtn(), onClick: () => guardedResetOp() }, 'Отмена')
       )
     ),
     // Фильтр по типу продукции
@@ -411,7 +419,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
                   h('div', { style: { minWidth: 130 } }, h('div', { style: S.lbl }, 'План. старт'), h('input', { type: 'datetime-local', style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.plannedStartDate, onChange: e => setForm(p => ({ ...p, plannedStartDate: e.target.value })) })),
                   h('div', { style: { minWidth: 130 } }, h('div', { style: S.lbl }, 'Чертёж'), h('input', { style: { ...S.inp, width: '100%', fontSize: 11 }, placeholder: 'URL', value: form.drawingUrl, onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value })) })),
                   h('button', { style: abtn({ padding: '7px 16px' }), onClick: addOrUpdate }, '✓ Сохранить'),
-                  h('button', { style: gbtn({ padding: '7px 12px' }), onClick: resetForm }, 'Отмена')
+                  h('button', { style: gbtn({ padding: '7px 12px' }), onClick: guardedResetOp }, 'Отмена')
                 )
               )
             )];
@@ -446,16 +454,9 @@ const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) =
     if (!deps.includes(depId) && checkCycle(depId)) {
       addToast('Нельзя: циклическая зависимость', 'error'); return;
     }
-gantt deps
-    const updated = data.ops.map(o => {
-      const idx = sorted.findIndex(s => s.id === o.id);
-      if (idx <= 0 || o.orderId !== orderId) return { ...o, dependsOn: o.orderId === orderId ? undefined : o.dependsOn };
-      return { ...o, dependsOn: [sorted[idx - 1].id] };
-    });
-    const d = { ...data, ops: updated };
+    const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, dependsOn: newDeps.length > 0 ? newDeps : undefined } : o) };
     onUpdate(d); DB.save(d).catch(() => onUpdate(data));
-    addToast('Расставлено последовательно', 'success');
-  }, [data, ops, orderId, onUpdate, addToast]);
+  }, [data, ops, onUpdate, addToast, orderId]);
 
   // Автоустановка: все параллельно (без зависимостей)
   const setAllParallel = useCallback(async () => {
@@ -598,14 +599,8 @@ const DependencyEditorInline = memo(({ data, orderId, onUpdate, addToast }) => {
       return (t?.dependsOn || []).some(d => d === opId || checkCycle(d, visited));
     };
     if (!deps.includes(depId) && checkCycle(depId)) { addToast('Нельзя: циклическая зависимость', 'error'); return; }
-resource deps
-      const idx = ops.findIndex(s => s.id === o.id);
-      if (idx <= 0 || o.orderId !== orderId) return { ...o, dependsOn: o.orderId === orderId ? undefined : o.dependsOn };
-      return { ...o, dependsOn: [ops[idx - 1].id] };
-    });
-    const d = { ...data, ops: updated };
+    const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, dependsOn: newDeps.length > 0 ? newDeps : undefined } : o) };
     onUpdate(d); DB.save(d).catch(() => onUpdate(data));
-    addToast('Расставлено последовательно', 'success');
   }, [data, ops, orderId, onUpdate, addToast]);
 
   const setAllParallel = useCallback(async () => {
@@ -816,6 +811,12 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 
   const edit = useCallback(ord => { setForm({ number: ord.number, product: ord.product, qty: String(ord.qty), deadline: ord.deadline || '', priority: ord.priority || 'medium', bomId: '', productType: ord.productType || '', drawingUrl: ord.drawingUrl || '' }); setEditingId(ord.id); }, []);
 
+  // Защита от потери данных формы заказа
+  const EMPTY_ORDER_FORM = { number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '' };
+  const isDirtyOrder = useIsDirty(form, EMPTY_ORDER_FORM) && (form.number !== '' || form.product !== '' || form.qty !== '');
+  const resetOrderForm = () => { setEditingId(null); setForm(EMPTY_ORDER_FORM); setFieldErrors({}); };
+  const guardedResetOrder = useDirtyGuard(isDirtyOrder, resetOrderForm, 'Заказ не сохранён. Закрыть форму?');
+
   const ordersToShow = useMemo(() => data.orders.filter(o => (showArchived ? true : !o.archived) && (!o.shipped || showShipped) && (!filterType || o.productType === filterType)).sort((a,b) => { const priorityOrder = { critical:0, high:1, medium:2, low:3 }; return (priorityOrder[a.priority]||4) - (priorityOrder[b.priority]||4) || (b.createdAt||0) - (a.createdAt||0); }), [data.orders, showArchived, showShipped, filterType]);
   const paginated = useMemo(() => { const start = (page-1)*pageSize; return ordersToShow.slice(start, start+pageSize); }, [ordersToShow, page]);
   useEffect(() => { setPage(1); }, [showArchived]);
@@ -867,7 +868,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
         h('div', { style: { minWidth: 140 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.bomId, onChange: e => setForm(p => ({ ...p, bomId: e.target.value })) }, h('option', { value: '' }, '— без BOM —'), data.bomTemplates.filter(b => !form.productType || b.productType === form.productType || !b.productType).map(b => h('option', { key: b.id, value: b.id }, b.productName)))),
         h('div', { style: { minWidth: 180, flex: 1 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: '🔗 Ссылка (чертёж, ТЗ…)', value: form.drawingUrl, onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value })) })),
         h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, editingId ? '✓' : '+'),
-        editingId && h('button', { type: 'button', style: gbtn(), onClick: () => { setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '' }); setFieldErrors({}); } }, 'Отмена'),
+        editingId && h('button', { type: 'button', style: gbtn(), onClick: () => guardedResetOrder() }, 'Отмена'),
         !editingId && h('button', { type: 'button', style: { ...gbtn(), borderColor: AM, color: AM2 }, onClick: () => setShowImport1C(true), title: 'Импортировать заказ из файла 1С (Excel)' }, '📥 Импорт из 1С')
       ),
       // Проверка остатков при выборе BOM
@@ -1705,7 +1706,9 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
     const duration = downtimeStartedAt ? now() - downtimeStartedAt : 0;
     const newEvent = { id: uid(), type:'downtime', workerId: op.workerIds?.[0], opId: op.id, ts: now(), downtimeTypeId: selectedDowntimeType, shift, startedAt: downtimeStartedAt || now(), duration, equipmentId: downtimeEquipmentId || undefined };
     const updated = { ...data, events: [...data.events, newEvent] };
-downtime
+    onUpdate(updated); DB.save(updated).catch(() => onUpdate(data));
+    setShowDowntimeModal(false); setSelectedDowntimeType(''); setDowntimeStartedAt(null); setDowntimeEquipmentId('');
+    addToast('Простой зафиксирован', 'success');
   }, [data, op, selectedDowntimeType, downtimeStartedAt, onUpdate, addToast]);
 
   // ── Ранний return — только после всех хуков ──
@@ -1776,3 +1779,6 @@ downtime
     )
   );
 });
+
+
+
