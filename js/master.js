@@ -1146,6 +1146,127 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
   const [tab, setTab] = useState(tabGroups[firstGroup]?.tabs[0]?.[0] || 'ops');
   const currentTabs = tabGroups[activeGroup]?.tabs || [];
   const switchGroup = (g) => { setActiveGroup(g); setTab(tabGroups[g].tabs[0][0]); };
+
+  // ── Keyboard Shortcuts ─────────────────────────────────────────────────────
+  const [showKbHint, setShowKbHint] = useState(false);
+
+  // Навигационная карта: Alt+key → { group?, tab? }
+  // Используем key (KeyboardEvent.key) — не зависит от раскладки
+  // Для кириллицы проверяем event.code — физическую клавишу
+  const KB_MAP = React.useMemo(() => {
+    const groupKeys = Object.keys(tabGroups);
+    return {
+      // Группы по цифрам
+      '1': { group: groupKeys[0] },
+      '2': { group: groupKeys[1] },
+      '3': { group: groupKeys[2] },
+      // Вкладки по первой букве (латиница и кириллица через code)
+      // code соответствует физической клавише независимо от раскладки
+      'KeyO': { group: 'production', tab: 'ops'          }, // О/O
+      'KeyK': { group: 'production', tab: 'kanban'        }, // К/K
+      'KeyG': { group: 'production', tab: 'gantt'         }, // Г/G
+      'KeyZ': { group: 'production', tab: 'orders'        }, // З/Z — Заказы
+      'KeyA': { group: 'analytics',  tab: 'analytics'     }, // А/A — Аналитика
+      'KeyR': { group: 'analytics',  tab: 'reports'       }, // Р/R — Отчёты
+      'KeyQ': { group: 'analytics',  tab: 'qms'           }, // Й/Q — Качество
+      'KeyW': { group: 'reference',  tab: 'workers'       }, // Ц/W — Сотрудники
+      'Slash': { hint: true },  // Alt+/ — показать подсказку
+    };
+  }, [tabGroups]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      // Только Alt без других модификаторов; игнорируем если фокус в input/textarea/select
+      if (!e.altKey || e.ctrlKey || e.metaKey) return;
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+      const action = KB_MAP[e.key] || KB_MAP[e.code];
+      if (!action) return;
+
+      e.preventDefault();
+      navigator.vibrate?.([12]);
+
+      if (action.hint) {
+        setShowKbHint(v => !v);
+        return;
+      }
+      if (action.group) {
+        // Проверяем что группа существует для текущей роли
+        if (!tabGroups[action.group]) return;
+        switchGroup(action.group);
+      }
+      if (action.tab) {
+        // Проверяем что вкладка доступна в текущей роли
+        const allTabs = Object.values(tabGroups).flatMap(g => g.tabs.map(([id]) => id));
+        if (allTabs.includes(action.tab)) {
+          const targetGroup = Object.entries(tabGroups).find(([, g]) => g.tabs.some(([id]) => id === action.tab))?.[0];
+          if (targetGroup) switchGroup(targetGroup);
+          setTab(action.tab);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [KB_MAP, tabGroups, switchGroup]);
+
+  // Компонент подсказки — рендерится внутри MasterScreen
+  const KbHintPanel = () => {
+    const groups = Object.entries(tabGroups);
+    return h('div', {
+      style: {
+        position: 'absolute', top: 52, right: 0, zIndex: 200,
+        background: 'var(--card, #fff)',
+        border: '0.5px solid rgba(0,0,0,0.12)',
+        borderRadius: 10, padding: '12px 16px',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+        minWidth: 260, maxWidth: 320,
+        animation: '_tpModalIn 0.18s ease-out both',
+      }
+    },
+      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 } },
+        h('div', { style: { fontSize: 12, fontWeight: 500, color: AM2 } }, 'Горячие клавиши'),
+        h('button', { onClick: () => setShowKbHint(false), style: { background: 'none', border: 'none', cursor: 'pointer', color: '#999', fontSize: 16, lineHeight: 1, padding: '0 2px' } }, '×')
+      ),
+      // Группы
+      h('div', { style: { marginBottom: 8 } },
+        h('div', { style: { fontSize: 10, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 } }, 'Группы'),
+        groups.map(([gid, g], i) =>
+          h('div', { key: gid, style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '3px 0', fontSize: 12 } },
+            h('span', { style: { color: activeGroup === gid ? AM2 : 'var(--fg, #333)', fontWeight: activeGroup === gid ? 500 : 400 } }, g.label),
+            h('kbd', { style: kbdStyle }, `Alt+${i + 1}`)
+          )
+        )
+      ),
+      h('div', { style: { borderTop: '0.5px solid rgba(0,0,0,0.07)', paddingTop: 8 } },
+        h('div', { style: { fontSize: 10, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 } }, 'Вкладки'),
+        [
+          ['Alt+О / O', 'Операции',   'ops'],
+          ['Alt+К / K', 'Канбан',     'kanban'],
+          ['Alt+Г / G', 'Гант',       'gantt'],
+          ['Alt+З / Z', 'Заказы',     'orders'],
+          ['Alt+А / A', 'Аналитика',  'analytics'],
+          ['Alt+Р / R', 'Отчёты',     'reports'],
+          ['Alt+Ц / W', 'Сотрудники', 'workers'],
+          ['Alt+/',     'Эта подсказка', null],
+        ].map(([keys, label, tabId]) =>
+          h('div', { key: keys, style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '3px 0', fontSize: 12 } },
+            h('span', { style: { color: tab === tabId ? AM2 : 'var(--fg, #333)', fontWeight: tab === tabId ? 500 : 400 } }, label),
+            h('kbd', { style: kbdStyle }, keys)
+          )
+        )
+      ),
+      h('div', { style: { marginTop: 8, fontSize: 10, color: '#bbb', textAlign: 'center' } }, 'Не работает в полях ввода')
+    );
+  };
+
+  const kbdStyle = {
+    display: 'inline-block', padding: '1px 6px', borderRadius: 4,
+    background: '#f0ede8', border: '0.5px solid rgba(0,0,0,0.15)',
+    fontSize: 10, fontFamily: 'monospace', color: '#555',
+    whiteSpace: 'nowrap',
+  };
   const filteredData = useMemo(() => {
     if (!sectionId) return data;
     return { ...data, ops: data.ops.filter(o => o.sectionId === sectionId || !o.sectionId), workers: data.workers.filter(w => w.sectionId === sectionId || !w.sectionId) };
@@ -1165,14 +1286,68 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
     qrOpData && h(QRModal, { ops:[qrOpData.op], order: data.orders.find(o => o.id === qrOpData.op.orderId), worker: qrOpData.worker, onClose: () => setQrOpData(null) }),
     // Онбординг мастера — автоматически скрывается когда всё настроено
     role === 'master' && h(MasterOnboarding, { data, onDone: () => {} }),
-    // Группы вкладок
-    h('div', { className: 'tab-groups', style: { display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' } },
-      Object.entries(tabGroups).map(([gid, g]) => h('button', { key: gid, style: activeGroup === gid ? abtn({ fontSize: 12, padding: '6px 14px' }) : gbtn({ fontSize: 12, padding: '6px 14px' }), onClick: () => switchGroup(gid) }, g.label))
+    // Группы вкладок + кнопка горячих клавиш
+    h('div', { style: { position: 'relative' } },
+      h('div', { className: 'tab-groups', style: { display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' } },
+        Object.entries(tabGroups).map(([gid, g]) => h('button', {
+          key: gid,
+          style: activeGroup === gid ? abtn({ fontSize: 12, padding: '6px 14px' }) : gbtn({ fontSize: 12, padding: '6px 14px' }),
+          onClick: () => switchGroup(gid),
+          title: `Alt+${Object.keys(tabGroups).indexOf(gid) + 1}`,
+        }, g.label)),
+        // Кнопка подсказки горячих клавиш — справа от групп
+        h('button', {
+          onClick: () => setShowKbHint(v => !v),
+          title: 'Горячие клавиши (Alt+/)',
+          'aria-label': 'Показать горячие клавиши',
+          style: {
+            marginLeft: 'auto',
+            background: showKbHint ? AM3 : 'transparent',
+            border: `0.5px solid ${showKbHint ? AM : 'rgba(0,0,0,0.15)'}`,
+            borderRadius: 6,
+            padding: '4px 10px',
+            cursor: 'pointer',
+            fontSize: 11,
+            color: showKbHint ? AM2 : '#888',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+            transition: 'all .15s',
+          }
+        },
+          h('span', { style: { fontSize: 12 } }, '⌨'),
+          'Alt+/'
+        )
+      ),
+      // Панель подсказки — абсолютная, не ломает layout
+      showKbHint && h(KbHintPanel),
+      // Клик вне панели — закрыть
+      showKbHint && h('div', {
+        style: { position: 'fixed', inset: 0, zIndex: 199 },
+        onClick: () => setShowKbHint(false),
+      })
     ),
     // Вкладки внутри группы — скролл
     h('div', { style: { borderBottom:'0.5px solid rgba(0,0,0,0.08)', marginBottom:16 }, role: 'tablist' },
       h('div', { className: 'tabs-scroll' },
-        currentTabs.map(([id,label]) => h('button', { key: id, role: 'tab', 'aria-selected': tab === id, onClick: () => setTab(id), style: { padding:'8px 16px', background:'transparent', border:'none', borderBottom: tab === id ? `2px solid ${AM}` : '2px solid transparent', color: tab === id ? AM : '#888', cursor:'pointer', fontSize:13, minHeight: 40 } }, label))
+        currentTabs.map(([id,label]) => {
+          // Находим shortcut для этой вкладки чтобы показать в tooltip
+          const shortcutEntry = Object.entries(KB_MAP).find(([, v]) => v.tab === id);
+          const shortcutKey = shortcutEntry ? `Alt+${shortcutEntry[0].replace('Key','')}` : null;
+          return h('button', {
+            key: id,
+            role: 'tab',
+            'aria-selected': tab === id,
+            onClick: () => setTab(id),
+            title: shortcutKey ? `${label} (${shortcutKey})` : label,
+            style: {
+              padding:'8px 16px', background:'transparent', border:'none',
+              borderBottom: tab === id ? `2px solid ${AM}` : '2px solid transparent',
+              color: tab === id ? AM : '#888', cursor:'pointer', fontSize:13, minHeight: 40,
+              transition: 'color .15s',
+            }
+          }, label);
+        })
       )
     ),
     tab === 'ops' && h('div', null,
@@ -1572,3 +1747,6 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
     )
   );
 });
+
+
+
