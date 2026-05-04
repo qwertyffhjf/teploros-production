@@ -1,4 +1,3 @@
-
 // teploros · master.js
 // Автоматически извлечено из монолита
 
@@ -291,7 +290,15 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
     ),
 
     paginated.length === 0
-      ? h('div', { style: { ...S.card, textAlign: 'center' } }, 'Нет операций')
+      ? h('div', { style: S.card }, h(EmptyState, {
+          icon: '🔧',
+          title: filters.search || filters.status !== 'all' ? 'Ничего не найдено' : 'Нет операций',
+          desc: filters.search || filters.status !== 'all'
+            ? 'Попробуйте изменить фильтры или сбросить поиск'
+            : 'Назначьте операции для заказов чтобы начать производство',
+          action: filters.search || filters.status !== 'all' ? null : 'Добавить операцию',
+          onAction: filters.search || filters.status !== 'all' ? null : () => setShowForm(true),
+        }))
       : h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
           h('thead', null, h('tr', null, [h('th', { style: { ...S.th, width: 44, textAlign: 'center', padding: '8px 4px' } }, h('input', { type: 'checkbox', style: { width: 18, height: 18, cursor: 'pointer' }, checked: selectedOps.size === opsToShow.length && opsToShow.length > 0, onChange: selectAllVisible, title: 'Выбрать все' })), ...['ID','Операция','Заказ','Исполнители','Участок','Оборуд.','План, ч','План. старт','Чертёж','Статус','Время',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t))])),
           h('tbody', null, paginated.map(op => {
@@ -439,6 +446,7 @@ const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) =
     if (!deps.includes(depId) && checkCycle(depId)) {
       addToast('Нельзя: циклическая зависимость', 'error'); return;
     }
+gantt deps
     const updated = data.ops.map(o => {
       const idx = sorted.findIndex(s => s.id === o.id);
       if (idx <= 0 || o.orderId !== orderId) return { ...o, dependsOn: o.orderId === orderId ? undefined : o.dependsOn };
@@ -590,7 +598,7 @@ const DependencyEditorInline = memo(({ data, orderId, onUpdate, addToast }) => {
       return (t?.dependsOn || []).some(d => d === opId || checkCycle(d, visited));
     };
     if (!deps.includes(depId) && checkCycle(depId)) { addToast('Нельзя: циклическая зависимость', 'error'); return; }
-    const updated = data.ops.map(o => {
+resource deps
       const idx = ops.findIndex(s => s.id === o.id);
       if (idx <= 0 || o.orderId !== orderId) return { ...o, dependsOn: o.orderId === orderId ? undefined : o.dependsOn };
       return { ...o, dependsOn: [ops[idx - 1].id] };
@@ -893,7 +901,15 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       )
     ),
     paginated.length === 0
-      ? h('div', { style: { ...S.card, textAlign: 'center' } }, 'Заказов нет')
+      ? h('div', { style: S.card }, h(EmptyState, {
+          icon: '📋',
+          title: filters.search ? 'Ничего не найдено' : 'Нет заказов',
+          desc: filters.search
+            ? 'Попробуйте изменить поиск'
+            : 'Создайте первый заказ чтобы начать работу',
+          action: filters.search ? null : 'Создать заказ',
+          onAction: filters.search ? null : () => setShowForm(true),
+        }))
       : h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
           h('thead', null, h('tr', null, ['Номер','Изделие','Тип','Кол-во','Дата отгрузки','Приоритет','Операций','Материалы','Статус',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
           h('tbody', null, paginated.map(ord => {
@@ -1499,7 +1515,7 @@ const QMSScreen = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
     h('div', { style: { ...S.card, marginBottom: 16 } },
       h('div', { style: S.sec }, '📊 Парето — Типы дефектов (80/20)'),
       paretoData.length === 0
-        ? h('div', { style: { textAlign: 'center', color: '#888', padding: '20px', fontSize: 12 } }, 'Нет дефектов')
+        ? h('div', null, h(EmptyState, { icon: '✓', title: 'Дефектов нет', desc: 'Отличный результат — брак не зафиксирован', positive: true, compact: true }))
         : h('div', null,
             paretoData.map(item =>
               h('div', { key: item.type, style: { marginBottom: 10 } },
@@ -1519,7 +1535,7 @@ const QMSScreen = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
     h('div', { style: { ...S.card, marginBottom: 16 } },
       h('div', { style: S.sec }, 'Дефекты по этапам'),
       stageAnalysis.length === 0
-        ? h('div', { style: { textAlign: 'center', color: '#888', padding: '20px', fontSize: 12 } }, 'Нет дефектов')
+        ? h('div', null, h(EmptyState, { icon: '✓', title: 'Дефектов нет', positive: true, compact: true }))
         : h('div', null,
             stageAnalysis.slice(0, 5).map(item =>
               h('div', { key: item.stage, style: { display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '0.5px solid #eee', fontSize: 12 } },
@@ -1543,7 +1559,7 @@ const QMSScreen = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
     // Список дефектов
     h('div', { style: { ...S.card, padding: 0 } },
       filtered.length === 0
-        ? h('div', { style: { textAlign: 'center', padding: '30px', color: '#888', fontSize: 12 } }, 'Нет дефектов по выбранным фильтрам')
+        ? h('div', null, h(EmptyState, { icon: '✓', title: 'Нет дефектов', desc: 'По выбранным фильтрам дефектов не найдено', positive: filterStatus === '' }))
         : h('div', null,
             filtered.map(d => {
               const order = data.orders.find(o => o.id === d.orderId);
@@ -1689,7 +1705,7 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
     const duration = downtimeStartedAt ? now() - downtimeStartedAt : 0;
     const newEvent = { id: uid(), type:'downtime', workerId: op.workerIds?.[0], opId: op.id, ts: now(), downtimeTypeId: selectedDowntimeType, shift, startedAt: downtimeStartedAt || now(), duration, equipmentId: downtimeEquipmentId || undefined };
     const updated = { ...data, events: [...data.events, newEvent] };
-    // УДАЛЕНА ОШИБОЧНАЯ СТРОКА: downtime
+downtime
   }, [data, op, selectedDowntimeType, downtimeStartedAt, onUpdate, addToast]);
 
   // ── Ранний return — только после всех хуков ──
