@@ -1254,6 +1254,82 @@ const ElapsedTimer = memo(({ startedAt, style }) => {
 });
 
 
+// ==================== EmptyState — пустое состояние с подсказкой ====================
+// Использование:
+//   h(EmptyState, { icon: '📋', title: 'Нет заказов', desc: 'Создайте первый заказ', action: 'Создать заказ', onAction: () => setShowForm(true) })
+//   h(EmptyState, { icon: '🔍', title: 'Ничего не найдено', desc: 'Попробуйте изменить фильтры' })
+//   h(EmptyState, { icon: '✓', title: 'Всё выполнено', desc: 'Нет операций в работе', positive: true })
+const EmptyState = memo(({ icon, title, desc, action, onAction, positive = false, compact = false }) => {
+  return h('div', {
+    className: 'op-card-anim',
+    style: {
+      textAlign: 'center',
+      padding: compact ? '20px 16px' : '36px 24px',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: compact ? 6 : 10,
+    }
+  },
+    // Иконка в кружке
+    h('div', {
+      style: {
+        width:  compact ? 44 : 64,
+        height: compact ? 44 : 64,
+        borderRadius: '50%',
+        background: positive ? GN3 : 'var(--border-soft, #f0ede8)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: compact ? 20 : 28,
+        marginBottom: compact ? 0 : 4,
+        flexShrink: 0,
+      }
+    }, icon),
+
+    // Заголовок
+    h('div', {
+      style: {
+        fontSize: compact ? 13 : 15,
+        fontWeight: 500,
+        color: 'var(--fg, #333)',
+      }
+    }, title),
+
+    // Описание
+    desc && h('div', {
+      style: {
+        fontSize: compact ? 11 : 12,
+        color: 'var(--muted, #888)',
+        lineHeight: 1.55,
+        maxWidth: 260,
+      }
+    }, desc),
+
+    // Кнопка действия
+    action && onAction && h('button', {
+      onClick: onAction,
+      style: {
+        marginTop: compact ? 4 : 8,
+        padding: '7px 18px',
+        borderRadius: 8,
+        background: AM3,
+        border: `0.5px solid ${AM4}`,
+        color: AM2,
+        fontSize: 13,
+        fontWeight: 500,
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        transition: 'background 0.15s, transform 0.1s',
+      },
+      onMouseEnter: e => { e.currentTarget.style.background = AM; e.currentTarget.style.color = '#fff'; },
+      onMouseLeave: e => { e.currentTarget.style.background = AM3; e.currentTarget.style.color = AM2; },
+      onMouseDown:  e => { e.currentTarget.style.transform = 'scale(0.97)'; },
+      onMouseUp:    e => { e.currentTarget.style.transform = ''; },
+    }, `+ ${action}`)
+  );
+});
+
 // ==================== useSave — универсальный хук сохранения ====================
 // Заменяет паттерн: await DB.save(d); onUpdate(d); addToast(...)
 // Использование:
