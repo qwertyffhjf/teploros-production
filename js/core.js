@@ -1361,6 +1361,69 @@ const AppSkeleton = memo(() => {
         }
       }
 
+      /* ── Валидация форм — shake + border ── */
+      @keyframes _tpShake {
+        0%, 100% { transform: translateX(0); }
+        20%       { transform: translateX(-6px); }
+        40%       { transform: translateX(5px); }
+        60%       { transform: translateX(-4px); }
+        80%       { transform: translateX(3px); }
+      }
+      .field-error input,
+      .field-error select,
+      .field-error textarea {
+        border-color: #E24B4A !important;
+        box-shadow: 0 0 0 2px rgba(226,75,74,0.15);
+        animation: _tpShake 0.35s cubic-bezier(0.36,0.07,0.19,0.97) both;
+      }
+      .field-valid input,
+      .field-valid select,
+      .field-valid textarea {
+        border-color: #1D9E75 !important;
+        box-shadow: 0 0 0 2px rgba(29,158,117,0.12);
+        transition: border-color 0.2s, box-shadow 0.2s;
+      }
+      .error-hint {
+        font-size: 11px;
+        color: #E24B4A;
+        margin-top: 3px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        animation: _tpFadeIn 0.2s ease-out both;
+      }
+      .error-hint::before { content: '⚠'; font-size: 10px; }
+
+      /* error-message уже используется в master.js — улучшаем */
+      .error-message {
+        font-size: 11px;
+        color: #E24B4A;
+        margin-top: 3px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        animation: _tpFadeIn 0.2s ease-out both;
+      }
+      .error-message::before { content: '⚠'; font-size: 10px; }
+
+      /* Кнопка сабмита в состоянии загрузки */
+      .btn-loading {
+        opacity: 0.7;
+        pointer-events: none;
+        position: relative;
+      }
+      .btn-loading::after {
+        content: '';
+        position: absolute;
+        right: 12px; top: 50%;
+        transform: translateY(-50%);
+        width: 14px; height: 14px;
+        border: 2px solid rgba(255,255,255,0.4);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: _tpSpinner 0.65s linear infinite;
+      }
+
       /* ── Kanban Drag-and-Drop ── */
       /* grab-курсор только на draggable картах, не на всей доске */
       [draggable="true"] { cursor: grab; }
