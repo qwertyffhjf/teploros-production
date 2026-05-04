@@ -487,7 +487,13 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
     viewMode === 'list' ? h('div', null,
       showAddForm && renderWorkerForm(),
       filtered.length === 0
-        ? h('div', { style: { ...S.card, textAlign:'center', padding:32 } }, 'Сотрудники не найдены')
+        ? h('div', { style: S.card }, h(EmptyState, {
+            icon: '👷',
+            title: 'Сотрудники не найдены',
+            desc: filters?.search ? 'Попробуйте изменить поиск' : 'Добавьте первого сотрудника в систему',
+            action: filters?.search ? null : 'Добавить сотрудника',
+            onAction: filters?.search ? null : () => setShowAddForm(true),
+          }))
         : filtered.map(w => {
             const ws = WORKER_STATUS[w.status] || WORKER_STATUS.working;
             // Плашка статуса берёт данные из табеля текущего дня
@@ -966,7 +972,7 @@ const VacationPlanner = memo(({ data, onUpdate, addToast }) => {
             h('td', { style:S.td }, h('button', { style:{ background:'none', border:'none', color:'#ccc', cursor:'pointer' }, onClick:()=>del(v.id) }, '×'))
           );
         })),
-        vacations.length === 0 && h('tr', null, h('td', { colSpan:7, style:{ ...S.td, textAlign:'center', color:'#888', padding:24 } }, 'Нет записей об отпусках'))
+        vacations.length === 0 && h('tr', null, h('td', { colSpan:7, style: S.td }, h(EmptyState, { icon: '🏖️', title: 'Нет отпусков', desc: 'Запланированных отпусков нет', compact: true })))
       )
     )
   );
