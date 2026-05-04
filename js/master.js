@@ -1,3 +1,4 @@
+
 // teploros · master.js
 // Автоматически извлечено из монолита
 
@@ -438,7 +439,6 @@ const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) =
     if (!deps.includes(depId) && checkCycle(depId)) {
       addToast('Нельзя: циклическая зависимость', 'error'); return;
     }
-gantt deps
     const updated = data.ops.map(o => {
       const idx = sorted.findIndex(s => s.id === o.id);
       if (idx <= 0 || o.orderId !== orderId) return { ...o, dependsOn: o.orderId === orderId ? undefined : o.dependsOn };
@@ -590,7 +590,7 @@ const DependencyEditorInline = memo(({ data, orderId, onUpdate, addToast }) => {
       return (t?.dependsOn || []).some(d => d === opId || checkCycle(d, visited));
     };
     if (!deps.includes(depId) && checkCycle(depId)) { addToast('Нельзя: циклическая зависимость', 'error'); return; }
-resource deps
+    const updated = data.ops.map(o => {
       const idx = ops.findIndex(s => s.id === o.id);
       if (idx <= 0 || o.orderId !== orderId) return { ...o, dependsOn: o.orderId === orderId ? undefined : o.dependsOn };
       return { ...o, dependsOn: [ops[idx - 1].id] };
@@ -1689,7 +1689,7 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
     const duration = downtimeStartedAt ? now() - downtimeStartedAt : 0;
     const newEvent = { id: uid(), type:'downtime', workerId: op.workerIds?.[0], opId: op.id, ts: now(), downtimeTypeId: selectedDowntimeType, shift, startedAt: downtimeStartedAt || now(), duration, equipmentId: downtimeEquipmentId || undefined };
     const updated = { ...data, events: [...data.events, newEvent] };
-downtime
+    // УДАЛЕНА ОШИБОЧНАЯ СТРОКА: downtime
   }, [data, op, selectedDowntimeType, downtimeStartedAt, onUpdate, addToast]);
 
   // ── Ранний return — только после всех хуков ──
@@ -1760,6 +1760,3 @@ downtime
     )
   );
 });
-
-
-
