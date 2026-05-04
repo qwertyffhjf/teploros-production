@@ -210,6 +210,9 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const [selectedDowntimeType, setSelectedDowntimeType] = useState('');
   const [weldParams, setWeldParams] = useState({ seamNumber: '', electrode: '', result: 'ok' });
   const [showAchievements, setShowAchievements] = useState(false);
+  // ── Очередь pop-up достижений ──
+  const [achQueue, setAchQueue] = useState([]);
+  const showNextAch = useCallback(() => setAchQueue(q => q.slice(1)), []);
   const [downtimeStartedAt, setDowntimeStartedAt] = useState(null);
   const [downtimeEquipmentId, setDowntimeEquipmentId] = useState('');
   const [showQRScanner, setShowQRScanner] = useState(false);
@@ -311,9 +314,13 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       const oldAch = (data.workers.find(w => w.id === workerId)?.achievements || []).length;
       const newAch = (withAch.workers.find(w => w.id === workerId)?.achievements || []);
       if (newAch.length > oldAch) {
-        const latest = newAch[newAch.length - 1];
-        const achInfo = ACHIEVEMENTS[latest];
-        if (achInfo) { vibrateOnAchievement(); addToast(`${achInfo.icon} Достижение: ${achInfo.title}!`, 'success'); }
+        // Все новые достижения — в очередь pop-up (могут разблокироваться сразу несколько)
+        const earnedIds = newAch.slice(oldAch);
+        const achInfos  = earnedIds.map(id => ACHIEVEMENTS[id]).filter(Boolean);
+        if (achInfos.length > 0) {
+          vibrateOnAchievement();
+          setAchQueue(q => [...q, ...achInfos]);
+        }
       }
     }
     // ── Optimistic update: сбрасываем UI немедленно ──
@@ -576,6 +583,12 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   }, [data, addOpForm, workerId, sectionId, worker, onUpdate, addToast]);
 
   return h('div', { style: { maxWidth: 440, margin: '0 auto', padding: '0 12px 80px' } },
+    // Pop-up достижения — показываем первое из очереди, остальные ждут
+    achQueue.length > 0 && h(AchievementPopup, {
+      achievement: achQueue[0],
+      workerName: worker?.name,
+      onClose: showNextAch,
+    }),
     // Онбординг — только при первом входе
     showOnboarding && h(WorkerOnboarding, { worker, myOps, onDone: doneOnboarding }),
     !showOnboarding && h('div', null,
