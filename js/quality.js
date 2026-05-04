@@ -59,7 +59,7 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'Операции, ожидающие контроля'),
       pendingQC.length === 0
-        ? h('div', { style: { padding: 16, textAlign: 'center' } }, 'Нет операций на контроле')
+        ? h('div', null, h(EmptyState, { icon: '✓', title: 'Нет операций на контроле', desc: 'Все операции проверены', positive: true, compact: true }))
         : h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
             h('thead', null, h('tr', null,
               ['Заказ','Операция','Сотрудник','Параметры','Действия'].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t))
@@ -391,7 +391,14 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
     ),
     // Список
     filtered.length === 0
-      ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888', padding: 32 } }, 'Нет рекламаций')
+      ? h('div', { style: S.card }, h(EmptyState, {
+          icon: '🏆',
+          title: filterSeverity || filterStatus ? 'Ничего не найдено' : 'Нет рекламаций',
+          desc: filterSeverity || filterStatus
+            ? 'Попробуйте сбросить фильтры'
+            : 'Рекламации от клиентов не зафиксированы',
+          positive: !filterSeverity && !filterStatus,
+        }))
       : filtered.map((rec, idx) => {
           const order = data.orders.find(o => o.id === rec.orderId);
           const sev = severityStyle[rec.severity] || severityStyle.minor;
