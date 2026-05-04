@@ -1,6 +1,96 @@
 // teploros · shared.js
 // Общие компоненты используемые несколькими модулями
 
+// ==================== CSS: модалки + сеть ====================
+// Инжектируем один раз при загрузке модуля
+;(function() {
+  if (document.getElementById('_tp_shared_style')) return;
+  const s = document.createElement('style');
+  s.id = '_tp_shared_style';
+  s.textContent = `
+    /* Backdrop: плавное затемнение */
+    @keyframes _tpBackdropIn  { from { opacity: 0 } to { opacity: 1 } }
+    @keyframes _tpBackdropOut { from { opacity: 1 } to { opacity: 0 } }
+
+    /* Модалка: появляется снизу + scale */
+    @keyframes _tpModalIn {
+      from { opacity: 0; transform: scale(0.95) translateY(8px); }
+      to   { opacity: 1; transform: scale(1)    translateY(0); }
+    }
+    @keyframes _tpModalOut {
+      from { opacity: 1; transform: scale(1)    translateY(0); }
+      to   { opacity: 0; transform: scale(0.96) translateY(6px); }
+    }
+
+    /* Класс для всех модальных контейнеров (внутренний div) */
+    .modal-animated {
+      animation: _tpModalIn 0.22s cubic-bezier(0.2, 0, 0, 1) both;
+    }
+
+    /* Сетевой индикатор */
+    @keyframes _tpNetPulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.6; }
+    }
+    #_tp_net_bar {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      z-index: 9999;
+      transition: background 0.4s, opacity 0.4s;
+      pointer-events: none;
+    }
+    #_tp_net_bar.online  { background: #1D9E75; opacity: 0; }
+    #_tp_net_bar.offline { background: #E24B4A; opacity: 1; animation: _tpNetPulse 1.5s ease-in-out infinite; }
+    #_tp_net_toast {
+      position: fixed;
+      bottom: 80px; left: 50%; transform: translateX(-50%);
+      background: #E24B4A; color: #fff;
+      padding: 8px 18px; border-radius: 20px;
+      font-size: 13px; font-weight: 500;
+      z-index: 9999; pointer-events: none;
+      transition: opacity 0.3s, transform 0.3s;
+      white-space: nowrap;
+    }
+    #_tp_net_toast.hidden { opacity: 0; transform: translateX(-50%) translateY(8px); }
+
+    @media (prefers-reduced-motion: reduce) {
+      .modal-animated, #_tp_net_bar { animation: none !important; }
+    }
+  `;
+  document.head.appendChild(s);
+
+  // ── Сетевой индикатор — DOM-узлы ──────────────────────────────
+  const bar = document.createElement('div');
+  bar.id = '_tp_net_bar';
+  document.body.appendChild(bar);
+
+  const toast = document.createElement('div');
+  toast.id = '_tp_net_toast';
+  toast.className = 'hidden';
+  toast.textContent = '⚠ Нет соединения — данные могут не сохраняться';
+  document.body.appendChild(toast);
+
+  let toastTimer = null;
+
+  const setOnline = () => {
+    bar.className = 'online';
+    toast.className = 'hidden';
+    clearTimeout(toastTimer);
+  };
+  const setOffline = () => {
+    bar.className = 'offline';
+    toast.className = '';
+    clearTimeout(toastTimer);
+    // Скрываем toast через 5с, полоска остаётся
+    toastTimer = setTimeout(() => { toast.className = 'hidden'; }, 5000);
+  };
+
+  window.addEventListener('online',  setOnline);
+  window.addEventListener('offline', setOffline);
+  if (!navigator.onLine) setOffline();
+})();
+
 // ==================== QR-сканер (встроенный) ====================
 const QRScannerModal = memo(({ onScan, onClose }) => {
   const [error, setError] = useState(null);
@@ -72,7 +162,7 @@ const MaterialConsumptionModal = memo(({ data, opId, onSave, onSkip }) => {
     onSave(valid.map(r => ({ materialId: r.materialId, qty: Number(r.qty), opId, ts: now() })));
   };
   return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 70 } },
-    h('div', { style: { background: '#fff', borderRadius: 12, padding: 20, width: 'min(380px, calc(100vw - 32px))', maxHeight: '70vh', overflowY: 'auto' } },
+    h('div', { className: 'modal-animated', style: { background: '#fff', borderRadius: 12, padding: 20, width: 'min(380px, calc(100vw - 32px))', maxHeight: '70vh', overflowY: 'auto' } },
       h('div', { style: { fontSize: 14, fontWeight: 500, marginBottom: 12 } }, 'Расход материалов'),
       items.map((r, i) => h('div', { key: i, style: { display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center' } },
         h('select', { style: { ...S.inp, flex: 2 }, value: r.materialId, onChange: e => updateRow(i, 'materialId', e.target.value) },
@@ -425,7 +515,7 @@ const QRModal = memo(({ ops, order, worker, onClose }) => {
     style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 },
     onKeyDown: (e) => e.key === 'Escape' && onClose()
   },
-    h('div', { style: { background: '#fff', border: '0.5px solid rgba(0,0,0,0.15)', borderRadius: 12, padding: 24, width: 'min(360px, calc(100vw - 32px))', textAlign: 'center', position: 'relative', maxHeight: '90vh', overflowY: 'auto' } },
+    h('div', { className: 'modal-animated', style: { background: '#fff', border: '0.5px solid rgba(0,0,0,0.15)', borderRadius: 12, padding: 24, width: 'min(360px, calc(100vw - 32px))', textAlign: 'center', position: 'relative', maxHeight: '90vh', overflowY: 'auto' } },
       h('button', { type: 'button', onClick: onClose, 'aria-label': 'Закрыть', style: { position: 'absolute', top: 10, right: 12, background: 'transparent', border: 'none', color: '#888', cursor: 'pointer', fontSize: 18 } }, '×'),
       h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12 } }, 'QR-код операции'),
       // QR
@@ -738,7 +828,7 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
     role:'dialog', 'aria-modal':'true',
     style:{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100 }
   },
-    h('div', { className:'modal-content', style:{ background:'#faf9f6', borderRadius:14, padding:20, width:'min(700px, calc(100vw - 24px))', maxHeight:'90vh', overflowY:'auto', position:'relative' } },
+    h('div', { className:'modal-content modal-animated', style:{ background:'#faf9f6', borderRadius:14, padding:20, width:'min(700px, calc(100vw - 24px))', maxHeight:'90vh', overflowY:'auto', position:'relative' } },
 
       // ── Кнопка закрытия (вне шапки, всегда поверх) ──
       h('button', { onClick:onClose, 'aria-label':'Закрыть', style:{ position:'sticky', top:0, float:'right', zIndex:10, background:'#fff', border:'1px solid #ccc', borderRadius:'50%', width:32, height:32, fontSize:18, lineHeight:'30px', textAlign:'center', cursor:'pointer', color:'#444', marginBottom:-32, marginRight:0 } }, '×'),
@@ -957,5 +1047,3 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
     )
   );
 });
-
-
