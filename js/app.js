@@ -1737,7 +1737,10 @@ function App() {
   }, [data.ops]);
 
   const goBack = () => { setRole(null); setWorkerId(null); setSectionId(null); setInitialOpId(null); setShowChat(false); window.history.replaceState({}, '', window.location.pathname); };
-  const addToast = useCallback((message, type = 'info') => { const id = Date.now() + Math.random(); setToasts(prev => [...prev, { id, message, type }]); }, []);
+  const addToast = useCallback((message, type = 'info', action = null) => {
+    const id = Date.now() + Math.random();
+    setToasts(prev => [...prev, { id, message, type, action }]);
+  }, []);
   const removeToast = useCallback(id => setToasts(prev => prev.filter(t => t.id !== id)), []);
 
   // Сброс PIN через мастер-ключ (вызывается из LoginScreen)
@@ -1771,7 +1774,7 @@ function App() {
       h('div', { style: { fontSize:12, color:'#888' } }, 'QR-операция')
     ),
     h(QRScreen, { data, opId: initialOpId, onUpdate: save, addToast }),
-    h('div', null, toasts.map(t => h(Toast, { key: t.id, message: t.message, onClose: () => removeToast(t.id) })))
+    h('div', null, toasts.map(t => h(Toast, { key: t.id, message: t.message, type: t.type, action: t.action, onClose: () => removeToast(t.id) })))
   );
 
   // Экран входа
@@ -1791,7 +1794,7 @@ function App() {
       },
       onResetPin: handleResetPin
     }),
-    h('div', null, toasts.map(t => h(Toast, { key: t.id, message: t.message, onClose: () => removeToast(t.id) })))
+    h('div', null, toasts.map(t => h(Toast, { key: t.id, message: t.message, type: t.type, action: t.action, onClose: () => removeToast(t.id) })))
   );
 
   // Режим "только чат"
@@ -1801,7 +1804,7 @@ function App() {
       h('div', { style: { fontSize:12, color:'#888' } }, `Чат · ${currentUser.name}`)
     ),
     h(ChatScreen, { data, onUpdate: save, addToast, currentUser, onBack: goBack }),
-    h('div', null, toasts.map(t => h(Toast, { key: t.id, message: t.message, onClose: () => removeToast(t.id) })))
+    h('div', null, toasts.map(t => h(Toast, { key: t.id, message: t.message, type: t.type, action: t.action, onClose: () => removeToast(t.id) })))
   );
 
   return h('div', null,
@@ -1897,7 +1900,8 @@ function App() {
       addToast,
       onClose: () => { setReceiveDeliveryId(null); window.history.replaceState({}, '', window.location.pathname); }
     }),
-    h('div', { 'aria-live': 'polite' }, toasts.map(t => h(Toast, { key: t.id, message: t.message, onClose: () => removeToast(t.id) }))),
+    h('div', { 'aria-live': 'polite' }, toasts.map(t => h(Toast, { key: t.id, message: t.message, type: t.type, action: t.action, onClose: () => removeToast(t.id) }))),
+    h(SaveStatusBar),
     h(InstallPromptBanner)
   );
 }
