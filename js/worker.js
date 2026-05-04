@@ -308,20 +308,17 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     const updated = { ...data, ops: result.ops, events: result.events, reclamations: result.reclamations, opNorms: result.opNorms || data.opNorms || {}, auxStats: result.auxStats || data.auxStats || {} };
     const status = result._status;
     // Проверяем достижения и сохраняем ОДИН раз
-    const withAch = checkAchievements(workerId, updated);
-    const final = withAch !== updated ? withAch : updated;
-    if (withAch !== updated) {
-      const oldAch = (data.workers.find(w => w.id === workerId)?.achievements || []).length;
-      const newAch = (withAch.workers.find(w => w.id === workerId)?.achievements || []);
-      if (newAch.length > oldAch) {
-        // Все новые достижения — в очередь pop-up (могут разблокироваться сразу несколько)
-        const earnedIds = newAch.slice(oldAch);
-        const achInfos  = earnedIds.map(id => ACHIEVEMENTS[id]).filter(Boolean);
-        if (achInfos.length > 0) {
-          vibrateOnAchievement();
-          setAchQueue(q => [...q, ...achInfos]);
-        }
-      }
+    // FIX: checkAchievements теперь возвращает { data, justEarned }
+    // justEarned — точный список ID только что заработанных, без slice/filter хаков
+    const { data: achData, justEarned } = checkAchievements(workerId, updated);
+    const final = justEarned.length > 0 ? achData : updated;
+
+    if (justEarned.length > 0) {
+      const achInfos = justEarned.map(id => ACHIEVEMENTS[id]).filter(Boolean);
+      vibrateOnAchievement();
+      // Небольшая задержка — даём UI сначала обновиться (операция завершена),
+      // потом показываем pop-up чтобы не перекрывать финальный экран сразу
+      setTimeout(() => setAchQueue(q => [...q, ...achInfos]), 600);
     }
     // ── Optimistic update: сбрасываем UI немедленно ──
     const prevData = data;
@@ -1022,3 +1019,4 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   confirmEl
   );
 });
+
