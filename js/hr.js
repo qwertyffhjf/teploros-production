@@ -619,7 +619,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
         h('span', { style: { color: '#aaa', fontSize: 10, alignSelf: 'center' } }, '· Нажмите ячейку для переключения')
       ),
       // Матрица с уровнями
-      h('div', { style: { ...S.card, padding: 0, overflow: 'auto', maxHeight: '70vh' } }, h('table', { style: { borderCollapse:'collapse', width:'100%', fontSize:12 } },
+      h('div', { style: { ...S.card, padding: 0, overflowX: 'auto', overflowY: 'auto', maxHeight: '70vh', WebkitOverflowScrolling: 'touch' } }, h('table', { style: { borderCollapse:'collapse', minWidth: 600, fontSize:12 } },
         h('thead', null, h('tr', null,
           h('th', { style: { ...S.th, position: 'sticky', top: 0, left: 0, zIndex: 3, background: '#f8f8f5', minWidth: 160, boxShadow: '2px 0 4px rgba(0,0,0,0.06)' }, scope: 'col' }, 'Сотрудник'),
           stagesForMatrix.map(s => {
@@ -783,9 +783,10 @@ const InstructionsTracker = memo(({ data, onUpdate, addToast }) => {
 
     // Матрица: сотрудник × виды инструктажей
     h('div', { style:{ ...S.card, padding:0, overflow:'auto', maxHeight:'60vh' } },
-      h('table', { style:{ borderCollapse:'collapse', fontSize:11, width:'100%' } },
+      h('div', { style: { overflowX: 'auto', WebkitOverflowScrolling: 'touch', borderRadius: 'inherit' } },
+      h('table', { style:{ borderCollapse:'collapse', fontSize:11, minWidth: 560 } },
         h('thead', null, h('tr', null,
-          h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'#f8f8f5', minWidth:160, textAlign:'left', padding:'6px 10px' } }, 'Сотрудник'),
+          h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'#f8f8f5', minWidth:160, textAlign:'left', padding:'6px 10px', boxShadow: '2px 0 4px rgba(0,0,0,0.06)' } }, 'Сотрудник'),
           INSTRUCTION_TYPES.map(t => h('th', { key:t.id, style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:90, fontSize:10 } }, t.label))
         )),
         h('tbody', null, shown.map(({ worker: w, byType }) =>
@@ -807,6 +808,7 @@ const InstructionsTracker = memo(({ data, onUpdate, addToast }) => {
           )
         ))
       )
+      ) // конец scroll-wrapper
     ),
 
     // Последние записи с пагинацией
@@ -933,7 +935,8 @@ const VacationPlanner = memo(({ data, onUpdate, addToast }) => {
     ),
 
     h('div', { style:{ ...S.card, padding:0 } },
-      h('table', { style:{ borderCollapse:'collapse', width:'100%', fontSize:12 } },
+      h('div', { style: { overflowX: 'auto', WebkitOverflowScrolling: 'touch' } },
+      h('table', { style:{ borderCollapse:'collapse', minWidth: 520, fontSize:12 } },
         h('thead', null, h('tr', null,
           ['Сотрудник','Начало','Конец','Дней','Статус','Утверждён',''].map((t,i) => h('th', { key:i, style:S.th }, t))
         )),
@@ -955,6 +958,7 @@ const VacationPlanner = memo(({ data, onUpdate, addToast }) => {
         })),
         vacations.length === 0 && h('tr', null, h('td', { colSpan:7, style:{ ...S.td, textAlign:'center', color:'#888', padding:24 } }, 'Нет записей об отпусках'))
       )
+      ) // конец scroll-wrapper
     )
   );
 });
