@@ -578,7 +578,7 @@ const ReceiveDeliveryScreen = memo(({ deliveryId, data, onUpdate, currentUserId,
   return h('div', {
     style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300, padding: 16 }
   },
-    h('div', { style: { background: '#fff', borderRadius: 16, padding: 28, width: 'min(400px, 100%)', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' } },
+    h('div', { className: 'modal-animated', style: { background: '#fff', borderRadius: 16, padding: 28, width: 'min(400px, 100%)', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' } },
 
       !delivery
         ? h('div', { style: { textAlign: 'center', padding: 24 } },
@@ -1152,7 +1152,7 @@ const useConfirm = () => {
     role: 'dialog', 'aria-modal': 'true',
     style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 400, padding: 16 }
   },
-    h('div', { style: { background: '#fff', borderRadius: 12, padding: 24, width: 'min(360px,100%)', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' } },
+    h('div', { className: 'modal-animated', style: { background: '#fff', borderRadius: 12, padding: 24, width: 'min(360px,100%)', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' } },
       h('div', { style: { fontSize: 15, fontWeight: 500, marginBottom: cfg.detail ? 6 : 20, lineHeight: 1.4 } }, cfg.msg),
       cfg.detail && h('div', { style: { fontSize: 12, color: '#888', marginBottom: 20, lineHeight: 1.5 } }, cfg.detail),
       h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
