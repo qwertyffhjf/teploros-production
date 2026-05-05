@@ -500,16 +500,18 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
       filtered.length === 0
         ? h('div', { style: S.card }, h(EmptyState, {
             icon: '👷',
-            title: 'Сотрудники не найдены',
-            desc: filters?.search ? 'Попробуйте изменить поиск' : 'Добавьте первого сотрудника в систему',
-            action: filters?.search ? null : 'Добавить сотрудника',
-            onAction: filters?.search ? null : () => setShowAddForm(true),
+            title: search ? 'Сотрудники не найдены' : 'Нет сотрудников',
+            desc: search ? 'Попробуйте изменить поиск' : 'Добавьте первого сотрудника в систему',
+            action: search ? null : 'Добавить сотрудника',
+            onAction: search ? null : () => setShowAddForm(true),
           }))
         : filtered.map(w => {
             const ws = WORKER_STATUS[w.status] || WORKER_STATUS.working;
             // Плашка статуса берёт данные из табеля текущего дня
             const today = new Date();
-            const todayCell = data.timesheet?.[w.id]?.[today.getDate()];
+            const _tsKeyToday = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2,'0')}`;
+            const todayCell = data.timesheet?.[_tsKeyToday]?.[w.id]?.[today.getDate()]
+              || data.timesheet?.[w.id]?.[today.getDate()]; // обратная совместимость со старым форматом
             const tsStatus = (() => {
               if (!todayCell) return null;
               if (todayCell.code === 'ОТ') return { label: 'Отпуск', bg: '#E6F1FB', cl: '#0C447C', br: '#90CAF9' };
@@ -557,7 +559,10 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
                   (() => {
                     const now = new Date();
                     const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,'0')}`;
-                    const tsMonth = data.timesheet?.[w.id] || {};
+                    // Новый формат: timesheet[ym][workerId], старый: timesheet[workerId]
+                    const tsMonth = data.timesheet?.[ym]?.[w.id]
+                      || data.timesheet?.[w.id]
+                      || {};
                     const totalH = Object.values(tsMonth).reduce((s, cell) => s + (cell?.h || 0), 0);
                     return totalH > 0 ? h('div', { style: { marginBottom: 8, padding: '6px 10px', background: GN3, borderRadius: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
                       h('span', { style: { fontSize: 11, color: GN2 } }, `📋 Табель ${now.toLocaleString('ru', { month: 'long' })}`),
@@ -810,8 +815,7 @@ const InstructionsTracker = memo(({ data, onUpdate, addToast }) => {
     ),
 
     // Матрица: сотрудник × виды инструктажей
-    h('div', { style:{ ...S.card, padding:0, overflow:'auto', maxHeight:'60vh' } },
-      h('div', { style: { overflowX: 'auto', WebkitOverflowScrolling: 'touch', borderRadius: 'inherit' } },
+    h('div', { style:{ ...S.card, padding:0, overflowX:'auto', overflowY:'auto', maxHeight:'60vh', WebkitOverflowScrolling:'touch' } },
       h('table', { style:{ borderCollapse:'collapse', fontSize:11, minWidth: 560 } },
         h('thead', null, h('tr', null,
           h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'#f8f8f5', minWidth:160, textAlign:'left', padding:'6px 10px', boxShadow: '2px 0 4px rgba(0,0,0,0.06)' } }, 'Сотрудник'),
@@ -836,7 +840,6 @@ const InstructionsTracker = memo(({ data, onUpdate, addToast }) => {
           )
         ))
       )
-      ) // конец scroll-wrapper
     ),
 
     // Последние записи с пагинацией
