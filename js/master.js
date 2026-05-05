@@ -39,7 +39,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
   // Отслеживаем несохранённые изменения в форме операции
   const EMPTY_OP_FORM = { orderId: '', name: '', workerIds: [], plannedHours: '', sectionId: '', equipmentId: '', plannedStartDate: '', drawingUrl: '' };
   const isDirtyOp = useIsDirty(form, editingId ? null : EMPTY_OP_FORM) && (form.name !== '' || form.orderId !== '' || form.plannedHours !== '');
-  const guardedResetOp = useDirtyGuard(isDirtyOp, resetForm, 'Операция не сохранена. Закрыть форму?', askConfirm);
+  const guardedResetOp = useDirtyGuard(isDirtyOp, resetForm, 'Операция не сохранена. Закрыть форму?');
 
   const addOrUpdate = useCallback(async () => {
     if (!validate()) return;
@@ -458,6 +458,20 @@ const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) =
     onUpdate(d); DB.save(d).catch(() => onUpdate(data));
   }, [data, ops, onUpdate, addToast, orderId]);
 
+  // Автоустановка: все последовательно (каждая ждёт предыдущую)
+  const setAllSequential = useCallback(async () => {
+    const ordered = [...ops];
+    const updated = data.ops.map(o => {
+      if (o.orderId !== orderId) return o;
+      const idx = ordered.findIndex(op => op.id === o.id);
+      if (idx <= 0) return { ...o, dependsOn: undefined };
+      return { ...o, dependsOn: [ordered[idx - 1].id] };
+    });
+    const d = { ...data, ops: updated };
+    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    addToast('Расставлено последовательно', 'success');
+  }, [data, ops, orderId, onUpdate, addToast]);
+
   // Автоустановка: все параллельно (без зависимостей)
   const setAllParallel = useCallback(async () => {
     const d = { ...data, ops: data.ops.map(o => o.orderId === orderId ? { ...o, dependsOn: undefined } : o) };
@@ -601,6 +615,19 @@ const DependencyEditorInline = memo(({ data, orderId, onUpdate, addToast }) => {
     if (!deps.includes(depId) && checkCycle(depId)) { addToast('Нельзя: циклическая зависимость', 'error'); return; }
     const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, dependsOn: newDeps.length > 0 ? newDeps : undefined } : o) };
     onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+  }, [data, ops, orderId, onUpdate, addToast]);
+
+  const setAllSequential = useCallback(async () => {
+    const ordered = [...ops];
+    const updated = data.ops.map(o => {
+      if (o.orderId !== orderId) return o;
+      const idx = ordered.findIndex(op => op.id === o.id);
+      if (idx <= 0) return { ...o, dependsOn: undefined };
+      return { ...o, dependsOn: [ordered[idx - 1].id] };
+    });
+    const d = { ...data, ops: updated };
+    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    addToast('Расставлено последовательно', 'success');
   }, [data, ops, orderId, onUpdate, addToast]);
 
   const setAllParallel = useCallback(async () => {
@@ -815,7 +842,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const EMPTY_ORDER_FORM = { number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '' };
   const isDirtyOrder = useIsDirty(form, EMPTY_ORDER_FORM) && (form.number !== '' || form.product !== '' || form.qty !== '');
   const resetOrderForm = () => { setEditingId(null); setForm(EMPTY_ORDER_FORM); setFieldErrors({}); };
-  const guardedResetOrder = useDirtyGuard(isDirtyOrder, resetOrderForm, 'Заказ не сохранён. Закрыть форму?', askConfirm);
+  const guardedResetOrder = useDirtyGuard(isDirtyOrder, resetOrderForm, 'Заказ не сохранён. Закрыть форму?');
 
   const ordersToShow = useMemo(() => data.orders.filter(o => (showArchived ? true : !o.archived) && (!o.shipped || showShipped) && (!filterType || o.productType === filterType)).sort((a,b) => { const priorityOrder = { critical:0, high:1, medium:2, low:3 }; return (priorityOrder[a.priority]||4) - (priorityOrder[b.priority]||4) || (b.createdAt||0) - (a.createdAt||0); }), [data.orders, showArchived, showShipped, filterType]);
   const paginated = useMemo(() => { const start = (page-1)*pageSize; return ordersToShow.slice(start, start+pageSize); }, [ordersToShow, page]);
