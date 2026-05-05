@@ -380,6 +380,12 @@ const pinMatch = (input, stored) => {
 // ⚠️ SECURITY: Перед использованием в production примени Security Rules!
 // Смотри FIREBASE_SECURITY_RULES.txt в корне проекта.
 // Сейчас БД открыта — любой может читать/писать. После Rules будет закрыто.
+
+// Защита: если Firebase CDN не загрузился (сеть недоступна) — не крашим весь core.js.
+// Приложение запустится в офлайн-режиме из кэша Service Worker.
+if (typeof firebase === 'undefined') {
+  console.warn('Firebase CDN не загрузился — работаем из кэша');
+} else {
 firebase.initializeApp({
   apiKey: "AIzaSyAR4Hvt4I80tbQKI2HLTKM8rbLSas2QFDw",
   authDomain: "teploros-11774.firebaseapp.com",
@@ -388,9 +394,10 @@ firebase.initializeApp({
   messagingSenderId: "151146225873",
   appId: "1:151146225873:web:f37d7ce9f9859dcb5de5f0"
 });
-const firestore = firebase.firestore();
-const DOC_REF    = firestore.collection('app').doc('production_v14');
-const WH_DOC_REF = firestore.collection('app').doc('warehouse_v1');   // Склад — отдельный документ
+}
+const firestore = typeof firebase !== 'undefined' ? firebase.firestore() : null;
+const DOC_REF    = firestore ? firestore.collection('app').doc('production_v14') : null;
+const WH_DOC_REF = firestore ? firestore.collection('app').doc('warehouse_v1') : null;   // Склад — отдельный документ
 const PRESENCE_REF = firestore.collection('presence');
 
 // Поля которые живут в warehouse_v1 (не в production_v14)
@@ -687,6 +694,20 @@ const DB = {
   async load() {
     cleanStaleLocalStorageKeys();
     await DB._flushQueue();
+
+    // Если Firebase не загрузился (CDN недоступен) — сразу идём в кэш
+    if (!DOC_REF) {
+      console.warn('Firebase недоступен — загружаем из кэша');
+      try {
+        const cached = localStorage.getItem(CACHE_KEY);
+        if (cached) {
+          const { data: cacheData } = JSON.parse(cached);
+          return { ...EMPTY_DATA, ...cacheData };
+        }
+      } catch(e) {}
+      return EMPTY_DATA;
+    }
+
     try {
       // Загружаем оба документа параллельно
       const [snap, whSnap] = await Promise.all([
