@@ -513,7 +513,21 @@ const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) =
       h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 11 } },
         h('thead', null, h('tr', null,
           h('th', { style: { ...S.th, position: 'sticky', left: 0, background: '#f8f8f5', zIndex: 1 } }, 'Операция ↓ зависит от →'),
-          ops.map(op => h('th', { key: op.id, style: { ...S.th, writingMode: 'vertical-lr', textOrientation: 'mixed', minWidth: 30, maxWidth: 40, height: 80, padding: '4px 2px' } }, op.name.length > 10 ? op.name.slice(0, 10) + '…' : op.name))
+          ops.map(op => h('th', { key: op.id, style: { ...S.th, minWidth: 36, maxWidth: 36, height: 110, padding: 0, verticalAlign: 'bottom', overflow: 'visible' } },
+            h('div', { style: {
+              transform: 'rotate(-45deg)',
+              transformOrigin: 'bottom center',
+              whiteSpace: 'nowrap',
+              fontSize: 11,
+              width: 30,
+              marginBottom: 4,
+              marginLeft: 'auto',
+              marginRight: 'auto',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              maxWidth: 90,
+            } }, op.name.length > 12 ? op.name.slice(0, 12) + '…' : op.name)
+          ))
         )),
         h('tbody', null, ops.map(op => h('tr', { key: op.id },
           h('td', { style: { ...S.td, fontWeight: 500, position: 'sticky', left: 0, background: '#fff', zIndex: 1, minWidth: 120 } },
@@ -647,7 +661,21 @@ const DependencyEditorInline = memo(({ data, orderId, onUpdate, addToast }) => {
     h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 11 } },
       h('thead', null, h('tr', null,
         h('th', { style: { ...S.th, position: 'sticky', left: 0, background: '#f8f8f5', zIndex: 1 } }, 'Операция ↓ зависит от →'),
-        ops.map(op => h('th', { key: op.id, style: { ...S.th, writingMode: 'vertical-lr', minWidth: 30, maxWidth: 40, height: 80, padding: '4px 2px' } }, op.name.length > 10 ? op.name.slice(0, 10) + '…' : op.name))
+        ops.map(op => h('th', { key: op.id, style: { ...S.th, minWidth: 36, maxWidth: 36, height: 110, padding: 0, verticalAlign: 'bottom', overflow: 'visible' } },
+            h('div', { style: {
+              transform: 'rotate(-45deg)',
+              transformOrigin: 'bottom center',
+              whiteSpace: 'nowrap',
+              fontSize: 11,
+              width: 30,
+              marginBottom: 4,
+              marginLeft: 'auto',
+              marginRight: 'auto',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              maxWidth: 90,
+            } }, op.name.length > 12 ? op.name.slice(0, 12) + '…' : op.name)
+          ))
       )),
       h('tbody', null, ops.map(op => h('tr', { key: op.id },
         h('td', { style: { ...S.td, fontWeight: 500, position: 'sticky', left: 0, background: '#fff', zIndex: 1, minWidth: 120 } },
