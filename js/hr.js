@@ -35,7 +35,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
   // Защита формы от случайного закрытия
   const EMPTY_WORKER_FORM = { name: '', position: '', grade: '', tabNumber: '', pin: '', sectionId: '', competences: [], competenceLevels: {}, competenceMeta: {}, status: 'working', phone: '', hireDate: '', email: '', emergencyContact: '', medicalExamDate: '', medicalExamNextDate: '', licences: [] };
   const isDirtyWorker = useIsDirty(form, EMPTY_WORKER_FORM) && form.name !== '';
-  const guardedResetWorker = useDirtyGuard(isDirtyWorker, resetForm, 'Данные сотрудника не сохранены. Закрыть форму?');
+  const guardedResetWorker = useDirtyGuard(isDirtyWorker, resetForm, 'Данные сотрудника не сохранены. Закрыть форму?', askConfirm);
 
   const addOrUpdate = useCallback(async () => {
     if (!form.name.trim()) { addToast('Введите имя сотрудника', 'error'); return; }
