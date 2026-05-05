@@ -39,7 +39,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
   // Отслеживаем несохранённые изменения в форме операции
   const EMPTY_OP_FORM = { orderId: '', name: '', workerIds: [], plannedHours: '', sectionId: '', equipmentId: '', plannedStartDate: '', drawingUrl: '' };
   const isDirtyOp = useIsDirty(form, editingId ? null : EMPTY_OP_FORM) && (form.name !== '' || form.orderId !== '' || form.plannedHours !== '');
-  const guardedResetOp = useDirtyGuard(isDirtyOp, resetForm, 'Операция не сохранена. Закрыть форму?');
+  const guardedResetOp = useDirtyGuard(isDirtyOp, resetForm, 'Операция не сохранена. Закрыть форму?', askConfirm);
 
   const addOrUpdate = useCallback(async () => {
     if (!validate()) return;
@@ -815,7 +815,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const EMPTY_ORDER_FORM = { number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '' };
   const isDirtyOrder = useIsDirty(form, EMPTY_ORDER_FORM) && (form.number !== '' || form.product !== '' || form.qty !== '');
   const resetOrderForm = () => { setEditingId(null); setForm(EMPTY_ORDER_FORM); setFieldErrors({}); };
-  const guardedResetOrder = useDirtyGuard(isDirtyOrder, resetOrderForm, 'Заказ не сохранён. Закрыть форму?');
+  const guardedResetOrder = useDirtyGuard(isDirtyOrder, resetOrderForm, 'Заказ не сохранён. Закрыть форму?', askConfirm);
 
   const ordersToShow = useMemo(() => data.orders.filter(o => (showArchived ? true : !o.archived) && (!o.shipped || showShipped) && (!filterType || o.productType === filterType)).sort((a,b) => { const priorityOrder = { critical:0, high:1, medium:2, low:3 }; return (priorityOrder[a.priority]||4) - (priorityOrder[b.priority]||4) || (b.createdAt||0) - (a.createdAt||0); }), [data.orders, showArchived, showShipped, filterType]);
   const paginated = useMemo(() => { const start = (page-1)*pageSize; return ordersToShow.slice(start, start+pageSize); }, [ordersToShow, page]);
