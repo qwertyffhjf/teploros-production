@@ -510,24 +510,16 @@ const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) =
         h('button', { style: gbtn({ fontSize: 11 }), onClick: setAllParallel }, '⇉ Все параллельно')
       ),
       // Матрица зависимостей
+      h('div', { style: { marginBottom: 6, fontSize: 10, color: '#888' } },
+        ops.map((op, idx) => h('span', { key: op.id, title: op.name, style: { display: 'inline-block', marginRight: 8 } },
+          h('span', { style: { fontWeight: 600, color: '#555' } }, idx + 1),
+          ` — ${op.name}`
+        ))
+      ),
       h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 11 } },
         h('thead', null, h('tr', null,
           h('th', { style: { ...S.th, position: 'sticky', left: 0, background: '#f8f8f5', zIndex: 1 } }, 'Операция ↓ зависит от →'),
-          ops.map(op => h('th', { key: op.id, style: { ...S.th, minWidth: 36, maxWidth: 36, height: 110, padding: 0, verticalAlign: 'bottom', overflow: 'visible' } },
-            h('div', { style: {
-              transform: 'rotate(-45deg)',
-              transformOrigin: 'bottom center',
-              whiteSpace: 'nowrap',
-              fontSize: 11,
-              width: 30,
-              marginBottom: 4,
-              marginLeft: 'auto',
-              marginRight: 'auto',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              maxWidth: 90,
-            } }, op.name.length > 12 ? op.name.slice(0, 12) + '…' : op.name)
-          ))
+          ops.map((op, idx) => h('th', { key: op.id, title: op.name, style: { ...S.th, minWidth: 34, maxWidth: 34, width: 34, textAlign: 'center', fontSize: 11, fontWeight: 600, color: '#555', padding: '4px 2px' } }, idx + 1))
         )),
         h('tbody', null, ops.map(op => h('tr', { key: op.id },
           h('td', { style: { ...S.td, fontWeight: 500, position: 'sticky', left: 0, background: '#fff', zIndex: 1, minWidth: 120 } },
@@ -658,24 +650,16 @@ const DependencyEditorInline = memo(({ data, orderId, onUpdate, addToast }) => {
         h('button', { style: gbtn({ fontSize: 11 }), onClick: setAllParallel }, '⇉ Все параллельно')
       )
     ),
+    h('div', { style: { marginBottom: 8, fontSize: 10, color: '#888', lineHeight: 1.7 } },
+      ops.map((op, idx) => h('span', { key: op.id, style: { display: 'inline-block', marginRight: 10 } },
+        h('span', { style: { fontWeight: 600, color: '#555' } }, idx + 1),
+        ` — ${op.name}`
+      ))
+    ),
     h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 11 } },
       h('thead', null, h('tr', null,
         h('th', { style: { ...S.th, position: 'sticky', left: 0, background: '#f8f8f5', zIndex: 1 } }, 'Операция ↓ зависит от →'),
-        ops.map(op => h('th', { key: op.id, style: { ...S.th, minWidth: 36, maxWidth: 36, height: 110, padding: 0, verticalAlign: 'bottom', overflow: 'visible' } },
-            h('div', { style: {
-              transform: 'rotate(-45deg)',
-              transformOrigin: 'bottom center',
-              whiteSpace: 'nowrap',
-              fontSize: 11,
-              width: 30,
-              marginBottom: 4,
-              marginLeft: 'auto',
-              marginRight: 'auto',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              maxWidth: 90,
-            } }, op.name.length > 12 ? op.name.slice(0, 12) + '…' : op.name)
-          ))
+        ops.map((op, idx) => h('th', { key: op.id, title: op.name, style: { ...S.th, minWidth: 34, maxWidth: 34, width: 34, textAlign: 'center', fontSize: 11, fontWeight: 600, color: '#555', padding: '4px 2px' } }, idx + 1))
       )),
       h('tbody', null, ops.map(op => h('tr', { key: op.id },
         h('td', { style: { ...S.td, fontWeight: 500, position: 'sticky', left: 0, background: '#fff', zIndex: 1, minWidth: 120 } },
