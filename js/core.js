@@ -1391,18 +1391,23 @@ const useIsDirty = (current, initial) => {
 // Оборачивает функцию закрытия формы — спрашивает подтверждение если есть изменения.
 // Использование:
 //   const guardedClose = useDirtyGuard(isDirty, resetForm, 'Закрыть без сохранения?');
-const useDirtyGuard = (isDirty, onClose, message = 'Есть несохранённые изменения. Закрыть без сохранения?') => {
+const useDirtyGuard = (isDirty, onClose, message = 'Есть несохранённые изменения. Закрыть без сохранения?', ask = null) => {
   return useCallback(async () => {
     if (!isDirty) { onClose(); return; }
-    const ok = await askConfirm({
-      message,
-      detail: 'Введённые данные будут потеряны',
-      danger: true,
-      confirmText: 'Закрыть',
-      cancelText: 'Остаться',
-    });
+    let ok;
+    if (typeof ask === 'function') {
+      ok = await ask({
+        message,
+        detail: 'Введённые данные будут потеряны',
+        danger: true,
+        confirmText: 'Закрыть',
+        cancelText: 'Остаться',
+      });
+    } else {
+      ok = window.confirm(message);
+    }
     if (ok) onClose();
-  }, [isDirty, onClose, message]);
+  }, [isDirty, onClose, message, ask]);
 };
 
 // ==================== DirtyBadge — индикатор несохранённых изменений ====================
