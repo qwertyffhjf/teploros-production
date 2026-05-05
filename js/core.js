@@ -858,12 +858,32 @@ const DB = {
       // ── Контроль размера ──
       const payload  = JSON.stringify(toSave);
       const sizeKb   = Math.round(payload.length / 1024);
+
+      // Вспомогательная функция: оставить только N последних месяцев табеля
+      const pruneTimesheet = (ts, keepMonths) => {
+        if (!ts || typeof ts !== 'object') return ts;
+        const keys = Object.keys(ts)
+          .filter(k => /^\d{4}-\d{2}$/.test(k)) // только ключи формата YYYY-MM
+          .sort(); // сортировка по дате
+        const toDelete = keys.slice(0, Math.max(0, keys.length - keepMonths));
+        if (toDelete.length === 0) return ts;
+        const pruned = { ...ts };
+        toDelete.forEach(k => delete pruned[k]);
+        console.log(`Timesheet pruned: удалены месяцы ${toDelete.join(', ')}`);
+        return pruned;
+      };
+
       if (sizeKb > 900) {
         toSave.events               = (toSave.events || []).slice(-1000);
         toSave.materialConsumptions = (toSave.materialConsumptions || []).slice(-1000);
-        DB._lastError = `⚠ Данных ${sizeKb} КБ — лимит 1 МБ. Старые заказы архивируются автоматически.`;
-        console.warn(`Payload: ${sizeKb} KB`);
+        // Оставляем только последние 3 месяца табеля
+        toSave.timesheet = pruneTimesheet(toSave.timesheet, 3);
+        const sizeAfter = Math.round(JSON.stringify(toSave).length / 1024);
+        DB._lastError = `⚠ Данных ${sizeKb}→${sizeAfter} КБ — лимит 1 МБ. Старые данные очищены.`;
+        console.warn(`Payload: ${sizeKb} KB → ${sizeAfter} KB after pruning`);
       } else if (sizeKb > 700) {
+        // Превентивно: оставляем последние 6 месяцев
+        toSave.timesheet = pruneTimesheet(toSave.timesheet, 6);
         DB._sizeWarning = sizeKb;
       } else {
         DB._sizeWarning = null;
@@ -1162,6 +1182,34 @@ const migrateData = (d) => {
       d = { ...d, events: deduped };
     }
   }
+
+  // Миграция табеля: старый формат timesheet[workerId][day] → новый timesheet[YYYY-MM][workerId][day]
+  // Определяем старый формат: ключи верхнего уровня — это ID сотрудников (не YYYY-MM)
+  if (d.timesheet && typeof d.timesheet === 'object') {
+    const keys = Object.keys(d.timesheet);
+    const hasOldFormat = keys.some(k => !/^\d{4}-\d{2}$/.test(k));
+    if (hasOldFormat) {
+      console.log('Миграция табеля: конвертируем в формат YYYY-MM...');
+      const now = new Date();
+      const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const newTimesheet = {};
+      // Копируем уже правильные ключи YYYY-MM
+      keys.filter(k => /^\d{4}-\d{2}$/.test(k)).forEach(k => {
+        newTimesheet[k] = d.timesheet[k];
+      });
+      // Переносим старые записи в текущий месяц (лучшее из возможного без метаданных дат)
+      const oldKeys = keys.filter(k => !/^\d{4}-\d{2}$/.test(k));
+      if (oldKeys.length > 0) {
+        if (!newTimesheet[currentYm]) newTimesheet[currentYm] = {};
+        oldKeys.forEach(workerId => {
+          newTimesheet[currentYm][workerId] = d.timesheet[workerId];
+        });
+        console.log(`Перенесено ${oldKeys.length} записей табеля в ${currentYm}`);
+      }
+      d = { ...d, timesheet: newTimesheet };
+    }
+  }
+
   return d;
 };
 
