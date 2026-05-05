@@ -225,6 +225,189 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
 
 
 
+
+// ==================== GreetingBanner ====================
+// Баннер приветствия — показывается 5 секунд после входа, затем сам закрывается
+const GreetingBanner = memo(({ role, name, data, workerId }) => {
+  const [visible, setVisible] = React.useState(true);
+  const [leaving, setLeaving] = React.useState(false);
+
+  React.useEffect(() => {
+    const hideTimer = setTimeout(() => {
+      setLeaving(true);
+      setTimeout(() => setVisible(false), 400);
+    }, 5000);
+    return () => clearTimeout(hideTimer);
+  }, []);
+
+  const close = () => { setLeaving(true); setTimeout(() => setVisible(false), 400); };
+
+  if (!visible) return null;
+
+  // Приветствие по времени суток
+  const hour = new Date().getHours();
+  const timeGreeting = hour < 6 ? 'Доброй ночи' : hour < 12 ? 'Доброе утро' : hour < 18 ? 'Добрый день' : 'Добрый вечер';
+
+  // Метрики по роли
+  const today = new Date(); today.setHours(0,0,0,0); const todayTs = today.getTime();
+  const activeOrders = (data.orders || []).filter(o => !o.archived && !o.shipped);
+  const activeOps    = (data.ops    || []).filter(o => !o.archived);
+  const now_ts = Date.now();
+
+  // Дедлайны — заказы у которых срок <= 3 дней
+  const urgentOrders = activeOrders
+    .filter(o => o.deadline && !o.shipped)
+    .map(o => ({ ...o, daysLeft: Math.ceil((new Date(o.deadline) - now_ts) / 86400000) }))
+    .filter(o => o.daysLeft <= 3)
+    .sort((a, b) => a.daysLeft - b.daysLeft)
+    .slice(0, 2);
+
+  const metrics = (() => {
+    if (role === 'worker' && workerId) {
+      const myOps     = activeOps.filter(o => (o.workerIds || []).includes(workerId));
+      const myActive  = myOps.filter(o => o.status === 'in_progress');
+      const myPending = myOps.filter(o => o.status === 'pending');
+      const myDone    = activeOps.filter(o => (o.workerIds || []).includes(workerId) && o.status === 'done' && o.finishedAt >= todayTs);
+      return [
+        myActive.length  > 0 ? { icon: '▶', label: 'В работе',         val: myActive.length,  color: AM2  } : null,
+        myPending.length > 0 ? { icon: '⏳', label: 'Ожидают тебя',    val: myPending.length, color: '#555' } : null,
+        myDone.length    > 0 ? { icon: '✓',  label: 'Готово сегодня',  val: myDone.length,    color: GN   } : null,
+      ].filter(Boolean);
+    }
+
+    if (role === 'master' || role === 'shop_master') {
+      const inWork    = activeOps.filter(o => o.status === 'in_progress').length;
+      const pending   = activeOps.filter(o => o.status === 'pending').length;
+      const overdue   = activeOrders.filter(o => o.deadline && new Date(o.deadline) < new Date()).length;
+      const onCheck   = activeOps.filter(o => o.status === 'on_check').length;
+      const freeW     = (data.workers || []).filter(w => !w.archived && !activeOps.some(o => o.status === 'in_progress' && (o.workerIds||[]).includes(w.id))).length;
+      return [
+        { icon: '▶',  label: 'В работе',    val: inWork,   color: AM2   },
+        { icon: '⏳', label: 'Ожидают',     val: pending,  color: '#555' },
+        onCheck  > 0 ? { icon: '🔍', label: 'На контроле', val: onCheck,  color: '#0277BD' } : null,
+        overdue  > 0 ? { icon: '⚠',  label: 'Просрочено', val: overdue,  color: RD        } : null,
+        { icon: '👤', label: 'Свободных',   val: freeW,    color: GN    },
+      ].filter(Boolean);
+    }
+
+    if (role === 'pdo' || role === 'director') {
+      const inWork  = activeOrders.filter(o => activeOps.some(op => op.orderId === o.id && op.status === 'in_progress')).length;
+      const overdue = activeOrders.filter(o => o.deadline && new Date(o.deadline) < new Date()).length;
+      const doneToday = activeOps.filter(o => o.status === 'done' && o.finishedAt >= todayTs).length;
+      return [
+        { icon: '📋', label: 'Активных заказов', val: activeOrders.length, color: '#555'  },
+        { icon: '▶',  label: 'В производстве',   val: inWork,              color: AM2     },
+        overdue > 0 ? { icon: '⚠', label: 'Просрочено', val: overdue, color: RD } : null,
+        { icon: '✓',  label: 'Операций сегодня', val: doneToday,           color: GN      },
+      ].filter(Boolean);
+    }
+
+    if (role === 'controller') {
+      const onCheck = activeOps.filter(o => o.status === 'on_check').length;
+      const defects = activeOps.filter(o => o.status === 'defect' || o.status === 'rework').length;
+      return [
+        { icon: '🔍', label: 'Ждут проверки', val: onCheck, color: onCheck > 0 ? AM2 : GN },
+        defects > 0 ? { icon: '⚠', label: 'На доработке', val: defects, color: RD } : null,
+      ].filter(Boolean);
+    }
+
+    if (role === 'warehouse') {
+      const pending   = (data.materialDeliveries || []).filter(d => d.status === 'pending').length;
+      const readyShip = activeOrders.filter(o => {
+        const ops = activeOps.filter(op => op.orderId === o.id);
+        return ops.length > 0 && ops.every(op => op.status === 'done');
+      }).length;
+      const compPending = activeOrders.reduce((acc, o) => acc + (o.components || []).filter(c => c.status !== 'confirmed').length, 0);
+      return [
+        pending    > 0 ? { icon: '📦', label: 'Поставок ожидается', val: pending,    color: AM2 } : null,
+        compPending > 0 ? { icon: '🔩', label: 'Компл. не получено', val: compPending, color: AM4 } : null,
+        readyShip  > 0 ? { icon: '🚚', label: 'Готово к отгрузке',   val: readyShip,  color: GN  } : null,
+      ].filter(Boolean);
+    }
+
+    if (role === 'hr') {
+      const total   = (data.workers || []).filter(w => !w.archived).length;
+      const onVac   = (data.workers || []).filter(w => w.status === 'vacation').length;
+      const onSick  = (data.workers || []).filter(w => w.status === 'sick').length;
+      return [
+        { icon: '👥', label: 'Сотрудников',  val: total,  color: '#555' },
+        onVac  > 0 ? { icon: '🏖', label: 'В отпуске',  val: onVac,  color: AM2 } : null,
+        onSick > 0 ? { icon: '🤒', label: 'На больничном', val: onSick, color: RD } : null,
+      ].filter(Boolean);
+    }
+
+    return [];
+  })();
+
+  const bannerStyle = {
+    position: 'fixed', top: 0, left: 0, right: 0, zIndex: 500,
+    background: 'linear-gradient(135deg, #1a1a18 0%, #2d2a24 100%)',
+    color: '#fff',
+    padding: '12px 16px',
+    boxShadow: '0 4px 24px rgba(0,0,0,0.25)',
+    display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+    transition: 'transform 0.4s cubic-bezier(0.4,0,0.2,1), opacity 0.4s',
+    transform: leaving ? 'translateY(-110%)' : 'translateY(0)',
+    opacity: leaving ? 0 : 1,
+  };
+
+  const progressStyle = {
+    position: 'absolute', bottom: 0, left: 0,
+    height: 2, background: AM,
+    animation: 'greetingProgress 5s linear forwards',
+  };
+
+  return h('div', { style: bannerStyle },
+    // Стиль для progress bar
+    h('style', null, '@keyframes greetingProgress { from { width: 100% } to { width: 0% } }'),
+
+    // Приветствие
+    h('div', { style: { flexShrink: 0 } },
+      h('div', { style: { fontSize: 13, fontWeight: 600, color: '#fff', lineHeight: 1.3 } },
+        `${timeGreeting}, ${name} 👋`
+      ),
+      h('div', { style: { fontSize: 10, color: 'rgba(255,255,255,0.5)', marginTop: 1 } },
+        new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' })
+      )
+    ),
+
+    // Разделитель
+    metrics.length > 0 && h('div', { style: { width: 1, height: 32, background: 'rgba(255,255,255,0.15)', flexShrink: 0 } }),
+
+    // Метрики
+    h('div', { style: { display: 'flex', gap: 16, flexWrap: 'wrap', flex: 1 } },
+      metrics.map((m, i) => m && h('div', { key: i, style: { display: 'flex', alignItems: 'center', gap: 5 } },
+        h('span', { style: { fontSize: 13 } }, m.icon),
+        h('span', { style: { fontSize: 20, fontWeight: 700, color: m.color, lineHeight: 1 } }, m.val),
+        h('span', { style: { fontSize: 10, color: 'rgba(255,255,255,0.55)', lineHeight: 1.2, maxWidth: 60 } }, m.label)
+      ))
+    ),
+
+    // Срочные дедлайны
+    urgentOrders.length > 0 && role !== 'worker' && h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', flexShrink: 0 } },
+      urgentOrders.map(o => h('div', { key: o.id, style: {
+        background: o.daysLeft <= 0 ? 'rgba(226,75,74,0.3)' : 'rgba(239,159,39,0.2)',
+        border: `0.5px solid ${o.daysLeft <= 0 ? RD : AM}`,
+        borderRadius: 6, padding: '3px 8px', fontSize: 11,
+      } },
+        h('span', { style: { fontWeight: 600, color: o.daysLeft <= 0 ? '#ff8a80' : AM } },
+          o.daysLeft <= 0 ? '⚠ Просрочен' : o.daysLeft === 0 ? '⚡ Сегодня' : `⏰ ${o.daysLeft} дн`
+        ),
+        h('span', { style: { color: 'rgba(255,255,255,0.7)', marginLeft: 4 } }, o.number)
+      ))
+    ),
+
+    // Прогресс-бар и кнопка закрытия
+    h('button', {
+      onClick: close,
+      title: 'Закрыть',
+      style: { background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 4px', flexShrink: 0, marginLeft: 'auto' }
+    }, '×'),
+
+    h('div', { style: progressStyle })
+  );
+});
+
 // ==================== Dashboard (Цеховое табло) ====================
 const Dashboard = memo(({ data, addToast, onOrderClick }) => {
   const [, setTick] = useState(0);
@@ -1600,6 +1783,7 @@ function App() {
   const [synced, setSynced] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [role, setRole] = useState(null);
+  const [greetingKey, setGreetingKey] = React.useState(0); // меняется при каждом входе
   const [workerId, setWorkerId] = useState(null);
   const [sectionId, setSectionId] = useState(null);
   const [initialOpId, setInitialOpId] = useState(null);
@@ -1789,6 +1973,7 @@ function App() {
         const userName = wid ? (data?.workers?.find(w => w.id === wid)?.name || r) : r;
         const presenceId = wid || r;
         Presence.start(presenceId, userName);
+        setGreetingKey(k => k + 1); // показать приветствие
         // chat, chat_master, chat_controller — всё это режим чата
         if (r === 'chat' || r === 'chat_master' || r === 'chat_controller') setShowChat(true);
       },
@@ -1873,6 +2058,7 @@ function App() {
         )
       )
     ),
+    h(GreetingBanner, { key: greetingKey, role: effectiveRole, name: currentUser.name, data, workerId }),
     showChat
       ? h(ChatScreen, { data, onUpdate: save, addToast, currentUser, onBack: () => setShowChat(false) })
       : h('div', null,
