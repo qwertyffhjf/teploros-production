@@ -198,6 +198,248 @@ const calcOrderCost = (order, data, hourlyRate = 500) => {
   return { laborHours: Math.round(laborHours * 10) / 10, laborCost: Math.round(laborCost), materialCost: Math.round(materialCost), totalCost: Math.round(laborCost + materialCost), opsTotal: ops.length, opsDone: doneOps.length };
 };
 
+
+// ==================== Import1CModal — импорт заказа из файла Excel/1С ====================
+// Поля которые парсятся из Excel и сохраняются в order:
+//   number, product, qty, deadline, priority, drawingUrl  — базовые
+//   customer, productCode, specs, weight, dimensions       — дополнительные (идут в паспорт)
+//   components: [{ name, code, qty, unit }]                — комплектующие (идут в паспорт)
+const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
+  const [step, setStep] = useState('upload');   // 'upload' | 'preview'
+  const [parsed, setParsed] = useState([]);
+  const [selected, setSelected] = useState(new Set());
+  const [loading, setLoading] = useState(false);
+
+  // ── Парсинг Excel через SheetJS ──
+  const handleFile = useCallback(async (file) => {
+    if (!file) return;
+    setLoading(true);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb  = XLSX.read(buf, { type: 'array', cellDates: true });
+      const ws  = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+      // Ищем строку-заголовок (содержит "номер" или "заказ")
+      let headerIdx = 0;
+      for (let i = 0; i < Math.min(10, rows.length); i++) {
+        const rowStr = rows[i].join(' ').toLowerCase();
+        if (rowStr.includes('номер') || rowStr.includes('заказ') || rowStr.includes('изделие')) {
+          headerIdx = i; break;
+        }
+      }
+      const headers = rows[headerIdx].map(h => String(h).toLowerCase().trim());
+
+      // Маппинг колонок
+      const col = (keywords) => {
+        const idx = headers.findIndex(h => keywords.some(k => h.includes(k)));
+        return idx >= 0 ? idx : -1;
+      };
+      const cols = {
+        number:      col(['номер заказа','номер','заказ №','заказ']),
+        product:     col(['изделие','наименование','продукт','описание']),
+        qty:         col(['кол-во','количество','qty','кол.']),
+        deadline:    col(['срок','дата отгрузки','дедлайн','дата']),
+        customer:    col(['заказчик','покупатель','клиент','customer']),
+        productCode: col(['код изделия','артикул','код','article']),
+        specs:       col(['характеристики','спецификация','тех.хар','параметры','specs']),
+        weight:      col(['масса','вес','weight']),
+        dimensions:  col(['габариты','размеры','dimensions']),
+        drawingUrl:  col(['чертёж','ссылка','url','drawing']),
+        priority:    col(['приоритет','priority']),
+      };
+
+      const fmtDate = (v) => {
+        if (!v) return '';
+        if (v instanceof Date) return v.toISOString().slice(0, 10);
+        const s = String(v);
+        // dd.mm.yyyy
+        const m = s.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})$/);
+        if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+        return s;
+      };
+
+      const orders = [];
+      for (let i = headerIdx + 1; i < rows.length; i++) {
+        const r = rows[i];
+        if (!r || r.every(c => !c)) continue;
+        const get = (c) => c >= 0 ? String(r[c] ?? '').trim() : '';
+        const number = get(cols.number);
+        const product = get(cols.product);
+        if (!number && !product) continue;
+
+        const priorityRaw = get(cols.priority).toLowerCase();
+        const priority = ['critical','high','medium','low'].includes(priorityRaw)
+          ? priorityRaw
+          : priorityRaw.includes('критич') ? 'critical'
+          : priorityRaw.includes('высок')  ? 'high'
+          : priorityRaw.includes('низк')   ? 'low'
+          : 'medium';
+
+        orders.push({
+          _id: uid(),
+          number:      number  || `ИМП-${i}`,
+          product:     product || '—',
+          qty:         Number(get(cols.qty)) || 1,
+          deadline:    fmtDate(cols.deadline >= 0 ? r[cols.deadline] : ''),
+          customer:    get(cols.customer),
+          productCode: get(cols.productCode),
+          specs:       get(cols.specs),
+          weight:      get(cols.weight),
+          dimensions:  get(cols.dimensions),
+          drawingUrl:  get(cols.drawingUrl),
+          priority,
+          _exists: data.orders.some(o => o.number.toLowerCase() === number.toLowerCase()),
+        });
+      }
+
+      if (!orders.length) {
+        addToast('Не удалось распознать строки заказов. Проверьте формат файла.', 'error');
+        setLoading(false); return;
+      }
+      setParsed(orders);
+      setSelected(new Set(orders.filter(o => !o._exists).map(o => o._id)));
+      setStep('preview');
+    } catch(e) {
+      console.error(e);
+      addToast('Ошибка чтения файла: ' + e.message, 'error');
+    }
+    setLoading(false);
+  }, [data.orders, addToast]);
+
+  const toggleRow = useCallback((id) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
+
+  const doImport = useCallback(() => {
+    const toImport = parsed.filter(o => selected.has(o._id) && !o._exists);
+    if (!toImport.length) { addToast('Нет новых заказов для импорта', 'info'); return; }
+
+    const createDefaultOps = (orderId, qty) => {
+      return (data.productionStages || []).map(stage => ({
+        id: uid(), orderId, name: stage.name, qty,
+        workerIds: [], status: 'pending', createdAt: now(),
+        plannedHours: undefined, archived: false,
+      }));
+    };
+
+    const newOrders = toImport.map(o => ({
+      id: o._id,
+      number:      o.number,
+      product:     o.product,
+      qty:         o.qty,
+      deadline:    o.deadline,
+      priority:    o.priority,
+      drawingUrl:  o.drawingUrl,
+      customer:    o.customer    || undefined,
+      productCode: o.productCode || undefined,
+      specs:       o.specs       || undefined,
+      weight:      o.weight      || undefined,
+      dimensions:  o.dimensions  || undefined,
+      source:      '1c_import',
+      createdAt:   now(),
+      archived:    false,
+    }));
+    const newOps = newOrders.flatMap(o => createDefaultOps(o.id, o.qty));
+    const d = { ...data, orders: [...data.orders, ...newOrders], ops: [...data.ops, ...newOps] };
+    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    addToast(`Импортировано заказов: ${newOrders.length}`, 'success');
+    onClose();
+  }, [parsed, selected, data, onUpdate, addToast, onClose]);
+
+  const tdS = { padding: '6px 8px', fontSize: 12, borderBottom: '0.5px solid var(--border-soft)', verticalAlign: 'middle' };
+
+  return h('div', {
+    role: 'dialog', 'aria-modal': 'true',
+    style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 100, padding: '24px 16px', overflowY: 'auto' },
+    onKeyDown: e => e.key === 'Escape' && onClose(),
+  },
+    h('div', { className: 'modal-animated', style: { background: 'var(--card)', borderRadius: 12, padding: 24, width: 'min(860px, calc(100vw - 32px))', position: 'relative' } },
+      h('button', { type: 'button', onClick: onClose, style: { position: 'absolute', top: 12, right: 14, background: 'transparent', border: 'none', color: '#888', cursor: 'pointer', fontSize: 20, lineHeight: 1 } }, '×'),
+      h('div', { style: { fontSize: 16, fontWeight: 500, marginBottom: 4 } }, '📥 Импорт заказов из 1С (Excel)'),
+      h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 16 } },
+        'Загрузите файл Excel из 1С. Поля "Заказчик", "Характеристики", "Код изделия" автоматически попадут в паспорт изделия.'
+      ),
+
+      step === 'upload' && h('div', null,
+        // Drag-and-drop зона
+        h('label', {
+          style: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, border: '2px dashed var(--border)', borderRadius: 10, padding: '32px 24px', cursor: 'pointer', background: 'var(--bg)', transition: 'border-color 0.15s' },
+          onDragOver: e => { e.preventDefault(); e.currentTarget.style.borderColor = AM; },
+          onDragLeave: e => { e.currentTarget.style.borderColor = ''; },
+          onDrop: e => { e.preventDefault(); e.currentTarget.style.borderColor = ''; const f = e.dataTransfer.files[0]; if (f) handleFile(f); },
+        },
+          h('div', { style: { fontSize: 32 } }, loading ? '⏳' : '📂'),
+          h('div', { style: { fontSize: 14, fontWeight: 500 } }, loading ? 'Обработка файла…' : 'Перетащите файл или нажмите для выбора'),
+          h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, '.xlsx, .xls — выгрузка из 1С: Производство, УПП, ERP'),
+          !loading && h('input', { type: 'file', accept: '.xlsx,.xls', style: { display: 'none' }, onChange: e => handleFile(e.target.files[0]) })
+        ),
+        // Подсказка по колонкам
+        h('div', { style: { marginTop: 16, padding: '10px 12px', background: 'var(--bg)', borderRadius: 8, fontSize: 11, color: 'var(--muted)' } },
+          h('div', { style: { fontWeight: 500, marginBottom: 4 } }, 'Распознаваемые колонки:'),
+          'Номер заказа · Изделие · Количество · Срок · Заказчик · Код изделия · Характеристики · Масса · Габариты · Чертёж · Приоритет'
+        )
+      ),
+
+      step === 'preview' && h('div', null,
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 } },
+          h('div', { style: { fontSize: 13 } },
+            h('span', { style: { fontWeight: 500 } }, `${parsed.length} строк`),
+            ' · выбрано к импорту: ',
+            h('span', { style: { color: AM2, fontWeight: 500 } }, String(parsed.filter(o => selected.has(o._id) && !o._exists).length))
+          ),
+          h('div', { style: { display: 'flex', gap: 8 } },
+            h('button', { style: gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => { setStep('upload'); setParsed([]); } }, '← Назад'),
+            h('button', { style: abtn({ fontSize: 13, padding: '6px 18px' }), onClick: doImport }, '✓ Импортировать')
+          )
+        ),
+        h('div', { style: { overflowX: 'auto' } },
+          h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 } },
+            h('thead', null,
+              h('tr', { style: { background: 'var(--bg)' } },
+                ['', '№ заказа', 'Изделие', 'Кол-во', 'Заказчик', 'Код', 'Характеристики', 'Срок', 'Статус'].map((col, i) =>
+                  h('th', { key: i, style: { ...tdS, fontWeight: 500, textAlign: 'left', whiteSpace: 'nowrap' } }, col)
+                )
+              )
+            ),
+            h('tbody', null,
+              parsed.map(o => {
+                const isSel = selected.has(o._id);
+                const rowBg = o._exists ? 'rgba(0,0,0,0.03)' : isSel ? 'rgba(239,159,39,0.07)' : 'transparent';
+                return h('tr', { key: o._id, style: { background: rowBg, opacity: o._exists ? 0.55 : 1 } },
+                  h('td', { style: tdS },
+                    !o._exists && h('input', { type: 'checkbox', checked: isSel, onChange: () => toggleRow(o._id), style: { width: 16, height: 16, cursor: 'pointer' } })
+                  ),
+                  h('td', { style: { ...tdS, fontWeight: 500, color: AM2, fontFamily: 'monospace' } }, o.number),
+                  h('td', { style: { ...tdS, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, o.product),
+                  h('td', { style: tdS }, o.qty),
+                  h('td', { style: { ...tdS, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--muted)' } }, o.customer || '—'),
+                  h('td', { style: { ...tdS, fontFamily: 'monospace', fontSize: 11, color: 'var(--muted)' } }, o.productCode || '—'),
+                  h('td', { style: { ...tdS, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--muted)' } }, o.specs || '—'),
+                  h('td', { style: { ...tdS, whiteSpace: 'nowrap', color: 'var(--muted)' } }, o.deadline || '—'),
+                  h('td', { style: tdS },
+                    o._exists
+                      ? h('span', { style: { color: '#888', fontSize: 11 } }, 'уже есть')
+                      : h('span', { style: { color: GN, fontSize: 11, fontWeight: 500 } }, '+ новый')
+                  )
+                );
+              })
+            )
+          )
+        ),
+        // Итого
+        h('div', { style: { marginTop: 10, fontSize: 11, color: 'var(--muted)' } },
+          `Уже существуют: ${parsed.filter(o => o._exists).length} · Будет создано: ${parsed.filter(o => selected.has(o._id) && !o._exists).length} заказов + операции по этапам производства`
+        )
+      )
+    )
+  );
+});
+
 // ==================== PDF Паспорт изделия ====================
 const generateFullPassport = (order, data) => {
   const ops = data.ops.filter(op => op.orderId === order.id && !op.archived);
