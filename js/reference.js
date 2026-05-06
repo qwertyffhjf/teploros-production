@@ -311,6 +311,7 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
   const [search, setSearch] = useState('');
   const [adjustModal, setAdjustModal] = useState(null); // {mat} — модал корректировки
   const [adjustForm, setAdjustForm] = useState({ qty: '', comment: '' });
+  const [selectedIds, setSelectedIds] = useState(new Set()); // для пакетного удаления
   const { ask: askConfirm, confirmEl } = useConfirm();
 
   const openAdjust = useCallback((mat) => {
@@ -356,6 +357,23 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
     }
   }, [form, editingId, data, onUpdate, addToast]);
   const del = useCallback(async (id) => { if (!(await askConfirm({ message: 'Удалить материал?' }))) return; const d = { ...data, materials: data.materials.filter(m => m.id !== id) }; await DB.save(d); onUpdate(d); addToast('Удалён', 'info'); }, [data, onUpdate, addToast]);
+
+  const delSelected = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    const ok = await askConfirm({ message: `Удалить ${selectedIds.size} позиц.?`, detail: 'Действие необратимо', danger: true });
+    if (!ok) return;
+    const d = { ...data, materials: data.materials.filter(m => !selectedIds.has(m.id)) };
+    await DB.save(d); onUpdate(d);
+    setSelectedIds(new Set());
+    addToast(`Удалено ${selectedIds.size} позиций`, 'info');
+  }, [data, selectedIds, onUpdate, addToast, askConfirm]);
+
+  const toggleSelect = (id) => setSelectedIds(prev => {
+    const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next;
+  });
+  const toggleAll = (items) => setSelectedIds(prev =>
+    prev.size === items.length ? new Set() : new Set(items.map(m => m.id))
+  );
   const edit = useCallback((m) => { setForm({ name: m.name, unit: m.unit, quantity: String(m.quantity), batch: m.batch || '', unitCost: m.unitCost ? String(m.unitCost) : '', minStock: m.minStock ? String(m.minStock) : '' }); setEditingId(m.id); }, []);
 
   // Импорт из Excel
@@ -490,13 +508,32 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
       ),
       h('div', { style: { fontSize: 10, color: '#888', marginTop: 6 } }, 'Excel: колонки «Название», «Ед. изм.», «Количество», «Цена/ед.», «Партия», «Мин. остаток». При совпадении названия — обновляет остаток.')
     ),
+    // Панель пакетного удаления
+    selectedIds.size > 0 && h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'rgba(226,75,74,0.08)', border: `0.5px solid ${RD}`, borderRadius: 8, marginBottom: 8 } },
+      h('span', { style: { fontSize: 13, color: RD, fontWeight: 500 } }, `Выбрано: ${selectedIds.size}`),
+      h('button', { onClick: delSelected, style: { fontSize: 12, padding: '5px 14px', background: RD, color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 } },
+        `🗑 Удалить ${selectedIds.size} позиц.`),
+      h('button', { onClick: () => setSelectedIds(new Set()), style: { fontSize: 12, padding: '5px 10px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 6, cursor: 'pointer' } },
+        'Снять выбор')
+    ),
     // Таблица
     filtered.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center' } }, 'Нет материалов') :
       h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-        h('thead', null, h('tr', null, ['Название','Ед.','Остаток','Мин.','Цена','Стоимость','Партия',''].map((t,i) => h('th', { key: i, style: S.th }, t)))),
+        h('thead', null, h('tr', null,
+          h('th', { style: { ...S.th, width: 36 } },
+            h('input', { type: 'checkbox', checked: selectedIds.size === filtered.length && filtered.length > 0, onChange: () => toggleAll(filtered),
+              style: { width: 14, height: 14, cursor: 'pointer', accentColor: RD } })
+          ),
+          ['Название','Ед.','Остаток','Мин.','Цена','Стоимость','Партия',''].map((t,i) => h('th', { key: i, style: S.th }, t))
+        )),
         h('tbody', null, filtered.map(m => {
           const isLow = m.minStock > 0 && m.quantity <= m.minStock;
-          return h('tr', { key: m.id, style: { background: isLow ? RD3 : 'transparent' } },
+          const isSel = selectedIds.has(m.id);
+          return h('tr', { key: m.id, style: { background: isSel ? 'rgba(226,75,74,0.06)' : isLow ? RD3 : 'transparent', transition: 'background 0.1s' } },
+            h('td', { style: { ...S.td, width: 36 } },
+              h('input', { type: 'checkbox', checked: isSel, onChange: () => toggleSelect(m.id),
+                style: { width: 14, height: 14, cursor: 'pointer', accentColor: RD } })
+            ),
             h('td', { style: S.td }, m.name),
             h('td', { style: S.td }, m.unit),
             h('td', { style: { ...S.td, fontWeight: 500, color: isLow ? RD : 'inherit' } }, m.quantity),
