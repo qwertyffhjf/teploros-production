@@ -199,6 +199,453 @@ const calcOrderCost = (order, data, hourlyRate = 500) => {
 };
 
 // ==================== PDF Паспорт изделия ====================
+// ==================== МОДУЛЬ МАТЕРИАЛОВ ====================
+// Хранение: firestore.collection('materials').doc(`needs_${year}`)
+// Структура needs_doc: { orders: { [orderId]: OrderNeeds } }
+// OrderNeeds: { orderId, groups: [{ id, name, items: [Item] }] }
+// Item: { id, name, code, material, thickness, qty, unit, length, note, status }
+// status: 'pending' | 'ordered' | 'received'
+
+// ── DB-слой для материалов ──────────────────────────────────
+const MaterialsDB = (() => {
+  if (!firestore) return null;
+  const col = () => firestore.collection('materials');
+  const docRef = (year) => col().doc(`needs_${year}`);
+  const currentYear = () => new Date().getFullYear();
+
+  return {
+    // Загрузить потребности по заказу (может быть в текущем или прошлом году)
+    async load(orderId) {
+      const yr = currentYear();
+      for (const y of [yr, yr - 1]) {
+        try {
+          const snap = await docRef(y).get();
+          if (snap.exists) {
+            const d = snap.data();
+            const payload = d.payload ? JSON.parse(d.payload) : d;
+            if (payload.orders?.[orderId]) {
+              return { year: y, needs: payload.orders[orderId] };
+            }
+          }
+        } catch(e) { /* ignore */ }
+      }
+      return { year: yr, needs: null };
+    },
+
+    // Сохранить потребности по заказу
+    async save(orderId, needs, year) {
+      const yr = year || currentYear();
+      const ref = docRef(yr);
+      try {
+        const snap = await ref.get();
+        let payload = {};
+        if (snap.exists) {
+          const d = snap.data();
+          payload = d.payload ? JSON.parse(d.payload) : d;
+        }
+        if (!payload.orders) payload.orders = {};
+        payload.orders[orderId] = needs;
+        await ref.set({ payload: JSON.stringify(payload), updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+        return true;
+      } catch(e) {
+        console.error('MaterialsDB.save error:', e);
+        return false;
+      }
+    },
+
+    // Загрузить все потребности за год (для склада)
+    async loadAll(year) {
+      const yr = year || currentYear();
+      try {
+        const snap = await docRef(yr).get();
+        if (!snap.exists) return {};
+        const d = snap.data();
+        const payload = d.payload ? JSON.parse(d.payload) : d;
+        return payload.orders || {};
+      } catch(e) { return {}; }
+    },
+  };
+})();
+
+// ── Утилиты ────────────────────────────────────────────────
+const DEFAULT_GROUPS = [
+  { id: 'raскрой',   name: 'Раскрой' },
+  { id: 'prokat',    name: 'Профильный прокат' },
+  { id: 'komplekt',  name: 'Комплектация' },
+];
+
+const ITEM_UNITS = ['шт', 'м', 'кг', 'л', 'компл', 'м²'];
+
+const makeGroup = (name) => ({ id: uid(), name, items: [] });
+const makeItem  = ()      => ({
+  id: uid(), name: '', code: '', material: '', thickness: '',
+  qty: 1, unit: 'шт', length: '', note: '', status: 'pending',
+});
+
+// Статус → цвет и текст
+const STATUS_MAP = {
+  pending:  { label: 'Ожидается', color: '#888',   bg: 'rgba(0,0,0,0.05)'       },
+  ordered:  { label: 'Заказано',  color: '#185FA5', bg: 'rgba(24,95,165,0.1)'   },
+  received: { label: 'Получено',  color: '#0F6E56', bg: 'rgba(15,110,86,0.1)'   },
+};
+
+// Экспорт в Excel через SheetJS
+const exportNeedsToExcel = (order, needs) => {
+  if (!XLSX) { alert('XLSX не загружен'); return; }
+  const wb = XLSX.utils.book_new();
+  (needs.groups || []).forEach(group => {
+    const rows = [
+      [`Заявка на материалы — Заказ ${order?.number || ''} — ${order?.product || ''}`],
+      [`Группа: ${group.name}`],
+      [],
+      ['№', 'Наименование', 'Код/Чертёж', 'Материал', 'Толщина, мм', 'Кол-во', 'Ед.', 'Длина, м', 'Статус', 'Примечание'],
+    ];
+    (group.items || []).forEach((item, i) => {
+      rows.push([
+        i + 1, item.name, item.code, item.material, item.thickness,
+        item.qty, item.unit, item.length,
+        STATUS_MAP[item.status]?.label || item.status, item.note,
+      ]);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [4,30,20,16,10,8,6,8,12,24].map(w => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, ws, group.name.slice(0, 31));
+  });
+  XLSX.writeFile(wb, `Заявка_${order?.number || 'заказ'}.xlsx`);
+};
+
+// Парсинг Excel (формат заявки технолога)
+const parseNeedsFromExcel = (file, onResult) => {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'array' });
+      const groups = [];
+      wb.SheetNames.forEach(sheetName => {
+        const ws = wb.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        const items = [];
+        // Ищем строку-заголовок
+        let headerRow = -1;
+        for (let i = 0; i < Math.min(8, rows.length); i++) {
+          const r = rows[i].join(' ').toLowerCase();
+          if (r.includes('наименование') || r.includes('чертеж') || r.includes('материал')) {
+            headerRow = i; break;
+          }
+        }
+        if (headerRow < 0) headerRow = 2; // fallback
+        const headers = rows[headerRow].map(h => String(h).toLowerCase().trim());
+        const col = (kws) => {
+          const idx = headers.findIndex(h => kws.some(k => h.includes(k)));
+          return idx >= 0 ? idx : -1;
+        };
+        const cols = {
+          name:      col(['наименование','название','деталь']),
+          code:      col(['чертеж','код','артикул','обозначение']),
+          material:  col(['материал','марка']),
+          thickness: col(['толщ','толщина']),
+          qty:       col(['кол-во','количество','кол.']),
+          unit:      col(['ед.','единиц','ед ']),
+          length:    col(['длина','длин']),
+          note:      col(['коментари','примечани','comment']),
+        };
+        for (let i = headerRow + 1; i < rows.length; i++) {
+          const row = rows[i];
+          if (!row || row.every(c => !c)) continue;
+          const get = (c) => c >= 0 ? String(row[c] ?? '').trim() : '';
+          const name = get(cols.name);
+          if (!name || name === '№') continue;
+          // Пропускаем строки-итого и заголовки
+          if (name.toLowerCase().includes('итого') || name.toLowerCase().includes('всего')) continue;
+          items.push({
+            id: uid(),
+            name,
+            code:      get(cols.code),
+            material:  get(cols.material),
+            thickness: get(cols.thickness),
+            qty:       parseFloat(get(cols.qty)) || 1,
+            unit:      get(cols.unit) || 'шт',
+            length:    get(cols.length),
+            note:      get(cols.note),
+            status:    'pending',
+          });
+        }
+        if (items.length > 0) {
+          groups.push({ id: uid(), name: sheetName, items });
+        }
+      });
+      onResult({ ok: true, groups });
+    } catch(e) {
+      onResult({ ok: false, error: e.message });
+    }
+  };
+  reader.readAsArrayBuffer(file);
+};
+
+// ── Компонент редактора одной позиции ──────────────────────
+const ItemRow = memo(({ item, groupId, onUpdate, onDelete, canEdit }) => {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(item);
+
+  const save = () => { onUpdate(groupId, draft); setEditing(false); };
+  const cancel = () => { setDraft(item); setEditing(false); };
+  const upd = (k, v) => setDraft(p => ({ ...p, [k]: v }));
+
+  const st = STATUS_MAP[item.status] || STATUS_MAP.pending;
+  const inp = (k, placeholder, w = '100%', type = 'text') =>
+    h('input', { value: draft[k] ?? '', placeholder, type,
+      style: { width: w, fontSize: 12, padding: '3px 6px', border: '0.5px solid var(--border)', borderRadius: 4, background: 'var(--card)', color: 'var(--fg)' },
+      onChange: e => upd(k, type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value) });
+
+  if (editing) return h('tr', { style: { background: 'rgba(239,159,39,0.06)' } },
+    h('td', { style: { padding: '4px 6px' } }, h('span', { style: { fontSize: 11, color: '#888' } }, '✎')),
+    h('td', { style: { padding: '4px 4px' } }, inp('name', 'Наименование')),
+    h('td', { style: { padding: '4px 4px' } }, inp('code', 'Код/Чертёж')),
+    h('td', { style: { padding: '4px 4px' } }, inp('material', 'Материал')),
+    h('td', { style: { padding: '4px 4px', width: 70 } }, inp('thickness', 'мм', 70)),
+    h('td', { style: { padding: '4px 4px', width: 60 } }, inp('qty', '1', 60, 'number')),
+    h('td', { style: { padding: '4px 4px', width: 70 } },
+      h('select', { value: draft.unit, style: { fontSize: 12, padding: '3px 4px', border: '0.5px solid var(--border)', borderRadius: 4, background: 'var(--card)', color: 'var(--fg)' },
+        onChange: e => upd('unit', e.target.value) },
+        ITEM_UNITS.map(u => h('option', { key: u, value: u }, u)))),
+    h('td', { style: { padding: '4px 4px', width: 70 } }, inp('length', 'м', 70)),
+    h('td', { style: { padding: '4px 4px' } }, inp('note', 'Примечание')),
+    h('td', { style: { padding: '4px 6px', whiteSpace: 'nowrap' } },
+      h('button', { onClick: save,   style: { fontSize: 11, padding: '3px 8px', background: AM, color: AM2, border: 'none', borderRadius: 4, cursor: 'pointer', marginRight: 4, fontWeight: 500 } }, '✓'),
+      h('button', { onClick: cancel, style: { fontSize: 11, padding: '3px 8px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 4, cursor: 'pointer' } }, '✕'))
+  );
+
+  return h('tr', { style: { borderBottom: '0.5px solid var(--border-soft)' },
+    onDoubleClick: canEdit ? () => { setDraft(item); setEditing(true); } : undefined },
+    h('td', { style: { padding: '5px 6px', fontSize: 11, color: '#888' } }),
+    h('td', { style: { padding: '5px 4px', fontSize: 12, fontWeight: item.name ? 400 : 400, color: item.name ? 'var(--fg)' : '#aaa' } }, item.name || '—'),
+    h('td', { style: { padding: '5px 4px', fontSize: 11, color: '#888', fontFamily: 'monospace' } }, item.code || ''),
+    h('td', { style: { padding: '5px 4px', fontSize: 11, color: 'var(--muted)' } }, item.material || ''),
+    h('td', { style: { padding: '5px 4px', fontSize: 11, textAlign: 'center', color: 'var(--muted)' } }, item.thickness ? `${item.thickness} мм` : ''),
+    h('td', { style: { padding: '5px 4px', fontSize: 12, fontWeight: 500, textAlign: 'center' } }, `${item.qty} ${item.unit}`),
+    h('td', { style: { padding: '5px 4px', fontSize: 11, color: 'var(--muted)', textAlign: 'center' } }, item.length ? `${item.length} м` : ''),
+    h('td', { style: { padding: '5px 4px', fontSize: 11, color: 'var(--muted)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, item.note || ''),
+    h('td', { style: { padding: '5px 6px' } },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+        h('span', { style: { fontSize: 10, padding: '2px 7px', borderRadius: 10, background: st.bg, color: st.color, fontWeight: 500, whiteSpace: 'nowrap' } }, st.label),
+        canEdit && h('button', { onClick: () => onDelete(groupId, item.id),
+          style: { fontSize: 11, color: RD, background: 'transparent', border: 'none', cursor: 'pointer', opacity: 0.6, padding: '0 2px' }, title: 'Удалить' }, '×')))
+  );
+});
+
+// ── Компонент группы ────────────────────────────────────────
+const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem, onDeleteItem, onAddItem, canEdit, onUpdateItemStatus }) => {
+  const [editingName, setEditingName] = useState(false);
+  const [draftName, setDraftName]     = useState(group.name);
+  const [collapsed, setCollapsed]     = useState(false);
+
+  const pendingCount  = (group.items || []).filter(i => i.status === 'pending').length;
+  const orderedCount  = (group.items || []).filter(i => i.status === 'ordered').length;
+  const receivedCount = (group.items || []).filter(i => i.status === 'received').length;
+  const total         = (group.items || []).length;
+
+  return h('div', { style: { marginBottom: 16, border: '0.5px solid var(--border)', borderRadius: 10, overflow: 'hidden' } },
+    // Заголовок группы
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--bg)', cursor: 'pointer' },
+      onClick: () => !editingName && setCollapsed(c => !c) },
+      h('span', { style: { fontSize: 13 } }, collapsed ? '▶' : '▼'),
+      editingName
+        ? h('input', { value: draftName, autoFocus: true, onClick: e => e.stopPropagation(),
+            style: { fontSize: 13, fontWeight: 600, padding: '2px 6px', border: '0.5px solid var(--border)', borderRadius: 4, background: 'var(--card)', color: 'var(--fg)' },
+            onChange: e => setDraftName(e.target.value),
+            onKeyDown: e => { if (e.key === 'Enter') { onUpdateGroup(group.id, draftName); setEditingName(false); } if (e.key === 'Escape') { setDraftName(group.name); setEditingName(false); } },
+            onBlur: () => { onUpdateGroup(group.id, draftName); setEditingName(false); } })
+        : h('span', { style: { fontSize: 13, fontWeight: 600, flex: 1 } }, group.name),
+      // Счётчики
+      total > 0 && h('div', { style: { display: 'flex', gap: 6, fontSize: 11 } },
+        pendingCount  > 0 && h('span', { style: { color: '#888'   } }, `⏳ ${pendingCount}`),
+        orderedCount  > 0 && h('span', { style: { color: '#185FA5'} }, `📦 ${orderedCount}`),
+        receivedCount > 0 && h('span', { style: { color: GN       } }, `✓ ${receivedCount}`),
+      ),
+      canEdit && h('div', { style: { display: 'flex', gap: 4 }, onClick: e => e.stopPropagation() },
+        h('button', { onClick: () => setEditingName(true),
+          style: { fontSize: 11, padding: '2px 7px', border: '0.5px solid var(--border)', borderRadius: 4, background: 'transparent', cursor: 'pointer' } }, '✎'),
+        h('button', { onClick: () => onDeleteGroup(group.id),
+          style: { fontSize: 11, padding: '2px 7px', border: `0.5px solid ${RD}`, borderRadius: 4, color: RD, background: 'transparent', cursor: 'pointer' } }, '✕'))
+    ),
+
+    // Таблица позиций
+    !collapsed && h('div', { style: { overflowX: 'auto' } },
+      h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 } },
+        h('thead', null, h('tr', { style: { background: 'var(--bg)', fontSize: 11, color: 'var(--muted)' } },
+          ['', 'Наименование', 'Код/Чертёж', 'Материал', 'Толщина', 'Кол-во', 'Длина', 'Примечание', 'Статус'].map((col, i) =>
+            h('th', { key: i, style: { padding: '5px 6px', textAlign: 'left', fontWeight: 500, whiteSpace: 'nowrap', borderBottom: '0.5px solid var(--border-soft)' } }, col))
+        )),
+        h('tbody', null,
+          (group.items || []).map(item =>
+            h(ItemRow, { key: item.id, item, groupId: group.id, canEdit,
+              onUpdate: (gid, updItem) => onUpdateItem(gid, updItem),
+              onDelete: onDeleteItem })
+          ),
+          // Пустая строка если нет позиций
+          (!group.items || group.items.length === 0) && h('tr', null,
+            h('td', { colSpan: 9, style: { padding: '12px', textAlign: 'center', color: '#aaa', fontSize: 12 } }, 'Нет позиций — добавьте вручную или импортируйте из Excel')
+          )
+        )
+      ),
+
+      // Кнопка добавить + статусы (для склада)
+      h('div', { style: { display: 'flex', gap: 8, padding: '6px 10px', borderTop: '0.5px solid var(--border-soft)', flexWrap: 'wrap' } },
+        canEdit && h('button', { onClick: () => onAddItem(group.id),
+          style: { fontSize: 11, padding: '4px 10px', border: '0.5px solid var(--border)', borderRadius: 6, background: 'transparent', cursor: 'pointer', color: AM2 } },
+          '+ Добавить позицию'),
+        // Быстрое изменение статусов (для склада)
+        !canEdit && (group.items || []).filter(i => i.status !== 'received').length > 0 &&
+          h('button', { onClick: () => onUpdateItemStatus(group.id, 'received'),
+            style: { fontSize: 11, padding: '4px 10px', border: `0.5px solid ${GN}`, borderRadius: 6, color: GN, background: 'transparent', cursor: 'pointer' } },
+            '✓ Отметить всё получено')
+      )
+    )
+  );
+});
+
+// ── Главный компонент — OrderMaterialsEditor ────────────────
+// Используется в карточке заказа (вкладка "Материалы")
+const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = true, warehouseMode = false }) => {
+  const [needs, setNeeds]       = useState(null);  // { groups: [...] }
+  const [loading, setLoading]   = useState(true);
+  const [saving, setSaving]     = useState(false);
+  const [dirty, setDirty]       = useState(false);
+  const [year, setYear]         = useState(new Date().getFullYear());
+  const fileRef = useRef(null);
+
+  // Загрузка при монтировании
+  useEffect(() => {
+    if (!order?.id || !MaterialsDB) { setLoading(false); return; }
+    setLoading(true);
+    MaterialsDB.load(order.id).then(({ year: y, needs: n }) => {
+      setYear(y);
+      setNeeds(n || { groups: DEFAULT_GROUPS.map(g => ({ ...makeGroup(g.name), id: g.id })) });
+      setLoading(false);
+    });
+  }, [order?.id]);
+
+  // Сохранение
+  const save = useCallback(async (updNeeds) => {
+    if (!MaterialsDB) return;
+    setSaving(true);
+    const ok = await MaterialsDB.save(order.id, updNeeds, year);
+    setSaving(false);
+    setDirty(false);
+    if (!ok) addToast('Ошибка сохранения материалов', 'error');
+  }, [order?.id, year, addToast]);
+
+  const updNeeds = useCallback((fn) => {
+    setNeeds(prev => {
+      const next = fn(prev);
+      setDirty(true);
+      save(next);
+      return next;
+    });
+  }, [save]);
+
+  // Группы
+  const addGroup = () => updNeeds(p => ({ ...p, groups: [...(p.groups || []), makeGroup('Новая группа')] }));
+  const deleteGroup = (gid) => updNeeds(p => ({ ...p, groups: p.groups.filter(g => g.id !== gid) }));
+  const updateGroupName = (gid, name) => updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, name } : g) }));
+
+  // Позиции
+  const addItem = (gid) => updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, items: [...(g.items || []), makeItem()] } : g) }));
+  const deleteItem = (gid, iid) => updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, items: g.items.filter(i => i.id !== iid) } : g) }));
+  const updateItem = (gid, item) => updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, items: g.items.map(i => i.id === item.id ? item : i) } : g) }));
+  const updateAllStatus = (gid, status) => updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, items: g.items.map(i => ({ ...i, status })) } : g) }));
+
+  // Импорт Excel
+  const handleImport = (file) => {
+    if (!file) return;
+    parseNeedsFromExcel(file, ({ ok, groups, error }) => {
+      if (!ok) { addToast(`Ошибка импорта: ${error}`, 'error'); return; }
+      // Мержим с существующими группами или заменяем
+      updNeeds(p => {
+        const existing = p.groups || [];
+        const newGroups = groups.map(g => {
+          const found = existing.find(e => e.name.toLowerCase() === g.name.toLowerCase());
+          return found ? { ...found, items: [...(found.items || []), ...g.items] } : g;
+        });
+        // Добавляем группы которых не было в импорте
+        const imported = newGroups.map(g => g.name.toLowerCase());
+        const kept = existing.filter(e => !imported.includes(e.name.toLowerCase()));
+        return { ...p, groups: [...kept, ...newGroups] };
+      });
+      addToast(`Импортировано: ${groups.reduce((a, g) => a + g.items.length, 0)} позиций из ${groups.length} листов`, 'success');
+    });
+  };
+
+  // Статистика
+  const stats = useMemo(() => {
+    if (!needs?.groups) return { total: 0, pending: 0, ordered: 0, received: 0 };
+    const items = needs.groups.flatMap(g => g.items || []);
+    return {
+      total:    items.length,
+      pending:  items.filter(i => i.status === 'pending').length,
+      ordered:  items.filter(i => i.status === 'ordered').length,
+      received: items.filter(i => i.status === 'received').length,
+    };
+  }, [needs]);
+
+  if (loading) return h('div', { style: { padding: 20, textAlign: 'center', color: '#888', fontSize: 13 } }, '⏳ Загрузка материалов…');
+  if (!needs)  return h('div', { style: { padding: 20, textAlign: 'center', color: '#888', fontSize: 13 } }, 'Нет данных');
+
+  return h('div', null,
+    // Шапка с кнопками
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' } },
+      // Статистика
+      h('div', { style: { display: 'flex', gap: 10, flex: 1, flexWrap: 'wrap' } },
+        [
+          { label: 'Всего',    val: stats.total,    color: '#555'    },
+          { label: '⏳ Ожид.', val: stats.pending,  color: '#888'    },
+          { label: '📦 Заказ.', val: stats.ordered,  color: '#185FA5' },
+          { label: '✓ Получ.', val: stats.received, color: GN        },
+        ].map((s, i) => h('div', { key: i, style: { display: 'flex', alignItems: 'baseline', gap: 4 } },
+          h('span', { style: { fontSize: 18, fontWeight: 700, color: s.color } }, s.val),
+          h('span', { style: { fontSize: 11, color: 'var(--muted)' } }, s.label)
+        ))
+      ),
+      // Кнопки действий
+      h('div', { style: { display: 'flex', gap: 6 } },
+        canEdit && h('button', {
+          onClick: () => fileRef.current?.click(),
+          style: { fontSize: 12, padding: '6px 12px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' }
+        }, '📥 Импорт Excel'),
+        h('button', {
+          onClick: () => exportNeedsToExcel(order, needs),
+          style: { fontSize: 12, padding: '6px 12px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' }
+        }, '📤 Экспорт Excel'),
+        canEdit && h('button', {
+          onClick: addGroup,
+          style: { fontSize: 12, padding: '6px 12px', border: `0.5px solid ${AM}`, borderRadius: 7, color: AM2, background: 'transparent', cursor: 'pointer', fontWeight: 500 }
+        }, '+ Группа'),
+        saving && h('span', { style: { fontSize: 11, color: '#888' } }, '💾 Сохранение…')
+      ),
+      h('input', { ref: fileRef, type: 'file', accept: '.xlsx,.xls', style: { display: 'none' },
+        onChange: e => { handleImport(e.target.files[0]); e.target.value = ''; } })
+    ),
+
+    // Группы
+    (needs.groups || []).map(group =>
+      h(MaterialGroup, {
+        key: group.id, group, canEdit,
+        onUpdateGroup: updateGroupName,
+        onDeleteGroup: deleteGroup,
+        onUpdateItem:  updateItem,
+        onDeleteItem:  deleteItem,
+        onAddItem:     addItem,
+        onUpdateItemStatus: updateAllStatus,
+      })
+    ),
+
+    needs.groups?.length === 0 && h('div', { style: { textAlign: 'center', padding: '32px', color: '#aaa', fontSize: 13 } },
+      'Нет групп. Нажмите «+ Группа» или импортируйте Excel.'
+    )
+  );
+});
+
+
 const generateFullPassport = (order, data) => {
   const ops = data.ops.filter(op => op.orderId === order.id && !op.archived);
   const cost = calcOrderCost(order, data);
