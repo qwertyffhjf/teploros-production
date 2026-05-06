@@ -2070,7 +2070,7 @@ function App() {
           effectiveRole === 'admin'       && h(AdminScreen,     { data, onUpdate: save, addToast }),
           effectiveRole === 'controller'  && h(ControllerScreen, { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }),
           effectiveRole === 'worker' && workerId && h(WorkerScreen, { data, workerId, sectionId, onUpdate: save, initialOpId: null, addToast }),
-          effectiveRole === 'warehouse' && h(WarehouseScreen, { data, onUpdate: save, addToast }),
+          effectiveRole === 'warehouse' && h(WarehouseScreen, { data, onUpdate: save, addToast, currentUserId: workerId }),
           effectiveRole === 'dashboard' && h(Dashboard, { data, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId })
         ),
     selectedOrderId && h(OrderDetailModal, { orderId: selectedOrderId, data, onUpdate: save, onClose: () => setSelectedOrderId(null) }),
@@ -2123,5 +2123,3 @@ if ('serviceWorker' in navigator) {
     if (!refreshing) { refreshing = true; window.location.reload(); }
   });
 }
-
-
