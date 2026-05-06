@@ -383,7 +383,7 @@ const parseNeedsFromExcel = (file, onResult) => {
 };
 
 // ── Компонент редактора одной позиции ──────────────────────
-const ItemRow = memo(({ item, groupId, onUpdate, onDelete, canEdit }) => {
+const ItemRow = memo(({ item, groupId, onUpdate, onDelete, canEdit, selected, onSelect }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item);
 
@@ -397,8 +397,10 @@ const ItemRow = memo(({ item, groupId, onUpdate, onDelete, canEdit }) => {
       style: { width: w, fontSize: 12, padding: '3px 6px', border: '0.5px solid var(--border)', borderRadius: 4, background: 'var(--card)', color: 'var(--fg)' },
       onChange: e => upd(k, type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value) });
 
+  const rowBg = selected ? 'rgba(226,75,74,0.06)' : 'transparent';
+
   if (editing) return h('tr', { style: { background: 'rgba(239,159,39,0.06)' } },
-    h('td', { style: { padding: '4px 6px' } }, h('span', { style: { fontSize: 11, color: '#888' } }, '✎')),
+    h('td', { style: { padding: '4px 6px' } }),
     h('td', { style: { padding: '4px 4px' } }, inp('name', 'Наименование')),
     h('td', { style: { padding: '4px 4px' } }, inp('code', 'Код/Чертёж')),
     h('td', { style: { padding: '4px 4px' } }, inp('material', 'Материал')),
@@ -412,13 +414,21 @@ const ItemRow = memo(({ item, groupId, onUpdate, onDelete, canEdit }) => {
     h('td', { style: { padding: '4px 4px' } }, inp('note', 'Примечание')),
     h('td', { style: { padding: '4px 6px', whiteSpace: 'nowrap' } },
       h('button', { onClick: save,   style: { fontSize: 11, padding: '3px 8px', background: AM, color: AM2, border: 'none', borderRadius: 4, cursor: 'pointer', marginRight: 4, fontWeight: 500 } }, '✓'),
-      h('button', { onClick: cancel, style: { fontSize: 11, padding: '3px 8px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 4, cursor: 'pointer' } }, '✕'))
+      h('button', { onClick: cancel, style: { fontSize: 11, padding: '3px 8px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 4, cursor: 'pointer' } }, 'Отмена'))
   );
 
-  return h('tr', { style: { borderBottom: '0.5px solid var(--border-soft)' },
-    onDoubleClick: canEdit ? () => { setDraft(item); setEditing(true); } : undefined },
-    h('td', { style: { padding: '5px 6px', fontSize: 11, color: '#888' } }),
-    h('td', { style: { padding: '5px 4px', fontSize: 12, fontWeight: item.name ? 400 : 400, color: item.name ? 'var(--fg)' : '#aaa' } }, item.name || '—'),
+  return h('tr', { style: { borderBottom: '0.5px solid var(--border-soft)', background: rowBg, transition: 'background 0.1s' } },
+    // Чекбокс + кнопка удалить (всегда видна при canEdit)
+    h('td', { style: { padding: '5px 6px', whiteSpace: 'nowrap' } },
+      canEdit && h('div', { style: { display: 'flex', alignItems: 'center', gap: 4 } },
+        h('input', { type: 'checkbox', checked: selected, onChange: () => onSelect(item.id),
+          style: { width: 14, height: 14, cursor: 'pointer', accentColor: RD } }),
+        h('button', { onClick: () => onDelete(groupId, item.id), title: 'Удалить позицию',
+          style: { fontSize: 13, color: RD, background: 'transparent', border: 'none', cursor: 'pointer', lineHeight: 1, padding: '0 2px', opacity: 0.7 } }, '🗑')
+      )
+    ),
+    h('td', { style: { padding: '5px 4px', fontSize: 12, color: item.name ? 'var(--fg)' : '#aaa' },
+      onDoubleClick: canEdit ? () => { setDraft(item); setEditing(true); } : undefined }, item.name || '—'),
     h('td', { style: { padding: '5px 4px', fontSize: 11, color: '#888', fontFamily: 'monospace' } }, item.code || ''),
     h('td', { style: { padding: '5px 4px', fontSize: 11, color: 'var(--muted)' } }, item.material || ''),
     h('td', { style: { padding: '5px 4px', fontSize: 11, textAlign: 'center', color: 'var(--muted)' } }, item.thickness ? `${item.thickness} мм` : ''),
@@ -427,22 +437,44 @@ const ItemRow = memo(({ item, groupId, onUpdate, onDelete, canEdit }) => {
     h('td', { style: { padding: '5px 4px', fontSize: 11, color: 'var(--muted)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, item.note || ''),
     h('td', { style: { padding: '5px 6px' } },
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
-        h('span', { style: { fontSize: 10, padding: '2px 7px', borderRadius: 10, background: st.bg, color: st.color, fontWeight: 500, whiteSpace: 'nowrap' } }, st.label),
-        canEdit && h('button', { onClick: () => onDelete(groupId, item.id),
-          style: { fontSize: 11, color: RD, background: 'transparent', border: 'none', cursor: 'pointer', opacity: 0.6, padding: '0 2px' }, title: 'Удалить' }, '×')))
+        h('span', { style: { fontSize: 10, padding: '2px 7px', borderRadius: 10, background: st.bg, color: st.color, fontWeight: 500, whiteSpace: 'nowrap', cursor: canEdit ? 'pointer' : 'default' },
+          onClick: canEdit ? () => {
+            const order = ['pending','ordered','received'];
+            const next = order[(order.indexOf(item.status) + 1) % order.length];
+            onUpdate(groupId, { ...item, status: next });
+          } : undefined,
+          title: canEdit ? 'Нажмите для смены статуса' : '' }, st.label)
+      )
+    )
   );
 });
 
 // ── Компонент группы ────────────────────────────────────────
-const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem, onDeleteItem, onAddItem, canEdit, onUpdateItemStatus }) => {
+const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem, onDeleteItem, onDeleteMany, onAddItem, canEdit, onUpdateItemStatus }) => {
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName]     = useState(group.name);
   const [collapsed, setCollapsed]     = useState(false);
+  const [selected, setSelected]       = useState(new Set()); // выбранные id для пакетного удаления
 
-  const pendingCount  = (group.items || []).filter(i => i.status === 'pending').length;
-  const orderedCount  = (group.items || []).filter(i => i.status === 'ordered').length;
-  const receivedCount = (group.items || []).filter(i => i.status === 'received').length;
-  const total         = (group.items || []).length;
+  const items = group.items || [];
+  const pendingCount  = items.filter(i => i.status === 'pending').length;
+  const orderedCount  = items.filter(i => i.status === 'ordered').length;
+  const receivedCount = items.filter(i => i.status === 'received').length;
+  const total         = items.length;
+  const allSelected   = total > 0 && selected.size === total;
+  const someSelected  = selected.size > 0;
+
+  const toggleSelect = (id) => setSelected(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(items.map(i => i.id)));
+  const deleteSelected = () => {
+    if (!someSelected) return;
+    onDeleteMany(group.id, [...selected]);
+    setSelected(new Set());
+  };
 
   return h('div', { style: { marginBottom: 16, border: '0.5px solid var(--border)', borderRadius: 10, overflow: 'hidden' } },
     // Заголовок группы
@@ -458,47 +490,68 @@ const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem,
         : h('span', { style: { fontSize: 13, fontWeight: 600, flex: 1 } }, group.name),
       // Счётчики
       total > 0 && h('div', { style: { display: 'flex', gap: 6, fontSize: 11 } },
-        pendingCount  > 0 && h('span', { style: { color: '#888'   } }, `⏳ ${pendingCount}`),
-        orderedCount  > 0 && h('span', { style: { color: '#185FA5'} }, `📦 ${orderedCount}`),
-        receivedCount > 0 && h('span', { style: { color: GN       } }, `✓ ${receivedCount}`),
+        pendingCount  > 0 && h('span', { style: { color: '#888'    } }, `⏳ ${pendingCount}`),
+        orderedCount  > 0 && h('span', { style: { color: '#185FA5' } }, `📦 ${orderedCount}`),
+        receivedCount > 0 && h('span', { style: { color: GN        } }, `✓ ${receivedCount}`),
       ),
       canEdit && h('div', { style: { display: 'flex', gap: 4 }, onClick: e => e.stopPropagation() },
         h('button', { onClick: () => setEditingName(true),
-          style: { fontSize: 11, padding: '2px 7px', border: '0.5px solid var(--border)', borderRadius: 4, background: 'transparent', cursor: 'pointer' } }, '✎'),
+          style: { fontSize: 11, padding: '2px 7px', border: '0.5px solid var(--border)', borderRadius: 4, background: 'transparent', cursor: 'pointer' } }, '✎ Переим.'),
         h('button', { onClick: () => onDeleteGroup(group.id),
-          style: { fontSize: 11, padding: '2px 7px', border: `0.5px solid ${RD}`, borderRadius: 4, color: RD, background: 'transparent', cursor: 'pointer' } }, '✕'))
+          style: { fontSize: 11, padding: '2px 7px', border: `0.5px solid ${RD}`, borderRadius: 4, color: RD, background: 'transparent', cursor: 'pointer' } }, '🗑 Группу'))
+    ),
+
+    // Панель пакетного удаления (появляется когда что-то выбрано)
+    canEdit && someSelected && !collapsed && h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px', background: 'rgba(226,75,74,0.07)', borderTop: `1px solid ${RD}22` } },
+      h('span', { style: { fontSize: 12, color: RD, fontWeight: 500 } }, `Выбрано: ${selected.size}`),
+      h('button', { onClick: deleteSelected,
+        style: { fontSize: 12, padding: '4px 14px', background: RD, color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 } },
+        `🗑 Удалить ${selected.size} позиц.`),
+      h('button', { onClick: () => setSelected(new Set()),
+        style: { fontSize: 12, padding: '4px 10px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 6, cursor: 'pointer' } },
+        'Снять выбор')
     ),
 
     // Таблица позиций
     !collapsed && h('div', { style: { overflowX: 'auto' } },
       h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 } },
         h('thead', null, h('tr', { style: { background: 'var(--bg)', fontSize: 11, color: 'var(--muted)' } },
-          ['', 'Наименование', 'Код/Чертёж', 'Материал', 'Толщина', 'Кол-во', 'Длина', 'Примечание', 'Статус'].map((col, i) =>
-            h('th', { key: i, style: { padding: '5px 6px', textAlign: 'left', fontWeight: 500, whiteSpace: 'nowrap', borderBottom: '0.5px solid var(--border-soft)' } }, col))
+          [
+            // Первая колонка — чекбокс «выбрать все» (только canEdit)
+            canEdit ? h('th', { key: 'chk', style: { padding: '5px 6px', width: 52, borderBottom: '0.5px solid var(--border-soft)' } },
+              h('input', { type: 'checkbox', checked: allSelected, onChange: toggleAll,
+                style: { width: 14, height: 14, cursor: 'pointer', accentColor: RD } })
+            ) : h('th', { key: 'chk', style: { width: 8 } }),
+            ...['Наименование', 'Код/Чертёж', 'Материал', 'Толщина', 'Кол-во', 'Длина', 'Примечание', 'Статус'].map((col, i) =>
+              h('th', { key: i, style: { padding: '5px 6px', textAlign: 'left', fontWeight: 500, whiteSpace: 'nowrap', borderBottom: '0.5px solid var(--border-soft)' } }, col))
+          ]
         )),
         h('tbody', null,
-          (group.items || []).map(item =>
+          items.map(item =>
             h(ItemRow, { key: item.id, item, groupId: group.id, canEdit,
+              selected: selected.has(item.id),
+              onSelect: toggleSelect,
               onUpdate: (gid, updItem) => onUpdateItem(gid, updItem),
               onDelete: onDeleteItem })
           ),
-          // Пустая строка если нет позиций
-          (!group.items || group.items.length === 0) && h('tr', null,
-            h('td', { colSpan: 9, style: { padding: '12px', textAlign: 'center', color: '#aaa', fontSize: 12 } }, 'Нет позиций — добавьте вручную или импортируйте из Excel')
+          items.length === 0 && h('tr', null,
+            h('td', { colSpan: 10, style: { padding: '12px', textAlign: 'center', color: '#aaa', fontSize: 12 } },
+              'Нет позиций — добавьте вручную или импортируйте из Excel')
           )
         )
       ),
 
-      // Кнопка добавить + статусы (для склада)
-      h('div', { style: { display: 'flex', gap: 8, padding: '6px 10px', borderTop: '0.5px solid var(--border-soft)', flexWrap: 'wrap' } },
+      // Нижняя панель
+      h('div', { style: { display: 'flex', gap: 8, padding: '6px 10px', borderTop: '0.5px solid var(--border-soft)', flexWrap: 'wrap', alignItems: 'center' } },
         canEdit && h('button', { onClick: () => onAddItem(group.id),
           style: { fontSize: 11, padding: '4px 10px', border: '0.5px solid var(--border)', borderRadius: 6, background: 'transparent', cursor: 'pointer', color: AM2 } },
           '+ Добавить позицию'),
-        // Быстрое изменение статусов (для склада)
-        !canEdit && (group.items || []).filter(i => i.status !== 'received').length > 0 &&
+        !canEdit && items.filter(i => i.status !== 'received').length > 0 &&
           h('button', { onClick: () => onUpdateItemStatus(group.id, 'received'),
             style: { fontSize: 11, padding: '4px 10px', border: `0.5px solid ${GN}`, borderRadius: 6, color: GN, background: 'transparent', cursor: 'pointer' } },
-            '✓ Отметить всё получено')
+            '✓ Отметить всё получено'),
+        canEdit && total > 0 && h('span', { style: { fontSize: 11, color: '#aaa', marginLeft: 'auto' } },
+          'Двойной клик на строку — редактировать')
       )
     )
   );
@@ -552,6 +605,10 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
   // Позиции
   const addItem = (gid) => updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, items: [...(g.items || []), makeItem()] } : g) }));
   const deleteItem = (gid, iid) => updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, items: g.items.filter(i => i.id !== iid) } : g) }));
+  const deleteManyItems = (gid, ids) => {
+    const idSet = new Set(ids);
+    updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, items: g.items.filter(i => !idSet.has(i.id)) } : g) }));
+  };
   const updateItem = (gid, item) => updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, items: g.items.map(i => i.id === item.id ? item : i) } : g) }));
   const updateAllStatus = (gid, status) => updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, items: g.items.map(i => ({ ...i, status })) } : g) }));
 
@@ -634,6 +691,7 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
         onDeleteGroup: deleteGroup,
         onUpdateItem:  updateItem,
         onDeleteItem:  deleteItem,
+        onDeleteMany:  deleteManyItems,
         onAddItem:     addItem,
         onUpdateItemStatus: updateAllStatus,
       })
