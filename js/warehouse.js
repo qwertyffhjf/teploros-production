@@ -689,7 +689,7 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
 
 
 // ==================== WarehouseScreen (Склад) ====================
-const WarehouseScreen = memo(({ data, onUpdate, addToast }) => {
+const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
   const [tab, setTab] = useState('stock');
   const [receiveForm, setReceiveForm] = useState({ materialId: '', qty: '', batch: '' });
   const [showImport, setShowImport] = useState(false);
