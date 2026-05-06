@@ -458,7 +458,6 @@ const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) =
     onUpdate(d); DB.save(d).catch(() => onUpdate(data));
   }, [data, ops, onUpdate, addToast, orderId]);
 
-  // Автоустановка: все последовательно (каждая ждёт предыдущую)
   const setAllSequential = useCallback(async () => {
     const ordered = [...ops];
     const updated = data.ops.map(o => {
@@ -472,7 +471,6 @@ const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) =
     addToast('Расставлено последовательно', 'success');
   }, [data, ops, orderId, onUpdate, addToast]);
 
-  // Автоустановка: все параллельно (без зависимостей)
   const setAllParallel = useCallback(async () => {
     const d = { ...data, ops: data.ops.map(o => o.orderId === orderId ? { ...o, dependsOn: undefined } : o) };
     onUpdate(d); DB.save(d).catch(() => onUpdate(data));
@@ -510,12 +508,6 @@ const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) =
         h('button', { style: gbtn({ fontSize: 11 }), onClick: setAllParallel }, '⇉ Все параллельно')
       ),
       // Матрица зависимостей
-      h('div', { style: { marginBottom: 6, fontSize: 10, color: '#888' } },
-        ops.map((op, idx) => h('span', { key: op.id, title: op.name, style: { display: 'inline-block', marginRight: 8 } },
-          h('span', { style: { fontWeight: 600, color: '#555' } }, idx + 1),
-          ` — ${op.name}`
-        ))
-      ),
       h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 11 } },
         h('thead', null, h('tr', null,
           h('th', { style: { ...S.th, position: 'sticky', left: 0, background: '#f8f8f5', zIndex: 1 } }, 'Операция ↓ зависит от →'),
@@ -650,16 +642,10 @@ const DependencyEditorInline = memo(({ data, orderId, onUpdate, addToast }) => {
         h('button', { style: gbtn({ fontSize: 11 }), onClick: setAllParallel }, '⇉ Все параллельно')
       )
     ),
-    h('div', { style: { marginBottom: 8, fontSize: 10, color: '#888', lineHeight: 1.7 } },
-      ops.map((op, idx) => h('span', { key: op.id, style: { display: 'inline-block', marginRight: 10 } },
-        h('span', { style: { fontWeight: 600, color: '#555' } }, idx + 1),
-        ` — ${op.name}`
-      ))
-    ),
     h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 11 } },
       h('thead', null, h('tr', null,
         h('th', { style: { ...S.th, position: 'sticky', left: 0, background: '#f8f8f5', zIndex: 1 } }, 'Операция ↓ зависит от →'),
-        ops.map((op, idx) => h('th', { key: op.id, title: op.name, style: { ...S.th, minWidth: 34, maxWidth: 34, width: 34, textAlign: 'center', fontSize: 11, fontWeight: 600, color: '#555', padding: '4px 2px' } }, idx + 1))
+        ops.map(op => h('th', { key: op.id, style: { ...S.th, writingMode: 'vertical-lr', minWidth: 30, maxWidth: 40, height: 80, padding: '4px 2px' } }, op.name.length > 10 ? op.name.slice(0, 10) + '…' : op.name))
       )),
       h('tbody', null, ops.map(op => h('tr', { key: op.id },
         h('td', { style: { ...S.td, fontWeight: 500, position: 'sticky', left: 0, background: '#fff', zIndex: 1, minWidth: 120 } },
@@ -705,6 +691,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const pageSize = 20;
   const [fieldErrors, setFieldErrors] = useState({});
   const [depEditorOrderId, setDepEditorOrderId] = useState(null);
+  const [materialOrderId, setMaterialOrderId]   = useState(null);
   const [printOrderId, setPrintOrderId] = useState(null);
   const [filterType, setFilterType] = useState('');
   const [showImport1C, setShowImport1C] = useState(false);
@@ -886,6 +873,27 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
         onUpdate(d); DB.save(d).catch(() => onUpdate(data));
         addToast(`Импортировано заказов: ${newOrders.length}`, 'success');
       }}),
+    materialOrderId && h('div', {
+      role: 'dialog', 'aria-modal': 'true',
+      style: { position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'flex-start', justifyContent:'center', zIndex:100, padding:'24px 16px', overflowY:'auto' },
+      onKeyDown: e => e.key === 'Escape' && setMaterialOrderId(null),
+    },
+      h('div', { className:'modal-animated', style:{ background:'var(--card)', borderRadius:12, padding:24, width:'min(960px, calc(100vw - 32px))', position:'relative' } },
+        h('div', { style:{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 } },
+          h('div', null,
+            h('div', { style:{ fontSize:16, fontWeight:600 } }, '🔩 Заявка на материалы'),
+            h('div', { style:{ fontSize:12, color:'var(--muted)', marginTop:2 } },
+              (() => { const o = data.orders.find(x => x.id === materialOrderId); return o ? `Заказ ${o.number} — ${o.product}` : ''; })()
+            )
+          ),
+          h('button', { onClick: () => setMaterialOrderId(null), style:{ background:'transparent', border:'none', fontSize:20, color:'#888', cursor:'pointer' } }, '×')
+        ),
+        h(OrderMaterialsEditor, {
+          order: data.orders.find(o => o.id === materialOrderId),
+          data, onUpdate, addToast, canEdit: true,
+        })
+      )
+    ),
     depEditorOrderId && h(DependencyEditor, { data, orderId: depEditorOrderId, onUpdate, addToast, onClose: () => setDepEditorOrderId(null) }),
     printOrderId && (() => {
       const pOrder = data.orders.find(o => o.id === printOrderId);
@@ -980,6 +988,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
                   h('button', { key: 'edit', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Редактировать', title: 'Редактировать заказ', onClick: () => edit(ord) }, '✎'),
                   h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'В архив', title: 'Переместить в архив', onClick: () => del(ord.id) }, '✕'),
                   h('button', { key: 'passport', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Паспорт PDF', title: 'Сформировать паспорт изделия (PDF)', onClick: () => generateFullPassport(ord, data) }, '📄'),
+                  h('button', { key: 'materials', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Заявка на материалы', title: 'Заявка на материалы', onClick: () => setMaterialOrderId(ord.id) }, '🔩'),
                   h('button', { key: 'route', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Маршрутный лист PDF', title: 'Распечатать маршрутный лист (PDF)', onClick: () => generateRouteSheet(ord, data) }, '📋'),
                   h('button', { key: 'deps', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Зависимости операций', title: 'Настроить зависимости операций', onClick: () => setDepEditorOrderId(ord.id) }, '🔗'),
                   !ord.shipped && h('button', { key: 'ship', style: { ...gbtn({ fontSize: 11, padding: '4px 8px' }), color: GN2, borderColor: GN }, 'aria-label': 'Отгрузить заказ', title: 'Отметить заказ как отгруженный', onClick: () => shipOrder(ord.id) }, '🚚'),
