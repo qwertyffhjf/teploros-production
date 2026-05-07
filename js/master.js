@@ -692,6 +692,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [fieldErrors, setFieldErrors] = useState({});
   const [depEditorOrderId, setDepEditorOrderId] = useState(null);
   const [materialOrderId, setMaterialOrderId]   = useState(null);
+  const [viewOrderId, setViewOrderId]           = useState(null); // красивая карточка заказа
   const [printOrderId, setPrintOrderId] = useState(null);
   const [filterType, setFilterType] = useState('');
   const [showImport1C, setShowImport1C] = useState(false);
@@ -873,6 +874,125 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
         onUpdate(d); DB.save(d).catch(() => onUpdate(data));
         addToast(`Импортировано заказов: ${newOrders.length}`, 'success');
       }}),
+    viewOrderId && (() => {
+      const ord = data.orders.find(o => o.id === viewOrderId);
+      if (!ord) return null;
+      const ops = data.ops.filter(o => o.orderId === ord.id && !o.archived);
+      const done = ops.filter(o => o.status === 'done').length;
+      const inProgress = ops.filter(o => o.status === 'in_progress').length;
+      const components = ord.components || [];
+      const priority = PRIORITY[ord.priority] || { label: '—', color: '#888' };
+      const daysLeft = ord.deadline ? Math.ceil((new Date(ord.deadline) - Date.now()) / 86400000) : null;
+      const deadlineColor = daysLeft === null ? '#888' : daysLeft < 0 ? RD : daysLeft <= 3 ? AM2 : '#888';
+
+      return h('div', {
+        role: 'dialog', 'aria-modal': 'true',
+        style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 100, padding: '24px 16px', overflowY: 'auto' },
+        onKeyDown: e => e.key === 'Escape' && setViewOrderId(null),
+      },
+        h('div', { className: 'modal-animated', style: { background: 'var(--card)', borderRadius: 14, padding: 0, width: 'min(680px, calc(100vw - 32px))', overflow: 'hidden', position: 'relative' } },
+
+          // Шапка — цветная полоса
+          h('div', { style: { background: `linear-gradient(135deg, #1a1a18 0%, #2d2a24 100%)`, padding: '20px 24px 16px', color: '#fff' } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' } },
+              h('div', null,
+                h('div', { style: { fontSize: 11, fontWeight: 500, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', marginBottom: 4 } }, '📋 КАРТОЧКА ЗАКАЗА'),
+                h('div', { style: { fontSize: 24, fontWeight: 700, color: AM, letterSpacing: '-0.5px' } }, ord.number),
+              ),
+              h('button', { onClick: () => setViewOrderId(null), style: { background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.5)', cursor: 'pointer', fontSize: 22, lineHeight: 1 } }, '×')
+            ),
+            h('div', { style: { fontSize: 16, fontWeight: 500, color: '#fff', marginTop: 8, lineHeight: 1.3 } }, ord.product),
+            ord.specs && h('div', { style: { fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 4 } }, ord.specs),
+          ),
+
+          h('div', { style: { padding: '20px 24px' } },
+
+            // Блок основной информации
+            h('div', { style: { background: 'var(--bg)', borderRadius: 10, padding: '14px 16px', marginBottom: 16 } },
+              h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 10 } }, '🗂 Основной заказ (изделие)'),
+              [
+                ['Заказчик',       ord.customer    || '—'],
+                ['Код изделия',    ord.productCode || '—'],
+                ['Количество',     `${ord.qty || 1} шт`],
+                ['Срок отгрузки',  ord.deadline ? h('span', { style: { color: deadlineColor, fontWeight: 500 } }, ord.deadline + (daysLeft !== null ? ` (${daysLeft < 0 ? `просрочен на ${Math.abs(daysLeft)} дн` : `${daysLeft} дн`})` : '')) : '—'],
+                ['Приоритет',      h('span', { style: { color: priority.color, fontWeight: 500 } }, priority.label)],
+                ord.drawingUrl ? ['Чертёж / ТЗ', h('a', { href: ord.drawingUrl, target: '_blank', rel: 'noopener', style: { color: BL, fontSize: 12 } }, '📐 Открыть')] : null,
+              ].filter(Boolean).map(([label, val], i) =>
+                h('div', { key: i, style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0', borderBottom: '0.5px solid var(--border-soft)', fontSize: 13 } },
+                  h('span', { style: { color: 'var(--muted)', fontSize: 12 } }, label),
+                  h('span', { style: { fontWeight: 400 } }, val)
+                )
+              )
+            ),
+
+            // Комплектующие из 1С
+            components.length > 0 && h('div', { style: { marginBottom: 16 } },
+              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 } },
+                h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase' } },
+                  `📦 Комплектующие (${components.length} поз.) — статус: ${components.some(c => c.status !== 'confirmed') ? 'ожидаются' : 'получены'}`
+                )
+              ),
+              h('div', { style: { border: '0.5px solid var(--border-soft)', borderRadius: 8, overflow: 'hidden' } },
+                h('div', { style: { display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: '0', background: 'var(--bg)', padding: '6px 12px', fontSize: 10, fontWeight: 600, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase' } },
+                  h('span', null, 'Наименование'), h('span', { style: { textAlign: 'center' } }, 'Код'), h('span', { style: { textAlign: 'center' } }, 'Кол-во'), h('span', { style: { textAlign: 'center' } }, 'Ед.')
+                ),
+                components.map((c, i) => h('div', { key: i, style: { display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: '0', padding: '8px 12px', borderTop: '0.5px solid var(--border-soft)', fontSize: 13, alignItems: 'center' } },
+                  h('span', { style: { fontWeight: 400 } }, c.name || c.description || '—'),
+                  h('span', { style: { color: 'var(--muted)', fontSize: 11, fontFamily: 'monospace', textAlign: 'center', padding: '0 8px' } }, c.code || c.article || '—'),
+                  h('span', { style: { textAlign: 'center', fontWeight: 500 } }, c.qty || 1),
+                  h('span', { style: { textAlign: 'center', color: 'var(--muted)', fontSize: 11 } }, c.unit || 'шт')
+                ))
+              ),
+              components.some(c => c.status !== 'confirmed') && h('div', { style: { marginTop: 6, padding: '6px 10px', background: 'rgba(239,159,39,0.08)', border: `0.5px solid ${AM}`, borderRadius: 6, fontSize: 11, color: AM2 } },
+                '⚠ Отгрузка заблокирована до получения всех комплектующих'
+              )
+            ),
+
+            // Операции
+            h('div', { style: { marginBottom: 16 } },
+              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 } },
+                h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase' } },
+                  `⚙ Производственные операции`
+                ),
+                h('div', { style: { fontSize: 12, color: 'var(--muted)' } },
+                  h('span', { style: { color: GN, fontWeight: 500 } }, done),
+                  ` / ${ops.length} завершено`,
+                  inProgress > 0 && h('span', { style: { color: AM2, marginLeft: 8 } }, `▶ ${inProgress} в работе`)
+                )
+              ),
+              // Прогресс-бар
+              ops.length > 0 && h('div', { style: { height: 6, background: 'var(--bg)', borderRadius: 3, marginBottom: 10, overflow: 'hidden' } },
+                h('div', { style: { height: '100%', width: `${Math.round(done/ops.length*100)}%`, background: GN, borderRadius: 3, transition: 'width 0.3s' } })
+              ),
+              h('div', { style: { border: '0.5px solid var(--border-soft)', borderRadius: 8, overflow: 'hidden', maxHeight: 280, overflowY: 'auto' } },
+                ops.length === 0
+                  ? h('div', { style: { padding: '16px', textAlign: 'center', color: 'var(--muted)', fontSize: 13 } }, 'Нет операций')
+                  : ops.map((op, i) => {
+                      const stColors = { pending: '#888', in_progress: AM2, on_check: BL, done: GN, defect: RD };
+                      const stLabels = { pending: 'Ожидает', in_progress: 'В работе', on_check: 'Контроль', done: 'Выполнено', defect: 'Дефект' };
+                      const workers = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name).filter(Boolean);
+                      return h('div', { key: op.id, style: { display: 'flex', alignItems: 'center', gap: 10, padding: '7px 12px', borderTop: i > 0 ? '0.5px solid var(--border-soft)' : 'none', fontSize: 12, background: op.status === 'done' ? 'rgba(15,110,86,0.04)' : 'transparent' } },
+                        h('span', { style: { fontSize: 10, minWidth: 20, color: 'var(--muted)', flexShrink: 0 } }, i + 1),
+                        h('span', { style: { flex: 1, textDecoration: op.status === 'done' ? 'line-through' : 'none', color: op.status === 'done' ? 'var(--muted)' : 'var(--fg)' } }, op.name),
+                        workers.length > 0 && h('span', { style: { fontSize: 11, color: 'var(--muted)', flexShrink: 0 } }, workers.join(', ')),
+                        h('span', { style: { fontSize: 10, padding: '2px 7px', borderRadius: 8, background: `${stColors[op.status]}18`, color: stColors[op.status], fontWeight: 500, flexShrink: 0, whiteSpace: 'nowrap' } }, stLabels[op.status] || op.status)
+                      );
+                    })
+              )
+            ),
+
+            // Кнопки действий
+            h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+              h('button', { onClick: () => { generateFullPassport(ord, data); }, style: gbtn({ fontSize: 12, padding: '8px 14px' }) }, '📄 Паспорт PDF'),
+              h('button', { onClick: () => { generateRouteSheet(ord, data); }, style: gbtn({ fontSize: 12, padding: '8px 14px' }) }, '📋 Маршрутный лист'),
+              h('button', { onClick: () => { setViewOrderId(null); setMaterialOrderId(ord.id); }, style: gbtn({ fontSize: 12, padding: '8px 14px' }) }, '🔩 Заявка на материалы'),
+              h('button', { onClick: () => setViewOrderId(null), style: gbtn({ fontSize: 12, padding: '8px 14px' }) }, 'Закрыть')
+            )
+          )
+        )
+      );
+    })(),
+
     materialOrderId && h('div', {
       role: 'dialog', 'aria-modal': 'true',
       style: { position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'flex-start', justifyContent:'center', zIndex:100, padding:'24px 16px', overflowY:'auto' },
@@ -985,6 +1105,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
               h('td', { style: S.td }, h(Badge, { st: ord.shipped ? 'shipped' : st })),
               h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
                 !ord.archived ? [
+                  h('button', { key: 'view', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Карточка заказа', title: 'Просмотр карточки заказа', onClick: () => setViewOrderId(ord.id) }, '👁'),
                   h('button', { key: 'edit', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Редактировать', title: 'Редактировать заказ', onClick: () => edit(ord) }, '✎'),
                   h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'В архив', title: 'Переместить в архив', onClick: () => del(ord.id) }, '✕'),
                   h('button', { key: 'passport', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Паспорт PDF', title: 'Сформировать паспорт изделия (PDF)', onClick: () => generateFullPassport(ord, data) }, '📄'),
@@ -1816,14 +1937,6 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
         h('div', null, h('div', { style: { fontSize:13, fontWeight:500 } }, workerNames || 'Не назначен'), h('div', { style: { fontSize:10, color:'#888' } }, 'Плановый исполнитель'))
       ),
       h('div', { style: { display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 } }, h(Badge, { st: op.status }), op.status === 'in_progress' && h('div', { style: { fontSize:24, fontWeight:500, color:AM } }, fmtDur(elapsed))),
-      (() => {
-        const drawUrl = op.drawingUrl || order?.drawingUrl;
-        return drawUrl && h('a', { href: drawUrl, target:'_blank', rel:'noopener',
-          style: { display:'inline-flex', alignItems:'center', gap:6, fontSize:13, color:'#185FA5',
-            textDecoration:'none', padding:'8px 12px', background:'#E3F2FD',
-            borderRadius:8, marginBottom:12, fontWeight:500 } },
-          '📐 Чертёж / ТЗ');
-      })(),
       renderQRActions()
     ),
     showDowntimeModal && h('div', { role:'dialog','aria-modal':'true','aria-label':'Фиксация простоя', style: { position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:60 } },
