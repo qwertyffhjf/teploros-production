@@ -631,6 +631,29 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
     });
   }, [save]);
 
+  // Импорт комплектации из заказа — объявлен до early returns (правило хуков)
+  const importComponentsFromOrder = useCallback(() => {
+    const components = order.components || [];
+    if (!components.length) return;
+    updNeeds(p => {
+      const groups = p.groups.map(g => {
+        if (g.id !== 'komplekt' && !g.name.toLowerCase().includes('комплект')) return g;
+        const newItems = components.map(c => ({
+          id: uid(), name: c.name || c.description || '—',
+          code: c.code || c.article || '',
+          material: '', thickness: '',
+          qty: c.qty || 1, unit: c.unit || 'шт',
+          length: '', note: c.note || '',
+          status: 'pending',
+        }));
+        return { ...g, items: [...(g.items || []), ...newItems] };
+      });
+      return { ...p, groups };
+    });
+    setShowImportComponents(false);
+    addToast(`Импортировано ${components.length} позиций комплектации`, 'success');
+  }, [order, updNeeds, addToast]);
+
   // Группы
   const addGroup = () => updNeeds(p => ({ ...p, groups: [...(p.groups || []), makeGroup('Новая группа')] }));
   const deleteGroup = (gid) => updNeeds(p => ({ ...p, groups: p.groups.filter(g => g.id !== gid) }));
@@ -681,29 +704,6 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
 
   if (loading) return h('div', { style: { padding: 20, textAlign: 'center', color: '#888', fontSize: 13 } }, '⏳ Загрузка материалов…');
   if (!needs)  return h('div', { style: { padding: 20, textAlign: 'center', color: '#888', fontSize: 13 } }, 'Нет данных');
-
-  // Импорт комплектации из заказа
-  const importComponentsFromOrder = useCallback(() => {
-    const components = order.components || [];
-    if (!components.length) return;
-    updNeeds(p => {
-      const groups = p.groups.map(g => {
-        if (g.id !== 'komplekt' && !g.name.toLowerCase().includes('комплект')) return g;
-        const newItems = components.map(c => ({
-          id: uid(), name: c.name || c.description || '—',
-          code: c.code || c.article || '',
-          material: '', thickness: '',
-          qty: c.qty || 1, unit: c.unit || 'шт',
-          length: '', note: c.note || '',
-          status: 'pending',
-        }));
-        return { ...g, items: [...(g.items || []), ...newItems] };
-      });
-      return { ...p, groups };
-    });
-    setShowImportComponents(false);
-    addToast(`Импортировано ${components.length} позиций комплектации`, 'success');
-  }, [order, updNeeds, addToast]);
 
   return h('div', null,
     // Баннер предложения импорта комплектации
