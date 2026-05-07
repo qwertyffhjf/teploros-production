@@ -632,7 +632,10 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
         ),
         h('div', { style: { fontSize: 12, color: AM4, marginBottom: 14, opacity: .8 } }, data.orders.find(o => o.id === active.orderId)?.number || ''),
         h(ElapsedTimer, { startedAt: active.startedAt, style: { fontSize: 36, fontWeight: 600, color: AM2, marginBottom: 14, display: 'block', fontFamily: 'monospace', letterSpacing: '-0.02em' } }),
-        active.drawingUrl && h('a', { href: active.drawingUrl, target: '_blank', rel: 'noopener', style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: BL, textDecoration: 'none', padding: '6px 10px', background: 'rgba(255,255,255,0.8)', borderRadius: 6, marginBottom: 12 } }, '📐 Чертёж'),
+        (() => {
+          const drawUrl = active.drawingUrl || data.orders.find(o => o.id === active.orderId)?.drawingUrl;
+          return drawUrl && h('a', { href: drawUrl, target: '_blank', rel: 'noopener', style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: BL, textDecoration: 'none', padding: '6px 10px', background: 'rgba(255,255,255,0.8)', borderRadius: 6, marginBottom: 12 } }, '📐 Чертёж / ТЗ');
+        })(),
         // Чек-лист
         active.checklist?.length > 0 && h('div', { style: { background: 'rgba(255,255,255,0.7)', borderRadius: 8, padding: '10px 12px', marginBottom: 14 } },
           h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, fontWeight: 500 } },
@@ -750,7 +753,10 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
               )
             ),
             op.comment && h('div', { style: { fontSize: 12, color: '#666', background: '#f8f8f5', padding: '6px 10px', borderRadius: 6, marginBottom: 10 } }, `💬 ${op.comment}`),
-            op.drawingUrl && h('a', { href: op.drawingUrl, target: '_blank', rel: 'noopener', style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: BL, textDecoration: 'none', padding: '6px 10px', background: '#E3F2FD', borderRadius: 6, marginBottom: 10 } }, '📐 Чертёж'),
+            (() => {
+              const drawUrl = op.drawingUrl || order?.drawingUrl;
+              return drawUrl && h('a', { href: drawUrl, target: '_blank', rel: 'noopener', style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: BL, textDecoration: 'none', padding: '6px 10px', background: '#E3F2FD', borderRadius: 6, marginBottom: 10 } }, '📐 Чертёж / ТЗ');
+            })(),
             // СТАРТ — крупная кнопка с отступом сверху
             op.status === 'pending' && depsComplete
               ? h('button', { className: 'worker-btn worker-btn-start', onClick: () => {
