@@ -703,6 +703,9 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
   const [needsLoading, setNeedsLoading] = useState(false);
   const [receiveQtys, setReceiveQtys]   = useState({});   // { `orderId_groupId_itemId`: qty }
   const [receiveFilter, setReceiveFilter] = useState('pending'); // 'pending'|'all'
+  // Заявки — снабженец создаёт/редактирует прямо в складе
+  const [needsOrderId, setNeedsOrderId]   = useState(null);  // выбранный заказ для редактирования заявки
+  const [needsSearch, setNeedsSearch]     = useState('');
   const [showImport, setShowImport] = useState(false);
   const [selectedStock, setSelectedStock] = React.useState(new Set());
 
@@ -816,7 +819,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
     h(SectionAnalytics, { section: 'warehouse', data }),
     showImport && h(MaterialImportModal, { data, onClose: () => setShowImport(false), onUpdate, addToast, defaultMode: importMode }),
     // Вкладки
-    h(TabBar, { tabs: [['deliveries', `🚚 Поставки (${(data.materialDeliveries||[]).filter(d=>d.status==='pending'||d.status==='partial').length})`], ['stock', '📦 Остатки'], ['requests', `🔔 Заявки (${materialRequests.length})`], ['receive', '📥 Приёмка'], ['history', '📋 Движение'], ['materials', '🗂 Справочник'], ['bom', '📋 Спецификации']], tab, setTab }),
+    h(TabBar, { tabs: [['deliveries', `🚚 Поставки (${(data.materialDeliveries||[]).filter(d=>d.status==='pending'||d.status==='partial').length})`], ['stock', '📦 Остатки'], ['requests', `🔔 Заявки (${materialRequests.length})`], ['receive', '📥 Приёмка'], ['needs', '📝 Заявки на матер.'], ['history', '📋 Движение'], ['materials', '🗂 Справочник'], ['bom', '📋 Спецификации']], tab, setTab }),
 
     // Заявки (уведомления)
     materialRequests.length > 0 && tab !== 'requests' && h('div', { role: 'alert', style: { padding: '8px 12px', background: AM3, border: `0.5px solid ${AM}`, borderRadius: 8, marginBottom: 12, fontSize: 12, cursor: 'pointer' }, onClick: () => setTab('requests') },
@@ -1016,6 +1019,10 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
                         h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 1 } },
                           [item.code, item.material, item.thickness ? `${item.thickness}мм` : null].filter(Boolean).join(' · ') || ''
                         ),
+                        item.note && h('div', { style: { fontSize: 11, color: '#BA7517', marginTop: 3, fontStyle: 'italic', display: 'flex', alignItems: 'flex-start', gap: 4 } },
+                          h('span', null, '⚠'),
+                          h('span', null, item.note)
+                        ),
                         item.receivedQty > 0 && !isReceived && h('div', { style: { fontSize: 11, color: '#BA7517', marginTop: 1 } },
                           `Принято: ${item.receivedQty} из ${item.qty} ${item.unit}`
                         )
@@ -1057,6 +1064,85 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
     ), // закрытие receive tab div
 
     // Движение
+    tab === 'needs' && h('div', null,
+      // Поиск заказа
+      h('div', { style: { display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' } },
+        h('input', { placeholder: '🔍 Поиск заказа по номеру или изделию…', value: needsSearch,
+          onChange: e => { setNeedsSearch(e.target.value); setNeedsOrderId(null); },
+          style: { ...S.inp, flex: 1 } }),
+        needsOrderId && h('button', { onClick: () => setNeedsOrderId(null),
+          style: { fontSize: 12, padding: '6px 12px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer', whiteSpace: 'nowrap' } },
+          '← К списку заказов')
+      ),
+
+      // Если заказ не выбран — показываем список
+      !needsOrderId && h('div', null,
+        (() => {
+          const filtered = data.orders
+            .filter(o => !o.archived && !o.shipped)
+            .filter(o => !needsSearch || o.number.toLowerCase().includes(needsSearch.toLowerCase()) || (o.product || '').toLowerCase().includes(needsSearch.toLowerCase()))
+            .sort((a, b) => (a.deadline || '').localeCompare(b.deadline || ''));
+
+          if (filtered.length === 0) return h('div', { style: S.card }, h(EmptyState, { icon: '📋', title: 'Нет активных заказов', desc: 'Все заказы выполнены или в архиве', compact: true }));
+
+          return filtered.map(order => {
+            const orderNeeds = needsAll[order.id];
+            const totalItems = orderNeeds ? (orderNeeds.groups || []).reduce((s, g) => s + (g.items || []).length, 0) : 0;
+            const receivedItems = orderNeeds ? (orderNeeds.groups || []).reduce((s, g) => s + (g.items || []).filter(i => i.status === 'received').length, 0) : 0;
+            const hasNeeds = totalItems > 0;
+            const daysLeft = order.deadline ? Math.ceil((new Date(order.deadline) - Date.now()) / 86400000) : null;
+
+            return h('div', { key: order.id,
+              style: { ...S.card, marginBottom: 8, padding: '10px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, transition: 'box-shadow 0.15s' },
+              onClick: () => { setNeedsOrderId(order.id); setNeedsSearch(''); }
+            },
+              // Иконка статуса заявки
+              h('div', { style: { fontSize: 20, flexShrink: 0 } }, hasNeeds ? '📝' : '➕'),
+              // Инфо о заказе
+              h('div', { style: { flex: 1, minWidth: 0 } },
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 } },
+                  h('span', { style: { fontSize: 13, fontWeight: 600, color: AM2 } }, order.number),
+                  h('span', { style: { fontSize: 12, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, order.product || ''),
+                ),
+                h('div', { style: { fontSize: 11, color: 'var(--muted)', display: 'flex', gap: 10 } },
+                  order.customer && h('span', null, order.customer),
+                  daysLeft !== null && h('span', { style: { color: daysLeft < 0 ? RD : daysLeft <= 3 ? AM2 : 'var(--muted)' } },
+                    daysLeft < 0 ? `⚠ Просрочен` : `Срок: ${new Date(order.deadline).toLocaleDateString('ru-RU')}`
+                  )
+                )
+              ),
+              // Прогресс заявки
+              h('div', { style: { flexShrink: 0, textAlign: 'right' } },
+                hasNeeds
+                  ? h('div', null,
+                      h('div', { style: { fontSize: 12, fontWeight: 500, color: receivedItems === totalItems ? GN : AM2 } },
+                        `${receivedItems}/${totalItems}`),
+                      h('div', { style: { fontSize: 10, color: 'var(--muted)' } }, 'получено')
+                    )
+                  : h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, 'нет заявки'),
+                h('div', { style: { fontSize: 11, color: BL, marginTop: 4 } }, '→ открыть')
+              )
+            );
+          });
+        })()
+      ),
+
+      // Если заказ выбран — показываем редактор заявки
+      needsOrderId && (() => {
+        const order = data.orders.find(o => o.id === needsOrderId);
+        return h('div', null,
+          h('div', { style: { marginBottom: 12, padding: '8px 12px', background: 'var(--bg)', borderRadius: 8, fontSize: 12, color: 'var(--muted)' } },
+            `📦 Заказ ${order?.number} — ${order?.product || ''}`
+          ),
+          h(OrderMaterialsEditor, { order, data, onUpdate, addToast, canEdit: true,
+            onNeedsLoaded: (yr, needs) => {
+              if (needs) setNeedsAll(prev => ({ ...prev, [needsOrderId]: needs }));
+            }
+          })
+        );
+      })()
+    ),
+
     tab === 'history' && h('div', null,
       movements.length === 0 ? h('div', { style: S.card }, h(EmptyState, { icon: '📊', title: 'Нет движений', desc: 'История приходов и расходов пуста', compact: true })) :
         h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
