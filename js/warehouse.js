@@ -405,7 +405,11 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
   const buildPreview = useCallback(() => {
     if (!colMap.name) { addToast('Укажите колонку с названием', 'error'); return; }
     const rows = rawRows.map(r => {
-      const name = (r[colMap.name] || '').toString().trim(); if (!name) return null;
+      const name = (r[colMap.name] || '').toString().trim();
+      // Пропускаем пустые, чисто числовые значения и слишком короткие (< 3 символов)
+      if (!name) return null;
+      if (!isNaN(name.replace(',', '.'))) return null;  // просто число — не название
+      if (name.length < 2) return null;                 // слишком короткое
       const qty   = parseFloat((r[colMap.qty]   || '').toString().replace(',', '.')) || 0;
       const unit  = colMap.unit  ? ((r[colMap.unit]  || '').toString().trim() || 'шт') : 'шт';
       const price = colMap.price ? (parseFloat((r[colMap.price] || '').toString().replace(',', '.')) || 0) : 0;
@@ -429,6 +433,8 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
     let materials = [...data.materials];
     const newEvents = [...data.events];
     preview.forEach(row => {
+      // Защита от мусорных записей
+      if (!row.name || !isNaN(row.name.replace(',', '.')) || row.name.length < 2) return;
       const qty = row.qty;
       if (mode === 'receipt') {
         const existing = row.match && row.matchType !== 'new' ? row.match : null;
@@ -693,6 +699,23 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
   const [tab, setTab] = useState('stock');
   const [receiveForm, setReceiveForm] = useState({ materialId: '', qty: '', batch: '' });
   const [showImport, setShowImport] = useState(false);
+  const [selectedStock, setSelectedStock] = React.useState(new Set());
+
+  const delSelectedStock = React.useCallback(() => {
+    if (selectedStock.size === 0) return;
+    if (!window.confirm(`Удалить ${selectedStock.size} позиций? Действие необратимо.`)) return;
+    const d = { ...data, materials: data.materials.filter(m => !selectedStock.has(m.id)) };
+    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    setSelectedStock(new Set());
+    addToast(`Удалено ${selectedStock.size} позиций`, 'info');
+  }, [data, selectedStock, onUpdate, addToast]);
+
+  const toggleStock = (id) => setSelectedStock(prev => {
+    const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next;
+  });
+  const toggleAllStock = (items) => setSelectedStock(prev =>
+    prev.size === items.length ? new Set() : new Set(items.map(m => m.id))
+  );
   const [importMode, setImportMode] = useState('receipt');
 
   const openImport = useCallback((mode = 'receipt') => {
@@ -785,10 +808,27 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
           XLSX.writeFile(wb, `stock_${new Date().toISOString().slice(0, 10)}.xlsx`);
         }}, '📥 Экспорт Excel')
       ),
+      // Панель пакетного удаления
+      selectedStock.size > 0 && h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'rgba(226,75,74,0.08)', border: `0.5px solid ${RD}`, borderRadius: 8, marginBottom: 8 } },
+        h('span', { style: { fontSize: 13, color: RD, fontWeight: 500 } }, `Выбрано: ${selectedStock.size}`),
+        h('button', { onClick: delSelectedStock, style: { fontSize: 12, padding: '5px 14px', background: RD, color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 } },
+          `🗑 Удалить ${selectedStock.size} позиц.`),
+        h('button', { onClick: () => setSelectedStock(new Set()), style: { fontSize: 12, padding: '5px 10px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 6, cursor: 'pointer' } },
+          'Снять выбор')
+      ),
       // Таблица
       data.materials.length === 0 ? h('div', { style: S.card }, h(EmptyState, { icon: '🗄️', title: 'Нет материалов', desc: 'Добавьте первый материал на склад', action: 'Добавить материал', onAction: () => setShowMatForm(true) })) :
         h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null, ['Материал', 'Остаток', 'Зарезерв.', 'Свободно', 'Мин.', 'Цена', 'Стоимость'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
+          h('thead', null, h('tr', null,
+            h('th', { style: { ...S.th, width: 36 } },
+              h('input', { type: 'checkbox',
+                checked: selectedStock.size === data.materials.length && data.materials.length > 0,
+                onChange: () => toggleAllStock(data.materials),
+                style: { width: 14, height: 14, cursor: 'pointer', accentColor: RD } })
+            ),
+            ['Материал','Остаток','Зарезерв.','Свободно','Мин.','Цена','Стоимость',''].map((t,i) =>
+              h('th', { key: i, style: S.th }, t))
+          )),
           h('tbody', null, [...data.materials].sort((a, b) => {
             const aCrit = a.minStock && a.quantity <= a.minStock;
             const bCrit = b.minStock && b.quantity <= b.minStock;
@@ -798,14 +838,28 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
             const reserved = (data.materialReservations || []).filter(r => r.materialId === m.id).reduce((s, r) => s + r.qty, 0);
             const free = Math.max(0, m.quantity - reserved);
             const crit = m.minStock && free <= m.minStock;
-            return h('tr', { key: m.id, style: { background: crit ? RD3 : 'transparent' } },
+            const isSel = selectedStock.has(m.id);
+            return h('tr', { key: m.id, style: { background: isSel ? 'rgba(226,75,74,0.06)' : crit ? RD3 : 'transparent', transition: 'background 0.1s' } },
+              h('td', { style: { ...S.td, width: 36 } },
+                h('input', { type: 'checkbox', checked: isSel, onChange: () => toggleStock(m.id),
+                  style: { width: 14, height: 14, cursor: 'pointer', accentColor: RD } })
+              ),
               h('td', { style: { ...S.td, fontWeight: crit ? 500 : 400 } }, `${m.name} (${m.unit})`),
               h('td', { style: { ...S.td, textAlign: 'center' } }, m.quantity),
               h('td', { style: { ...S.td, textAlign: 'center', color: reserved > 0 ? AM2 : '#888' } }, reserved > 0 ? reserved : '—'),
               h('td', { style: { ...S.td, color: crit ? RD : free > 0 ? GN : '#888', fontWeight: 500, textAlign: 'center' } }, free),
               h('td', { style: { ...S.td, textAlign: 'center', color: '#888' } }, m.minStock || '—'),
               h('td', { style: { ...S.td, textAlign: 'center' } }, m.unitCost ? `${m.unitCost}₽` : '—'),
-              h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'right' } }, m.unitCost ? `${(m.quantity * m.unitCost).toLocaleString()}₽` : '—')
+              h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'right' } }, m.unitCost ? `${(m.quantity * m.unitCost).toLocaleString()}₽` : '—'),
+              h('td', { style: S.td },
+                h('button', { onClick: () => {
+                  if (window.confirm(`Удалить «${m.name}»?`)) {
+                    const d = { ...data, materials: data.materials.filter(x => x.id !== m.id) };
+                    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+                    addToast('Удалено', 'info');
+                  }
+                }, style: { fontSize: 13, color: RD, background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 4px' }, title: 'Удалить' }, '🗑')
+              )
             );
           }))
         )))
