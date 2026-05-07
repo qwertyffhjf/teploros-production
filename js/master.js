@@ -1816,6 +1816,14 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
         h('div', null, h('div', { style: { fontSize:13, fontWeight:500 } }, workerNames || 'Не назначен'), h('div', { style: { fontSize:10, color:'#888' } }, 'Плановый исполнитель'))
       ),
       h('div', { style: { display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 } }, h(Badge, { st: op.status }), op.status === 'in_progress' && h('div', { style: { fontSize:24, fontWeight:500, color:AM } }, fmtDur(elapsed))),
+      (() => {
+        const drawUrl = op.drawingUrl || order?.drawingUrl;
+        return drawUrl && h('a', { href: drawUrl, target:'_blank', rel:'noopener',
+          style: { display:'inline-flex', alignItems:'center', gap:6, fontSize:13, color:'#185FA5',
+            textDecoration:'none', padding:'8px 12px', background:'#E3F2FD',
+            borderRadius:8, marginBottom:12, fontWeight:500 } },
+          '📐 Чертёж / ТЗ');
+      })(),
       renderQRActions()
     ),
     showDowntimeModal && h('div', { role:'dialog','aria-modal':'true','aria-label':'Фиксация простоя', style: { position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:60 } },
