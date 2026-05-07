@@ -788,7 +788,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
     await MaterialsDB.save(orderId, updNeeds);
     setNeedsAll(prev => ({ ...prev, [orderId]: updNeeds }));
     addToast(newStatus === 'received' ? '✓ Принято полностью' : `Принято частично: ${receivedQty} из ${totalQty}`, 'success');
-    setReceiveQtys(prev => { const n = { ...prev }; delete n[\`\${orderId}_\${groupId}_\${itemId}\`]; return n; });
+    setReceiveQtys(prev => { const n = { ...prev }; delete n[`${orderId}_${groupId}_${itemId}`]; return n; });
   }, [needsAll, currentUserId, addToast]);
 
   const receiveMaterial = useCallback(async () => {
