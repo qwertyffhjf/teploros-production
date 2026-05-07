@@ -1090,12 +1090,12 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
             const matCost = matConsumption.reduce((s, mc) => { const mat = data.materials.find(m => m.id === mc.materialId); return s + mc.qty * (mat?.unitCost || 0); }, 0);
             return h('tr', { key: ord.id, style: { background: ord.archived ? '#eee' : 'transparent' } },
               h('td', { style: { ...S.td, fontWeight: 500 } },
-                onOrderClick
-                  ? h('span', { style: { color: AM, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => onOrderClick(ord.id), title: 'Открыть карточку' }, ord.number)
-                  : h('span', { style: { color: AM } }, ord.number),
+                h('span', { style: { color: AM, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => setViewOrderId(ord.id), title: 'Открыть карточку заказа' }, ord.number),
                 nearDeadline && h('span', { style: { marginLeft: 6, color: RD } }, '⏳')
               ),
-              h('td', { style: S.td }, ord.product),
+              h('td', { style: { ...S.td, cursor: 'pointer', color: 'var(--fg)' }, onClick: () => setViewOrderId(ord.id), title: 'Открыть карточку заказа' },
+                h('span', { style: { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 260, whiteSpace: 'nowrap' } }, ord.product)
+              ),
               h('td', { style: { ...S.td, fontSize: 11 } }, (productTypes.find(pt => pt.id === ord.productType)?.label) || '—'),
               h('td', { style: S.td }, ord.qty),
               h('td', { style: { ...S.td, color: nearDeadline ? RD : '#888' } }, ord.deadline || '—'),
@@ -1105,7 +1105,6 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
               h('td', { style: S.td }, h(Badge, { st: ord.shipped ? 'shipped' : st })),
               h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
                 !ord.archived ? [
-                  h('button', { key: 'view', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Карточка заказа', title: 'Просмотр карточки заказа', onClick: () => setViewOrderId(ord.id) }, '👁'),
                   h('button', { key: 'edit', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Редактировать', title: 'Редактировать заказ', onClick: () => edit(ord) }, '✎'),
                   h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'В архив', title: 'Переместить в архив', onClick: () => del(ord.id) }, '✕'),
                   h('button', { key: 'passport', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Паспорт PDF', title: 'Сформировать паспорт изделия (PDF)', onClick: () => generateFullPassport(ord, data) }, '📄'),
