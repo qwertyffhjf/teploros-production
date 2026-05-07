@@ -590,14 +590,25 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
   const [year, setYear]         = useState(new Date().getFullYear());
   const fileRef = useRef(null);
 
+  const [showImportComponents, setShowImportComponents] = useState(false);
+
   // Загрузка при монтировании
   useEffect(() => {
     if (!order?.id || !MaterialsDB) { setLoading(false); return; }
     setLoading(true);
     MaterialsDB.load(order.id).then(({ year: y, needs: n }) => {
       setYear(y);
-      setNeeds(n || { groups: DEFAULT_GROUPS.map(g => ({ ...makeGroup(g.name), id: g.id })) });
+      const loaded = n || { groups: DEFAULT_GROUPS.map(g => ({ ...makeGroup(g.name), id: g.id })) };
+      setNeeds(loaded);
       setLoading(false);
+      // Если есть components в заказе и группа Комплектация пустая — предложить импорт
+      const components = order.components || [];
+      if (components.length > 0) {
+        const komplekt = loaded.groups.find(g => g.id === 'komplekt' || g.name.toLowerCase().includes('комплект'));
+        if (komplekt && (!komplekt.items || komplekt.items.length === 0)) {
+          setShowImportComponents(true);
+        }
+      }
     });
   }, [order?.id]);
 
@@ -671,7 +682,39 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
   if (loading) return h('div', { style: { padding: 20, textAlign: 'center', color: '#888', fontSize: 13 } }, '⏳ Загрузка материалов…');
   if (!needs)  return h('div', { style: { padding: 20, textAlign: 'center', color: '#888', fontSize: 13 } }, 'Нет данных');
 
+  // Импорт комплектации из заказа
+  const importComponentsFromOrder = useCallback(() => {
+    const components = order.components || [];
+    if (!components.length) return;
+    updNeeds(p => {
+      const groups = p.groups.map(g => {
+        if (g.id !== 'komplekt' && !g.name.toLowerCase().includes('комплект')) return g;
+        const newItems = components.map(c => ({
+          id: uid(), name: c.name || c.description || '—',
+          code: c.code || c.article || '',
+          material: '', thickness: '',
+          qty: c.qty || 1, unit: c.unit || 'шт',
+          length: '', note: c.note || '',
+          status: 'pending',
+        }));
+        return { ...g, items: [...(g.items || []), ...newItems] };
+      });
+      return { ...p, groups };
+    });
+    setShowImportComponents(false);
+    addToast(`Импортировано ${components.length} позиций комплектации`, 'success');
+  }, [order, updNeeds, addToast]);
+
   return h('div', null,
+    // Баннер предложения импорта комплектации
+    showImportComponents && (order.components || []).length > 0 && h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'rgba(239,159,39,0.1)', border: `0.5px solid ${AM}`, borderRadius: 8, marginBottom: 12 } },
+      h('div', { style: { flex: 1, fontSize: 13 } },
+        h('span', { style: { fontWeight: 500, color: AM2 } }, '📦 Комплектация из заказа: '),
+        `${(order.components || []).length} позиций (горелка, автоматика…) — добавить в группу «Комплектация»?`
+      ),
+      h('button', { onClick: importComponentsFromOrder, style: { fontSize: 12, padding: '5px 14px', background: AM, color: AM2, border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap' } }, '+ Импортировать'),
+      h('button', { onClick: () => setShowImportComponents(false), style: { fontSize: 12, padding: '5px 10px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 6, cursor: 'pointer' } }, 'Нет')
+    ),
     // Шапка с кнопками
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' } },
       // Статистика
