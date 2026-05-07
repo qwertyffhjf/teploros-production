@@ -284,9 +284,8 @@ const makeItem  = ()      => ({
 
 // Статус → цвет и текст
 const STATUS_MAP = {
-  pending:  { label: 'Ожидается', color: '#888',    bg: 'rgba(0,0,0,0.05)'       },
+  pending:  { label: 'Ожидается', color: '#888',   bg: 'rgba(0,0,0,0.05)'       },
   ordered:  { label: 'Заказано',  color: '#185FA5', bg: 'rgba(24,95,165,0.1)'   },
-  partial:  { label: 'Частично',  color: '#BA7517', bg: 'rgba(239,159,39,0.12)' },
   received: { label: 'Получено',  color: '#0F6E56', bg: 'rgba(15,110,86,0.1)'   },
 };
 
@@ -384,8 +383,8 @@ const parseNeedsFromExcel = (file, onResult) => {
 };
 
 // ── Компонент редактора одной позиции ──────────────────────
-const ItemRow = memo(({ item, groupId, onUpdate, onDelete, canEdit, selected, onSelect }) => {
-  const [editing, setEditing] = useState(false);
+const ItemRow = memo(({ item, groupId, onUpdate, onDelete, canEdit, selected, onSelect, autoEdit = false }) => {
+  const [editing, setEditing] = useState(autoEdit);
   const [draft, setDraft] = useState(item);
 
   const save = () => { onUpdate(groupId, draft); setEditing(false); };
@@ -440,7 +439,7 @@ const ItemRow = memo(({ item, groupId, onUpdate, onDelete, canEdit, selected, on
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
         h('span', { style: { fontSize: 10, padding: '2px 7px', borderRadius: 10, background: st.bg, color: st.color, fontWeight: 500, whiteSpace: 'nowrap', cursor: canEdit ? 'pointer' : 'default' },
           onClick: canEdit ? () => {
-            const order = ['pending','ordered','partial','received'];
+            const order = ['pending','ordered','received'];
             const next = order[(order.indexOf(item.status) + 1) % order.length];
             onUpdate(groupId, { ...item, status: next });
           } : undefined,
@@ -455,12 +454,12 @@ const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem,
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName]     = useState(group.name);
   const [collapsed, setCollapsed]     = useState(false);
-  const [selected, setSelected]       = useState(new Set()); // выбранные id для пакетного удаления
+  const [selected, setSelected]       = useState(new Set());
+  const [newItemId, setNewItemId]     = useState(null); // id только что добавленной строки // выбранные id для пакетного удаления
 
   const items = group.items || [];
   const pendingCount  = items.filter(i => i.status === 'pending').length;
   const orderedCount  = items.filter(i => i.status === 'ordered').length;
-  const partialCount  = items.filter(i => i.status === 'partial').length;
   const receivedCount = items.filter(i => i.status === 'received').length;
   const total         = items.length;
   const allSelected   = total > 0 && selected.size === total;
@@ -494,7 +493,6 @@ const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem,
       total > 0 && h('div', { style: { display: 'flex', gap: 6, fontSize: 11 } },
         pendingCount  > 0 && h('span', { style: { color: '#888'    } }, `⏳ ${pendingCount}`),
         orderedCount  > 0 && h('span', { style: { color: '#185FA5' } }, `📦 ${orderedCount}`),
-        partialCount  > 0 && h('span', { style: { color: '#BA7517' } }, `◑ ${partialCount}`),
         receivedCount > 0 && h('span', { style: { color: GN        } }, `✓ ${receivedCount}`),
       ),
       canEdit && h('div', { style: { display: 'flex', gap: 4 }, onClick: e => e.stopPropagation() },
@@ -534,7 +532,8 @@ const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem,
             h(ItemRow, { key: item.id, item, groupId: group.id, canEdit,
               selected: selected.has(item.id),
               onSelect: toggleSelect,
-              onUpdate: (gid, updItem) => onUpdateItem(gid, updItem),
+              autoEdit: item.id === newItemId,
+              onUpdate: (gid, updItem) => { onUpdateItem(gid, updItem); setNewItemId(null); },
               onDelete: onDeleteItem })
           ),
           items.length === 0 && h('tr', null,
@@ -546,7 +545,7 @@ const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem,
 
       // Нижняя панель
       h('div', { style: { display: 'flex', gap: 8, padding: '6px 10px', borderTop: '0.5px solid var(--border-soft)', flexWrap: 'wrap', alignItems: 'center' } },
-        canEdit && h('button', { onClick: () => onAddItem(group.id),
+        canEdit && h('button', { onClick: () => { const newId = onAddItem(group.id); setNewItemId(newId); setCollapsed(false); },
           style: { fontSize: 11, padding: '4px 10px', border: '0.5px solid var(--border)', borderRadius: 6, background: 'transparent', cursor: 'pointer', color: AM2 } },
           '+ Добавить позицию'),
         !canEdit && items.filter(i => i.status !== 'received').length > 0 &&
@@ -606,7 +605,11 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
   const updateGroupName = (gid, name) => updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, name } : g) }));
 
   // Позиции
-  const addItem = (gid) => updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, items: [...(g.items || []), makeItem()] } : g) }));
+  const addItem = (gid) => {
+    const newItem = makeItem();
+    updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, items: [...(g.items || []), newItem] } : g) }));
+    return newItem.id;
+  };
   const deleteItem = (gid, iid) => updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, items: g.items.filter(i => i.id !== iid) } : g) }));
   const deleteManyItems = (gid, ids) => {
     const idSet = new Set(ids);
@@ -644,7 +647,6 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
       total:    items.length,
       pending:  items.filter(i => i.status === 'pending').length,
       ordered:  items.filter(i => i.status === 'ordered').length,
-      partial:  items.filter(i => i.status === 'partial').length,
       received: items.filter(i => i.status === 'received').length,
     };
   }, [needs]);
@@ -661,7 +663,6 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
           { label: 'Всего',    val: stats.total,    color: '#555'    },
           { label: '⏳ Ожид.', val: stats.pending,  color: '#888'    },
           { label: '📦 Заказ.', val: stats.ordered,  color: '#185FA5' },
-          { label: '◑ Частич.', val: stats.partial,  color: '#BA7517' },
           { label: '✓ Получ.', val: stats.received, color: GN        },
         ].map((s, i) => h('div', { key: i, style: { display: 'flex', alignItems: 'baseline', gap: 4 } },
           h('span', { style: { fontSize: 18, fontWeight: 700, color: s.color } }, s.val),
