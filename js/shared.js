@@ -325,42 +325,66 @@ const parseNeedsFromExcel = (file, onResult) => {
         const ws = wb.Sheets[sheetName];
         const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
         const items = [];
-        // Ищем строку-заголовок
+
+        // Ищем строку-заголовок по ключевым словам
         let headerRow = -1;
-        for (let i = 0; i < Math.min(8, rows.length); i++) {
+        for (let i = 0; i < Math.min(10, rows.length); i++) {
           const r = rows[i].join(' ').toLowerCase();
-          if (r.includes('наименование') || r.includes('чертеж') || r.includes('материал')) {
+          if (r.includes('чертеж') || r.includes('наименование') || r.includes('деталь') ||
+              r.includes('материал') || r.includes('толщ') || r.includes('кол-во') || r.includes('кол.')) {
             headerRow = i; break;
           }
         }
-        if (headerRow < 0) headerRow = 2; // fallback
+        // Fallback: первая строка с 3+ непустыми ячейками
+        if (headerRow < 0) {
+          for (let i = 0; i < Math.min(10, rows.length); i++) {
+            if (rows[i].filter(c => String(c).trim()).length >= 3) { headerRow = i; break; }
+          }
+        }
+        if (headerRow < 0) headerRow = 0;
+
         const headers = rows[headerRow].map(h => String(h).toLowerCase().trim());
         const col = (kws) => {
           const idx = headers.findIndex(h => kws.some(k => h.includes(k)));
           return idx >= 0 ? idx : -1;
         };
+
+        // Расширенный маппинг — поддерживает формат "Чертеж детали" (code+name в одной колонке)
         const cols = {
-          name:      col(['наименование','название','деталь']),
-          code:      col(['чертеж','код','артикул','обозначение']),
-          material:  col(['материал','марка']),
-          thickness: col(['толщ','толщина']),
-          qty:       col(['кол-во','количество','кол.']),
-          unit:      col(['ед.','единиц','ед ']),
-          length:    col(['длина','длин']),
-          note:      col(['коментари','примечани','comment']),
+          nameOrCode: col(['чертеж детали', 'чертеж', 'наименование', 'название', 'деталь', 'обозначение', 'код']),
+          material:   col(['материал', 'марка']),
+          thickness:  col(['толщ', 'толщина']),
+          qty:        col(['кол-во деталей', 'кол-во', 'количество', 'кол.']),
+          unit:       col(['ед.', 'единиц', 'ед ']),
+          length:     col(['длина', 'длин']),
+          note:       col(['коментари', 'примечани', 'comment', 'комментари']),
         };
+
         for (let i = headerRow + 1; i < rows.length; i++) {
           const row = rows[i];
-          if (!row || row.every(c => !c)) continue;
+          if (!row || row.every(c => String(c).trim() === '')) continue;
           const get = (c) => c >= 0 ? String(row[c] ?? '').trim() : '';
-          const name = get(cols.name);
-          if (!name || name === '№') continue;
-          // Пропускаем строки-итого и заголовки
-          if (name.toLowerCase().includes('итого') || name.toLowerCase().includes('всего')) continue;
+          const raw = get(cols.nameOrCode);
+          if (!raw) continue;
+          if (!isNaN(raw.replace(',', '.').replace(' ', ''))) continue;
+          if (raw.length < 2) continue;
+          if (raw.toLowerCase().includes('итого') || raw.toLowerCase().includes('всего')) continue;
+          if (raw === '№' || raw.toLowerCase() === 'наименование') continue;
+
+          // Разбиваем "КВК-600.XX - Название" на code + name
+          let code = '', name = raw;
+          const dashIdx = raw.indexOf(' - ');
+          if (dashIdx > 0) {
+            const potentialCode = raw.slice(0, dashIdx).trim();
+            // Код обычно содержит точки или дефисы (КВК-600.XX.XX)
+            if (/^[\w\d\-\.\/]+$/.test(potentialCode) && potentialCode.length < 40) {
+              code = potentialCode;
+              name = raw.slice(dashIdx + 3).trim();
+            }
+          }
+
           items.push({
-            id: uid(),
-            name,
-            code:      get(cols.code),
+            id: uid(), name, code,
             material:  get(cols.material),
             thickness: get(cols.thickness),
             qty:       parseFloat(get(cols.qty)) || 1,
@@ -381,7 +405,6 @@ const parseNeedsFromExcel = (file, onResult) => {
   };
   reader.readAsArrayBuffer(file);
 };
-
 // ── Компонент редактора одной позиции ──────────────────────
 const ItemRow = memo(({ item, groupId, onUpdate, onDelete, canEdit, selected, onSelect, autoEdit = false }) => {
   const [editing, setEditing] = useState(autoEdit);
@@ -454,8 +477,7 @@ const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem,
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName]     = useState(group.name);
   const [collapsed, setCollapsed]     = useState(false);
-  const [selected, setSelected]       = useState(new Set());
-  const [newItemId, setNewItemId]     = useState(null); // id только что добавленной строки // выбранные id для пакетного удаления
+  const [selected, setSelected]       = useState(new Set()); // выбранные id для пакетного удаления
 
   const items = group.items || [];
   const pendingCount  = items.filter(i => i.status === 'pending').length;
@@ -532,8 +554,7 @@ const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem,
             h(ItemRow, { key: item.id, item, groupId: group.id, canEdit,
               selected: selected.has(item.id),
               onSelect: toggleSelect,
-              autoEdit: item.id === newItemId,
-              onUpdate: (gid, updItem) => { onUpdateItem(gid, updItem); setNewItemId(null); },
+              onUpdate: (gid, updItem) => onUpdateItem(gid, updItem),
               onDelete: onDeleteItem })
           ),
           items.length === 0 && h('tr', null,
@@ -545,7 +566,7 @@ const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem,
 
       // Нижняя панель
       h('div', { style: { display: 'flex', gap: 8, padding: '6px 10px', borderTop: '0.5px solid var(--border-soft)', flexWrap: 'wrap', alignItems: 'center' } },
-        canEdit && h('button', { onClick: () => { const newId = onAddItem(group.id); setNewItemId(newId); setCollapsed(false); },
+        canEdit && h('button', { onClick: () => onAddItem(group.id),
           style: { fontSize: 11, padding: '4px 10px', border: '0.5px solid var(--border)', borderRadius: 6, background: 'transparent', cursor: 'pointer', color: AM2 } },
           '+ Добавить позицию'),
         !canEdit && items.filter(i => i.status !== 'received').length > 0 &&
@@ -605,11 +626,7 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
   const updateGroupName = (gid, name) => updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, name } : g) }));
 
   // Позиции
-  const addItem = (gid) => {
-    const newItem = makeItem();
-    updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, items: [...(g.items || []), newItem] } : g) }));
-    return newItem.id;
-  };
+  const addItem = (gid) => updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, items: [...(g.items || []), makeItem()] } : g) }));
   const deleteItem = (gid, iid) => updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, items: g.items.filter(i => i.id !== iid) } : g) }));
   const deleteManyItems = (gid, ids) => {
     const idSet = new Set(ids);
