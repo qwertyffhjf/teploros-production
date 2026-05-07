@@ -284,8 +284,9 @@ const makeItem  = ()      => ({
 
 // Статус → цвет и текст
 const STATUS_MAP = {
-  pending:  { label: 'Ожидается', color: '#888',   bg: 'rgba(0,0,0,0.05)'       },
+  pending:  { label: 'Ожидается', color: '#888',    bg: 'rgba(0,0,0,0.05)'       },
   ordered:  { label: 'Заказано',  color: '#185FA5', bg: 'rgba(24,95,165,0.1)'   },
+  partial:  { label: 'Частично',  color: '#BA7517', bg: 'rgba(239,159,39,0.12)' },
   received: { label: 'Получено',  color: '#0F6E56', bg: 'rgba(15,110,86,0.1)'   },
 };
 
@@ -439,7 +440,7 @@ const ItemRow = memo(({ item, groupId, onUpdate, onDelete, canEdit, selected, on
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
         h('span', { style: { fontSize: 10, padding: '2px 7px', borderRadius: 10, background: st.bg, color: st.color, fontWeight: 500, whiteSpace: 'nowrap', cursor: canEdit ? 'pointer' : 'default' },
           onClick: canEdit ? () => {
-            const order = ['pending','ordered','received'];
+            const order = ['pending','ordered','partial','received'];
             const next = order[(order.indexOf(item.status) + 1) % order.length];
             onUpdate(groupId, { ...item, status: next });
           } : undefined,
@@ -459,6 +460,7 @@ const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem,
   const items = group.items || [];
   const pendingCount  = items.filter(i => i.status === 'pending').length;
   const orderedCount  = items.filter(i => i.status === 'ordered').length;
+  const partialCount  = items.filter(i => i.status === 'partial').length;
   const receivedCount = items.filter(i => i.status === 'received').length;
   const total         = items.length;
   const allSelected   = total > 0 && selected.size === total;
@@ -492,6 +494,7 @@ const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem,
       total > 0 && h('div', { style: { display: 'flex', gap: 6, fontSize: 11 } },
         pendingCount  > 0 && h('span', { style: { color: '#888'    } }, `⏳ ${pendingCount}`),
         orderedCount  > 0 && h('span', { style: { color: '#185FA5' } }, `📦 ${orderedCount}`),
+        partialCount  > 0 && h('span', { style: { color: '#BA7517' } }, `◑ ${partialCount}`),
         receivedCount > 0 && h('span', { style: { color: GN        } }, `✓ ${receivedCount}`),
       ),
       canEdit && h('div', { style: { display: 'flex', gap: 4 }, onClick: e => e.stopPropagation() },
@@ -641,6 +644,7 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
       total:    items.length,
       pending:  items.filter(i => i.status === 'pending').length,
       ordered:  items.filter(i => i.status === 'ordered').length,
+      partial:  items.filter(i => i.status === 'partial').length,
       received: items.filter(i => i.status === 'received').length,
     };
   }, [needs]);
@@ -657,6 +661,7 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
           { label: 'Всего',    val: stats.total,    color: '#555'    },
           { label: '⏳ Ожид.', val: stats.pending,  color: '#888'    },
           { label: '📦 Заказ.', val: stats.ordered,  color: '#185FA5' },
+          { label: '◑ Частич.', val: stats.partial,  color: '#BA7517' },
           { label: '✓ Получ.', val: stats.received, color: GN        },
         ].map((s, i) => h('div', { key: i, style: { display: 'flex', alignItems: 'baseline', gap: 4 } },
           h('span', { style: { fontSize: 18, fontWeight: 700, color: s.color } }, s.val),
