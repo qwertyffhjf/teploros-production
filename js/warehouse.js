@@ -698,6 +698,11 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
 const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
   const [tab, setTab] = useState('stock');
   const [receiveForm, setReceiveForm] = useState({ materialId: '', qty: '', batch: '' });
+  // Новый экран приёмки — заявки по заказам из MaterialsDB
+  const [needsAll, setNeedsAll]         = useState({});   // { orderId: OrderNeeds }
+  const [needsLoading, setNeedsLoading] = useState(false);
+  const [receiveQtys, setReceiveQtys]   = useState({});   // { `orderId_groupId_itemId`: qty }
+  const [receiveFilter, setReceiveFilter] = useState('pending'); // 'pending'|'all'
   const [showImport, setShowImport] = useState(false);
   const [selectedStock, setSelectedStock] = React.useState(new Set());
 
@@ -724,6 +729,16 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
   }, []);
 
   // Заявки на материалы (из чата)
+  // Загружать заявки из MaterialsDB при переключении на вкладку приёмки
+  React.useEffect(() => {
+    if (tab !== 'receive' || !MaterialsDB) return;
+    setNeedsLoading(true);
+    MaterialsDB.loadAll().then(orders => {
+      setNeedsAll(orders || {});
+      setNeedsLoading(false);
+    });
+  }, [tab]);
+
   const materialRequests = useMemo(() => {
     return data.events.filter(e => e.type === 'chat_alert' && e.alertType === 'need_material' && !e.fulfilled)
       .sort((a, b) => b.ts - a.ts);
@@ -752,6 +767,30 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
   }, [data.materialConsumptions, data.events, data.materials, data.ops, data.orders]);
 
   // Приёмка материала
+  // Сохранить приёмку позиции из заявки (частичная или полная)
+  const saveNeedsReceipt = React.useCallback(async (orderId, groupId, itemId, receivedQty, totalQty) => {
+    if (!MaterialsDB) return;
+    const needs = needsAll[orderId];
+    if (!needs) return;
+    const newStatus = receivedQty >= totalQty ? 'received' : receivedQty > 0 ? 'partial' : 'pending';
+    const updNeeds = {
+      ...needs,
+      groups: needs.groups.map(g => g.id !== groupId ? g : {
+        ...g,
+        items: g.items.map(i => i.id !== itemId ? i : {
+          ...i, status: newStatus,
+          receivedQty: receivedQty,
+          receivedAt: receivedQty > 0 ? now() : undefined,
+          receivedBy: currentUserId || undefined,
+        })
+      })
+    };
+    await MaterialsDB.save(orderId, updNeeds);
+    setNeedsAll(prev => ({ ...prev, [orderId]: updNeeds }));
+    addToast(newStatus === 'received' ? '✓ Принято полностью' : `Принято частично: ${receivedQty} из ${totalQty}`, 'success');
+    setReceiveQtys(prev => { const n = { ...prev }; delete n[\`\${orderId}_\${groupId}_\${itemId}\`]; return n; });
+  }, [needsAll, currentUserId, addToast]);
+
   const receiveMaterial = useCallback(async () => {
     if (!receiveForm.materialId || !receiveForm.qty || Number(receiveForm.qty) <= 0) { addToast('Укажите материал и количество', 'error'); return; }
     const qty = Number(receiveForm.qty);
@@ -883,29 +922,138 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
 
     // Приёмка
     tab === 'receive' && h('div', null,
-      // Импорт накладной
-      h('div', { style: { ...S.card, padding: '14px 16px', marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' } },
-        h('div', null,
-          h('div', { style: { fontSize: 13, fontWeight: 500, marginBottom: 2 } }, '📥 Импорт из накладной'),
-          h('div', { style: { fontSize: 11, color: '#888' } }, 'Загрузите Excel-файл или накладную из 1С — данные определятся автоматически')
-        ),
-        h('button', { style: abtn({ fontSize: 13, padding: '10px 20px', whiteSpace: 'nowrap' }), onClick: () => openImport('receipt') }, '📤 Загрузить накладную')
-      ),
-      // Ручная приёмка
-      h('div', { style: S.card },
-      h('div', { style: S.sec }, 'Приёмка вручную'),
-      h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
-        h('div', { style: { flex: 2, minWidth: 150 } },
-          h('select', { style: { ...S.inp, width: '100%' }, value: receiveForm.materialId, onChange: e => setReceiveForm(p => ({ ...p, materialId: e.target.value })) },
-            h('option', { value: '' }, '— выберите материал —'),
-            data.materials.map(m => h('option', { key: m.id, value: m.id }, `${m.name} (${m.quantity} ${m.unit})`))
+
+      // Фильтр + статистика
+      (() => {
+        // Собираем все позиции из всех заявок
+        const allItems = [];
+        Object.entries(needsAll).forEach(([orderId, needs]) => {
+          const order = data.orders.find(o => o.id === orderId);
+          if (!order || order.archived || order.shipped) return;
+          (needs.groups || []).forEach(group => {
+            (group.items || []).forEach(item => {
+              allItems.push({ orderId, order, group, item });
+            });
+          });
+        });
+        const pending  = allItems.filter(x => x.item.status === 'pending' || x.item.status === 'ordered').length;
+        const partial  = allItems.filter(x => x.item.status === 'partial').length;
+        const received = allItems.filter(x => x.item.status === 'received').length;
+
+        const filtered = receiveFilter === 'pending'
+          ? allItems.filter(x => x.item.status !== 'received')
+          : allItems;
+
+        // Группируем по заказу
+        const byOrder = {};
+        filtered.forEach(x => {
+          if (!byOrder[x.orderId]) byOrder[x.orderId] = { order: x.order, groups: {} };
+          if (!byOrder[x.orderId].groups[x.group.id]) byOrder[x.orderId].groups[x.group.id] = { group: x.group, items: [] };
+          byOrder[x.orderId].groups[x.group.id].items.push(x.item);
+        });
+
+        const ST = {
+          pending:  { label: 'Ожидается', color: '#888',    bg: 'rgba(0,0,0,0.05)'      },
+          ordered:  { label: 'Заказано',  color: '#185FA5', bg: 'rgba(24,95,165,0.1)'  },
+          partial:  { label: 'Частично',  color: '#BA7517', bg: 'rgba(239,159,39,0.12)' },
+          received: { label: 'Получено',  color: '#0F6E56', bg: 'rgba(15,110,86,0.1)'  },
+        };
+
+        return h('div', null,
+          // Статистика
+          h('div', { style: { display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap' } },
+            [
+              { label: '⏳ Ожидается', val: pending,  color: '#888'    },
+              { label: '📦 Частично',  val: partial,  color: '#BA7517' },
+              { label: '✓ Получено',   val: received, color: GN        },
+            ].map((s, i) => h('div', { key: i, style: { ...S.card, padding: '8px 14px', display: 'flex', alignItems: 'baseline', gap: 6 } },
+              h('span', { style: { fontSize: 20, fontWeight: 700, color: s.color } }, s.val),
+              h('span', { style: { fontSize: 12, color: 'var(--muted)' } }, s.label)
+            ))
+          ),
+
+          // Фильтр
+          h('div', { style: { display: 'flex', gap: 6, marginBottom: 12 } },
+            h('button', { style: receiveFilter === 'pending' ? abtn({ fontSize: 12, padding: '5px 14px' }) : gbtn({ fontSize: 12, padding: '5px 14px' }), onClick: () => setReceiveFilter('pending') }, 'Не получено'),
+            h('button', { style: receiveFilter === 'all' ? abtn({ fontSize: 12, padding: '5px 14px' }) : gbtn({ fontSize: 12, padding: '5px 14px' }), onClick: () => setReceiveFilter('all') }, 'Все позиции')
+          ),
+
+          needsLoading && h('div', { style: { textAlign: 'center', padding: 24, color: '#888' } }, '⏳ Загрузка заявок…'),
+
+          !needsLoading && Object.keys(byOrder).length === 0 && h('div', { style: S.card },
+            h(EmptyState, { icon: '✓', title: receiveFilter === 'pending' ? 'Все позиции получены' : 'Нет заявок на материалы', desc: 'Технолог должен создать заявку в карточке заказа', compact: true })
+          ),
+
+          // Карточки по заказам
+          !needsLoading && Object.entries(byOrder).map(([orderId, { order, groups }]) =>
+            h('div', { key: orderId, style: { ...S.card, marginBottom: 12, padding: 0, overflow: 'hidden' } },
+              // Шапка заказа
+              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: 'var(--bg)', borderBottom: '0.5px solid var(--border-soft)' } },
+                h('div', null,
+                  h('div', { style: { fontSize: 13, fontWeight: 600 } }, `Заказ ${order.number}`),
+                  h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, order.product)
+                ),
+                order.deadline && h('div', { style: { fontSize: 11, color: 'var(--muted)' } },
+                  `Срок: ${new Date(order.deadline).toLocaleDateString('ru-RU')}`
+                )
+              ),
+
+              // Группы и позиции
+              Object.entries(groups).map(([groupId, { group, items }]) =>
+                h('div', { key: groupId },
+                  h('div', { style: { padding: '6px 14px', fontSize: 11, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em', background: 'var(--bg)', borderBottom: '0.5px solid var(--border-soft)' } }, group.name),
+                  items.map(item => {
+                    const st = ST[item.status] || ST.pending;
+                    const key = `${orderId}_${groupId}_${item.id}`;
+                    const inputQty = receiveQtys[key] ?? '';
+                    const isReceived = item.status === 'received';
+                    return h('div', { key: item.id, style: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: '0.5px solid var(--border-soft)', background: isReceived ? 'rgba(15,110,86,0.04)' : 'transparent' } },
+                      // Статус
+                      h('span', { style: { fontSize: 10, padding: '2px 8px', borderRadius: 10, background: st.bg, color: st.color, fontWeight: 500, whiteSpace: 'nowrap', flexShrink: 0 } }, st.label),
+                      // Название
+                      h('div', { style: { flex: 1, minWidth: 0 } },
+                        h('div', { style: { fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: isReceived ? 'line-through' : 'none', color: isReceived ? 'var(--muted)' : 'var(--fg)' } }, item.name),
+                        h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 1 } },
+                          [item.code, item.material, item.thickness ? `${item.thickness}мм` : null].filter(Boolean).join(' · ') || ''
+                        ),
+                        item.receivedQty > 0 && !isReceived && h('div', { style: { fontSize: 11, color: '#BA7517', marginTop: 1 } },
+                          `Принято: ${item.receivedQty} из ${item.qty} ${item.unit}`
+                        )
+                      ),
+                      // Кол-во к получению
+                      h('div', { style: { fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap', flexShrink: 0 } },
+                        `${item.qty} ${item.unit}${item.length ? ` × ${item.length}м` : ''}`
+                      ),
+                      // Поле ввода + кнопки (только если не получено)
+                      !isReceived && h('div', { style: { display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 } },
+                        h('input', { type: 'number', min: 0, max: item.qty, step: '0.1',
+                          placeholder: `из ${item.qty}`,
+                          value: inputQty,
+                          onChange: e => setReceiveQtys(prev => ({ ...prev, [key]: e.target.value })),
+                          style: { width: 70, fontSize: 12, padding: '4px 6px', border: '0.5px solid var(--border)', borderRadius: 6, background: 'var(--card)', color: 'var(--fg)', textAlign: 'center' }
+                        }),
+                        h('button', {
+                          title: 'Принять указанное количество',
+                          disabled: !inputQty || Number(inputQty) <= 0,
+                          onClick: () => saveNeedsReceipt(orderId, groupId, item.id, Number(inputQty), item.qty),
+                          style: { fontSize: 12, padding: '4px 10px', background: AM, color: AM2, border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap', opacity: (!inputQty || Number(inputQty) <= 0) ? 0.4 : 1 }
+                        }, '✓'),
+                        h('button', {
+                          title: 'Принято всё',
+                          onClick: () => saveNeedsReceipt(orderId, groupId, item.id, item.qty, item.qty),
+                          style: { fontSize: 12, padding: '4px 10px', background: GN, color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', whiteSpace: 'nowrap' }
+                        }, 'Всё')
+                      ),
+                      // Если получено — показать галочку
+                      isReceived && h('span', { style: { fontSize: 18, color: GN, flexShrink: 0 } }, '✓')
+                    );
+                  })
+                )
+              )
+            )
           )
-        ),
-        h('div', { style: { flex: 1, minWidth: 80 } }, h('input', { type: 'number', step: '0.1', style: { ...S.inp, width: '100%' }, placeholder: 'Кол-во', value: receiveForm.qty, onChange: e => setReceiveForm(p => ({ ...p, qty: e.target.value })) })),
-        h('div', { style: { flex: 1, minWidth: 100 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Партия', value: receiveForm.batch, onChange: e => setReceiveForm(p => ({ ...p, batch: e.target.value })) })),
-        h('button', { style: abtn({ padding: '10px 20px' }), onClick: receiveMaterial }, '📥 Принять')
-      )
-      ) // закрытие S.card ручной приёмки
+        );
+      })()
     ), // закрытие receive tab div
 
     // Движение
