@@ -113,7 +113,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId }) => {
                 h('div', { style: { flex: 1 } },
                   h('div', { style: { fontSize: 14, fontWeight: 500, marginBottom: 3 } }, mat?.name || del.materialId),
                   h('div', { style: { fontSize: 12, color: '#888', marginBottom: 6 } },
-                    `Заказ: `, h('span', { style: { color: AM2, fontWeight: 500 } }, order?.number || del.orderId),
+                    `Заказ: `, h('span', { style: { color: AM2, fontWeight: 500, cursor: order ? 'pointer' : 'default', textDecoration: order ? 'underline' : 'none', textDecorationStyle: 'dotted' }, onClick: () => order && setViewOrderId(order.id) }, order?.number || del.orderId),
                     ` · Этап: ${del.stageName}`
                   ),
                   h('div', { style: { display: 'flex', gap: 12, fontSize: 12 } },
@@ -702,7 +702,8 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
   const [needsAll, setNeedsAll]         = useState({});   // { orderId: OrderNeeds }
   const [needsLoading, setNeedsLoading] = useState(false);
   const [receiveQtys, setReceiveQtys]   = useState({});   // { `orderId_groupId_itemId`: qty }
-  const [receiveFilter, setReceiveFilter] = useState('pending'); // 'pending'|'all'
+  const [receiveFilter, setReceiveFilter] = useState('pending');
+  const [viewOrderId, setViewOrderId] = useState(null); // 'pending'|'all'
   // Заявки — снабженец создаёт/редактирует прямо в складе
   const [needsOrderId, setNeedsOrderId]   = useState(null);  // выбранный заказ для редактирования заявки
   const [needsSearch, setNeedsSearch]     = useState('');
@@ -817,6 +818,11 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
 
   return h('div', { style: { maxWidth: 800, margin: '0 auto', padding: '0 0 24px' } },
     h(SectionAnalytics, { section: 'warehouse', data }),
+    viewOrderId && h(OrderCardModal, {
+      orderId: viewOrderId, data,
+      onClose: () => setViewOrderId(null),
+      canEdit: false,
+    }),
     showImport && h(MaterialImportModal, { data, onClose: () => setShowImport(false), onUpdate, addToast, defaultMode: importMode }),
     // Вкладки
     h(TabBar, { tabs: [['deliveries', `🚚 Поставки (${(data.materialDeliveries||[]).filter(d=>d.status==='pending'||d.status==='partial').length})`], ['stock', '📦 Остатки'], ['requests', `🔔 Заявки (${materialRequests.length})`], ['receive', '📥 Приёмка'], ['needs', '📝 Заявки на матер.'], ['history', '📋 Движение'], ['materials', '🗂 Справочник'], ['bom', '📋 Спецификации']], tab, setTab }),
@@ -993,7 +999,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
               // Шапка заказа
               h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: 'var(--bg)', borderBottom: '0.5px solid var(--border-soft)' } },
                 h('div', null,
-                  h('div', { style: { fontSize: 13, fontWeight: 600 } }, `Заказ ${order.number}`),
+                  h('div', { style: { fontSize: 13, fontWeight: 600, color: '#EF9F27', cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => setViewOrderId(order.id) }, `Заказ ${order.number}`),
                   h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, order.product)
                 ),
                 order.deadline && h('div', { style: { fontSize: 11, color: 'var(--muted)' } },
