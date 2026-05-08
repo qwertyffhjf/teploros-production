@@ -221,6 +221,12 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const [showHistory, setShowHistory] = useState(false);
   const [historyOp, setHistoryOp] = useState(null);
   const [viewOrderId, setViewOrderId] = useState(null);
+  const [showPressureForm, setShowPressureForm] = useState(false);
+  const [pressureOp, setPressureOp] = useState(null); // операция опрессовки
+  const [pressureForm, setPressureForm] = useState({
+    workPressure: '', testPressure: '', duration: '10', tempC: '',
+    pressureStart: '', pressureEnd: '', sweatingFound: false, defectDesc: '', verdict: 'pass',
+  });
   const [opComment, setOpComment] = useState('');
 
   // Сохранить комментарий к операции
@@ -302,6 +308,44 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     setDefFormErrors(errors);
     return Object.keys(errors).length === 0;
   }, [defectReasonId, defNote]);
+
+  const savePressureTest = useCallback(async () => {
+    if (!pressureOp) return;
+    const order = data.orders.find(o => o.id === pressureOp.orderId);
+    const protocol = {
+      id: uid(),
+      orderId: pressureOp.orderId,
+      opId: pressureOp.id,
+      serialNumber: order?.serialNumber || '',
+      workPressure: Number(pressureForm.workPressure) || 0,
+      testPressure: Number(pressureForm.testPressure) || 0,
+      duration: Number(pressureForm.duration) || 10,
+      tempC: Number(pressureForm.tempC) || 0,
+      pressureStart: Number(pressureForm.pressureStart) || 0,
+      pressureEnd: Number(pressureForm.pressureEnd) || 0,
+      sweatingFound: pressureForm.sweatingFound,
+      defectDesc: pressureForm.defectDesc.trim(),
+      verdict: pressureForm.verdict,
+      operatorId: workerId,
+      status: 'pending_qc', // ожидает подписи ОТК
+      createdAt: now(),
+      qcSignedBy: null, qcSignedAt: null,
+    };
+    const isDefect = pressureForm.verdict === 'fail';
+    // Завершаем операцию
+    const result = buildFinishUpdate(data, pressureOp, workerId, { isDefect, isRework: false, source: 'current', defNote: isDefect ? (pressureForm.defectDesc || 'Не прошло гидроиспытание') : '', defectReasonId: '', weldParams: {} });
+    const updated = { ...data, ops: result.ops, events: result.events, reclamations: result.reclamations, opNorms: result.opNorms || data.opNorms || {}, auxStats: result.auxStats || data.auxStats || {}, pressureTests: [...(data.pressureTests || []), protocol] };
+    const { data: achData, justEarned } = checkAchievements(workerId, updated);
+    const final = justEarned.length > 0 ? achData : updated;
+    if (justEarned.length > 0) setTimeout(() => setAchQueue(q => [...q, ...justEarned.map(id => ACHIEVEMENTS[id]).filter(Boolean)]), 600);
+    onUpdate(final);
+    vibrateAction('finish');
+    setActiveOp(null);
+    setShowPressureForm(false);
+    setPressureOp(null);
+    addToast(isDefect ? '⚠ Протокол ГИ сохранён — не выдержал. Уведомлён ОТК.' : '✓ Протокол ГИ сохранён — ожидает подписи ОТК', isDefect ? 'error' : 'success');
+    DB.save(final).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
+  }, [data, pressureOp, pressureForm, workerId, onUpdate, addToast]);
 
   const doFinish = useCallback(async (op, isDefect = false, isRework = false, source = 'current') => {
     if (op.status !== 'in_progress') return;
@@ -680,7 +724,17 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
               )
             : h('div', null,
                 // СТОП — самая крупная кнопка
-                h('button', { className: 'worker-btn worker-btn-stop', style: { marginBottom: 12 }, onClick: () => { vibrateAction('start'); doFinish(active); } }, '■ Завершить операцию'),
+                h('button', { className: 'worker-btn worker-btn-stop', style: { marginBottom: 12 }, onClick: () => {
+                vibrateAction('start');
+                if (active.requiresPressureTest || active.name.toLowerCase().includes('опресс')) {
+                  const order = data.orders.find(o => o.id === active.orderId);
+                  setPressureOp(active);
+                  setPressureForm({ workPressure: '', testPressure: '', duration: '10', tempC: '', pressureStart: '', pressureEnd: '', sweatingFound: false, defectDesc: '', verdict: 'pass' });
+                  setShowPressureForm(true);
+                } else {
+                  doFinish(active);
+                }
+              } }, '■ Завершить операцию'),
                 // Брак — две средние кнопки рядом
                 h('div', { style: { display: 'flex', gap: 10, marginBottom: 12 } },
                   h('button', { className: 'worker-btn-defect', onClick: () => { navigator.vibrate?.([40]); setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
@@ -1023,6 +1077,89 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       )
     )
   ),
+  showPressureForm && pressureOp && h('div', {
+    role: 'dialog', 'aria-modal': 'true',
+    style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 200, padding: '16px', overflowY: 'auto' },
+  },
+    h('div', { className: 'modal-animated', style: { background: 'var(--card)', borderRadius: 12, padding: 0, width: 'min(480px, calc(100vw - 32px))', overflow: 'hidden' } },
+
+      h('div', { style: { background: '#1a1a18', padding: '14px 18px', color: '#fff' } },
+        h('div', { style: { fontSize: 10, letterSpacing: '0.1em', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', marginBottom: 3 } }, 'Протокол гидравлического испытания'),
+        h('div', { style: { fontSize: 15, fontWeight: 500 } }, pressureOp.name),
+        h('div', { style: { fontSize: 12, color: 'rgba(255,255,255,0.55)', marginTop: 2 } },
+          (() => { const o = data.orders.find(x => x.id === pressureOp.orderId); return o ? `Заказ ${o.number} · ${o.product}` : ''; })()
+        )
+      ),
+
+      h('div', { style: { padding: '16px 18px' } },
+
+        // Параметры испытания
+        h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 } }, 'Параметры испытания'),
+        h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 } },
+          ['workPressure:Рабочее давление, бар', 'testPressure:Давление испытания, бар', 'duration:Выдержка, мин', 'tempC:Темп. воды, °С'].map(s => {
+            const [key, label] = s.split(':');
+            return h('div', { key },
+              h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 3 } }, label),
+              h('input', { type: 'number', step: '0.1', style: { width: '100%', fontSize: 14, padding: '7px 10px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'var(--card)', color: 'var(--fg)' },
+                value: pressureForm[key] || '', onChange: e => setPressureForm(p => ({ ...p, [key]: e.target.value })) })
+            );
+          })
+        ),
+
+        // Результаты замеров
+        h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 } }, 'Результаты замеров'),
+        h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 } },
+          ['pressureStart:Давление в начале, бар', 'pressureEnd:Давление в конце, бар'].map(s => {
+            const [key, label] = s.split(':');
+            return h('div', { key },
+              h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 3 } }, label),
+              h('input', { type: 'number', step: '0.01', style: { width: '100%', fontSize: 14, padding: '7px 10px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'var(--card)', color: 'var(--fg)' },
+                value: pressureForm[key] || '', onChange: e => setPressureForm(p => ({ ...p, [key]: e.target.value })) })
+            );
+          })
+        ),
+
+        // Потение швов
+        h('label', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, cursor: 'pointer', fontSize: 13 } },
+          h('input', { type: 'checkbox', checked: pressureForm.sweatingFound, onChange: e => setPressureForm(p => ({ ...p, sweatingFound: e.target.checked })), style: { width: 18, height: 18 } }),
+          'Обнаружено потение швов / течи'
+        ),
+
+        // Дефекты
+        pressureForm.sweatingFound && h('div', { style: { marginBottom: 12 } },
+          h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 3 } }, 'Описание дефектов (место, характер)'),
+          h('textarea', { rows: 2, style: { width: '100%', fontSize: 13, padding: '7px 10px', border: `0.5px solid #E24B4A`, borderRadius: 7, background: 'var(--card)', color: 'var(--fg)', resize: 'vertical' },
+            value: pressureForm.defectDesc, onChange: e => setPressureForm(p => ({ ...p, defectDesc: e.target.value })), placeholder: 'Шов №3, сварное соединение фланца...' })
+        ),
+
+        // Вердикт
+        h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 } }, 'Результат испытания'),
+        h('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } },
+          h('button', { onClick: () => setPressureForm(p => ({ ...p, verdict: 'pass', sweatingFound: false })),
+            style: { flex: 1, padding: '10px', border: `2px solid ${pressureForm.verdict === 'pass' ? '#1D9E75' : 'var(--border)'}`, borderRadius: 8, background: pressureForm.verdict === 'pass' ? 'rgba(29,158,117,0.1)' : 'transparent', color: pressureForm.verdict === 'pass' ? '#1D9E75' : 'var(--fg)', cursor: 'pointer', fontWeight: 500, fontSize: 14 } },
+            '✓ Выдержал'
+          ),
+          h('button', { onClick: () => setPressureForm(p => ({ ...p, verdict: 'fail', sweatingFound: true })),
+            style: { flex: 1, padding: '10px', border: `2px solid ${pressureForm.verdict === 'fail' ? '#E24B4A' : 'var(--border)'}`, borderRadius: 8, background: pressureForm.verdict === 'fail' ? 'rgba(226,75,74,0.1)' : 'transparent', color: pressureForm.verdict === 'fail' ? '#E24B4A' : 'var(--fg)', cursor: 'pointer', fontWeight: 500, fontSize: 14 } },
+            '✕ Не выдержал'
+          )
+        ),
+
+        // Кнопки действий
+        h('div', { style: { display: 'flex', gap: 8 } },
+          h('button', { onClick: savePressureTest,
+            style: { flex: 1, padding: '12px', background: pressureForm.verdict === 'pass' ? '#1D9E75' : '#E24B4A', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 500, fontSize: 14 } },
+            pressureForm.verdict === 'pass' ? '✓ Сохранить протокол' : '⚠ Зафиксировать дефект'
+          ),
+          h('button', { onClick: () => { setShowPressureForm(false); setPressureOp(null); },
+            style: { padding: '12px 16px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 8, cursor: 'pointer', fontSize: 13 } },
+            'Отмена'
+          )
+        )
+      )
+    )
+  ),
+
   viewOrderId && h(OrderCardModal, {
     orderId: viewOrderId, data,
     onClose: () => setViewOrderId(null),
