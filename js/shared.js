@@ -770,6 +770,130 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
 });
 
 
+
+// ==================== OrderCardModal — универсальная карточка заказа (360°) ====================
+// Использование:
+//   h(OrderCardModal, { orderId, data, onClose, canEdit: false })
+// canEdit: true — показывает кнопки PDF, редактирования (для мастера/ПДО)
+// canEdit: false — только просмотр (для рабочего, склада)
+const OrderCardModal = memo(({ orderId, data, onClose, canEdit = false, onEditMaterials, onEditDeps }) => {
+  if (!orderId) return null;
+  const ord = data.orders.find(o => o.id === orderId);
+  if (!ord) return null;
+
+  const ops        = data.ops.filter(o => o.orderId === ord.id && !o.archived);
+  const done       = ops.filter(o => o.status === 'done').length;
+  const inProgress = ops.filter(o => o.status === 'in_progress').length;
+  const components = ord.components || [];
+  const priority   = { low: { label: 'Низкий', color: '#888' }, medium: { label: 'Средний', color: '#378ADD' }, high: { label: 'Высокий', color: '#EF9F27' }, critical: { label: 'Критический', color: '#E24B4A' } }[ord.priority] || { label: '—', color: '#888' };
+  const daysLeft   = ord.deadline ? Math.ceil((new Date(ord.deadline) - Date.now()) / 86400000) : null;
+  const deadlineColor = daysLeft === null ? '#888' : daysLeft < 0 ? '#E24B4A' : daysLeft <= 3 ? '#EF9F27' : '#888';
+
+  const ST_COLORS = { pending: '#888', in_progress: '#EF9F27', on_check: '#378ADD', done: '#1D9E75', defect: '#E24B4A' };
+  const ST_LABELS = { pending: 'Ожидает', in_progress: 'В работе', on_check: 'Контроль', done: 'Выполнено', defect: 'Дефект' };
+
+  return h('div', {
+    role: 'dialog', 'aria-modal': 'true',
+    style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 200, padding: '24px 16px', overflowY: 'auto' },
+    onKeyDown: e => e.key === 'Escape' && onClose(),
+    onClick: e => e.target === e.currentTarget && onClose(),
+  },
+    h('div', { className: 'modal-animated', style: { background: 'var(--card)', borderRadius: 14, padding: 0, width: 'min(680px, calc(100vw - 32px))', overflow: 'hidden', position: 'relative' } },
+
+      // Тёмная шапка
+      h('div', { style: { background: 'linear-gradient(135deg, #1a1a18 0%, #2d2a24 100%)', padding: '20px 24px 16px', color: '#fff' } },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' } },
+          h('div', null,
+            h('div', { style: { fontSize: 11, fontWeight: 500, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', marginBottom: 4 } }, '📋 КАРТОЧКА ЗАКАЗА'),
+            h('div', { style: { fontSize: 26, fontWeight: 700, color: '#EF9F27', letterSpacing: '-0.5px' } }, ord.number),
+          ),
+          h('button', { onClick: onClose, style: { background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: 24, lineHeight: 1, padding: '0 4px' } }, '×')
+        ),
+        h('div', { style: { fontSize: 15, fontWeight: 500, color: '#fff', marginTop: 8, lineHeight: 1.3 } }, ord.product),
+        ord.specs && h('div', { style: { fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 4 } }, ord.specs),
+      ),
+
+      h('div', { style: { padding: '20px 24px', maxHeight: '70vh', overflowY: 'auto' } },
+
+        // Основная информация
+        h('div', { style: { background: 'var(--bg)', borderRadius: 10, padding: '12px 16px', marginBottom: 14 } },
+          h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 8 } }, '🗂 Основное'),
+          [
+            ord.customer    && ['Заказчик',    ord.customer],
+            ord.productCode && ['Код изделия', ord.productCode],
+            ['Количество',   `${ord.qty || 1} шт`],
+            ord.deadline    && ['Срок',        h('span', { style: { color: deadlineColor, fontWeight: 500 } }, ord.deadline + (daysLeft !== null ? ` (${daysLeft < 0 ? `просрочен ${Math.abs(daysLeft)} дн` : `${daysLeft} дн`})` : ''))],
+            ['Приоритет',    h('span', { style: { color: priority.color, fontWeight: 500 } }, priority.label)],
+            ord.drawingUrl  && ['Чертёж / ТЗ', h('a', { href: ord.drawingUrl, target: '_blank', rel: 'noopener', style: { color: '#378ADD', fontSize: 12 } }, '📐 Открыть')],
+          ].filter(Boolean).map(([label, val], i) =>
+            h('div', { key: i, style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0', borderBottom: '0.5px solid var(--border-soft)', fontSize: 13 } },
+              h('span', { style: { color: 'var(--muted)', fontSize: 12, flexShrink: 0, marginRight: 12 } }, label),
+              h('span', { style: { textAlign: 'right' } }, val)
+            )
+          )
+        ),
+
+        // Комплектующие
+        components.length > 0 && h('div', { style: { marginBottom: 14 } },
+          h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 8 } },
+            `📦 Комплектующие (${components.length} поз.)`
+          ),
+          h('div', { style: { border: '0.5px solid var(--border-soft)', borderRadius: 8, overflow: 'hidden' } },
+            h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 120px 50px 40px', background: 'var(--bg)', padding: '5px 12px', fontSize: 10, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em' } },
+              h('span', null, 'Наименование'), h('span', null, 'Код'), h('span', { style: { textAlign: 'center' } }, 'Кол-во'), h('span', { style: { textAlign: 'center' } }, 'Ед.')
+            ),
+            components.map((c, i) => h('div', { key: i, style: { display: 'grid', gridTemplateColumns: '1fr 120px 50px 40px', padding: '8px 12px', borderTop: '0.5px solid var(--border-soft)', fontSize: 12, alignItems: 'center', background: c.status === 'confirmed' ? 'rgba(29,158,117,0.04)' : 'transparent' } },
+              h('span', null, c.name || c.description || '—'),
+              h('span', { style: { color: 'var(--muted)', fontFamily: 'monospace', fontSize: 11 } }, c.code || c.article || '—'),
+              h('span', { style: { textAlign: 'center', fontWeight: 500 } }, c.qty || 1),
+              h('span', { style: { textAlign: 'center', color: 'var(--muted)', fontSize: 11 } }, c.unit || 'шт')
+            ))
+          ),
+          components.some(c => c.status !== 'confirmed') && h('div', { style: { marginTop: 5, padding: '5px 10px', background: 'rgba(239,159,39,0.08)', border: '0.5px solid #EF9F27', borderRadius: 6, fontSize: 11, color: '#BA7517' } },
+            '⚠ Ожидается получение комплектующих'
+          )
+        ),
+
+        // Операции
+        h('div', { style: { marginBottom: 14 } },
+          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 } },
+            h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase' } }, '⚙ Операции'),
+            h('div', { style: { fontSize: 12, color: 'var(--muted)' } },
+              h('span', { style: { color: '#1D9E75', fontWeight: 500 } }, done),
+              ` / ${ops.length}`,
+              inProgress > 0 && h('span', { style: { color: '#EF9F27', marginLeft: 8 } }, `▶ ${inProgress} в работе`)
+            )
+          ),
+          ops.length > 0 && h('div', { style: { height: 4, background: 'var(--bg)', borderRadius: 2, marginBottom: 8, overflow: 'hidden' } },
+            h('div', { style: { height: '100%', width: `${Math.round(done / ops.length * 100)}%`, background: '#1D9E75', borderRadius: 2 } })
+          ),
+          h('div', { style: { border: '0.5px solid var(--border-soft)', borderRadius: 8, overflow: 'hidden', maxHeight: 220, overflowY: 'auto' } },
+            ops.length === 0
+              ? h('div', { style: { padding: 16, textAlign: 'center', color: 'var(--muted)', fontSize: 13 } }, 'Нет операций')
+              : ops.map((op, i) => {
+                  const workers = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name).filter(Boolean);
+                  return h('div', { key: op.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', borderTop: i > 0 ? '0.5px solid var(--border-soft)' : 'none', fontSize: 12, background: op.status === 'done' ? 'rgba(29,158,117,0.04)' : 'transparent' } },
+                    h('span', { style: { fontSize: 10, minWidth: 18, color: 'var(--muted)', flexShrink: 0 } }, i + 1),
+                    h('span', { style: { flex: 1, textDecoration: op.status === 'done' ? 'line-through' : 'none', color: op.status === 'done' ? 'var(--muted)' : 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, op.name),
+                    workers.length > 0 && h('span', { style: { fontSize: 11, color: 'var(--muted)', flexShrink: 0, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, workers.join(', ')),
+                    h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 6, background: `${ST_COLORS[op.status] || '#888'}18`, color: ST_COLORS[op.status] || '#888', fontWeight: 500, flexShrink: 0, whiteSpace: 'nowrap' } }, ST_LABELS[op.status] || op.status)
+                  );
+                })
+          )
+        ),
+
+        // Кнопки — только для canEdit
+        h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+          canEdit && h('button', { onClick: () => { if (typeof generateFullPassport === 'function') generateFullPassport(ord, data); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '📄 Паспорт PDF'),
+          canEdit && h('button', { onClick: () => { if (typeof generateRouteSheet === 'function') generateRouteSheet(ord, data); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '📋 Маршрутный лист'),
+          canEdit && onEditMaterials && h('button', { onClick: () => { onClose(); onEditMaterials(ord.id); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '🔩 Заявка на материалы'),
+          h('button', { onClick: onClose, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, 'Закрыть')
+        )
+      )
+    )
+  );
+});
+
 const generateFullPassport = (order, data) => {
   const ops = data.ops.filter(op => op.orderId === order.id && !op.archived);
   const cost = calcOrderCost(order, data);
