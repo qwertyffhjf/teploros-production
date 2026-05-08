@@ -436,6 +436,7 @@ const EMPTY_DATA = {
   opNorms: {},        // нормы операций: {opName: {planned: N, samples: N, totalMs: N}}
   auxStats: {},       // агрегация вспомогательных работ: {"YYYY-MM": {total, totalMs, byCategory:{cat:{count,ms}}, byWorker:{wid:{count,ms}}}}
   messages: [], reclamations: [], duels: [], materialReservations: [], defects: [],
+  pressureTests: [],   // протоколы гидравлических испытаний
   materialDeliveries: [],  // поставки материалов: [{id, orderId, materialId, stageName, requiredQty, deliveredQty, unit, status, confirmedAt, confirmedBy}]
   // components хранятся внутри каждого order: order.components = [{id, name, qty, unit, code, price, status}]
   settings: {
@@ -1141,6 +1142,7 @@ const migrateWorkerIds = (ops) => {
 
 // Миграция данных: заполняет productionStages из OPERATION_STAGES если пусто
 const migrateData = (d) => {
+  if (!d.pressureTests) d.pressureTests = [];
   if (d.ops) d = { ...d, ops: migrateWorkerIds(d.ops) };
   if (!d.productionStages || d.productionStages.length === 0) {
     d = { ...d, productionStages: OPERATION_STAGES.map(name => ({ id: uid(), name, productType: 'boiler' })) };
@@ -1391,23 +1393,18 @@ const useIsDirty = (current, initial) => {
 // Оборачивает функцию закрытия формы — спрашивает подтверждение если есть изменения.
 // Использование:
 //   const guardedClose = useDirtyGuard(isDirty, resetForm, 'Закрыть без сохранения?');
-const useDirtyGuard = (isDirty, onClose, message = 'Есть несохранённые изменения. Закрыть без сохранения?', ask = null) => {
+const useDirtyGuard = (isDirty, onClose, message = 'Есть несохранённые изменения. Закрыть без сохранения?') => {
   return useCallback(async () => {
     if (!isDirty) { onClose(); return; }
-    let ok;
-    if (typeof ask === 'function') {
-      ok = await ask({
-        message,
-        detail: 'Введённые данные будут потеряны',
-        danger: true,
-        confirmText: 'Закрыть',
-        cancelText: 'Остаться',
-      });
-    } else {
-      ok = window.confirm(message);
-    }
+    const ok = await askConfirm({
+      message,
+      detail: 'Введённые данные будут потеряны',
+      danger: true,
+      confirmText: 'Закрыть',
+      cancelText: 'Остаться',
+    });
     if (ok) onClose();
-  }, [isDirty, onClose, message, ask]);
+  }, [isDirty, onClose, message]);
 };
 
 // ==================== DirtyBadge — индикатор несохранённых изменений ====================
