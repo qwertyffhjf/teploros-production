@@ -3,8 +3,27 @@
 
 const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorkerClick }) => {
   const pendingQC = useMemo(() => data.ops.filter(o => o.status === 'on_check' && !o.archived), [data.ops]);
+  const pendingPT = useMemo(() => (data.pressureTests || []).filter(t => t.status === 'pending_qc'), [data.pressureTests]);
+  const [tab, setControllerTab] = useState('qc');
   const [rejectModal, setRejectModal] = useState(null); // { op } | null
   const [rejectNote, setRejectNote] = useState('');
+  const [viewOrderId, setViewOrderId] = useState(null);
+
+  const signProtocol = useCallback((test) => {
+    const updated = { ...data, pressureTests: (data.pressureTests || []).map(t =>
+      t.id !== test.id ? t : { ...t, status: 'signed', qcSignedAt: now(), qcSignedBy: null }
+    )};
+    onUpdate(updated); DB.save(updated).catch(() => onUpdate(data));
+    addToast('Протокол ГИ подписан ✓', 'success');
+  }, [data, onUpdate, addToast]);
+
+  const rejectProtocol = useCallback((test, note) => {
+    const updated = { ...data, pressureTests: (data.pressureTests || []).map(t =>
+      t.id !== test.id ? t : { ...t, status: 'rejected', qcNote: note, qcSignedAt: now() }
+    )};
+    onUpdate(updated); DB.save(updated).catch(() => onUpdate(data));
+    addToast('Протокол ГИ — направлен на доработку', 'info');
+  }, [data, onUpdate, addToast]);
 
   const acceptOp = useCallback(async (op) => {
     const updated = { ...data, ops: data.ops.map(o => o.id === op.id ? { ...o, status: 'done' } : o), events: [...data.events, { id: uid(), type: 'qc_pass', opId: op.id, ts: now() }] };
@@ -22,6 +41,11 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
   }, [data, onUpdate, addToast, rejectModal, rejectNote]);
 
   return h('div', null,
+    viewOrderId && h(OrderCardModal, { orderId: viewOrderId, data, onClose: () => setViewOrderId(null), canEdit: false }),
+    h(TabBar, { tabs: [
+      ['qc', `🔍 Контроль (${pendingQC.length})`],
+      ['pressure', `💧 Протоколы ГИ (${pendingPT.length})`],
+    ], tab, setTab: setControllerTab }),
     // Панель уведомлений ОТК
     h('div', { style: { ...S.card, marginBottom: 8, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: pendingQC.length > 0 ? 'rgba(2,119,189,0.07)' : '#f8f8f5', border: pendingQC.length > 0 ? '1px solid #90CAF9' : '0.5px solid #eee' } },
       h('div', null,
@@ -56,7 +80,79 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
         )
       )
     ),
-    h('div', { style: S.card },
+    tab === 'pressure' && h('div', null,
+      // Протоколы гидравлических испытаний
+      (data.pressureTests || []).length === 0
+        ? h('div', { style: S.card }, h(EmptyState, { icon: '💧', title: 'Нет протоколов ГИ', desc: 'Протоколы появятся после завершения операции Опрессовка', compact: true }))
+        : h('div', null,
+            [...(data.pressureTests || [])].sort((a,b) => b.createdAt - a.createdAt).map(test => {
+              const order = data.orders.find(o => o.id === test.orderId);
+              const operator = data.workers.find(w => w.id === test.operatorId);
+              const drop = (test.pressureStart || 0) - (test.pressureEnd || 0);
+              const isPending = test.status === 'pending_qc';
+              const isSigned  = test.status === 'signed';
+              const isRejected = test.status === 'rejected';
+              return h('div', { key: test.id, style: { ...S.card, marginBottom: 10, borderLeft: `3px solid ${test.verdict === 'pass' ? GN : RD}`, padding: '12px 16px' } },
+                // Заголовок
+                h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 } },
+                  h('div', null,
+                    h('div', { style: { fontSize: 13, fontWeight: 500 } }, 'Протокол ГИ · ',
+                      h('span', { style: { color: AM, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => order && setViewOrderId(order.id) }, order?.number || '—')
+                    ),
+                    h('div', { style: { fontSize: 12, color: '#888', marginTop: 2 } }, order?.product || '—'),
+                    test.serialNumber && h('div', { style: { fontSize: 11, color: '#888', fontFamily: 'monospace' } }, `С/н: ${test.serialNumber}`),
+                    h('div', { style: { fontSize: 11, color: '#888', marginTop: 2 } },
+                      `Оператор: ${operator?.name || '—'} · ${new Date(test.createdAt).toLocaleString('ru-RU')}`
+                    )
+                  ),
+                  h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 } },
+                    h('span', { style: { fontSize: 11, padding: '2px 8px', borderRadius: 8, fontWeight: 500,
+                      background: test.verdict === 'pass' ? 'rgba(29,158,117,0.1)' : 'rgba(226,75,74,0.1)',
+                      color: test.verdict === 'pass' ? GN : RD } },
+                      test.verdict === 'pass' ? '✓ Выдержал' : '✕ Не выдержал'
+                    ),
+                    h('span', { style: { fontSize: 10, color: isPending ? '#185FA5' : isSigned ? GN : RD } },
+                      isPending ? '⏳ Ожидает подписи' : isSigned ? '✓ Подписан' : '✕ Отклонён'
+                    )
+                  )
+                ),
+                // Параметры
+                h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, marginBottom: 10 } },
+                  [
+                    ['Давление исп.', `${test.testPressure} бар`],
+                    ['Выдержка',     `${test.duration} мин`],
+                    ['Падение',      `${drop.toFixed(2)} бар`],
+                    ['Потение швов', test.sweatingFound ? '⚠ Да' : 'Нет'],
+                  ].map(([l,v], i) => h('div', { key: i, style: { background: 'var(--bg)', borderRadius: 6, padding: '6px 8px' } },
+                    h('div', { style: { fontSize: 10, color: '#888' } }, l),
+                    h('div', { style: { fontSize: 13, fontWeight: 500 } }, v)
+                  ))
+                ),
+                // Дефекты
+                test.defectDesc && h('div', { style: { padding: '6px 10px', background: 'rgba(226,75,74,0.06)', border: '0.5px solid rgba(226,75,74,0.3)', borderRadius: 6, fontSize: 12, marginBottom: 10, color: RD } },
+                  `⚠ ${test.defectDesc}`
+                ),
+                // Кнопки ОТК
+                h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+                  isPending && h('button', { style: abtn({ fontSize: 12, padding: '6px 14px' }), onClick: () => signProtocol(test) }, '✓ Подписать протокол'),
+                  isPending && h('button', { style: rbtn({ fontSize: 12, padding: '6px 14px' }), onClick: () => {
+                    const note = window.prompt('Причина отказа в подписи:');
+                    if (note !== null) rejectProtocol(test, note);
+                  }}, 'Отклонить'),
+                  h('button', { style: gbtn({ fontSize: 12, padding: '6px 14px' }), onClick: () => generatePressureTestPDF(test, data) }, '📄 PDF протокол')
+                ),
+                isSigned && h('div', { style: { fontSize: 12, color: GN, fontWeight: 500 } },
+                  `✓ Подписан ${new Date(test.qcSignedAt).toLocaleString('ru-RU')}`
+                ),
+                isRejected && h('div', { style: { fontSize: 12, color: RD } },
+                  `✕ Отклонён · ${test.qcNote || ''}`
+                )
+              );
+            })
+          )
+    ),
+
+    tab === 'qc' && h('div', { style: S.card },
       h('div', { style: S.sec }, 'Операции, ожидающие контроля'),
       pendingQC.length === 0
         ? h('div', null, h(EmptyState, { icon: '✓', title: 'Нет операций на контроле', desc: 'Все операции проверены', positive: true, compact: true }))
@@ -91,7 +187,6 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
     )
   );
 });
-
 
 
 // ==================== MasterReclamations ====================
