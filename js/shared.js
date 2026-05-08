@@ -441,12 +441,13 @@ const ItemRow = memo(({ item, groupId, onUpdate, onDelete, canEdit, selected, on
       canEdit && h('div', { style: { display: 'flex', alignItems: 'center', gap: 4 } },
         h('input', { type: 'checkbox', checked: selected, onChange: () => onSelect(item.id),
           style: { width: 14, height: 14, cursor: 'pointer', accentColor: RD } }),
+        h('button', { onClick: () => { setDraft(item); setEditing(true); }, title: 'Редактировать',
+          style: { fontSize: 12, color: '#555', background: 'transparent', border: 'none', cursor: 'pointer', lineHeight: 1, padding: '0 2px' } }, '✎'),
         h('button', { onClick: () => onDelete(groupId, item.id), title: 'Удалить позицию',
           style: { fontSize: 13, color: RD, background: 'transparent', border: 'none', cursor: 'pointer', lineHeight: 1, padding: '0 2px', opacity: 0.7 } }, '🗑')
       )
     ),
-    h('td', { style: { padding: '5px 4px', fontSize: 12, color: item.name ? 'var(--fg)' : '#aaa' },
-      onDoubleClick: canEdit ? () => { setDraft(item); setEditing(true); } : undefined }, item.name || '—'),
+    h('td', { style: { padding: '5px 4px', fontSize: 12, color: item.name ? 'var(--fg)' : '#aaa' } }, item.name || '—'),
 
     h('td', { style: { padding: '5px 4px', fontSize: 11, color: 'var(--muted)' } }, item.material || ''),
     h('td', { style: { padding: '5px 4px', fontSize: 11, textAlign: 'center', color: 'var(--muted)' } }, item.thickness ? `${item.thickness} мм` : ''),
@@ -570,8 +571,7 @@ const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem,
           h('button', { onClick: () => onUpdateItemStatus(group.id, 'received'),
             style: { fontSize: 11, padding: '4px 10px', border: `0.5px solid ${GN}`, borderRadius: 6, color: GN, background: 'transparent', cursor: 'pointer' } },
             '✓ Отметить всё получено'),
-        canEdit && total > 0 && h('span', { style: { fontSize: 11, color: '#aaa', marginLeft: 'auto' } },
-          'Двойной клик на строку — редактировать')
+
       )
     )
   );
@@ -713,13 +713,15 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
       h('button', { onClick: importComponentsFromOrder, style: { fontSize: 12, padding: '5px 14px', background: AM, color: AM2, border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap' } }, '+ Импортировать'),
       h('button', { onClick: () => setShowImportComponents(false), style: { fontSize: 12, padding: '5px 10px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 6, cursor: 'pointer' } }, 'Нет')
     ),
-    // Номер заявки
-    canEdit && h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 } },
+    // Номер заявки — показывается всегда, редактируется только при canEdit
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 } },
       h('div', { style: { fontSize: 12, fontWeight: 500, color: 'var(--muted)', whiteSpace: 'nowrap' } }, '№ Заявки:'),
-      h('input', { type: 'text', placeholder: 'напр. З-2026-047', value: needs.requestNumber || '',
-        style: { fontSize: 13, padding: '5px 10px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'var(--card)', color: 'var(--fg)', width: 160 },
-        onChange: e => updNeeds(p => ({ ...p, requestNumber: e.target.value })) }),
-      needs.requestNumber && h('span', { style: { fontSize: 11, color: 'var(--muted)' } }, '— сохраняется автоматически')
+      canEdit
+        ? h('input', { type: 'text', placeholder: 'напр. З-2026-047', value: needs.requestNumber || '',
+            style: { fontSize: 13, padding: '5px 10px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'var(--card)', color: 'var(--fg)', width: 180 },
+            onChange: e => updNeeds(p => ({ ...p, requestNumber: e.target.value })) })
+        : h('span', { style: { fontSize: 13, fontWeight: 500, color: needs.requestNumber ? 'var(--fg)' : 'var(--muted)' } }, needs.requestNumber || '—'),
+      needs.requestNumber && canEdit && h('span', { style: { fontSize: 11, color: 'var(--muted)' } }, '✓ сохранено')
     ),
     // Шапка с кнопками
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' } },
