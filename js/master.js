@@ -54,7 +54,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
       onUpdate(d); resetForm(); addToast('Операция обновлена', 'success');
       DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
     } else {
-      const op = { id: uid(), orderId: form.orderId, name: form.name.trim(), workerIds: form.workerIds, status: 'pending', createdAt: now(), plannedHours: form.plannedHours ? Number(form.plannedHours) : undefined, archived: false, sectionId: form.sectionId || null, equipmentId: form.equipmentId || null, plannedStartDate: form.plannedStartDate ? new Date(form.plannedStartDate).getTime() : undefined, drawingUrl: form.drawingUrl.trim() || undefined, requiresQC: form.name.includes('свар') || form.name.includes('Опресовка') };
+      const op = { id: uid(), orderId: form.orderId, name: form.name.trim(), workerIds: form.workerIds, status: 'pending', createdAt: now(), plannedHours: form.plannedHours ? Number(form.plannedHours) : undefined, archived: false, sectionId: form.sectionId || null, equipmentId: form.equipmentId || null, plannedStartDate: form.plannedStartDate ? new Date(form.plannedStartDate).getTime() : undefined, drawingUrl: form.drawingUrl.trim() || undefined, requiresQC: form.name.toLowerCase().includes('свар') || form.name.toLowerCase().includes('опресс'), requiresPressureTest: form.name.toLowerCase().includes('опресс') };
       const d = { ...data, ops: [...data.ops, op] };
       onUpdate(d); resetForm(); addToast('Операция добавлена', 'success');
       DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
@@ -712,7 +712,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 
   const createDefaultOps = useCallback((orderId, productType, orderQty, drawingUrl) => {
     const stages = (data.productionStages || []).filter(s => !productType || s.productType === productType);
-    return stages.map(stage => ({ id: uid(), orderId, name: stage.name, qty: orderQty, workerIds: [], workerQty: {}, status: 'pending', createdAt: now(), plannedHours: undefined, archived: false, sectionId: null, equipmentId: null, plannedStartDate: undefined, drawingUrl: drawingUrl || undefined, requiresQC: stage.name.includes('свар') || stage.name.includes('Опресовка') }));
+    return stages.map(stage => ({ id: uid(), orderId, name: stage.name, qty: orderQty, workerIds: [], workerQty: {}, status: 'pending', createdAt: now(), plannedHours: undefined, archived: false, sectionId: null, equipmentId: null, plannedStartDate: undefined, drawingUrl: drawingUrl || undefined, requiresQC: stage.name.includes('свар') || stage.name.includes('Опресс') || stage.name.toLowerCase().includes('опресс') }));
   }, [data.productionStages]);
 
   // Создаём поставки материалов по всем этапам у которых есть requiredMaterialIds
@@ -836,10 +836,10 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     addToast('Заказ восстановлен', 'success');
   }, [data, onUpdate, addToast]);
 
-  const edit = useCallback(ord => { setForm({ number: ord.number, product: ord.product, qty: String(ord.qty), deadline: ord.deadline || '', priority: ord.priority || 'medium', bomId: '', productType: ord.productType || '', drawingUrl: ord.drawingUrl || '' }); setEditingId(ord.id); }, []);
+  const edit = useCallback(ord => { setForm({ number: ord.number, product: ord.product, qty: String(ord.qty), deadline: ord.deadline || '', priority: ord.priority || 'medium', bomId: '', productType: ord.productType || '', drawingUrl: ord.drawingUrl || '', serialNumber: ord.serialNumber || '' }); setEditingId(ord.id); }, []);
 
   // Защита от потери данных формы заказа
-  const EMPTY_ORDER_FORM = { number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '' };
+  const EMPTY_ORDER_FORM = { number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '' };
   const isDirtyOrder = useIsDirty(form, EMPTY_ORDER_FORM) && (form.number !== '' || form.product !== '' || form.qty !== '');
   const resetOrderForm = () => { setEditingId(null); setForm(EMPTY_ORDER_FORM); setFieldErrors({}); };
   const guardedResetOrder = useDirtyGuard(isDirtyOrder, resetOrderForm, 'Заказ не сохранён. Закрыть форму?');
@@ -874,13 +874,131 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
         onUpdate(d); DB.save(d).catch(() => onUpdate(data));
         addToast(`Импортировано заказов: ${newOrders.length}`, 'success');
       }}),
+    viewOrderId && (() => {
+      const ord = data.orders.find(o => o.id === viewOrderId);
+      if (!ord) return null;
+      const ops = data.ops.filter(o => o.orderId === ord.id && !o.archived);
+      const done = ops.filter(o => o.status === 'done').length;
+      const inProgress = ops.filter(o => o.status === 'in_progress').length;
+      const components = ord.components || [];
+      const priority = PRIORITY[ord.priority] || { label: '—', color: '#888' };
+      const daysLeft = ord.deadline ? Math.ceil((new Date(ord.deadline) - Date.now()) / 86400000) : null;
+      const deadlineColor = daysLeft === null ? '#888' : daysLeft < 0 ? RD : daysLeft <= 3 ? AM2 : '#888';
+
+      return h('div', {
+        role: 'dialog', 'aria-modal': 'true',
+        style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 100, padding: '24px 16px', overflowY: 'auto' },
+        onKeyDown: e => e.key === 'Escape' && setViewOrderId(null),
+      },
+        h('div', { className: 'modal-animated', style: { background: 'var(--card)', borderRadius: 14, padding: 0, width: 'min(680px, calc(100vw - 32px))', overflow: 'hidden', position: 'relative' } },
+
+          // Шапка — цветная полоса
+          h('div', { style: { background: `linear-gradient(135deg, #1a1a18 0%, #2d2a24 100%)`, padding: '20px 24px 16px', color: '#fff' } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' } },
+              h('div', null,
+                h('div', { style: { fontSize: 11, fontWeight: 500, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', marginBottom: 4 } }, '📋 КАРТОЧКА ЗАКАЗА'),
+                h('div', { style: { fontSize: 24, fontWeight: 700, color: AM, letterSpacing: '-0.5px' } }, ord.number),
+              ),
+              h('button', { onClick: () => setViewOrderId(null), style: { background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.5)', cursor: 'pointer', fontSize: 22, lineHeight: 1 } }, '×')
+            ),
+            h('div', { style: { fontSize: 16, fontWeight: 500, color: '#fff', marginTop: 8, lineHeight: 1.3 } }, ord.product),
+            ord.specs && h('div', { style: { fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 4 } }, ord.specs),
+          ),
+
+          h('div', { style: { padding: '20px 24px' } },
+
+            // Блок основной информации
+            h('div', { style: { background: 'var(--bg)', borderRadius: 10, padding: '14px 16px', marginBottom: 16 } },
+              h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 10 } }, '🗂 Основной заказ (изделие)'),
+              [
+                ['Заказчик',       ord.customer    || '—'],
+                ['Код изделия',    ord.productCode || '—'],
+                ['Количество',     `${ord.qty || 1} шт`],
+                ['Срок отгрузки',  ord.deadline ? h('span', { style: { color: deadlineColor, fontWeight: 500 } }, ord.deadline + (daysLeft !== null ? ` (${daysLeft < 0 ? `просрочен на ${Math.abs(daysLeft)} дн` : `${daysLeft} дн`})` : '')) : '—'],
+                ['Приоритет',      h('span', { style: { color: priority.color, fontWeight: 500 } }, priority.label)],
+                ord.drawingUrl ? ['Чертёж / ТЗ', h('a', { href: ord.drawingUrl, target: '_blank', rel: 'noopener', style: { color: BL, fontSize: 12 } }, '📐 Открыть')] : null,
+              ].filter(Boolean).map(([label, val], i) =>
+                h('div', { key: i, style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0', borderBottom: '0.5px solid var(--border-soft)', fontSize: 13 } },
+                  h('span', { style: { color: 'var(--muted)', fontSize: 12 } }, label),
+                  h('span', { style: { fontWeight: 400 } }, val)
+                )
+              )
+            ),
+
+            // Комплектующие из 1С
+            components.length > 0 && h('div', { style: { marginBottom: 16 } },
+              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 } },
+                h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase' } },
+                  `📦 Комплектующие (${components.length} поз.) — статус: ${components.some(c => c.status !== 'confirmed') ? 'ожидаются' : 'получены'}`
+                )
+              ),
+              h('div', { style: { border: '0.5px solid var(--border-soft)', borderRadius: 8, overflow: 'hidden' } },
+                h('div', { style: { display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: '0', background: 'var(--bg)', padding: '6px 12px', fontSize: 10, fontWeight: 600, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase' } },
+                  h('span', null, 'Наименование'), h('span', { style: { textAlign: 'center' } }, 'Код'), h('span', { style: { textAlign: 'center' } }, 'Кол-во'), h('span', { style: { textAlign: 'center' } }, 'Ед.')
+                ),
+                components.map((c, i) => h('div', { key: i, style: { display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: '0', padding: '8px 12px', borderTop: '0.5px solid var(--border-soft)', fontSize: 13, alignItems: 'center' } },
+                  h('span', { style: { fontWeight: 400 } }, c.name || c.description || '—'),
+                  h('span', { style: { color: 'var(--muted)', fontSize: 11, fontFamily: 'monospace', textAlign: 'center', padding: '0 8px' } }, c.code || c.article || '—'),
+                  h('span', { style: { textAlign: 'center', fontWeight: 500 } }, c.qty || 1),
+                  h('span', { style: { textAlign: 'center', color: 'var(--muted)', fontSize: 11 } }, c.unit || 'шт')
+                ))
+              ),
+              components.some(c => c.status !== 'confirmed') && h('div', { style: { marginTop: 6, padding: '6px 10px', background: 'rgba(239,159,39,0.08)', border: `0.5px solid ${AM}`, borderRadius: 6, fontSize: 11, color: AM2 } },
+                '⚠ Отгрузка заблокирована до получения всех комплектующих'
+              )
+            ),
+
+            // Операции
+            h('div', { style: { marginBottom: 16 } },
+              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 } },
+                h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase' } },
+                  `⚙ Производственные операции`
+                ),
+                h('div', { style: { fontSize: 12, color: 'var(--muted)' } },
+                  h('span', { style: { color: GN, fontWeight: 500 } }, done),
+                  ` / ${ops.length} завершено`,
+                  inProgress > 0 && h('span', { style: { color: AM2, marginLeft: 8 } }, `▶ ${inProgress} в работе`)
+                )
+              ),
+              // Прогресс-бар
+              ops.length > 0 && h('div', { style: { height: 6, background: 'var(--bg)', borderRadius: 3, marginBottom: 10, overflow: 'hidden' } },
+                h('div', { style: { height: '100%', width: `${Math.round(done/ops.length*100)}%`, background: GN, borderRadius: 3, transition: 'width 0.3s' } })
+              ),
+              h('div', { style: { border: '0.5px solid var(--border-soft)', borderRadius: 8, overflow: 'hidden', maxHeight: 280, overflowY: 'auto' } },
+                ops.length === 0
+                  ? h('div', { style: { padding: '16px', textAlign: 'center', color: 'var(--muted)', fontSize: 13 } }, 'Нет операций')
+                  : ops.map((op, i) => {
+                      const stColors = { pending: '#888', in_progress: AM2, on_check: BL, done: GN, defect: RD };
+                      const stLabels = { pending: 'Ожидает', in_progress: 'В работе', on_check: 'Контроль', done: 'Выполнено', defect: 'Дефект' };
+                      const workers = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name).filter(Boolean);
+                      return h('div', { key: op.id, style: { display: 'flex', alignItems: 'center', gap: 10, padding: '7px 12px', borderTop: i > 0 ? '0.5px solid var(--border-soft)' : 'none', fontSize: 12, background: op.status === 'done' ? 'rgba(15,110,86,0.04)' : 'transparent' } },
+                        h('span', { style: { fontSize: 10, minWidth: 20, color: 'var(--muted)', flexShrink: 0 } }, i + 1),
+                        h('span', { style: { flex: 1, textDecoration: op.status === 'done' ? 'line-through' : 'none', color: op.status === 'done' ? 'var(--muted)' : 'var(--fg)' } }, op.name),
+                        workers.length > 0 && h('span', { style: { fontSize: 11, color: 'var(--muted)', flexShrink: 0 } }, workers.join(', ')),
+                        h('span', { style: { fontSize: 10, padding: '2px 7px', borderRadius: 8, background: `${stColors[op.status]}18`, color: stColors[op.status], fontWeight: 500, flexShrink: 0, whiteSpace: 'nowrap' } }, stLabels[op.status] || op.status)
+                      );
+                    })
+              )
+            ),
+
+            // Кнопки действий
+            h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+              h('button', { onClick: () => { generateFullPassport(ord, data); }, style: gbtn({ fontSize: 12, padding: '8px 14px' }) }, '📄 Паспорт PDF'),
+              h('button', { onClick: () => { generateRouteSheet(ord, data); }, style: gbtn({ fontSize: 12, padding: '8px 14px' }) }, '📋 Маршрутный лист'),
+              h('button', { onClick: () => { setViewOrderId(null); setMaterialOrderId(ord.id); }, style: gbtn({ fontSize: 12, padding: '8px 14px' }) }, '🔩 Заявка на материалы'),
+              h('button', { onClick: () => setViewOrderId(null), style: gbtn({ fontSize: 12, padding: '8px 14px' }) }, 'Закрыть')
+            )
+          )
+        )
+      );
+    })(),
+
     viewOrderId && h(OrderCardModal, {
       orderId: viewOrderId, data,
       onClose: () => setViewOrderId(null),
       canEdit: true,
       onEditMaterials: (id) => setMaterialOrderId(id),
     }),
-
     materialOrderId && h('div', {
       role: 'dialog', 'aria-modal': 'true',
       style: { position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'flex-start', justifyContent:'center', zIndex:100, padding:'24px 16px', overflowY:'auto' },
@@ -922,6 +1040,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
         h('div', { style: { minWidth: 100 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.productType, onChange: e => setForm(p => ({ ...p, productType: e.target.value })) }, h('option', { value: '' }, 'Тип'), productTypes.map(pt => h('option', { key: pt.id, value: pt.id }, pt.label)))),
         h('div', { style: { minWidth: 140 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.bomId, onChange: e => setForm(p => ({ ...p, bomId: e.target.value })) }, h('option', { value: '' }, '— без BOM —'), data.bomTemplates.filter(b => !form.productType || b.productType === form.productType || !b.productType).map(b => h('option', { key: b.id, value: b.id }, b.productName)))),
         h('div', { style: { minWidth: 180, flex: 1 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: '🔗 Ссылка (чертёж, ТЗ…)', value: form.drawingUrl, onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value })) })),
+        h('div', { style: { minWidth: 130 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: '# Серийный №', value: form.serialNumber || '', title: 'Серийный номер изделия', onChange: e => setForm(p => ({ ...p, serialNumber: e.target.value })) })),
         h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, editingId ? '✓' : '+'),
         editingId && h('button', { type: 'button', style: gbtn(), onClick: () => guardedResetOrder() }, 'Отмена'),
         !editingId && h('button', { type: 'button', style: { ...gbtn(), borderColor: AM, color: AM2 }, onClick: () => setShowImport1C(true), title: 'Импортировать заказ из файла 1С (Excel)' }, '📥 Импорт из 1С')
@@ -982,7 +1101,8 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
                 nearDeadline && h('span', { style: { marginLeft: 6, color: RD } }, '⏳')
               ),
               h('td', { style: { ...S.td, cursor: 'pointer', color: 'var(--fg)' }, onClick: () => setViewOrderId(ord.id), title: 'Открыть карточку заказа' },
-                h('span', { style: { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 260, whiteSpace: 'nowrap' } }, ord.product)
+                h('span', { style: { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 260, whiteSpace: 'nowrap' } }, ord.product),
+                ord.serialNumber && h('span', { style: { fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace', display: 'block' } }, ord.serialNumber)
               ),
               h('td', { style: { ...S.td, fontSize: 11 } }, (productTypes.find(pt => pt.id === ord.productType)?.label) || '—'),
               h('td', { style: S.td }, ord.qty),
