@@ -220,6 +220,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const [pendingFinishOp, setPendingFinishOp] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
   const [historyOp, setHistoryOp] = useState(null);
+  const [viewOrderId, setViewOrderId] = useState(null);
   const [opComment, setOpComment] = useState('');
 
   // Сохранить комментарий к операции
@@ -736,7 +737,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
               h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' } },
                 h('div', { style: { flex: 1 } },
                   h('div', { style: { fontSize: 15, fontWeight: 500, marginBottom: 2 } }, op.name),
-                  h('div', { style: { fontSize: 11, color: AM4 } }, order?.number || '—'),
+                  h('div', { style: { fontSize: 11, color: AM4, cursor: order ? 'pointer' : 'default', textDecoration: order ? 'underline' : 'none', textDecorationStyle: 'dotted' }, onClick: () => order && setViewOrderId(order.id) }, order?.number || '—'),
                   blockReason && h('div', { style: { fontSize: 11, color: AM2, background: AM3, padding: '2px 8px', borderRadius: 4, marginTop: 4, display: 'inline-block' } }, blockReason)
                 ),
                 op.isAuxiliary && op.addedByWorker === workerId && (op.status === 'pending' || op.status === 'in_progress') &&
@@ -889,7 +890,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
                 h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
                   h('div', null,
                     h('div', { style: { fontSize: 13, fontWeight: 500 } }, op.name),
-                    h('div', { style: { fontSize: 11, color: '#888' } }, `${order?.number || '—'} · ${dur}`)
+                    h('div', { style: { fontSize: 11, color: '#888', cursor: order ? 'pointer' : 'default', textDecoration: order ? 'underline' : 'none', textDecorationStyle: 'dotted' }, onClick: () => order && setViewOrderId(order.id) }, `${order?.number || '—'} · ${dur}`)
                   ),
                   h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } }, h(Badge, { st: op.status }), h('span', { style: { fontSize: 10, color: '#aaa' } }, isExp ? '▾' : '▸'))
                 ),
@@ -1022,6 +1023,11 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       )
     )
   ),
+  viewOrderId && h(OrderCardModal, {
+    orderId: viewOrderId, data,
+    onClose: () => setViewOrderId(null),
+    canEdit: false,
+  }),
   confirmEl
   );
 });
