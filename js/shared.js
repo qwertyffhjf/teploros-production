@@ -299,11 +299,11 @@ const exportNeedsToExcel = (order, needs) => {
       [`Заявка на материалы — Заказ ${order?.number || ''} — ${order?.product || ''}`],
       [`Группа: ${group.name}`],
       [],
-      ['№', 'Наименование', 'Код/Чертёж', 'Материал', 'Толщина, мм', 'Кол-во', 'Ед.', 'Длина, м', 'Статус', 'Примечание'],
+      ['№', 'Наименование', 'Материал', 'Толщина, мм', 'Кол-во', 'Ед.', 'Длина, м', 'Статус', 'Примечание'],
     ];
     (group.items || []).forEach((item, i) => {
       rows.push([
-        i + 1, item.name, item.code, item.material, item.thickness,
+        i + 1, item.name, item.material, item.thickness,
         item.qty, item.unit, item.length,
         STATUS_MAP[item.status]?.label || item.status, item.note,
       ]);
@@ -372,18 +372,8 @@ const parseNeedsFromExcel = (file, onResult) => {
           if (raw.toLowerCase().includes('итого') || raw.toLowerCase().includes('всего')) continue;
           if (raw === '№' || raw.toLowerCase() === 'наименование') continue;
 
-          // Разбиваем "КВК-600.XX - Название" на code + name
+          // Наименование = весь текст как есть (код + название вместе)
           let code = '', name = raw;
-          const dashIdx = raw.indexOf(' - ');
-          if (dashIdx > 0) {
-            const potentialCode = raw.slice(0, dashIdx).trim();
-            // Код обычно содержит точки или дефисы (КВК-600.XX.XX)
-            if (/^[\w\d\-\.\/]+$/.test(potentialCode) && potentialCode.length < 40) {
-              code = potentialCode;
-              name = raw.slice(dashIdx + 3).trim();
-            }
-          }
-
           items.push({
             id: uid(), name, code,
             material:  get(cols.material),
@@ -426,7 +416,7 @@ const ItemRow = memo(({ item, groupId, onUpdate, onDelete, canEdit, selected, on
   if (editing) return h('tr', { style: { background: 'rgba(239,159,39,0.06)' } },
     h('td', { style: { padding: '4px 6px' } }),
     h('td', { style: { padding: '4px 4px' } }, inp('name', 'Наименование')),
-    h('td', { style: { padding: '4px 4px' } }, inp('code', 'Код/Чертёж')),
+
     h('td', { style: { padding: '4px 4px' } }, inp('material', 'Материал')),
     h('td', { style: { padding: '4px 4px', width: 70 } }, inp('thickness', 'мм', 70)),
     h('td', { style: { padding: '4px 4px', width: 60 } }, inp('qty', '1', 60, 'number')),
@@ -435,7 +425,11 @@ const ItemRow = memo(({ item, groupId, onUpdate, onDelete, canEdit, selected, on
         onChange: e => upd('unit', e.target.value) },
         ITEM_UNITS.map(u => h('option', { key: u, value: u }, u)))),
     h('td', { style: { padding: '4px 4px', width: 70 } }, inp('length', 'м', 70)),
-    h('td', { style: { padding: '4px 4px' } }, inp('note', 'Примечание')),
+    h('td', { style: { padding: '4px 4px', minWidth: 160 } },
+      h('textarea', { value: draft.note ?? '', placeholder: 'Примечание',
+        rows: 2, style: { width: '100%', fontSize: 12, padding: '3px 6px', border: '0.5px solid var(--border)', borderRadius: 4, background: 'var(--card)', color: 'var(--fg)', resize: 'vertical', minHeight: 36, fontFamily: 'inherit' },
+        onChange: e => upd('note', e.target.value) })
+    ),
     h('td', { style: { padding: '4px 6px', whiteSpace: 'nowrap' } },
       h('button', { onClick: save,   style: { fontSize: 11, padding: '3px 8px', background: AM, color: AM2, border: 'none', borderRadius: 4, cursor: 'pointer', marginRight: 4, fontWeight: 500 } }, '✓'),
       h('button', { onClick: cancel, style: { fontSize: 11, padding: '3px 8px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 4, cursor: 'pointer' } }, 'Отмена'))
@@ -453,12 +447,14 @@ const ItemRow = memo(({ item, groupId, onUpdate, onDelete, canEdit, selected, on
     ),
     h('td', { style: { padding: '5px 4px', fontSize: 12, color: item.name ? 'var(--fg)' : '#aaa' },
       onDoubleClick: canEdit ? () => { setDraft(item); setEditing(true); } : undefined }, item.name || '—'),
-    h('td', { style: { padding: '5px 4px', fontSize: 11, color: '#888', fontFamily: 'monospace' } }, item.code || ''),
+
     h('td', { style: { padding: '5px 4px', fontSize: 11, color: 'var(--muted)' } }, item.material || ''),
     h('td', { style: { padding: '5px 4px', fontSize: 11, textAlign: 'center', color: 'var(--muted)' } }, item.thickness ? `${item.thickness} мм` : ''),
     h('td', { style: { padding: '5px 4px', fontSize: 12, fontWeight: 500, textAlign: 'center' } }, `${item.qty} ${item.unit}`),
     h('td', { style: { padding: '5px 4px', fontSize: 11, color: 'var(--muted)', textAlign: 'center' } }, item.length ? `${item.length} м` : ''),
-    h('td', { style: { padding: '5px 4px', fontSize: 11, color: 'var(--muted)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, item.note || ''),
+    h('td', { style: { padding: '5px 4px', fontSize: 11, color: 'var(--muted)', minWidth: 120, maxWidth: 260 } },
+      item.note ? h('span', { style: { display: 'block', lineHeight: 1.4, wordBreak: 'break-word', whiteSpace: 'pre-wrap' } }, item.note) : ''
+    ),
     h('td', { style: { padding: '5px 6px' } },
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
         h('span', { style: { fontSize: 10, padding: '2px 7px', borderRadius: 10, background: st.bg, color: st.color, fontWeight: 500, whiteSpace: 'nowrap', cursor: canEdit ? 'pointer' : 'default' },
@@ -546,7 +542,7 @@ const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem,
               h('input', { type: 'checkbox', checked: allSelected, onChange: toggleAll,
                 style: { width: 14, height: 14, cursor: 'pointer', accentColor: RD } })
             ) : h('th', { key: 'chk', style: { width: 8 } }),
-            ...['Наименование', 'Код/Чертёж', 'Материал', 'Толщина', 'Кол-во', 'Длина', 'Примечание', 'Статус'].map((col, i) =>
+            ...['Наименование', 'Материал', 'Толщина', 'Кол-во', 'Длина', 'Примечание', 'Статус'].map((col, i) =>
               h('th', { key: i, style: { padding: '5px 6px', textAlign: 'left', fontWeight: 500, whiteSpace: 'nowrap', borderBottom: '0.5px solid var(--border-soft)' } }, col))
           ]
         )),
@@ -640,8 +636,9 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
       const groups = p.groups.map(g => {
         if (g.id !== 'komplekt' && !g.name.toLowerCase().includes('комплект')) return g;
         const newItems = components.map(c => ({
-          id: uid(), name: c.name || c.description || '—',
-          code: c.code || c.article || '',
+          id: uid(),
+          name: [c.code || c.article, c.name || c.description].filter(Boolean).join(' - ') || '—',
+          code: '',
           material: '', thickness: '',
           qty: c.qty || 1, unit: c.unit || 'шт',
           length: '', note: c.note || '',
@@ -715,6 +712,14 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
       ),
       h('button', { onClick: importComponentsFromOrder, style: { fontSize: 12, padding: '5px 14px', background: AM, color: AM2, border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap' } }, '+ Импортировать'),
       h('button', { onClick: () => setShowImportComponents(false), style: { fontSize: 12, padding: '5px 10px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 6, cursor: 'pointer' } }, 'Нет')
+    ),
+    // Номер заявки
+    canEdit && h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 } },
+      h('div', { style: { fontSize: 12, fontWeight: 500, color: 'var(--muted)', whiteSpace: 'nowrap' } }, '№ Заявки:'),
+      h('input', { type: 'text', placeholder: 'напр. З-2026-047', value: needs.requestNumber || '',
+        style: { fontSize: 13, padding: '5px 10px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'var(--card)', color: 'var(--fg)', width: 160 },
+        onChange: e => updNeeds(p => ({ ...p, requestNumber: e.target.value })) }),
+      needs.requestNumber && h('span', { style: { fontSize: 11, color: 'var(--muted)' } }, '— сохраняется автоматически')
     ),
     // Шапка с кнопками
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' } },
