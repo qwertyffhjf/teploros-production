@@ -284,8 +284,9 @@ const makeItem  = ()      => ({
 
 // Статус → цвет и текст
 const STATUS_MAP = {
-  pending:  { label: 'Ожидается', color: '#888',   bg: 'rgba(0,0,0,0.05)'       },
+  pending:  { label: 'Ожидается', color: '#888',    bg: 'rgba(0,0,0,0.05)'       },
   ordered:  { label: 'Заказано',  color: '#185FA5', bg: 'rgba(24,95,165,0.1)'   },
+  partial:  { label: 'Частично',  color: '#BA7517', bg: 'rgba(239,159,39,0.12)' },
   received: { label: 'Получено',  color: '#0F6E56', bg: 'rgba(15,110,86,0.1)'   },
 };
 
@@ -893,6 +894,105 @@ const OrderCardModal = memo(({ orderId, data, onClose, canEdit = false, onEditMa
     )
   );
 });
+
+
+// ==================== PDF Протокол гидравлического испытания ====================
+const generatePressureTestPDF = (test, data) => {
+  if (!pdfMake) { alert('pdfMake не загружен'); return; }
+  const order    = data.orders.find(o => o.id === test.orderId);
+  const operator = data.workers.find(w => w.id === test.operatorId);
+  const drop     = ((test.pressureStart || 0) - (test.pressureEnd || 0)).toFixed(3);
+  const dateStr  = new Date(test.createdAt).toLocaleDateString('ru-RU');
+  const timeStr  = new Date(test.createdAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
+  const docDefinition = {
+    pageSize: 'A4', pageMargins: [40, 50, 40, 50],
+    styles: {
+      header:    { fontSize: 14, bold: true, alignment: 'center', margin: [0, 0, 0, 4] },
+      subheader: { fontSize: 10, bold: true, margin: [0, 10, 0, 4], color: '#555' },
+      label:     { fontSize: 9, color: '#888' },
+      value:     { fontSize: 11, bold: true },
+      small:     { fontSize: 8, color: '#888' },
+    },
+    content: [
+      // Шапка
+      { text: 'ООО "НТ" · ПРОИЗВОДСТВО', style: 'small', alignment: 'center' },
+      { text: 'ПРОТОКОЛ ГИДРАВЛИЧЕСКОГО ИСПЫТАНИЯ', style: 'header', margin: [0, 4, 0, 2] },
+      { text: `№ ГИ-${String(test.createdAt).slice(-6)}`, fontSize: 10, alignment: 'center', color: '#888', margin: [0, 0, 0, 12] },
+
+      // Идентификация
+      { text: '1. ИДЕНТИФИКАЦИЯ ИЗДЕЛИЯ', style: 'subheader' },
+      { table: { widths: ['30%', '70%'], body: [
+        [{ text: 'Заказ', style: 'label' }, { text: order?.number || '—', style: 'value' }],
+        [{ text: 'Изделие', style: 'label' }, { text: order?.product || '—', style: 'value' }],
+        [{ text: 'Серийный номер', style: 'label' }, { text: test.serialNumber || order?.serialNumber || '—', style: 'value' }],
+        [{ text: 'Заказчик', style: 'label' }, { text: order?.customer || '—', style: 'value' }],
+        [{ text: 'Рабочее давление', style: 'label' }, { text: `${test.workPressure} бар`, style: 'value' }],
+      ]}, layout: 'lightHorizontalLines', margin: [0, 0, 0, 8] },
+
+      // Параметры испытания
+      { text: '2. ПАРАМЕТРЫ ИСПЫТАНИЯ', style: 'subheader' },
+      { table: { widths: ['25%', '25%', '25%', '25%'], body: [
+        ['Давление испытания', 'Выдержка', 'Температура воды', 'Среда испытания'].map(t => ({ text: t, style: 'label', alignment: 'center' })),
+        [
+          { text: `${test.testPressure} бар`, style: 'value', alignment: 'center' },
+          { text: `${test.duration} мин`, style: 'value', alignment: 'center' },
+          { text: `+${test.tempC} °С`, style: 'value', alignment: 'center' },
+          { text: 'Вода', style: 'value', alignment: 'center' },
+        ],
+      ]}, layout: 'lightHorizontalLines', margin: [0, 0, 0, 8] },
+
+      // Результаты замеров
+      { text: '3. РЕЗУЛЬТАТЫ ЗАМЕРОВ', style: 'subheader' },
+      { table: { widths: ['25%', '25%', '25%', '25%'], body: [
+        ['Давление в начале', 'Давление в конце', 'Падение давления', 'Потение швов'].map(t => ({ text: t, style: 'label', alignment: 'center' })),
+        [
+          { text: `${test.pressureStart} бар`, style: 'value', alignment: 'center' },
+          { text: `${test.pressureEnd} бар`, style: 'value', alignment: 'center' },
+          { text: `${drop} бар`, style: 'value', alignment: 'center', color: Math.abs(Number(drop)) > 0.1 ? 'red' : 'black' },
+          { text: test.sweatingFound ? 'ДА' : 'НЕТ', style: 'value', alignment: 'center', color: test.sweatingFound ? 'red' : 'green' },
+        ],
+      ]}, layout: 'lightHorizontalLines', margin: [0, 0, 0, 8] },
+
+      // Дефекты
+      test.defectDesc && { text: '4. ВЫЯВЛЕННЫЕ ДЕФЕКТЫ', style: 'subheader' },
+      test.defectDesc && { text: test.defectDesc, fontSize: 11, margin: [0, 0, 0, 8], color: 'red' },
+
+      // Заключение
+      { text: test.defectDesc ? '5. ЗАКЛЮЧЕНИЕ' : '4. ЗАКЛЮЧЕНИЕ', style: 'subheader' },
+      { table: { widths: ['100%'], body: [[{
+        text: test.verdict === 'pass'
+          ? `ИЗДЕЛИЕ ВЫДЕРЖАЛО гидравлическое испытание давлением ${test.testPressure} бар в течение ${test.duration} мин и ДОПУСКАЕТСЯ к дальнейшему производству.`
+          : `ИЗДЕЛИЕ НЕ ВЫДЕРЖАЛО гидравлическое испытание. Требуется устранение дефектов и повторное испытание.`,
+        fontSize: 11, bold: true, alignment: 'center',
+        color: test.verdict === 'pass' ? 'green' : 'red',
+        margin: [8, 8, 8, 8],
+      }]]}, layout: { hLineColor: () => test.verdict === 'pass' ? 'green' : 'red', vLineColor: () => test.verdict === 'pass' ? 'green' : 'red' }, margin: [0, 0, 0, 20] },
+
+      // Подписи
+      { text: 'ПОДПИСИ', style: 'subheader' },
+      { columns: [
+        { width: '50%', stack: [
+          { text: 'Оператор опрессовки:', style: 'label' },
+          { text: operator?.name || '—', fontSize: 11, margin: [0, 4, 0, 0] },
+          { text: `${dateStr} ${timeStr}`, style: 'small', margin: [0, 2, 0, 0] },
+          { canvas: [{ type: 'line', x1: 0, y1: 15, x2: 160, y2: 15, lineWidth: 0.5, lineColor: '#888' }] },
+          { text: '(подпись)', style: 'small', alignment: 'center', margin: [0, 2, 0, 0] },
+        ]},
+        { width: '50%', stack: [
+          { text: 'Контролёр ОТК:', style: 'label' },
+          { text: test.qcSignedAt ? new Date(test.qcSignedAt).toLocaleDateString('ru-RU') : '___________', fontSize: 11, margin: [0, 4, 0, 0] },
+          { canvas: [{ type: 'line', x1: 0, y1: 15, x2: 160, y2: 15, lineWidth: 0.5, lineColor: '#888' }] },
+          { text: '(подпись / печать)', style: 'small', alignment: 'center', margin: [0, 2, 0, 0] },
+        ]},
+      ], margin: [0, 8, 0, 0] },
+
+      // Нормативная ссылка
+      { text: 'Испытание проведено в соответствии с ФНП "Правила промышленной безопасности при использовании оборудования, работающего под избыточным давлением" (ПБ 10-558-03)', fontSize: 7, color: '#aaa', margin: [0, 20, 0, 0], alignment: 'center' },
+    ].filter(Boolean),
+  };
+  pdfMake.createPdf(docDefinition).download(`ГИ_${order?.number || 'протокол'}_${dateStr}.pdf`);
+};
 
 const generateFullPassport = (order, data) => {
   const ops = data.ops.filter(op => op.orderId === order.id && !op.archived);
