@@ -54,14 +54,30 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Firebase, Google Analytics — не кешируем, всегда сеть
-  if (
-    url.hostname.includes('firebasejs') ||
-    url.hostname.includes('firebase') ||
-    url.hostname.includes('googleapis') ||
-    url.hostname.includes('googletagmanager') ||
-    url.hostname.includes('google-analytics')
-  ) {
+  // Сторонние сервисы — не кешируем, пропускаем напрямую
+  if (url.origin !== location.origin) {
+    // CDN (React, XLSX, pdfmake, Chart.js и т.д.) — cache-first
+    if (
+      url.hostname.includes('cdnjs.cloudflare.com') ||
+      url.hostname.includes('cdn.jsdelivr.net') ||
+      url.hostname.includes('unpkg.com') ||
+      url.hostname.includes('gstatic.com')
+    ) {
+      event.respondWith(
+        caches.match(event.request).then(cached => {
+          if (cached) return cached;
+          return fetch(event.request).then(response => {
+            if (response.ok) {
+              const clone = response.clone();
+              caches.open(CDN_CACHE).then(cache => cache.put(event.request, clone));
+            }
+            return response;
+          }).catch(() => cached);
+        })
+      );
+      return;
+    }
+    // Всё остальное внешнее (Firebase, Google, Analytics) — только сеть, не трогаем
     return;
   }
 
@@ -81,19 +97,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // CDN (Chart.js, XLSX, React, pdfmake...) — cache-first, отдельный кеш
-  event.respondWith(
-    caches.match(event.request).then(cached => {
-      if (cached) return cached;
-      return fetch(event.request).then(response => {
-        if (response.ok) {
-          const clone = response.clone();
-          caches.open(CDN_CACHE).then(cache => cache.put(event.request, clone));
-        }
-        return response;
-      }).catch(() => caches.match(event.request));
-    })
-  );
+  // (CDN обрабатывается выше)
 });
 
 // SKIP_WAITING от update-banner
