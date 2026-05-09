@@ -886,8 +886,10 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
     const newOps = parsed.productQty === 1 ? stages.map(stage => ({
       id: uid(), orderId, name: stage.name, qty: 1,
       workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
-      archived: false, sectionId: null, equipmentId: null,
-      requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.includes('Опресовка')
+      archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null,
+      plannedHours: stage.plannedHours || undefined, drawingUrl: stage.drawingUrl || undefined,
+      requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.includes('Опресовка'),
+      requiresPressureTest: stage.name.toLowerCase().includes('опресс'),
     })) : [];
 
     // Поставки материалов — всегда у родителя
@@ -1114,7 +1116,8 @@ const SubOrderSplitStep = memo(({ data, onUpdate, addToast, onClose, parentOrder
           newOps.push({
             id: uid(), orderId: subId, name: stage.name, qty: 1,
             workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
-            archived: false, sectionId: null, equipmentId: null,
+            archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null,
+            plannedHours: stage.plannedHours || undefined, drawingUrl: stage.drawingUrl || undefined,
             requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.includes('Опресовка'),
             requiresPressureTest: stage.name.toLowerCase().includes('опресс'),
           });
@@ -1288,179 +1291,6 @@ const OrderComponentsBlock = memo(({ order, data, onUpdate }) => {
             )
           );
         }))
-      )
-    )
-  );
-});
-
-// ==================== OrderDetailModal ====================
-const OrderDetailModal = memo(({ orderId, data, onClose, onUpdate }) => {
-  // ── Все хуки ПЕРЕД любым условным return (Rules of Hooks) ──
-
-  // O(n) сортировка через Map индексов этапов
-  const ops = useMemo(() => {
-    const stageIndex = new Map((data.productionStages || []).map((s, i) => [s.name, i]));
-    return data.ops
-      .filter(o => o.orderId === orderId && !o.archived)
-      .sort((a, b) => (stageIndex.get(a.name) ?? 99) - (stageIndex.get(b.name) ?? 99));
-  }, [data.ops, data.productionStages, orderId]);
-
-  // Себестоимость — зависит только от нужных массивов, не от объекта order
-  const cost = useMemo(
-    () => calcOrderCost({ id: orderId }, data),
-    [orderId, data.ops, data.materialConsumptions, data.materials]
-  );
-
-  const reclamations = useMemo(
-    () => (data.reclamations || []).filter(r => r.orderId === orderId),
-    [data.reclamations, orderId]
-  );
-
-  // Ранний return — только после всех хуков
-  const order = data.orders.find(o => o.id === orderId);
-  if (!order) return null;
-
-  const doneOps   = ops.filter(o => o.status === 'done');
-  const activeOps = ops.filter(o => o.status === 'in_progress');
-  const defectOps = ops.filter(o => o.status === 'defect' || o.status === 'rework');
-  const checkOps  = ops.filter(o => o.status === 'on_check');
-  const pct = ops.length > 0 ? Math.round(doneOps.length / ops.length * 100) : 0;
-
-  const priority = PRIORITY[order.priority] || PRIORITY.medium;
-  const daysLeft = order.deadline
-    ? Math.ceil((new Date(order.deadline).getTime() - Date.now()) / 86400000)
-    : null;
-  const deadlineColor = daysLeft === null ? '#888' : daysLeft < 0 ? RD : daysLeft <= 2 ? AM : GN;
-
-  // Lead time
-  const finishedDates = doneOps.filter(o => o.finishedAt).map(o => o.finishedAt);
-  const startedDates  = ops.filter(o => o.startedAt).map(o => o.startedAt);
-  const leadTime = finishedDates.length && startedDates.length
-    ? fmtDur(Math.max(...finishedDates) - Math.min(...startedDates)) : '—';
-
-  return h('div', {
-    role: 'dialog', 'aria-modal': 'true', 'aria-label': `Заказ ${order.number}`,
-    style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 300, overflowY: 'auto', padding: '16px 8px' },
-    onClick: e => { if (e.target === e.currentTarget) onClose(); }
-  },
-    h('div', { style: { background: '#fff', borderRadius: 14, width: 'min(700px, 100%)', maxHeight: 'none', boxShadow: '0 8px 40px rgba(0,0,0,0.22)' } },
-
-      // ── Шапка ──
-      h('div', { style: { padding: '18px 20px 14px', borderBottom: '0.5px solid rgba(0,0,0,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' } },
-        h('div', null,
-          h('div', { style: { fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 } }, 'Заказ'),
-          h('div', { style: { fontSize: 22, fontWeight: 600, color: AM2, lineHeight: 1.1 } }, order.number),
-          h('div', { style: { fontSize: 14, color: '#444', marginTop: 4 } }, order.product),
-          h('div', { style: { display: 'flex', gap: 10, marginTop: 8, flexWrap: 'wrap' } },
-            h('span', { style: { padding: '3px 10px', borderRadius: 8, background: AM3, color: AM2, fontSize: 11, fontWeight: 500 } }, `Кол-во: ${order.qty}`),
-            h('span', { style: { padding: '3px 10px', borderRadius: 8, fontSize: 11, fontWeight: 500, color: priority.color, background: '#f5f5f2', border: `0.5px solid ${priority.color}` } }, priority.label),
-            order.deadline && h('span', { style: { padding: '3px 10px', borderRadius: 8, fontSize: 11, fontWeight: 500, color: deadlineColor, background: '#f5f5f2' } },
-              `📅 ${order.deadline}${daysLeft !== null ? ` (${daysLeft < 0 ? `просрочен ${Math.abs(daysLeft)}д` : daysLeft === 0 ? 'сегодня' : `${daysLeft}д`})` : ''}`
-            ),
-            h('span', { style: { padding: '3px 10px', borderRadius: 8, fontSize: 11, color: '#888', background: '#f5f5f2' } }, `Lead time: ${leadTime}`)
-          )
-        ),
-        h('button', { onClick: onClose, 'aria-label': 'Закрыть', style: { background: 'none', border: 'none', fontSize: 24, color: '#aaa', cursor: 'pointer', lineHeight: 1, padding: 4 } }, '×')
-      ),
-
-      // ── Прогресс ──
-      h('div', { style: { padding: '14px 20px', borderBottom: '0.5px solid rgba(0,0,0,0.06)' } },
-        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 } },
-          h('div', { style: { fontSize: 12, fontWeight: 500 } }, `Выполнено операций: ${doneOps.length} / ${ops.length}`),
-          h('div', { style: { fontSize: 14, fontWeight: 600, color: pct === 100 ? GN : AM } }, `${pct}%`)
-        ),
-        h('div', { style: { height: 10, background: '#f0ede8', borderRadius: 6, overflow: 'hidden' } },
-          h('div', { style: { height: '100%', width: `${pct}%`, background: pct === 100 ? GN : AM, borderRadius: 6, transition: 'width .3s' } })
-        ),
-        h('div', { style: { display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap' } },
-          activeOps.length > 0 && h('span', { style: { fontSize: 11, color: AM2 } }, `▶ В работе: ${activeOps.length}`),
-          checkOps.length > 0  && h('span', { style: { fontSize: 11, color: '#0277BD' } }, `🔍 Контроль: ${checkOps.length}`),
-          defectOps.length > 0 && h('span', { style: { fontSize: 11, color: RD } }, `⚠ Проблемы: ${defectOps.length}`),
-          ops.filter(o => o.status === 'pending').length > 0 && h('span', { style: { fontSize: 11, color: '#888' } }, `⏳ Ожидают: ${ops.filter(o => o.status === 'pending').length}`)
-        )
-      ),
-
-      // ── Операции ──
-      h('div', { style: { padding: '14px 20px', borderBottom: '0.5px solid rgba(0,0,0,0.06)' } },
-        h('div', { style: S.sec }, 'Операции'),
-        ops.length === 0
-          ? h('div', { style: { fontSize: 12, color: '#888' } }, 'Нет операций')
-          : h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-              h('thead', null, h('tr', null,
-                ['Операция', 'Исполнитель', 'Статус', 'Длительность', 'vs план'].map((t, i) =>
-                  h('th', { key: i, style: S.th }, t))
-              )),
-              h('tbody', null, ops.map(op => {
-                const workers = (op.workerIds || []).map(id => data.workers.find(w => w.id === id)?.name).filter(Boolean);
-                const dur = op.startedAt && op.finishedAt ? op.finishedAt - op.startedAt
-                  : op.startedAt ? Date.now() - op.startedAt : null;
-                const vsplan = dur && op.plannedHours
-                  ? Math.round(dur / (op.plannedHours * 3600000) * 100)
-                  : null;
-                const vsColor = vsplan === null ? '#888' : vsplan <= 100 ? GN : vsplan <= 130 ? AM : RD;
-                return h('tr', { key: op.id, style: { background: op.status === 'defect' ? RD3 : op.status === 'in_progress' ? AM3 : 'transparent' } },
-                  h('td', { style: { ...S.td, fontWeight: 500 } },
-                    op.name,
-                    op.defectNote && h('div', { style: { fontSize: 10, color: RD, marginTop: 2 } }, op.defectNote)
-                  ),
-                  h('td', { style: { ...S.td, fontSize: 11 } }, workers.join(', ') || h('span', { style: { color: '#ccc' } }, '—')),
-                  h('td', { style: S.td }, h(Badge, { st: op.status })),
-                  h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 11 } },
-                    dur ? fmtDur(dur) + (op.status === 'in_progress' ? ' ↻' : '') : '—'
-                  ),
-                  h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 11, color: vsColor, fontWeight: vsplan ? 500 : 400 } },
-                    vsplan !== null ? `${vsplan}%` : op.plannedHours ? `план ${op.plannedHours}ч` : '—'
-                  )
-                );
-              }))
-            ))
-      ),
-
-      // ── Комплектующие ──
-      (order.components || []).length > 0 && h(OrderComponentsBlock, { order, data, onUpdate }),
-
-      // ── Себестоимость ──
-      h('div', { style: { padding: '14px 20px', borderBottom: '0.5px solid rgba(0,0,0,0.06)' } },
-        h('div', { style: S.sec }, 'Себестоимость'),
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 } },
-          h('div', { style: { textAlign: 'center', padding: '10px 8px', background: '#f8f8f5', borderRadius: 8 } },
-            h('div', { style: { fontSize: 18, fontWeight: 600, color: AM2 } }, `${cost.laborHours}ч`),
-            h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'Трудозатраты')
-          ),
-          h('div', { style: { textAlign: 'center', padding: '10px 8px', background: '#f8f8f5', borderRadius: 8 } },
-            h('div', { style: { fontSize: 18, fontWeight: 600, color: AM2 } }, `${cost.materialCost.toLocaleString()}₽`),
-            h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'Материалы')
-          ),
-          h('div', { style: { textAlign: 'center', padding: '10px 8px', background: AM3, borderRadius: 8 } },
-            h('div', { style: { fontSize: 18, fontWeight: 600, color: AM2 } }, `${cost.totalCost.toLocaleString()}₽`),
-            h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase' } }, 'Итого')
-          )
-        )
-      ),
-
-      // ── Дефекты / рекламации ──
-      (defectOps.length > 0 || reclamations.length > 0) && h('div', { style: { padding: '14px 20px', borderBottom: '0.5px solid rgba(0,0,0,0.06)' } },
-        h('div', { style: S.sec }, 'Дефекты и рекламации'),
-        defectOps.length > 0 && h('div', { style: { marginBottom: 8 } },
-          defectOps.map(op => {
-            const reason = (data.defectReasons || []).find(r => r.id === op.defectReasonId);
-            return h('div', { key: op.id, style: { padding: '6px 10px', background: RD3, borderRadius: 6, marginBottom: 4, fontSize: 12 } },
-              h('span', { style: { fontWeight: 500, color: RD2 } }, op.name),
-              reason && h('span', { style: { color: '#666', marginLeft: 8 } }, `· ${reason.name}`),
-              op.defectNote && h('span', { style: { color: '#888', marginLeft: 8 } }, op.defectNote)
-            );
-          })
-        ),
-        reclamations.length > 0 && h('div', { style: { fontSize: 12, color: '#666' } },
-          `Рекламаций: ${reclamations.length} (${reclamations.filter(r => r.status === 'open').length} открытых)`
-        )
-      ),
-
-      // ── Кнопки PDF ──
-      h('div', { style: { padding: '14px 20px', display: 'flex', gap: 8, flexWrap: 'wrap' } },
-        h('button', { style: gbtn({ fontSize: 12 }), onClick: () => generateRouteSheet(order, data) }, '📋 Маршрутный лист'),
-        h('button', { style: gbtn({ fontSize: 12 }), onClick: () => generateFullPassport(order, data) }, '📄 Паспорт изделия'),
-        h('button', { style: gbtn({ fontSize: 12 }), onClick: onClose }, 'Закрыть')
       )
     )
   );
@@ -2221,7 +2051,7 @@ function App() {
           effectiveRole === 'warehouse' && h(WarehouseScreen, { data, onUpdate: save, addToast, currentUserId: workerId }),
           effectiveRole === 'dashboard' && h(Dashboard, { data, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId })
         ),
-    selectedOrderId && h(OrderDetailModal, { orderId: selectedOrderId, data, onUpdate: save, onClose: () => setSelectedOrderId(null) }),
+    selectedOrderId && h(OrderCardModal, { orderId: selectedOrderId, data, onClose: () => setSelectedOrderId(null), canEdit: true, onEditMaterials: (id) => { setSelectedOrderId(null); } }),
     // 🌍 Глобальная карточка сотрудника — открывается из любого места системы
     selectedWorkerId && (() => {
       const worker = data.workers.find(w => w.id === selectedWorkerId);
