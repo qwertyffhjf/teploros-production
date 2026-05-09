@@ -1448,7 +1448,7 @@ const MasterOnboarding = memo(({ data, onDone }) => {
   const steps = useMemo(() => [
     { id: 'workers',   label: 'Добавить сотрудников',          done: data.workers.filter(w => !w.archived).length > 0,       action: null },
     { id: 'stages',    label: 'Создать этапы производства',     done: (data.productionStages || []).length > 0,                action: null },
-    { id: 'order',     label: 'Создать первый заказ',           done: data.orders.filter(o => !o.archived).length > 0,         action: null },
+    { id: 'order',     label: 'Создать первый заказ',           done: data.orders.filter(o => !o.archived && !o.isParentOrder).length > 0,         action: null },
     { id: 'competences', label: 'Заполнить матрицу компетенций', done: data.workers.some(w => w.competences?.length > 0),       action: null },
     { id: 'assign',    label: 'Назначить операции',             done: data.ops.some(o => o.workerIds?.length > 0),             action: null },
   ], [data]);
