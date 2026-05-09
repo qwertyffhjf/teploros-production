@@ -297,7 +297,7 @@ const exportNeedsToExcel = (order, needs) => {
   (needs.groups || []).forEach(group => {
     const rows = [
       [`Заявка на материалы — Заказ ${order?.number || ''} — ${order?.product || ''}`],
-      [`Группа: ${group.name}`],
+      [`Группа: ${group.name}${group.requestNumber ? `   |   № Заявки: ${group.requestNumber}` : ''}`],
       [],
       ['№', 'Наименование', 'Материал', 'Толщина, мм', 'Кол-во', 'Ед.', 'Длина, м', 'Статус', 'Примечание'],
     ];
@@ -471,11 +471,13 @@ const ItemRow = memo(({ item, groupId, onUpdate, onDelete, canEdit, selected, on
 });
 
 // ── Компонент группы ────────────────────────────────────────
-const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem, onDeleteItem, onDeleteMany, onAddItem, canEdit, onUpdateItemStatus }) => {
-  const [editingName, setEditingName] = useState(false);
-  const [draftName, setDraftName]     = useState(group.name);
-  const [collapsed, setCollapsed]     = useState(false);
-  const [selected, setSelected]       = useState(new Set()); // выбранные id для пакетного удаления
+const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem, onDeleteItem, onDeleteMany, onAddItem, canEdit, onUpdateItemStatus, onUpdateGroupReqNum }) => {
+  const [editingName, setEditingName]   = useState(false);
+  const [draftName, setDraftName]       = useState(group.name);
+  const [collapsed, setCollapsed]       = useState(false);
+  const [selected, setSelected]         = useState(new Set());
+  const [editingReqNum, setEditingReqNum] = useState(false);
+  const [draftReqNum, setDraftReqNum]   = useState(group.requestNumber || '');
 
   const items = group.items || [];
   const pendingCount  = items.filter(i => i.status === 'pending').length;
@@ -514,6 +516,24 @@ const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem,
         pendingCount  > 0 && h('span', { style: { color: '#888'    } }, `⏳ ${pendingCount}`),
         orderedCount  > 0 && h('span', { style: { color: '#185FA5' } }, `📦 ${orderedCount}`),
         receivedCount > 0 && h('span', { style: { color: GN        } }, `✓ ${receivedCount}`),
+      ),
+      // Номер заявки в шапке группы
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 4 }, onClick: e => e.stopPropagation() },
+        canEdit && editingReqNum
+          ? h('input', { autoFocus: true, placeholder: 'З-2026-047', value: draftReqNum,
+              style: { fontSize: 11, padding: '2px 7px', border: `0.5px solid ${AM}`, borderRadius: 4, background: 'var(--card)', color: 'var(--fg)', width: 110 },
+              onChange: e => setDraftReqNum(e.target.value),
+              onBlur: () => { onUpdateGroupReqNum && onUpdateGroupReqNum(group.id, draftReqNum); setEditingReqNum(false); },
+              onKeyDown: e => { if (e.key === 'Enter') { onUpdateGroupReqNum && onUpdateGroupReqNum(group.id, draftReqNum); setEditingReqNum(false); } if (e.key === 'Escape') setEditingReqNum(false); }
+            })
+          : h('span', {
+              title: canEdit ? 'Нажмите чтобы задать номер заявки' : '',
+              onClick: canEdit ? () => { setDraftReqNum(group.requestNumber || ''); setEditingReqNum(true); } : undefined,
+              style: { fontSize: 11, padding: '2px 8px', borderRadius: 4, cursor: canEdit ? 'pointer' : 'default',
+                background: group.requestNumber ? `${AM}22` : 'transparent',
+                border: group.requestNumber ? `0.5px solid ${AM}` : `0.5px dashed var(--border)`,
+                color: group.requestNumber ? AM2 : 'var(--muted)', whiteSpace: 'nowrap' }
+            }, group.requestNumber ? `№ ${group.requestNumber}` : '+ № заявки')
       ),
       canEdit && h('div', { style: { display: 'flex', gap: 4 }, onClick: e => e.stopPropagation() },
         h('button', { onClick: () => setEditingName(true),
@@ -713,16 +733,7 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
       h('button', { onClick: importComponentsFromOrder, style: { fontSize: 12, padding: '5px 14px', background: AM, color: AM2, border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap' } }, '+ Импортировать'),
       h('button', { onClick: () => setShowImportComponents(false), style: { fontSize: 12, padding: '5px 10px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 6, cursor: 'pointer' } }, 'Нет')
     ),
-    // Номер заявки — показывается всегда, редактируется только при canEdit
-    h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 } },
-      h('div', { style: { fontSize: 12, fontWeight: 500, color: 'var(--muted)', whiteSpace: 'nowrap' } }, '№ Заявки:'),
-      canEdit
-        ? h('input', { type: 'text', placeholder: 'напр. З-2026-047', value: needs.requestNumber || '',
-            style: { fontSize: 13, padding: '5px 10px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'var(--card)', color: 'var(--fg)', width: 180 },
-            onChange: e => updNeeds(p => ({ ...p, requestNumber: e.target.value })) })
-        : h('span', { style: { fontSize: 13, fontWeight: 500, color: needs.requestNumber ? 'var(--fg)' : 'var(--muted)' } }, needs.requestNumber || '—'),
-      needs.requestNumber && canEdit && h('span', { style: { fontSize: 11, color: 'var(--muted)' } }, '✓ сохранено')
-    ),
+
     // Шапка с кнопками
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' } },
       // Статистика
@@ -767,6 +778,7 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
         onDeleteItem:  deleteItem,
         onDeleteMany:  deleteManyItems,
         onAddItem:     addItem,
+        onUpdateGroupReqNum: (gid, num) => updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, requestNumber: num } : g) })),
         onUpdateItemStatus: updateAllStatus,
       })
     ),
