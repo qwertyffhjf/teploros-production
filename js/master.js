@@ -821,16 +821,21 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   }, [data, onUpdate, addToast]);
 
   const del = useCallback(async id => {
-    if (!(await askConfirm({ message: 'Переместить заказ в архив?', danger: false }))) return;
-    let d = { ...data, orders: data.orders.map(o => o.id === id ? { ...o, archived: true } : o) };
-    d = logAction(d, 'order_archive', { orderId: id, orderNumber: data.orders.find(o => o.id === id)?.number });
+    const order = data.orders.find(o => o.id === id);
+    const hasSubOrders = data.orders.some(o => o.parentOrderId === id);
+    const msg = hasSubOrders ? 'Переместить заказ и все подзаказы в архив?' : 'Переместить заказ в архив?';
+    if (!(await askConfirm({ message: msg, danger: false }))) return;
+    // Архивируем заказ и все его подзаказы
+    let d = { ...data, orders: data.orders.map(o => o.id === id || o.parentOrderId === id ? { ...o, archived: true } : o) };
+    d = logAction(d, 'order_archive', { orderId: id, orderNumber: order?.number });
     const prevDataOrder = data;
     onUpdate(d); DB.save(d).catch(() => onUpdate(prevDataOrder));
-    addToast(`Заказ ${data.orders.find(o=>o.id===id)?.number || ''} архивирован`, 'info', { label: 'Отменить', action: () => restore(id), ttl: 5000 });
+    addToast(`Заказ ${order?.number || ''} архивирован`, 'info', { label: 'Отменить', action: () => restore(id), ttl: 5000 });
   }, [data, onUpdate, addToast]);
 
   const restore = useCallback(async id => {
-    let d = { ...data, orders: data.orders.map(o => o.id === id ? { ...o, archived: false } : o) };
+    // Восстанавливаем заказ и все его подзаказы
+    let d = { ...data, orders: data.orders.map(o => o.id === id || o.parentOrderId === id ? { ...o, archived: false } : o) };
     d = logAction(d, 'order_restore', { orderId: id });
     onUpdate(d); DB.save(d).catch(() => onUpdate(data));
     addToast('Заказ восстановлен', 'success');
@@ -844,7 +849,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const resetOrderForm = () => { setEditingId(null); setForm(EMPTY_ORDER_FORM); setFieldErrors({}); };
   const guardedResetOrder = useDirtyGuard(isDirtyOrder, resetOrderForm, 'Заказ не сохранён. Закрыть форму?');
 
-  const ordersToShow = useMemo(() => data.orders.filter(o => (showArchived ? true : !o.archived) && (!o.shipped || showShipped) && (!filterType || o.productType === filterType)).sort((a,b) => { const priorityOrder = { critical:0, high:1, medium:2, low:3 }; return (priorityOrder[a.priority]||4) - (priorityOrder[b.priority]||4) || (b.createdAt||0) - (a.createdAt||0); }), [data.orders, showArchived, showShipped, filterType]);
+  const ordersToShow = useMemo(() => data.orders.filter(o => (showArchived ? true : !o.archived) && (!o.shipped || showShipped) && (!filterType || o.productType === filterType) && !o.parentOrderId).sort((a,b) => { const priorityOrder = { critical:0, high:1, medium:2, low:3 }; return (priorityOrder[a.priority]||4) - (priorityOrder[b.priority]||4) || (b.createdAt||0) - (a.createdAt||0); }), [data.orders, showArchived, showShipped, filterType]);
   const paginated = useMemo(() => { const start = (page-1)*pageSize; return ordersToShow.slice(start, start+pageSize); }, [ordersToShow, page]);
   // Состояние раскрытых родительских заказов
   const [expandedParents, setExpandedParents] = useState({});
@@ -1537,7 +1542,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
     const pendingOps  = data.ops.filter(o => o.status === 'pending' && !o.archived);
     const defectOps   = data.ops.filter(o => (o.status === 'defect' || o.status === 'rework') && !o.archived);
     const onCheckOps  = data.ops.filter(o => o.status === 'on_check' && !o.archived);
-    const wipOrders   = data.orders.filter(o => !o.archived && data.ops.some(op => op.orderId === o.id && op.status === 'in_progress'));
+    const wipOrders   = data.orders.filter(o => !o.archived && !o.isParentOrder && data.ops.some(op => op.orderId === o.id && op.status === 'in_progress'));
     const freeWorkers = data.workers.filter(w => isWorkerOnShift(w, data.timesheet) && !data.ops.some(op => op.status === 'in_progress' && op.workerIds?.includes(w.id)));
     return { activeOps, pendingOps, defectOps, onCheckOps, wipOrders, freeWorkers };
   }, [data.ops, data.orders, data.workers]);
