@@ -250,7 +250,7 @@ const GreetingBanner = memo(({ role, name, data, workerId }) => {
 
   // Метрики по роли
   const today = new Date(); today.setHours(0,0,0,0); const todayTs = today.getTime();
-  const activeOrders = (data.orders || []).filter(o => !o.archived && !o.shipped);
+  const activeOrders = (data.orders || []).filter(o => !o.archived && !o.shipped && !o.isParentOrder);
   const activeOps    = (data.ops    || []).filter(o => !o.archived);
   const now_ts = Date.now();
 
@@ -466,7 +466,7 @@ const Dashboard = memo(({ data, addToast, onOrderClick }) => {
   const busyWorkers = useMemo(() => new Set(activeOps.flatMap(op => op.workerIds || [])), [activeOps]);
   const freeWorkers = useMemo(() => activeWorkers.filter(w => !busyWorkers.has(w.id)), [activeWorkers, busyWorkers]);
   const criticalMaterials = useMemo(() => data.materials.filter(m => m.minStock && m.quantity <= m.minStock), [data.materials]);
-  const activeOrders = useMemo(() => data.orders.filter(o => !o.archived), [data.orders]);
+  const activeOrders = useMemo(() => data.orders.filter(o => !o.archived && !o.isParentOrder), [data.orders]);
   const activeDuels = useMemo(() => (data.duels || []).filter(d => d.status === 'active'), [data.duels]);
 
   // Заказы с прогрессом
@@ -1752,8 +1752,8 @@ const PDOScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [tab, setTab] = useState('orders');
   const TABS = [['orders','Заказы'],['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['plan','План'],['reports','Отчёты'],['auxops','Доп. работы'],['journal','Журнал'],['notifications','Уведомления']];
 
-  const overdueOrders = useMemo(() => data.orders.filter(o => !o.archived && o.deadline && new Date(o.deadline) < new Date()).length, [data.orders]);
-  const activeOrders  = useMemo(() => data.orders.filter(o => !o.archived).length, [data.orders]);
+  const overdueOrders = useMemo(() => data.orders.filter(o => !o.archived && !o.isParentOrder && o.deadline && new Date(o.deadline) < new Date()).length, [data.orders]);
+  const activeOrders  = useMemo(() => data.orders.filter(o => !o.archived && !o.isParentOrder).length, [data.orders]);
   const inProgOps     = useMemo(() => data.ops.filter(o => o.status === 'in_progress' && !o.archived).length, [data.ops]);
 
   return h('div', null,
