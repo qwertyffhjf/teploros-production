@@ -743,10 +743,11 @@ const parseOrderHeader = (text) => {
 };
 
 const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
-  const [step, setStep] = useState('upload'); // upload | preview | done
+  const [step, setStep] = useState('upload'); // upload | preview | split | done
   const [parsed, setParsed] = useState(null);  // { orderNumber, customer, deadline, product, productCode, qty, specs, components[] }
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState('');
+  const [createdParentId, setCreatedParentId] = useState(null); // id родительского заказа после создания
   const fileInputRef = React.useRef(null);
 
   const parseExcel = (arrayBuffer) => {
@@ -858,10 +859,10 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
     if (!parsed) return;
     const orderId = uid();
 
-    // Определяем тип продукта из справочника
     const productType = data.settings?.productTypes?.[0]?.id || 'boiler';
+    const stages = (data.productionStages || []).filter(s => !s.productType || s.productType === productType);
 
-    // Создаём заказ
+    // Родительский заказ — всегда без операций если qty > 1
     const newOrder = {
       id: orderId,
       number: parsed.orderNumber || `1С-${Date.now()}`,
@@ -877,19 +878,19 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
       archived: false,
       createdAt: now(),
       source: '1c_import',
-      components: parsed.components   // ← комплектующие сохраняются в заказ
+      components: parsed.components,
+      isParentOrder: parsed.productQty > 1,
     };
 
-    // Создаём операции по умолчанию
-    const stages = (data.productionStages || []).filter(s => !s.productType || s.productType === productType);
-    const newOps = stages.map(stage => ({
-      id: uid(), orderId, name: stage.name, qty: parsed.productQty,
+    // Если qty = 1 — операции создаём сразу (нет смысла делить)
+    const newOps = parsed.productQty === 1 ? stages.map(stage => ({
+      id: uid(), orderId, name: stage.name, qty: 1,
       workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
       archived: false, sectionId: null, equipmentId: null,
       requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.includes('Опресовка')
-    }));
+    })) : [];
 
-    // Создаём поставки материалов (если этапы имеют привязку)
+    // Поставки материалов — всегда у родителя
     const newDeliveries = [];
     stages.forEach(stage => {
       (stage.requiredMaterialIds || []).forEach(matId => {
@@ -915,16 +916,20 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
     await DB.save(d);
     onUpdate(d);
 
-    const msg = [
-      `Заказ ${newOrder.number} создан`,
-      `${newOps.length} операций`,
-      parsed.components.length > 0 ? `${parsed.components.length} комплектующих` : null,
-      newDeliveries.length > 0 ? `${newDeliveries.length} поставок материалов` : null
-    ].filter(Boolean).join(' · ');
-
-    addToast(`✓ ${msg}`, 'success');
-    setStep('done');
-    setTimeout(onClose, 1500);
+    if (parsed.productQty > 1) {
+      setCreatedParentId(orderId);
+      setStep('split');
+    } else {
+      const msg = [
+        `Заказ ${newOrder.number} создан`,
+        `${newOps.length} операций`,
+        parsed.components.length > 0 ? `${parsed.components.length} комплектующих` : null,
+        newDeliveries.length > 0 ? `${newDeliveries.length} поставок материалов` : null
+      ].filter(Boolean).join(' · ');
+      addToast(`✓ ${msg}`, 'success');
+      setStep('done');
+      setTimeout(onClose, 1500);
+    }
   };
 
   const S2 = {
@@ -1039,10 +1044,153 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
       ),
 
       // ШАГ 3: Готово
+      step === 'split' && createdParentId && h(SubOrderSplitStep, {
+        data, onUpdate, addToast, onClose,
+        parentOrderId: createdParentId,
+        parsed,
+      }),
+
       step === 'done' && h('div', { style: { textAlign: 'center', padding: 32 } },
         h('div', { style: { fontSize: 48, marginBottom: 12 } }, '✅'),
         h('div', { style: { fontSize: 16, fontWeight: 500 } }, 'Заказ создан!')
       )
+    )
+  );
+});
+
+// ==================== SubOrderSplitStep ====================
+// Шаг разделения родительского заказа (qty>1) на подзаказы
+// Отображается внутри Import1CModal после создания родительского заказа
+const SubOrderSplitStep = memo(({ data, onUpdate, addToast, onClose, parentOrderId, parsed }) => {
+  const parentOrder = data.orders.find(o => o.id === parentOrderId);
+  const qty = parsed?.productQty || parentOrder?.qty || 1;
+  const baseNumber = parentOrder?.number || '';
+  const productType = data.settings?.productTypes?.[0]?.id || 'boiler';
+  const stages = (data.productionStages || []).filter(s => !s.productType || s.productType === productType);
+
+  // Инициализируем подзаказы: номер авто, шильдик пустой
+  const initSubs = () => Array.from({ length: qty }, (_, i) => ({
+    idx: i,
+    number: `${baseNumber}/${i + 1}`,
+    serialNumber: '',
+  }));
+
+  const [subs, setSubs] = useState(initSubs);
+  const [saving, setSaving] = useState(false);
+
+  const updateSub = (idx, field, value) => {
+    setSubs(prev => prev.map(s => s.idx === idx ? { ...s, [field]: value } : s));
+  };
+
+  const handleSplit = async () => {
+    setSaving(true);
+    try {
+      // Создаём подзаказы с операциями
+      const newOrders = [];
+      const newOps = [];
+
+      subs.forEach(sub => {
+        const subId = uid();
+        newOrders.push({
+          id: subId,
+          number: sub.number.trim() || `${baseNumber}/${sub.idx + 1}`,
+          product: parentOrder.product,
+          productCode: parentOrder.productCode,
+          specs: parentOrder.specs,
+          qty: 1,
+          customer: parentOrder.customer,
+          deadline: parentOrder.deadline,
+          priority: parentOrder.priority || 'medium',
+          status: 'active',
+          shipped: false,
+          archived: false,
+          createdAt: now(),
+          source: parentOrder.source,
+          serialNumber: sub.serialNumber.trim() || '',
+          parentOrderId: parentOrderId,  // ← привязка к родителю
+        });
+
+        stages.forEach(stage => {
+          newOps.push({
+            id: uid(), orderId: subId, name: stage.name, qty: 1,
+            workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
+            archived: false, sectionId: null, equipmentId: null,
+            requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.includes('Опресовка'),
+            requiresPressureTest: stage.name.toLowerCase().includes('опресс'),
+          });
+        });
+      });
+
+      const d = {
+        ...data,
+        orders: [...data.orders, ...newOrders],
+        ops: [...data.ops, ...newOps],
+      };
+
+      await DB.save(d);
+      onUpdate(d);
+      addToast(`✓ Создано ${newOrders.length} подзаказов · ${newOps.length} операций`, 'success');
+      onClose();
+    } catch(e) {
+      addToast('Ошибка создания подзаказов: ' + e.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSkip = () => {
+    addToast(`Заказ ${baseNumber} создан без разделения`, 'info');
+    onClose();
+  };
+
+  return h('div', null,
+    h('div', { style: { background: AM3, border: `0.5px solid ${AM4}`, borderRadius: 10, padding: '12px 16px', marginBottom: 16 } },
+      h('div', { style: { fontSize: 13, fontWeight: 600, color: AM2, marginBottom: 4 } }, `📦 Заказ содержит ${qty} изделия`),
+      h('div', { style: { fontSize: 12, color: AM2 } },
+        `Разделите на подзаказы чтобы присвоить каждому изделию номер шильдика и сформировать отдельный паспорт ГИ.`
+      )
+    ),
+
+    h('div', { style: { border: '0.5px solid var(--border,#ddd)', borderRadius: 8, overflow: 'hidden', marginBottom: 16 } },
+      h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', background: 'var(--bg,#f5f5f2)', padding: '8px 12px', fontSize: 11, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' } },
+        h('span', null, 'Номер подзаказа'),
+        h('span', null, 'Шильдик (номер изделия)')
+      ),
+      subs.map((sub, i) =>
+        h('div', { key: sub.idx, style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, padding: '8px 12px', borderTop: '0.5px solid var(--border-soft,#eee)', alignItems: 'center' } },
+          h('input', {
+            type: 'text',
+            value: sub.number,
+            onChange: e => updateSub(sub.idx, 'number', e.target.value),
+            style: { ...S.inp, fontSize: 13, padding: '6px 10px' },
+            placeholder: `${baseNumber}/${i + 1}`,
+          }),
+          h('input', {
+            type: 'text',
+            value: sub.serialNumber,
+            onChange: e => updateSub(sub.idx, 'serialNumber', e.target.value),
+            style: { ...S.inp, fontSize: 13, padding: '6px 10px', fontFamily: 'monospace' },
+            placeholder: 'напр. КТ-2025-001',
+          })
+        )
+      )
+    ),
+
+    h('div', { style: { fontSize: 11, color: '#888', marginBottom: 16 } },
+      '💡 Шильдик можно заполнить позже в карточке каждого подзаказа'
+    ),
+
+    h('div', { style: { display: 'flex', gap: 8 } },
+      h('button', {
+        style: { ...abtn({ flex: 2 }), fontSize: 14 },
+        onClick: handleSplit,
+        disabled: saving,
+      }, saving ? '...' : `✓ Создать ${qty} подзаказа`),
+      h('button', {
+        style: gbtn({ flex: 1 }),
+        onClick: handleSkip,
+        disabled: saving,
+      }, 'Пропустить')
     )
   );
 });
