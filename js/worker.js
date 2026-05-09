@@ -598,7 +598,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   // Категории из core.js (глобальные AUX_CATEGORIES)
 
   // Доступные заказы (опционально — для привязки к заказу)
-  const availableOrders = useMemo(() => data.orders.filter(o => !o.archived).sort((a, b) => {
+  const availableOrders = useMemo(() => data.orders.filter(o => !o.archived && !o.isParentOrder).sort((a, b) => {
     const prio = { critical: 0, high: 1, medium: 2, low: 3 };
     return (prio[a.priority] || 4) - (prio[b.priority] || 4);
   }), [data.orders]);
