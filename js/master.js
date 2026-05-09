@@ -712,7 +712,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 
   const createDefaultOps = useCallback((orderId, productType, orderQty, drawingUrl) => {
     const stages = (data.productionStages || []).filter(s => !productType || s.productType === productType);
-    return stages.map(stage => ({ id: uid(), orderId, name: stage.name, qty: orderQty, workerIds: [], workerQty: {}, status: 'pending', createdAt: now(), plannedHours: undefined, archived: false, sectionId: null, equipmentId: null, plannedStartDate: undefined, drawingUrl: drawingUrl || undefined, requiresQC: stage.name.includes('свар') || stage.name.includes('Опресс') || stage.name.toLowerCase().includes('опресс') }));
+    return stages.map(stage => ({ id: uid(), orderId, name: stage.name, qty: orderQty, workerIds: [], workerQty: {}, status: 'pending', createdAt: now(), plannedHours: stage.plannedHours || undefined, archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null, plannedStartDate: undefined, drawingUrl: drawingUrl || stage.drawingUrl || undefined, requiresQC: stage.name.includes('свар') || stage.name.includes('Опресс') || stage.name.toLowerCase().includes('опресс'), requiresPressureTest: stage.name.toLowerCase().includes('опресс') }));
   }, [data.productionStages]);
 
   // Создаём поставки материалов по всем этапам у которых есть requiredMaterialIds
@@ -759,7 +759,10 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     if (!validate()) return;
     if (editingId) {
       const updatedOrders = data.orders.map(o => o.id === editingId ? { ...o, ...form, qty: Number(form.qty), priority: form.priority } : o);
-      const d = { ...data, orders: updatedOrders };
+      // Мигрируем drawingUrl из заказа во все его pending-операции (которые ещё не начаты)
+      const newDrawingUrl = form.drawingUrl.trim() || undefined;
+      const updatedOps = data.ops.map(o => o.orderId === editingId && o.status === 'pending' && newDrawingUrl ? { ...o, drawingUrl: newDrawingUrl } : o);
+      const d = { ...data, orders: updatedOrders, ops: updatedOps };
       onUpdate(d); DB.save(d).catch(() => onUpdate(data));
       setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '' }); setFieldErrors({});
       addToast(`Заказ ${form.number} обновлён`, 'success');
