@@ -824,13 +824,14 @@ const OrderCardModal = memo(({ orderId, data, onClose, canEdit = false, onEditMa
       h('div', { style: { background: 'linear-gradient(135deg, #1a1a18 0%, #2d2a24 100%)', padding: '20px 24px 16px', color: '#fff' } },
         h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' } },
           h('div', null,
-            h('div', { style: { fontSize: 11, fontWeight: 500, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', marginBottom: 4 } }, '📋 КАРТОЧКА ЗАКАЗА'),
+            h('div', { style: { fontSize: 11, fontWeight: 500, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', marginBottom: 4 } }, ord.isParentOrder ? '📦 РОДИТЕЛЬСКИЙ ЗАКАЗ' : ord.parentOrderId ? '🔧 ПОДЗАКАЗ' : '📋 КАРТОЧКА ЗАКАЗА'),
             h('div', { style: { fontSize: 26, fontWeight: 700, color: '#EF9F27', letterSpacing: '-0.5px' } }, ord.number),
           ),
           h('button', { onClick: onClose, style: { background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: 24, lineHeight: 1, padding: '0 4px' } }, '×')
         ),
         h('div', { style: { fontSize: 15, fontWeight: 500, color: '#fff', marginTop: 8, lineHeight: 1.3 } }, ord.product),
         ord.specs && h('div', { style: { fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 4 } }, ord.specs),
+        ord.serialNumber && h('div', { style: { fontSize: 13, color: '#EF9F27', marginTop: 6, fontFamily: 'monospace', fontWeight: 600 } }, `🏷 Шильдик: ${ord.serialNumber}`),
       ),
 
       h('div', { style: { padding: '20px 24px', maxHeight: '70vh', overflowY: 'auto' } },
@@ -852,6 +853,37 @@ const OrderCardModal = memo(({ orderId, data, onClose, canEdit = false, onEditMa
             )
           )
         ),
+
+        // Подзаказы (только для родительского заказа)
+        (() => {
+          if (!ord.isParentOrder) return null;
+          const subOrders = (data.orders || []).filter(o => o.parentOrderId === ord.id && !o.archived);
+          if (subOrders.length === 0) return h('div', { style: { padding: '10px 14px', background: AM3, borderRadius: 8, fontSize: 12, color: AM2, marginBottom: 14 } },
+            '⚠ Подзаказы ещё не созданы — разделите заказ на подзаказы через импорт из 1С'
+          );
+          return h('div', { style: { marginBottom: 14 } },
+            h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 8 } },
+              `🔧 Подзаказы (${subOrders.length} шт.)`
+            ),
+            h('div', { style: { border: '0.5px solid var(--border-soft)', borderRadius: 8, overflow: 'hidden' } },
+              subOrders.map((sub, i) => {
+                const subOps = (data.ops || []).filter(o => o.orderId === sub.id && !o.archived);
+                const subDone = subOps.filter(o => o.status === 'done').length;
+                const pct = subOps.length > 0 ? Math.round(subDone / subOps.length * 100) : 0;
+                return h('div', { key: sub.id, style: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderTop: i > 0 ? '0.5px solid var(--border-soft)' : 'none', fontSize: 12 } },
+                  h('span', { style: { color: AM, cursor: 'pointer', fontWeight: 500, minWidth: 80, textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => { if (typeof onClose === 'function') onClose(); setTimeout(() => window._tpOpenOrder && window._tpOpenOrder(sub.id), 100); } }, sub.number),
+                  h('div', { style: { flex: 1, height: 6, background: 'var(--bg)', borderRadius: 3, overflow: 'hidden' } },
+                    h('div', { style: { height: '100%', width: `${pct}%`, background: pct === 100 ? GN : AM, borderRadius: 3 } })
+                  ),
+                  h('span', { style: { fontSize: 11, color: 'var(--muted)', minWidth: 40, textAlign: 'right' } }, `${subDone}/${subOps.length}`),
+                  sub.serialNumber
+                    ? h('span', { style: { fontSize: 11, fontFamily: 'monospace', color: AM2, fontWeight: 500, minWidth: 80 } }, `🏷 ${sub.serialNumber}`)
+                    : h('span', { style: { fontSize: 11, color: '#ccc', minWidth: 80 } }, 'нет шильдика')
+                );
+              })
+            )
+          );
+        })(),
 
         // Комплектующие
         components.length > 0 && h('div', { style: { marginBottom: 14 } },
@@ -902,10 +934,18 @@ const OrderCardModal = memo(({ orderId, data, onClose, canEdit = false, onEditMa
           )
         ),
 
+        // Подзаказ: показываем шильдик и кнопку редактирования
+        ord.parentOrderId && h('div', { style: { background: 'rgba(239,159,39,0.06)', border: `0.5px solid ${AM}`, borderRadius: 8, padding: '10px 14px', marginBottom: 12 } },
+          h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 6 } }, '🏷 Шильдик (номер изделия)'),
+          ord.serialNumber
+            ? h('div', { style: { fontSize: 16, fontWeight: 600, fontFamily: 'monospace', color: AM2 } }, ord.serialNumber)
+            : h('div', { style: { fontSize: 12, color: '#aaa', fontStyle: 'italic' } }, 'Не присвоен — укажите в форме редактирования заказа')
+        ),
+
         // Кнопки — только для canEdit
         h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
-          canEdit && h('button', { onClick: () => { if (typeof generateFullPassport === 'function') generateFullPassport(ord, data); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '📄 Паспорт PDF'),
-          canEdit && h('button', { onClick: () => { if (typeof generateRouteSheet === 'function') generateRouteSheet(ord, data); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '📋 Маршрутный лист'),
+          canEdit && !ord.isParentOrder && h('button', { onClick: () => { if (typeof generateFullPassport === 'function') generateFullPassport(ord, data); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '📄 Паспорт PDF'),
+          canEdit && !ord.isParentOrder && h('button', { onClick: () => { if (typeof generateRouteSheet === 'function') generateRouteSheet(ord, data); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '📋 Маршрутный лист'),
           canEdit && onEditMaterials && h('button', { onClick: () => { onClose(); onEditMaterials(ord.id); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '🔩 Заявка на материалы'),
           h('button', { onClick: onClose, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, 'Закрыть')
         )
@@ -1051,6 +1091,9 @@ const generateFullPassport = (order, data) => {
             { text: 'Количество', bold: true }, { text: String(order.qty || 1) + ' шт' },
             { text: 'Код изделия', bold: true }, { text: order.productCode || '—' }
           ],
+          ...(order.serialNumber ? [[
+            { text: 'Шильдик (№ изделия)', bold: true, color: '#BA7517' }, { text: order.serialNumber, bold: true, color: '#BA7517', colSpan: 3 }, {}, {}
+          ]] : []),
           [
             { text: 'Дата создания', bold: true }, { text: order.createdAt ? new Date(order.createdAt).toLocaleDateString('ru') : '—' },
             { text: 'Срок отгрузки', bold: true }, { text: order.deadline ? new Date(order.deadline).toLocaleDateString('ru') : '—' }
