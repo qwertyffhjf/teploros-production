@@ -72,7 +72,7 @@ self.addEventListener('fetch', (event) => {
               caches.open(CDN_CACHE).then(cache => cache.put(event.request, clone));
             }
             return response;
-          }).catch(() => cached);
+          }).catch(() => cached || new Response('', { status: 503 }));
         })
       );
       return;
@@ -81,8 +81,9 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Локальные файлы (JS, HTML) — network-first с fallback в кеш
-  if (url.origin === location.origin) {
+  // Навигационные запросы (?opId=..., ?receive=... и т.д.) — всегда отдаём index.html
+  // caches.match не найдёт URL с query-параметрами, поэтому ищем index.html явно
+  if (event.request.mode === 'navigate') {
     event.respondWith(
       fetch(event.request)
         .then(response => {
@@ -92,12 +93,31 @@ self.addEventListener('fetch', (event) => {
           }
           return response;
         })
-        .catch(() => caches.match(event.request))
+        .catch(() =>
+          caches.match('./index.html').then(cached =>
+            cached || new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } })
+          )
+        )
     );
     return;
   }
 
-  // (CDN обрабатывается выше)
+  // Локальные статические файлы (JS, CSS, иконки) — network-first с fallback в кеш
+  event.respondWith(
+    fetch(event.request)
+      .then(response => {
+        if (response.ok) {
+          const clone = response.clone();
+          caches.open(APP_CACHE).then(cache => cache.put(event.request, clone));
+        }
+        return response;
+      })
+      .catch(() =>
+        caches.match(event.request).then(cached =>
+          cached || new Response('', { status: 503 })
+        )
+      )
+  );
 });
 
 // SKIP_WAITING от update-banner
