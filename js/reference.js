@@ -883,6 +883,11 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
     const other = allStages.filter(s => s.productType !== stageType);
     const d = { ...data, productionStages: [...other, ...n] }; DB.save(d).then(() => onUpdate(d));
   };
+  const saveStageDefaults = async (stageId, defaults) => {
+    const d = { ...data, productionStages: allStages.map(s => s.id === stageId ? { ...s, ...defaults } : s) };
+    await DB.save(d); onUpdate(d); addToast('Настройки этапа сохранены', 'success');
+  };
+
   const addCheckItem = async (stageId) => {
     if (!newCheckItem.trim()) return;
     const d = { ...data, productionStages: allStages.map(s => s.id === stageId ? { ...s, checklist: [...(s.checklist || []), newCheckItem.trim()] } : s) };
@@ -929,6 +934,7 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
                 h('div', { style: { display: 'flex', gap: 4 } },
                   h('button', { style: gbtn({ fontSize: 10, padding: '4px 6px' }), onClick: () => setEditingChecklist(editingChecklist === stage.id ? null : stage.id) }, editingChecklist === stage.id ? '▾ Чек-лист' : '▸ Чек-лист'),
                   h('button', { style: { ...gbtn({ fontSize: 10, padding: '4px 6px' }), ...(stage.requiredMaterialIds?.length > 0 ? { color: GN2, borderColor: GN } : {}) }, onClick: () => setEditingMaterials(editingMaterials === stage.id ? null : stage.id) }, editingMaterials === stage.id ? '▾ Материалы' : `▸ Материалы${stage.requiredMaterialIds?.length ? ` (${stage.requiredMaterialIds.length})` : ''}`),
+                  h('button', { style: { ...gbtn({ fontSize: 10, padding: '4px 6px' }), ...(stage.sectionId || stage.equipmentId || stage.plannedHours || stage.drawingUrl ? { color: AM2, borderColor: AM } : {}) }, onClick: () => setEditingDefaults(editingDefaults === stage.id ? null : stage.id) }, editingDefaults === stage.id ? '▾ Настройки' : `▸ Настройки${stage.sectionId || stage.equipmentId || stage.plannedHours || stage.drawingUrl ? ' ●' : ''}`),
                   h('button', { style: gbtn({ fontSize: 11, padding: '4px 6px' }), onClick: () => moveUp(index), disabled: index === 0 }, '↑'),
                   h('button', { style: gbtn({ fontSize: 11, padding: '4px 6px' }), onClick: () => moveDown(index), disabled: index === (data.productionStages || []).length-1 }, '↓'),
                   h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => deleteStage(stage.id) }, '✕')
@@ -954,6 +960,15 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
                     )
               ),
 
+              // Редактор настроек этапа (участок, оборудование, норма, чертёж)
+              editingDefaults === stage.id && h(StageDefaultsEditor, {
+                key: stage.id,
+                stage,
+                data,
+                onSave: (defaults) => { saveStageDefaults(stage.id, defaults); setEditingDefaults(null); },
+                onClose: () => setEditingDefaults(null),
+              }),
+
               // Редактор чек-листа
               editingChecklist === stage.id && h('div', { style: { marginTop: 8, padding: '10px 12px', background: '#f8f8f5', borderRadius: 8 } },
                 h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 } }, 'Чек-лист (при запуске операции копируется рабочему)'),
@@ -972,6 +987,90 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
               )
             )
           )
+    )
+  );
+});
+
+// ==================== StageDefaultsEditor ====================
+// Встроенный редактор настроек этапа: участок, оборудование, норма, чертёж
+const StageDefaultsEditor = memo(({ stage, data, onSave, onClose }) => {
+  const [form, setForm] = useState({
+    sectionId:    stage.sectionId    || '',
+    equipmentId:  stage.equipmentId  || '',
+    plannedHours: stage.plannedHours ? String(stage.plannedHours) : '',
+    drawingUrl:   stage.drawingUrl   || '',
+  });
+
+  const handleSave = () => {
+    onSave({
+      sectionId:    form.sectionId    || null,
+      equipmentId:  form.equipmentId  || null,
+      plannedHours: form.plannedHours ? Number(form.plannedHours) : null,
+      drawingUrl:   form.drawingUrl.trim() || null,
+    });
+  };
+
+  const sectionName  = form.sectionId   ? (data.sections  || []).find(s => s.id === form.sectionId)?.name   : null;
+  const equipName    = form.equipmentId ? (data.equipment || []).find(e => e.id === form.equipmentId)?.name  : null;
+
+  return h('div', { style: { marginTop: 8, padding: '12px 14px', background: AM3, borderRadius: 8, border: `0.5px solid ${AM4}` } },
+    h('div', { style: { fontSize: 10, color: AM2, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10, fontWeight: 600 } },
+      '⚙ Настройки по умолчанию — подставляются во все новые операции этого этапа'
+    ),
+    h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 } },
+      // Участок
+      h('div', null,
+        h('div', { style: { fontSize: 10, color: AM2, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4, fontWeight: 500 } }, 'Участок'),
+        h('select', {
+          style: { ...S.inp, width: '100%', fontSize: 12 },
+          value: form.sectionId,
+          onChange: e => setForm(p => ({ ...p, sectionId: e.target.value }))
+        },
+          h('option', { value: '' }, '— не задан —'),
+          (data.sections || []).map(s => h('option', { key: s.id, value: s.id }, s.name))
+        ),
+        sectionName && h('div', { style: { fontSize: 10, color: AM4, marginTop: 2 } }, `✓ ${sectionName}`)
+      ),
+      // Оборудование
+      h('div', null,
+        h('div', { style: { fontSize: 10, color: AM2, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4, fontWeight: 500 } }, 'Оборудование'),
+        h('select', {
+          style: { ...S.inp, width: '100%', fontSize: 12 },
+          value: form.equipmentId,
+          onChange: e => setForm(p => ({ ...p, equipmentId: e.target.value }))
+        },
+          h('option', { value: '' }, '— не задано —'),
+          (data.equipment || []).map(eq => h('option', { key: eq.id, value: eq.id }, eq.name))
+        ),
+        equipName && h('div', { style: { fontSize: 10, color: AM4, marginTop: 2 } }, `✓ ${equipName}`)
+      ),
+      // Норма времени
+      h('div', null,
+        h('div', { style: { fontSize: 10, color: AM2, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4, fontWeight: 500 } }, 'Норма времени, ч'),
+        h('input', {
+          type: 'number', step: '0.5', min: '0',
+          style: { ...S.inp, width: '100%', fontSize: 12 },
+          placeholder: 'напр. 2.5',
+          value: form.plannedHours,
+          onChange: e => setForm(p => ({ ...p, plannedHours: e.target.value }))
+        })
+      ),
+      // Ссылка на чертёж
+      h('div', null,
+        h('div', { style: { fontSize: 10, color: AM2, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4, fontWeight: 500 } }, 'Ссылка на чертёж / инструкцию'),
+        h('input', {
+          type: 'text',
+          style: { ...S.inp, width: '100%', fontSize: 12 },
+          placeholder: 'https://...',
+          value: form.drawingUrl,
+          onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value }))
+        }),
+        form.drawingUrl && h('a', { href: form.drawingUrl, target: '_blank', rel: 'noopener', style: { fontSize: 10, color: BL, marginTop: 2, display: 'block' } }, '📐 Открыть ссылку')
+      )
+    ),
+    h('div', { style: { display: 'flex', gap: 6 } },
+      h('button', { style: abtn({ fontSize: 11, padding: '5px 12px' }), onClick: handleSave }, '✓ Сохранить'),
+      h('button', { style: gbtn({ fontSize: 11, padding: '5px 12px' }), onClick: onClose }, 'Отмена')
     )
   );
 });
@@ -1735,6 +1834,3 @@ const ShiftSettings = memo(({ data, onUpdate, addToast }) => {
     )
   );
 });
-
-
-
