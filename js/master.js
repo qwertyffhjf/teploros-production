@@ -761,7 +761,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       const updatedOrders = data.orders.map(o => o.id === editingId ? { ...o, ...form, qty: Number(form.qty), priority: form.priority } : o);
       const d = { ...data, orders: updatedOrders };
       onUpdate(d); DB.save(d).catch(() => onUpdate(data));
-      setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '' }); setFieldErrors({});
+      setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '' }); setFieldErrors({});
       addToast(`Заказ ${form.number} обновлён`, 'success');
     } else {
       const newOrder = { id: uid(), ...form, qty: Number(form.qty), createdAt: now(), archived: false };
@@ -846,6 +846,9 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 
   const ordersToShow = useMemo(() => data.orders.filter(o => (showArchived ? true : !o.archived) && (!o.shipped || showShipped) && (!filterType || o.productType === filterType)).sort((a,b) => { const priorityOrder = { critical:0, high:1, medium:2, low:3 }; return (priorityOrder[a.priority]||4) - (priorityOrder[b.priority]||4) || (b.createdAt||0) - (a.createdAt||0); }), [data.orders, showArchived, showShipped, filterType]);
   const paginated = useMemo(() => { const start = (page-1)*pageSize; return ordersToShow.slice(start, start+pageSize); }, [ordersToShow, page]);
+  // Состояние раскрытых родительских заказов
+  const [expandedParents, setExpandedParents] = useState({});
+  const toggleParent = (orderId) => setExpandedParents(prev => ({ ...prev, [orderId]: !prev[orderId] }));
   useEffect(() => { setPage(1); }, [showArchived]);
 
   return h('div', null,
@@ -1087,18 +1090,33 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
         }))
       : h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
           h('thead', null, h('tr', null, ['Номер','Изделие','Тип','Кол-во','Дата отгрузки','Приоритет','Операций','Материалы','Статус',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
-          h('tbody', null, paginated.map(ord => {
+          h('tbody', null, paginated.flatMap(ord => {
+            // Получаем подзаказы если это родительский заказ
+            const subOrders = ord.isParentOrder ? data.orders.filter(o => o.parentOrderId === ord.id && !o.archived) : [];
+            const isExpanded = expandedParents[ord.id];
+
+            // Для родительского заказа — агрегируем прогресс по всем подзаказам
+            const opsForProgress = ord.isParentOrder
+              ? data.ops.filter(o => subOrders.some(s => s.id === o.orderId) && !o.archived)
+              : data.ops.filter(o => o.orderId === ord.id && !o.archived);
             const ops = data.ops.filter(o => o.orderId === ord.id);
-            const done = ops.filter(o => o.status === 'done').length;
-            const def = ops.filter(o => o.status === 'defect').length;
-            const st = ops.length === 0 ? 'pending' : done === ops.length ? 'done' : ops.some(o => o.status === 'in_progress') ? 'in_progress' : 'pending';
+            const done = opsForProgress.filter(o => o.status === 'done').length;
+            const def = opsForProgress.filter(o => o.status === 'defect').length;
+            const st = opsForProgress.length === 0 ? 'pending' : done === opsForProgress.length ? 'done' : opsForProgress.some(o => o.status === 'in_progress') ? 'in_progress' : 'pending';
             const nearDeadline = isShipmentNear(ord.deadline) && st !== 'done';
             const matConsumption = (data.materialConsumptions || []).filter(mc => ops.some(op => op.id === mc.opId));
             const matCost = matConsumption.reduce((s, mc) => { const mat = data.materials.find(m => m.id === mc.materialId); return s + mc.qty * (mat?.unitCost || 0); }, 0);
-            return h('tr', { key: ord.id, style: { background: ord.archived ? '#eee' : 'transparent' } },
+
+            const parentRow = h('tr', { key: ord.id, style: { background: ord.archived ? '#eee' : ord.isParentOrder ? 'rgba(239,159,39,0.04)' : 'transparent' } },
               h('td', { style: { ...S.td, fontWeight: 500 } },
+                ord.isParentOrder && h('button', {
+                  onClick: () => toggleParent(ord.id),
+                  style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: AM2, marginRight: 4, padding: '0 2px' },
+                  title: isExpanded ? 'Свернуть подзаказы' : 'Развернуть подзаказы'
+                }, isExpanded ? '▼' : '▶'),
                 h('span', { style: { color: AM, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => setViewOrderId(ord.id), title: 'Открыть карточку заказа' }, ord.number),
-                nearDeadline && h('span', { style: { marginLeft: 6, color: RD } }, '⏳')
+                nearDeadline && h('span', { style: { marginLeft: 6, color: RD } }, '⏳'),
+                ord.isParentOrder && h('span', { style: { marginLeft: 6, fontSize: 10, padding: '1px 6px', borderRadius: 8, background: AM3, color: AM2, fontWeight: 500 } }, `${subOrders.length} подзаказов`)
               ),
               h('td', { style: { ...S.td, cursor: 'pointer', color: 'var(--fg)' }, onClick: () => setViewOrderId(ord.id), title: 'Открыть карточку заказа' },
                 h('span', { style: { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 260, whiteSpace: 'nowrap' } }, ord.product),
@@ -1108,22 +1126,56 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
               h('td', { style: S.td }, ord.qty),
               h('td', { style: { ...S.td, color: nearDeadline ? RD : '#888' } }, ord.deadline || '—'),
               h('td', { style: { ...S.td, color: PRIORITY[ord.priority]?.color || '#888' } }, PRIORITY[ord.priority]?.label || '—'),
-              h('td', { style: S.td }, `${done}/${ops.length}`, def > 0 && h('span', { style: { marginLeft: 4, color: RD } }, `⚠ ${def}`)),
+              h('td', { style: S.td }, ord.isParentOrder ? `${done}/${opsForProgress.length}` : `${done}/${ops.length}`, def > 0 && h('span', { style: { marginLeft: 4, color: RD } }, `⚠ ${def}`)),
               h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 11 } }, matConsumption.length > 0 ? `${matCost.toLocaleString()}₽` : '—'),
               h('td', { style: S.td }, h(Badge, { st: ord.shipped ? 'shipped' : st })),
               h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
                 !ord.archived ? [
                   h('button', { key: 'edit', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Редактировать', title: 'Редактировать заказ', onClick: () => edit(ord) }, '✎'),
                   h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'В архив', title: 'Переместить в архив', onClick: () => del(ord.id) }, '✕'),
-                  h('button', { key: 'passport', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Паспорт PDF', title: 'Сформировать паспорт изделия (PDF)', onClick: () => generateFullPassport(ord, data) }, '📄'),
+                  !ord.isParentOrder && h('button', { key: 'passport', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Паспорт PDF', title: 'Сформировать паспорт изделия (PDF)', onClick: () => generateFullPassport(ord, data) }, '📄'),
                   h('button', { key: 'materials', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Заявка на материалы', title: 'Заявка на материалы', onClick: () => setMaterialOrderId(ord.id) }, '🔩'),
-                  h('button', { key: 'route', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Маршрутный лист PDF', title: 'Распечатать маршрутный лист (PDF)', onClick: () => generateRouteSheet(ord, data) }, '📋'),
-                  h('button', { key: 'deps', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Зависимости операций', title: 'Настроить зависимости операций', onClick: () => setDepEditorOrderId(ord.id) }, '🔗'),
-                  !ord.shipped && h('button', { key: 'ship', style: { ...gbtn({ fontSize: 11, padding: '4px 8px' }), color: GN2, borderColor: GN }, 'aria-label': 'Отгрузить заказ', title: 'Отметить заказ как отгруженный', onClick: () => shipOrder(ord.id) }, '🚚'),
+                  !ord.isParentOrder && h('button', { key: 'route', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Маршрутный лист PDF', title: 'Распечатать маршрутный лист (PDF)', onClick: () => generateRouteSheet(ord, data) }, '📋'),
+                  !ord.isParentOrder && h('button', { key: 'deps', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Зависимости операций', title: 'Настроить зависимости операций', onClick: () => setDepEditorOrderId(ord.id) }, '🔗'),
+                  !ord.shipped && !ord.isParentOrder && h('button', { key: 'ship', style: { ...gbtn({ fontSize: 11, padding: '4px 8px' }), color: GN2, borderColor: GN }, 'aria-label': 'Отгрузить заказ', title: 'Отметить заказ как отгруженный', onClick: () => shipOrder(ord.id) }, '🚚'),
                   ord.shipped && h('span', { key: 'shipped', style: { fontSize: 10, padding: '3px 6px', background: GN3, color: GN2, borderRadius: 4, fontWeight: 500 } }, `✓ Отгружен${ord.shippedAt ? ' ' + new Date(ord.shippedAt).toLocaleDateString('ru') : ''}`)
                 ] : h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Восстановить', title: 'Восстановить из архива', onClick: () => restore(ord.id) }, '↩ Восстановить')
               ))
             );
+
+            // Строки подзаказов (видны когда раскрыт родитель)
+            const subRows = (ord.isParentOrder && isExpanded) ? subOrders.map(sub => {
+              const subOps = data.ops.filter(o => o.orderId === sub.id && !o.archived);
+              const subDone = subOps.filter(o => o.status === 'done').length;
+              const subDef = subOps.filter(o => o.status === 'defect').length;
+              const subSt = subOps.length === 0 ? 'pending' : subDone === subOps.length ? 'done' : subOps.some(o => o.status === 'in_progress') ? 'in_progress' : 'pending';
+              return h('tr', { key: sub.id, style: { background: 'rgba(239,159,39,0.02)', borderLeft: `3px solid ${AM3}` } },
+                h('td', { style: { ...S.td, fontWeight: 500, paddingLeft: 28 } },
+                  h('span', { style: { color: AM4, fontSize: 11 } }, '└ '),
+                  h('span', { style: { color: AM, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted', fontSize: 12 }, onClick: () => setViewOrderId(sub.id), title: 'Открыть карточку подзаказа' }, sub.number)
+                ),
+                h('td', { style: { ...S.td, cursor: 'pointer' }, onClick: () => setViewOrderId(sub.id) },
+                  h('span', { style: { fontSize: 12, color: 'var(--muted)' } }, sub.product),
+                  sub.serialNumber && h('span', { style: { fontSize: 11, color: AM2, fontFamily: 'monospace', display: 'block', fontWeight: 500 } }, `🏷 ${sub.serialNumber}`)
+                ),
+                h('td', { style: { ...S.td, fontSize: 11, color: 'var(--muted)' } }, '—'),
+                h('td', { style: S.td }, '1'),
+                h('td', { style: { ...S.td, color: '#888', fontSize: 12 } }, sub.deadline || '—'),
+                h('td', { style: { ...S.td, color: PRIORITY[sub.priority]?.color || '#888', fontSize: 12 } }, PRIORITY[sub.priority]?.label || '—'),
+                h('td', { style: S.td }, `${subDone}/${subOps.length}`, subDef > 0 && h('span', { style: { marginLeft: 4, color: RD } }, `⚠ ${subDef}`)),
+                h('td', { style: S.td }, '—'),
+                h('td', { style: S.td }, h(Badge, { st: sub.shipped ? 'shipped' : subSt })),
+                h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
+                  h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), title: 'Редактировать подзаказ', onClick: () => edit(sub) }, '✎'),
+                  h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), title: 'Паспорт PDF', onClick: () => generateFullPassport(sub, data) }, '📄'),
+                  h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), title: 'Маршрутный лист', onClick: () => generateRouteSheet(sub, data) }, '📋'),
+                  !sub.shipped && h('button', { style: { ...gbtn({ fontSize: 11, padding: '4px 8px' }), color: GN2, borderColor: GN }, title: 'Отгрузить', onClick: () => shipOrder(sub.id) }, '🚚'),
+                  sub.shipped && h('span', { style: { fontSize: 10, padding: '3px 6px', background: GN3, color: GN2, borderRadius: 4, fontWeight: 500 } }, '✓ Отгружен')
+                ))
+              );
+            }) : [];
+
+            return [parentRow, ...subRows];
           }))
         ))),
     h('div', { className: 'pagination' },
