@@ -507,7 +507,11 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
         h('div', { style:{ display:'flex', gap:4, marginBottom:8, flexWrap:'wrap' } },
           [8,7,6,4].map(v => h('button', { key:v,
             style:{ padding:'4px 8px', borderRadius:6, fontSize:12, fontWeight:500, background:GN3, color:GN2, border:`0.5px solid ${GN}`, cursor:'pointer' },
-            onClick: () => setPopupVal(String(v))
+            onClick: async () => {
+              if (!activeCell) return;
+              await setCellVal(activeCell.workerId, activeCell.day, { h: v, code: null });
+              setActiveCell(null); setPopupVal('');
+            }
           }, `${v}ч`))
         ),
         h('div', { style:{ fontSize:11, color:'#888', marginBottom:6 } }, 'Отсутствие / особые случаи:'),
