@@ -41,35 +41,241 @@ const Leaderboard = memo(({ data }) => {
   );
 });
 
-// ==================== LoginScreen (единый PIN-вход, мастер-ключ для сброса PIN) ====================
+// teploros · app.js — patch for LoginScreen (Apple-inspired skin)
+// ───────────────────────────────────────────────────────────────────────────
+// HOW TO APPLY
+//   1. Открой js/app.js
+//   2. Найди блок, который начинается со строки:
+//        // ==================== LoginScreen ...
+//      и заканчивается перед строкой:
+//        // ==================== GreetingBanner ====================
+//   3. Полностью замени его кодом ниже.
+//   4. Закоммить и запушь.
+// ───────────────────────────────────────────────────────────────────────────
+//
+// Что меняется визуально:
+//   • Хедер «teploros» отрисован как маленькая фирменная марка (квадратный
+//     токен с буквой t + wordmark рядом), а не огромный заголовок по центру.
+//   • Заголовок «Вход в систему» — display 28/600 с tight-tracking,
+//     подзаголовок caps как в Apple.
+//   • Роли — без emoji. Чистые pill-чипы (rounded.pill), серый фон,
+//     активная роль = заливка брендом + тёмный ink-цвет текста.
+//   • Контролёр с очередью на проверке: красная точка-индикатор справа от
+//     лейбла вместо «🔍 Контролёр 🔴 N».
+//   • PIN-поле узкое, центрированное; индикатор «глаз» — через SVG, не emoji.
+//   • Кнопка «Войти» — Apple pill primary (border-radius 9999px, scale-press).
+//   • Лидерборд под футером — без emoji-медалей; ранг как тонкий numeric chip.
+//   • Никаких теней на UI; единственная тень допустима только в продуктовых
+//     рендерах (здесь их нет).
+
 const LoginScreen = ({ data, onLogin, onResetPin }) => {
-  const onCheckCount = useMemo(() => (data?.ops || []).filter(o => o.status === 'on_check' && !o.archived).length, [data]);
+  const onCheckCount = useMemo(
+    () => (data?.ops || []).filter(o => o.status === 'on_check' && !o.archived).length,
+    [data]
+  );
   const [role, setRole] = useState('worker');
   const [pin, setPin] = useState('');
   const [showPin, setShowPin] = useState(false);
   const [loginError, setLoginError] = useState('');
-  // Состояние для режима сброса PIN мастер-ключом
   const [resetMode, setResetMode] = useState(false);
   const [resetKey, setResetKey] = useState('');
-  const [resetTarget, setResetTarget] = useState(''); // id сотрудника
+  const [resetTarget, setResetTarget] = useState('');
   const [resetNewPin, setResetNewPin] = useState('');
   const [resetError, setResetError] = useState('');
   const [resetSuccess, setResetSuccess] = useState('');
 
   const settings = data.settings || EMPTY_DATA.settings;
 
-  // Карта PIN → роль и данные пользователя
+  // ─── Apple-inspired tokens (локальные, чтобы не плодить глобальный CSS) ───
+  const T = {
+    bg:        '#f5f5f7',
+    canvas:    '#ffffff',
+    ink:       '#1d1d1f',
+    inkMuted:  '#6e6e73',
+    fine:      '#86868b',
+    hairline:  '#e6e6e9',
+    brand:     '#EF9F27',
+    brandInk:  '#412402',
+    brandSoft: '#fdf3e0',
+    danger:    '#d6342f',
+    info:      '#0066cc',
+    success:   '#1d8a3a',
+    fontDisp:  '"SF Pro Display", "Inter", system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
+    fontText:  '"SF Pro Text", "Inter", system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
+  };
+
+  // ─── Стили (вместо S.inp / abtn / gbtn — единый Apple-словарь) ───
+  const stylesL = {
+    page: {
+      minHeight: '100vh',
+      background: T.bg,
+      fontFamily: T.fontText,
+      color: T.ink,
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      padding: '40px 20px 80px',
+    },
+    brand: {
+      display: 'flex', alignItems: 'center', gap: 10, marginBottom: 48,
+    },
+    brandMark: {
+      width: 32, height: 32, borderRadius: 8,
+      background: T.brand, color: T.brandInk,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: T.fontDisp, fontWeight: 700, fontSize: 17, letterSpacing: '-0.4px',
+    },
+    brandWord: {
+      fontFamily: T.fontDisp, fontSize: 17, fontWeight: 600,
+      color: T.ink, letterSpacing: '-0.3px',
+    },
+    eyebrow: {
+      fontSize: 12, fontWeight: 600, color: T.fine,
+      letterSpacing: '0.12em', textTransform: 'uppercase',
+      marginBottom: 12, textAlign: 'center',
+    },
+    h1: {
+      fontFamily: T.fontDisp,
+      fontSize: 40, fontWeight: 600, lineHeight: 1.1,
+      letterSpacing: '-0.6px',
+      color: T.ink, margin: 0, textAlign: 'center',
+    },
+    sub: {
+      marginTop: 8, fontSize: 17, color: T.inkMuted,
+      letterSpacing: '-0.374px', textAlign: 'center',
+      maxWidth: 420,
+    },
+    rolesWrap: {
+      width: '100%', maxWidth: 720,
+      marginTop: 36, marginBottom: 28,
+      display: 'flex', flexDirection: 'column', gap: 10,
+    },
+    rolesGroupLbl: {
+      fontSize: 11, fontWeight: 600, color: T.fine,
+      letterSpacing: '0.08em', textTransform: 'uppercase',
+      marginBottom: 2, marginLeft: 4,
+    },
+    rolesRow: {
+      display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center',
+    },
+    chip: (active) => ({
+      position: 'relative',
+      padding: '9px 18px',
+      minHeight: 36,
+      borderRadius: 9999,
+      border: active ? 'none' : `1px solid ${T.hairline}`,
+      background: active ? T.brand : T.canvas,
+      color: active ? T.brandInk : T.ink,
+      fontFamily: T.fontText,
+      fontSize: 14, fontWeight: active ? 600 : 500,
+      letterSpacing: '-0.224px',
+      cursor: 'pointer',
+      transition: 'transform 120ms cubic-bezier(0.4,0,0.2,1), background 120ms',
+    }),
+    chipDot: {
+      display: 'inline-block', marginLeft: 8,
+      width: 6, height: 6, borderRadius: '50%',
+      background: T.danger, verticalAlign: 'middle',
+    },
+    pinBlock: {
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+      marginBottom: 16,
+    },
+    pinShell: { position: 'relative', display: 'inline-block' },
+    pinInput: {
+      width: 240, height: 56,
+      background: T.canvas,
+      border: `1px solid ${T.hairline}`,
+      borderRadius: 12,
+      padding: '0 48px 0 18px',
+      fontFamily: T.fontDisp,
+      fontSize: 22, letterSpacing: '0.42em', textAlign: 'center',
+      color: T.ink,
+      outline: 'none',
+      transition: 'border-color 120ms, box-shadow 120ms',
+    },
+    pinInputFocus: {
+      borderColor: T.brand,
+      boxShadow: `0 0 0 3px rgba(239,159,39,0.18)`,
+    },
+    pinEye: {
+      position: 'absolute', right: 8, top: '50%',
+      transform: 'translateY(-50%)',
+      background: 'transparent', border: 'none',
+      width: 32, height: 32, borderRadius: 8,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      cursor: 'pointer', color: T.fine,
+      minHeight: 32, padding: 0,
+    },
+    pinHint: { fontSize: 13, color: T.inkMuted, letterSpacing: '-0.224px' },
+    err: {
+      color: T.danger, fontSize: 13, fontWeight: 500,
+      letterSpacing: '-0.224px', textAlign: 'center', marginTop: 4,
+    },
+    primary: {
+      marginTop: 12,
+      background: T.brand, color: T.brandInk,
+      border: 'none', borderRadius: 9999,
+      padding: '13px 40px',
+      fontFamily: T.fontText,
+      fontSize: 17, fontWeight: 600, letterSpacing: '-0.374px',
+      cursor: 'pointer', minHeight: 44,
+      transition: 'transform 120ms',
+    },
+    link: {
+      marginTop: 18,
+      background: 'none', border: 'none', padding: 0,
+      color: T.info, fontSize: 14, letterSpacing: '-0.224px',
+      cursor: 'pointer', minHeight: 'auto',
+    },
+    divider: {
+      width: '100%', maxWidth: 720,
+      height: 1, background: T.hairline,
+      margin: '36px 0 24px',
+    },
+    leadersWrap: { width: '100%', maxWidth: 720 },
+    resetWrap: {
+      width: '100%', maxWidth: 380,
+      display: 'flex', flexDirection: 'column', gap: 14,
+      marginTop: 40,
+    },
+    label: {
+      fontSize: 12, fontWeight: 600, color: T.fine,
+      letterSpacing: '0.04em', textTransform: 'uppercase',
+      marginBottom: 6, display: 'block',
+    },
+    field: {
+      width: '100%', height: 44,
+      background: T.canvas,
+      border: `1px solid ${T.hairline}`,
+      borderRadius: 10, padding: '0 14px',
+      fontFamily: T.fontText, fontSize: 15, color: T.ink,
+      outline: 'none', letterSpacing: '-0.224px',
+    },
+    fieldCenter: {
+      textAlign: 'center', fontSize: 22, letterSpacing: '0.32em',
+      fontFamily: T.fontDisp,
+    },
+    btnGhost: {
+      flex: 1,
+      background: T.canvas, color: T.ink,
+      border: `1px solid ${T.hairline}`,
+      borderRadius: 9999, padding: '12px 22px',
+      fontSize: 15, fontWeight: 500, letterSpacing: '-0.224px',
+      cursor: 'pointer', minHeight: 44,
+    },
+  };
+
+  // ─── PIN resolve / login (логика без изменений) ───
   const resolvePin = (inputPin) => {
     const p = inputPin.trim();
     if (!p) return null;
-    if (pinMatch(p, settings.masterPin || 'H_18D7OAL')) return { role: 'master', workerId: null, sectionId: null, name: 'Начальник цеха' };
-    if (pinMatch(p, settings.controllerPin || 'H_18D8GW1')) return { role: 'controller', workerId: null, sectionId: null, name: 'Контролёр' };
-    if (pinMatch(p, settings.warehousePin || 'H_18D99HH')) return { role: 'warehouse', workerId: null, sectionId: null, name: 'Склад' };
-    if (pinMatch(p, settings.pdoPin || 'H_18DA22X')) return { role: 'pdo', workerId: null, sectionId: null, name: 'ПДО' };
-    if (pinMatch(p, settings.directorPin || 'H_18DAUOD')) return { role: 'director', workerId: null, sectionId: null, name: 'Руководитель' };
-    if (pinMatch(p, settings.hrPin || 'H_18DBN9T')) return { role: 'hr', workerId: null, sectionId: null, name: 'HR' };
+    if (pinMatch(p, settings.masterPin     || 'H_18D7OAL')) return { role: 'master',      workerId: null, sectionId: null, name: 'Начальник цеха' };
+    if (pinMatch(p, settings.controllerPin || 'H_18D8GW1')) return { role: 'controller',  workerId: null, sectionId: null, name: 'Контролёр' };
+    if (pinMatch(p, settings.warehousePin  || 'H_18D99HH')) return { role: 'warehouse',   workerId: null, sectionId: null, name: 'Склад' };
+    if (pinMatch(p, settings.pdoPin        || 'H_18DA22X')) return { role: 'pdo',         workerId: null, sectionId: null, name: 'ПДО' };
+    if (pinMatch(p, settings.directorPin   || 'H_18DAUOD')) return { role: 'director',    workerId: null, sectionId: null, name: 'Руководитель' };
+    if (pinMatch(p, settings.hrPin         || 'H_18DBN9T')) return { role: 'hr',          workerId: null, sectionId: null, name: 'HR' };
     if (pinMatch(p, settings.shopMasterPin || 'H_18DCFV9')) return { role: 'shop_master', workerId: null, sectionId: null, name: 'Сменный мастер' };
-    if (pinMatch(p, settings.adminPin || 'H_18DD8GP')) return { role: 'admin', workerId: null, sectionId: null, name: 'Администратор' };
+    if (pinMatch(p, settings.adminPin      || 'H_18DD8GP')) return { role: 'admin',       workerId: null, sectionId: null, name: 'Администратор' };
     const worker = data.workers.find(w => pinMatch(p, w.pin));
     if (worker) return { role: 'worker', workerId: worker.id, sectionId: worker.sectionId || null, name: worker.name };
     return null;
@@ -81,14 +287,11 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
     if (!pin.trim()) { setLoginError('Введите PIN-код'); return; }
     const resolved = resolvePin(pin);
     if (!resolved) { setLoginError('Неверный PIN-код'); return; }
-    // Если выбрали роль «Чат» — входим с правами сотрудника, но открываем чат
     if (role === 'chat') {
       if (resolved.role === 'worker') { onLogin('chat', resolved.workerId, resolved.sectionId); return; }
-      // Мастер и контролёр тоже могут зайти в чат
       onLogin('chat_' + resolved.role, null, null);
       return;
     }
-    // Обычный вход — роль определяется PIN-ом, кнопка выбора роли — подсказка, не ограничение
     onLogin(resolved.role, resolved.workerId, resolved.sectionId);
   };
 
@@ -97,7 +300,6 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
     if (!pinMatch(resetKey.trim(), settings.masterKey || 'H_18DETNL')) { setResetError('Неверный мастер-ключ'); return; }
     if (!resetTarget) { setResetError('Выберите сотрудника'); return; }
     if (!resetNewPin.trim() || resetNewPin.trim().length < 4) { setResetError('Новый PIN — минимум 4 цифры'); return; }
-    // Проверяем что новый PIN не занят
     const conflict = data.workers.find(w => w.id !== resetTarget && pinMatch(resetNewPin.trim(), w.pin));
     if (conflict) { setResetError(`PIN уже занят (${conflict.name})`); return; }
     onResetPin(resetTarget, resetNewPin.trim());
@@ -107,124 +309,160 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
   };
 
   const roleHints = {
-    worker: 'PIN сотрудника',
-    master: 'PIN мастера',
-    controller: 'PIN контролёра',
-    warehouse: 'PIN кладовщика',
-    chat: 'Любой PIN для чата',
-    dashboard: '',
+    worker:      'PIN сотрудника',
+    master:      'PIN начальника цеха',
+    shop_master: 'PIN сменного мастера',
+    controller:  'PIN контролёра',
+    warehouse:   'PIN кладовщика',
+    pdo:         'PIN ПДО',
+    director:    'PIN руководителя',
+    hr:          'PIN HR',
+    admin:       'PIN администратора',
+    chat:        'Любой PIN для чата',
+    dashboard:   '',
   };
 
-  if (resetMode) return h('div', { style: { minHeight: 480, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 12, maxWidth: 360, margin: '0 auto' } },
-    h('div', { style: { textAlign: 'center', marginBottom: 8 } },
-      h('div', { style: { fontSize: 22, fontWeight: 500 } }, '🔑 Сброс PIN'),
-      h('div', { style: { fontSize: 12, color: '#888', marginTop: 4 } }, 'Введите мастер-ключ для сброса любого PIN')
+  // SVG-глаз (без emoji)
+  const EyeIcon = (open) => h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round' },
+    open
+      ? [h('path', { key: 'p', d: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z' }),
+         h('circle', { key: 'c', cx: 12, cy: 12, r: 3 })]
+      : [h('path', { key: 'p', d: 'M3 3l18 18M10.6 10.6a3 3 0 004.2 4.2M9.5 5.4A10.7 10.7 0 0112 5c6.5 0 10 7 10 7a16.4 16.4 0 01-3.3 4.1M6.6 6.6A16.4 16.4 0 002 12s3.5 7 10 7c1.4 0 2.7-.3 4-.7' })]
+  );
+
+  // ─── Reset mode ───
+  if (resetMode) return h('div', { style: stylesL.page },
+    h('div', { style: stylesL.brand },
+      h('div', { style: stylesL.brandMark }, 't'),
+      h('div', { style: stylesL.brandWord }, 'teploros')
     ),
-    h('div', { style: { width: '100%', display: 'flex', flexDirection: 'column', gap: 10 } },
+    h('div', { style: stylesL.eyebrow }, 'Сброс PIN'),
+    h('h1', { style: stylesL.h1 }, 'Аварийный сброс'),
+    h('div', { style: stylesL.sub }, 'Введите мастер-ключ, выберите сотрудника и задайте новый PIN.'),
+
+    h('div', { style: stylesL.resetWrap },
       h('div', null,
-        h('label', { style: S.lbl }, 'Мастер-ключ (аварийный сброс PIN)'),
-        h('input', { type: 'password', inputMode: 'numeric', style: { ...S.inp, width: '100%', textAlign: 'center', fontSize: 20, letterSpacing: '0.3em' }, placeholder: '• • • •', value: resetKey, maxLength: 8, onChange: e => setResetKey(e.target.value) })
+        h('label', { style: stylesL.label }, 'Мастер-ключ'),
+        h('input', { type: 'password', inputMode: 'numeric',
+          style: { ...stylesL.field, ...stylesL.fieldCenter },
+          placeholder: '••••', value: resetKey, maxLength: 8,
+          onChange: e => setResetKey(e.target.value) })
       ),
       h('div', null,
-        h('label', { style: S.lbl }, 'Сотрудник'),
-        h('select', { style: { ...S.inp, width: '100%' }, value: resetTarget, onChange: e => setResetTarget(e.target.value) },
-          h('option', { value: '' }, '— выберите сотрудника —'),
+        h('label', { style: stylesL.label }, 'Сотрудник'),
+        h('select', { style: stylesL.field, value: resetTarget, onChange: e => setResetTarget(e.target.value) },
+          h('option', { value: '' }, '— выберите —'),
           data.workers.map(w => h('option', { key: w.id, value: w.id }, w.name))
         )
       ),
       h('div', null,
-        h('label', { style: S.lbl }, 'Новый PIN (минимум 4 цифры)'),
-        h('input', { type: 'password', inputMode: 'numeric', style: { ...S.inp, width: '100%', textAlign: 'center', fontSize: 20, letterSpacing: '0.3em' }, placeholder: '• • • •', value: resetNewPin, maxLength: 8, onChange: e => setResetNewPin(e.target.value), onKeyDown: e => e.key === 'Enter' && handleMasterKeyReset() })
+        h('label', { style: stylesL.label }, 'Новый PIN (минимум 4 цифры)'),
+        h('input', { type: 'password', inputMode: 'numeric',
+          style: { ...stylesL.field, ...stylesL.fieldCenter },
+          placeholder: '••••', value: resetNewPin, maxLength: 8,
+          onChange: e => setResetNewPin(e.target.value),
+          onKeyDown: e => e.key === 'Enter' && handleMasterKeyReset() })
+      ),
+      resetError   && h('div', { role: 'alert',  style: stylesL.err }, resetError),
+      resetSuccess && h('div', { role: 'status', style: { ...stylesL.err, color: T.success } }, resetSuccess),
+      h('div', { style: { display: 'flex', gap: 10, marginTop: 6 } },
+        h('button', { style: stylesL.btnGhost, onClick: () => { setResetMode(false); setResetKey(''); setResetNewPin(''); setResetTarget(''); setResetError(''); } }, 'Назад'),
+        h('button', { style: { ...stylesL.primary, marginTop: 0, flex: 1 }, onClick: handleMasterKeyReset }, 'Сбросить PIN')
       )
-    ),
-    resetError && h('div', { role: 'alert', style: { color: RD, fontSize: 12, fontWeight: 500, textAlign: 'center' } }, resetError),
-    resetSuccess && h('div', { role: 'status', style: { color: GN, fontSize: 12, fontWeight: 500, textAlign: 'center' } }, resetSuccess),
-    h('div', { style: { display: 'flex', gap: 8, marginTop: 8 } },
-      h('button', { style: gbtn({ flex: 1 }), onClick: () => { setResetMode(false); setResetKey(''); setResetNewPin(''); setResetTarget(''); setResetError(''); } }, '← Назад'),
-      h('button', { style: abtn({ flex: 1 }), onClick: handleMasterKeyReset }, 'Сбросить PIN')
     )
   );
 
-  return h('div', { style: { minHeight: 480, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 12 } },
-    h('div', { style: { textAlign: 'center', marginBottom: 16 } },
-      h('div', { style: { fontSize: 32, fontWeight: 700, color: AM, lineHeight: 1.2 } }, settings.welcomeTitle || 'teploros'),
-      h('div', { style: { fontSize: 14, color: '#888', letterSpacing: '0.15em', textTransform: 'uppercase' } }, settings.welcomeSubtitle || 'надежная техника')
+  // ─── Group definitions (без emoji, чистые лейблы) ───
+  const groupProduction = [
+    ['worker',      'Сотрудник'],
+    ['shop_master', 'Сменный мастер'],
+    ['controller',  'Контролёр',    onCheckCount > 0 ? onCheckCount : null],
+    ['warehouse',   'Склад'],
+  ];
+  const groupManagement = [
+    ['pdo',      'ПДО'],
+    ['master',   'Начальник цеха'],
+    ['director', 'Руководитель'],
+    ['hr',       'HR'],
+    ['admin',    'Администратор'],
+  ];
+  const groupView = [
+    ['dashboard', 'Дашборд'],
+    ['chat',      'Чат'],
+  ];
+
+  const renderRow = (items) => h('div', { style: stylesL.rolesRow },
+    items.map(([r, label, badge]) => h('button', {
+      key: r,
+      style: stylesL.chip(role === r),
+      onClick: () => { setRole(r); setLoginError(''); setPin(''); },
+      onMouseDown: (e) => { e.currentTarget.style.transform = 'scale(0.95)'; },
+      onMouseUp:   (e) => { e.currentTarget.style.transform = ''; },
+      onMouseLeave:(e) => { e.currentTarget.style.transform = ''; },
+    }, label, badge ? h('span', { style: stylesL.chipDot, title: `${badge} на проверке` }) : null))
+  );
+
+  // ─── Main view ───
+  return h('div', { style: stylesL.page },
+    // Brand
+    h('div', { style: stylesL.brand },
+      h('div', { style: stylesL.brandMark }, 't'),
+      h('div', { style: stylesL.brandWord }, settings.welcomeTitle || 'teploros')
     ),
-    h('div', { style: { textAlign: 'center', marginBottom: 20 } },
-      h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.15em' } }, settings.welcomeLabel || 'Производственный учёт · НТ'),
-      h('div', { style: { fontSize: 22, fontWeight: 500 } }, 'Вход в систему')
+
+    // Title
+    h('div', { style: stylesL.eyebrow }, settings.welcomeLabel || 'Производственный учёт · НТ'),
+    h('h1', { style: stylesL.h1 }, 'Вход в систему'),
+    h('div', { style: stylesL.sub }, settings.welcomeSubtitle ? settings.welcomeSubtitle : 'Выберите свою роль и введите PIN-код.'),
+
+    // Roles
+    h('div', { style: stylesL.rolesWrap },
+      renderRow(groupProduction),
+      renderRow(groupManagement),
+      renderRow(groupView),
     ),
-    // Кнопки выбора роли
-    h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 } },
-      // Производственный персонал
-      h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' } },
-        [
-          ['worker',      '👷 Сотрудник'],
-          ['shop_master', '🔧 Сменный мастер'],
-          ['controller',  onCheckCount > 0 ? `🔍 Контролёр 🔴${onCheckCount}` : '🔍 Контролёр'],
-          ['warehouse',   '📦 Склад'],
-        ].map(([r, label]) => h('button', {
-          key: r,
-          style: role === r ? abtn({ minWidth: 110, fontSize: 12 }) : r === 'controller' && onCheckCount > 0 ? { ...gbtn({ minWidth: 110, fontSize: 12 }), borderColor: RD, color: RD, fontWeight: 600 } : gbtn({ minWidth: 110, fontSize: 12 }),
-          onClick: () => { setRole(r); setLoginError(''); setPin(''); }
-        }, label))
-      ),
-      // Управленческий персонал
-      h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' } },
-        [
-          ['pdo',      '📋 ПДО'],
-          ['master',   '🔑 Начальник цеха'],
-          ['director', '👔 Руководитель'],
-          ['hr',       '👥 HR'],
-          ['admin',    '⚙ Администратор'],
-        ].map(([r, label]) => h('button', {
-          key: r,
-          style: role === r ? abtn({ minWidth: 110, fontSize: 12 }) : gbtn({ minWidth: 110, fontSize: 12 }),
-          onClick: () => { setRole(r); setLoginError(''); setPin(''); }
-        }, label))
-      ),
-      // Просмотр
-      h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' } },
-        [
-          ['dashboard', '📊 Дашборд'],
-          ['chat',      '💬 Чат'],
-        ].map(([r, label]) => h('button', {
-          key: r,
-          style: role === r ? abtn({ minWidth: 110, fontSize: 12 }) : gbtn({ minWidth: 110, fontSize: 12 }),
-          onClick: () => { setRole(r); setLoginError(''); setPin(''); }
-        }, label))
-      )
-    ),
-    // PIN-поле — для всех кроме дашборда
+
+    // PIN field / dashboard hint
     role !== 'dashboard'
-      ? h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 } },
-          h('div', { style: { position: 'relative', display: 'inline-block' } },
+      ? h('div', { style: stylesL.pinBlock },
+          h('div', { style: stylesL.pinShell },
             h('input', {
               type: showPin ? 'text' : 'password', inputMode: 'numeric', autoFocus: true,
-              style: { ...S.inp, width: 220, textAlign: 'center', fontSize: 24, letterSpacing: '0.4em', padding: '10px 40px 10px 10px' },
-              placeholder: '• • • •', value: pin,
-              onChange: e => setPin(e.target.value),
+              style: stylesL.pinInput,
+              placeholder: '••••', value: pin, maxLength: 8,
+              onChange:  e => setPin(e.target.value),
               onKeyDown: e => e.key === 'Enter' && handleLogin(),
-              maxLength: 8
+              onFocus:   e => Object.assign(e.target.style, stylesL.pinInputFocus),
+              onBlur:    e => { e.target.style.borderColor = T.hairline; e.target.style.boxShadow = 'none'; },
             }),
-            h('button', { type: 'button', style: { position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#888', padding: 4, minHeight: 'auto' }, onClick: () => setShowPin(v => !v) }, showPin ? '🙈' : '👁')
+            h('button', { type: 'button', style: stylesL.pinEye,
+              'aria-label': showPin ? 'Скрыть PIN' : 'Показать PIN',
+              onClick: () => setShowPin(v => !v) }, EyeIcon(!showPin))
           ),
-          h('div', { style: { fontSize: 11, color: '#888' } }, roleHints[role] || 'Введите PIN-код')
+          h('div', { style: stylesL.pinHint }, roleHints[role] || 'Введите PIN-код')
         )
-      : h('div', { style: { fontSize: 11, color: '#888', padding: '8px 0' } }, 'Открытый просмотр без PIN'),
-    loginError && h('div', { role: 'alert', style: { color: RD, fontSize: 12, fontWeight: 500 } }, loginError),
-    h('button', { style: abtn({ marginTop: 8, padding: '10px 40px', fontSize: 14 }), onClick: handleLogin }, 'Войти'),
-    // Ссылка на сброс PIN мастер-ключом
-    h('button', { style: { background: 'none', border: 'none', fontSize: 11, color: '#aaa', cursor: 'pointer', marginTop: 12, padding: 0, textDecoration: 'underline' }, onClick: () => setResetMode(true) }, 'Сбросить PIN мастер-ключом'),
-    // Таблица лидеров
-    h('div', { style: { width: '100%', maxWidth: 500, marginTop: 24, borderTop: '0.5px solid rgba(0,0,0,0.08)', paddingTop: 16 } },
+      : h('div', { style: stylesL.pinHint }, 'Открытый просмотр без PIN'),
+
+    loginError && h('div', { role: 'alert', style: stylesL.err }, loginError),
+
+    // Submit
+    h('button', {
+      style: stylesL.primary, onClick: handleLogin,
+      onMouseDown:  e => { e.currentTarget.style.transform = 'scale(0.95)'; },
+      onMouseUp:    e => { e.currentTarget.style.transform = ''; },
+      onMouseLeave: e => { e.currentTarget.style.transform = ''; },
+    }, 'Войти'),
+
+    // Reset link
+    h('button', { style: stylesL.link, onClick: () => setResetMode(true) }, 'Сбросить PIN мастер-ключом'),
+
+    // Divider + leaderboard
+    h('div', { style: stylesL.divider }),
+    h('div', { style: stylesL.leadersWrap },
       h(Leaderboard, { data })
     )
   );
 };
-
-
-
 
 // ==================== GreetingBanner ====================
 // Баннер приветствия — показывается 5 секунд после входа, затем сам закрывается
