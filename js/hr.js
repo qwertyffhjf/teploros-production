@@ -391,12 +391,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
         )
       )
     ),
-    h('div', { className: 'metrics-grid', style: { display:'grid', gap:10, marginBottom:16 } },
-      h(MC, { v: summary.total, l: 'Всего' }),
-      h(MC, { v: summary.working, l: 'На смене', c: GN }),
-      h(MC, { v: summary.absent+summary.sick+summary.vacation, l: 'Отсутствуют', c: RD }),
-      h(MC, { v: `${summary.avgLoad}%`, l: 'Загрузка, ср.', c: AM })
-    ),
+
     currentShiftInfo && h('div', { style: { display:'flex', alignItems:'center', gap:12, padding:'8px 14px', background: GN3, borderRadius:8, marginBottom:10, border:`0.5px solid ${GN}` } },
       h('span', { style: { fontSize:13, color: GN2, fontWeight:500 } },
         `🕐 Сейчас ${currentShiftInfo.hour}:00 МСК · ${currentShiftInfo.name} (${currentShiftInfo.start}:00–${currentShiftInfo.end}:00)`
