@@ -844,6 +844,7 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
   const [newName, setNewName] = useState('');
   const [editingChecklist, setEditingChecklist] = useState(null);
   const [editingMaterials, setEditingMaterials] = useState(null);
+  const [editingDefaults, setEditingDefaults] = useState(null);
   const [newCheckItem, setNewCheckItem] = useState('');
   const [stageType, setStageType] = useState('boiler');
   const { ask: askConfirm, confirmEl } = useConfirm();
