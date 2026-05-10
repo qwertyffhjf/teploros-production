@@ -89,11 +89,11 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
   // ─── Apple-inspired tokens (локальные, чтобы не плодить глобальный CSS) ───
   const T = {
     bg:        '#f5f5f7',
-    canvas:    '#ffffff',
-    ink:       '#1d1d1f',
-    inkMuted:  '#6e6e73',
-    fine:      '#86868b',
-    hairline:  '#e6e6e9',
+    canvas:    'rgba(255,255,255,0.12)',
+    ink:       '#ffffff',
+    inkMuted:  'rgba(255,255,255,0.72)',
+    fine:      'rgba(255,255,255,0.55)',
+    hairline:  'rgba(255,255,255,0.22)',
     brand:     '#EF9F27',
     brandInk:  '#412402',
     brandSoft: '#fdf3e0',
@@ -108,7 +108,7 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
   const stylesL = {
     page: {
       minHeight: '100vh',
-      background: T.bg,
+      background: `linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.55)), url('./78878.webp') center/cover no-repeat fixed`,
       fontFamily: T.fontText,
       color: T.ink,
       display: 'flex', flexDirection: 'column', alignItems: 'center',
