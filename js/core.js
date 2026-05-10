@@ -520,11 +520,12 @@ const getWorkerStatusToday = (workerId, timesheet) => {
   return 'absent';
 };
 
-// Проверяет что сотрудник сейчас на смене (источник — табель, fallback — w.status)
+// Проверяет что сотрудник сейчас на смене (источник — только табель)
+// Нет записи в табеле = не на смене (не считаем w.status)
 const isWorkerOnShift = (worker, timesheet) => {
   const fromTs = getWorkerStatusToday(worker.id, timesheet);
-  if (fromTs !== null) return fromTs === 'working';
-  return (worker.status || 'working') === 'working';
+  if (fromTs === null) return false; // нет записи в табеле — не на смене
+  return fromTs === 'working';
 };
 
 // ==================== useTheme ====================
