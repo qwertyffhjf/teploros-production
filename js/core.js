@@ -515,6 +515,7 @@ const getWorkerStatusToday = (workerId, timesheet) => {
   if (cell.code === 'К')                          return 'vacation';
   if (cell.code === 'НН')                         return 'absent';
   if (cell.code === 'У')                          return 'absent';
+  if (cell.code === 'СД')                         return 'working'; // сдельная оплата = на смене
   if (cell.h > 0)                                 return 'working';
   return 'absent';
 };
