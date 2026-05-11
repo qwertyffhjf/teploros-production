@@ -126,4 +126,28 @@ self.addEventListener('message', (event) => {
   if (event.data?.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
+  // Push-уведомление ОТК: воркер отправляет NOTIFY_QC с данными операции
+  if (event.data?.type === 'NOTIFY_QC') {
+    const { opName, orderNumber } = event.data;
+    self.registration.showNotification('🔍 Требуется контроль ОТК', {
+      body: 'Заказ ' + orderNumber + ' · ' + opName,
+      icon: './78878.webp',
+      badge: './78878.webp',
+      tag: 'qc-' + Date.now(),
+      requireInteraction: true,
+      data: { url: self.registration.scope }
+    });
+  }
+});
+
+// Клик по уведомлению — открыть/сфокусировать вкладку
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      const existing = list.find(c => c.url.startsWith(self.registration.scope));
+      if (existing) return existing.focus();
+      return clients.openWindow(event.notification.data?.url || self.registration.scope);
+    })
+  );
 });
