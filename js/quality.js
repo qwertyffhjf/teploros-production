@@ -61,11 +61,21 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
         style: Notification.permission === 'granted'
           ? { ...gbtn({ fontSize: 11 }), color: GN2, borderColor: GN }
           : gbtn({ fontSize: 11 }),
-        onClick: () => Notification.requestPermission().then(p => {
-          if (p === 'granted') addToast('✓ Push-уведомления включены! Теперь уведомления придут даже при закрытой вкладке', 'success');
-          else addToast('Push-уведомления отклонены браузером', 'error');
-        })
-      }, Notification.permission === 'granted' ? '🔔 Push включён' : '🔕 Включить Push')
+        onClick: () => {
+          if (Notification.permission === 'granted') {
+            // Тест: отправить пробное уведомление
+            navigator.serviceWorker?.ready.then(reg => {
+              reg.active?.postMessage({ type: 'NOTIFY_QC', opName: 'Тестовая операция', orderNumber: '№0' });
+            });
+            addToast('Тестовое уведомление отправлено', 'info');
+          } else {
+            Notification.requestPermission().then(p => {
+              if (p === 'granted') addToast('✓ Push-уведомления включены — ОТК будет получать оповещения при появлении операций на контроле', 'success');
+              else addToast('Браузер отклонил разрешение на уведомления', 'error');
+            });
+          }
+        }
+      }, Notification.permission === 'granted' ? '🔔 Push включён (тест)' : '🔕 Включить Push-уведомления')
     ),
     h(SectionAnalytics, { section: 'quality', data }),
     // Модалка отклонения — вместо prompt()
