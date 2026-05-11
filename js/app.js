@@ -2040,6 +2040,9 @@ function App() {
     // QR-приёмка материала: ?receive=deliveryId
     const receiveId = params.get('receive');
     if (receiveId) setReceiveDeliveryId(receiveId);
+    // QR-бирка заказа: ?order=orderId — открыть карточку заказа
+    const orderId = params.get('order');
+    if (orderId) setSelectedOrderId(orderId);
     if ("Notification" in window && Notification.permission !== "denied") { Notification.requestPermission().catch(() => {}); }
 
     // Защита от двух вкладок: при открытии второй вкладки — предупреждение
