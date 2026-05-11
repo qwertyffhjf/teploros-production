@@ -796,6 +796,142 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
 //   h(OrderCardModal, { orderId, data, onClose, canEdit: false })
 // canEdit: true — показывает кнопки PDF, редактирования (для мастера/ПДО)
 // canEdit: false — только просмотр (для рабочего, склада)
+// ==================== Печать бирки заказа А4 ====================
+const printOrderLabel = (ord, data) => {
+  const ops        = (data.ops || []).filter(o => o.orderId === ord.id && !o.archived);
+  const done       = ops.filter(o => o.status === 'done').length;
+  const components = ord.components || [];
+  const priority   = { low: 'Низкий', medium: 'Средний', high: 'Высокий', critical: 'Критический' }[ord.priority] || '—';
+  const prioColor  = { low: '#888', medium: '#378ADD', high: '#EF9F27', critical: '#E24B4A' }[ord.priority] || '#888';
+  const daysLeft   = ord.deadline ? Math.ceil((new Date(ord.deadline) - Date.now()) / 86400000) : null;
+  const deadlineStr = ord.deadline
+    ? ord.deadline + (daysLeft !== null ? (daysLeft < 0 ? ' (просрочен ' + Math.abs(daysLeft) + ' дн.)' : ' (' + daysLeft + ' дн.)') : '')
+    : '—';
+  const deadlineColor = daysLeft === null ? '#888' : daysLeft < 0 ? '#E24B4A' : daysLeft <= 3 ? '#EF9F27' : '#333';
+
+  const subOrders = (data.orders || []).filter(o => o.parentOrderId === ord.id && !o.archived);
+  const appUrl = window.location.origin + window.location.pathname + '?order=' + ord.id;
+
+  // QR через API (не требует библиотеки)
+  const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=' + encodeURIComponent(appUrl);
+
+  const row = (label, val, color) =>
+    '<tr><td style="padding:5px 10px 5px 0;font-size:12px;color:#666;white-space:nowrap;vertical-align:top">' + label + '</td>' +
+    '<td style="padding:5px 0;font-size:12px;color:' + (color || '#111') + ';font-weight:500">' + val + '</td></tr>';
+
+  const compRows = components.length > 0
+    ? components.map((c, i) =>
+        '<tr style="background:' + (i % 2 === 0 ? '#fafaf8' : '#fff') + '">' +
+        '<td style="padding:5px 10px;font-size:11px;border-bottom:0.5px solid #eee">' + (c.name || c.description || '—') + '</td>' +
+        '<td style="padding:5px 10px;font-size:11px;color:#888;border-bottom:0.5px solid #eee;font-family:monospace">' + (c.code || c.article || '—') + '</td>' +
+        '<td style="padding:5px 10px;font-size:11px;text-align:center;font-weight:600;border-bottom:0.5px solid #eee">' + (c.qty || 1) + '</td>' +
+        '<td style="padding:5px 10px;font-size:11px;color:#888;border-bottom:0.5px solid #eee">' + (c.unit || 'шт') + '</td>' +
+        '</tr>'
+      ).join('')
+    : '<tr><td colspan="4" style="padding:10px;font-size:12px;color:#aaa;text-align:center">Нет комплектующих</td></tr>';
+
+  const subRows = subOrders.length > 0
+    ? subOrders.map((s, i) => {
+        const sOps = (data.ops || []).filter(o => o.orderId === s.id && !o.archived);
+        const sDone = sOps.filter(o => o.status === 'done').length;
+        const pct = sOps.length > 0 ? Math.round(sDone / sOps.length * 100) : 0;
+        return '<tr style="background:' + (i % 2 === 0 ? '#fafaf8' : '#fff') + '">' +
+          '<td style="padding:5px 10px;font-size:11px;font-weight:600;color:#EF9F27;border-bottom:0.5px solid #eee">' + s.number + '</td>' +
+          '<td style="padding:5px 10px;font-size:11px;border-bottom:0.5px solid #eee">' + (s.product || '—') + '</td>' +
+          '<td style="padding:5px 10px;font-size:11px;font-family:monospace;color:#888;border-bottom:0.5px solid #eee">' + (s.serialNumber || '—') + '</td>' +
+          '<td style="padding:5px 10px;font-size:11px;text-align:center;border-bottom:0.5px solid #eee">' + sDone + '/' + sOps.length + ' (' + pct + '%)</td>' +
+          '</tr>';
+      }).join('')
+    : '';
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Бирка заказа ${ord.number}</title>
+<style>
+  @page { margin: 12mm; }
+  @media print { .no-print { display: none !important; } body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  body { font-family: system-ui, Arial, sans-serif; color: #111; background: #fff; margin: 0; }
+  .header { background: linear-gradient(135deg, #1a1a18 0%, #2d2a24 100%); color: #fff; padding: 16px 20px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: flex-start; }
+  .order-num { font-size: 32px; font-weight: 800; color: #EF9F27; letter-spacing: -1px; }
+  .product { font-size: 16px; font-weight: 600; color: #fff; margin-top: 4px; }
+  .specs { font-size: 12px; color: rgba(255,255,255,0.6); margin-top: 3px; }
+  .serial { font-size: 13px; color: #EF9F27; font-family: monospace; font-weight: 700; margin-top: 6px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 6px; }
+  .body { border: 0.5px solid #e0e0e0; border-top: none; border-radius: 0 0 8px 8px; padding: 16px 20px; }
+  .section-title { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: #888; text-transform: uppercase; margin: 14px 0 6px; }
+  .info-table { border-collapse: collapse; width: 100%; }
+  .data-table { border-collapse: collapse; width: 100%; border: 0.5px solid #e0e0e0; border-radius: 6px; overflow: hidden; }
+  .data-table thead td { padding: 5px 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #888; background: #f5f5f2; border-bottom: 0.5px solid #e0e0e0; }
+  .progress-bar { height: 4px; background: #eee; border-radius: 2px; margin-top: 4px; }
+  .progress-fill { height: 100%; border-radius: 2px; background: #EF9F27; }
+  .footer { margin-top: 14px; padding-top: 10px; border-top: 0.5px solid #eee; display: flex; align-items: center; justify-content: space-between; }
+  .print-btn { padding: 8px 24px; font-size: 13px; border-radius: 6px; border: none; background: #EF9F27; color: #412402; cursor: pointer; font-weight: 600; }
+</style></head><body>
+
+<div class="no-print" style="text-align:right;padding:8px 0 12px">
+  <button class="print-btn" onclick="window.print()">🖨 Печать</button>
+</div>
+
+<div class="header">
+  <div>
+    <div style="font-size:10px;color:rgba(255,255,255,0.4);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:4px">
+      ${ord.isParentOrder ? '📦 РОДИТЕЛЬСКИЙ ЗАКАЗ' : ord.parentOrderId ? '🔧 ПОДЗАКАЗ' : '📋 БИРКА ЗАКАЗА'}
+    </div>
+    <div class="order-num">${ord.number}</div>
+    <div class="product">${ord.product || '—'}</div>
+    ${ord.specs ? '<div class="specs">' + ord.specs + '</div>' : ''}
+    ${ord.serialNumber ? '<div class="serial">🏷 ' + ord.serialNumber + '</div>' : ''}
+    <div class="badge" style="background:${prioColor}22;color:${prioColor};border:1px solid ${prioColor}44">${priority}</div>
+  </div>
+  <div style="text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+    <img src="${qrUrl}" width="100" height="100" style="background:#fff;padding:4px;border-radius:4px" alt="QR">
+    <div style="font-size:9px;color:rgba(255,255,255,0.35)">Карточка заказа</div>
+  </div>
+</div>
+
+<div class="body">
+
+  <div class="section-title">🗂 Основная информация</div>
+  <table class="info-table">
+    ${ord.customer ? row('Заказчик', ord.customer) : ''}
+    ${ord.productCode ? row('Код изделия', ord.productCode) : ''}
+    ${row('Количество', (ord.qty || 1) + ' шт')}
+    ${row('Дедлайн', deadlineStr, deadlineColor)}
+    ${row('Прогресс', done + ' / ' + ops.length + ' операций')}
+    ${ord.drawingUrl ? row('Чертёж / ТЗ', '<a href="' + ord.drawingUrl + '" style="color:#378ADD">' + ord.drawingUrl + '</a>') : ''}
+  </table>
+
+  ${ord.notes ? '<div class="section-title">💬 Примечания</div><div style="font-size:12px;color:#555;padding:6px 10px;background:#fafaf8;border-radius:6px;border:0.5px solid #eee">' + ord.notes + '</div>' : ''}
+
+  ${components.length > 0 ? `
+  <div class="section-title">📦 Комплектующие (${components.length} поз.)</div>
+  <table class="data-table">
+    <thead><tr>
+      <td>Наименование</td><td>Код / Артикул</td><td style="text-align:center">Кол-во</td><td>Ед.</td>
+    </tr></thead>
+    <tbody>${compRows}</tbody>
+  </table>` : ''}
+
+  ${subOrders.length > 0 ? `
+  <div class="section-title">🔧 Подзаказы (${subOrders.length} шт.)</div>
+  <table class="data-table">
+    <thead><tr><td>Номер</td><td>Изделие</td><td>Шильдик</td><td style="text-align:center">Прогресс</td></tr></thead>
+    <tbody>${subRows}</tbody>
+  </table>` : ''}
+
+  <div class="footer">
+    <div style="font-size:10px;color:#aaa">Напечатано: ${new Date().toLocaleString('ru-RU')} · teploros</div>
+    <div style="font-size:9px;color:#ccc;font-family:monospace">${ord.id}</div>
+  </div>
+</div>
+
+</body></html>`;
+
+  const w = window.open('', '_blank', 'width=800,height=900');
+  if (!w) { alert('Разрешите всплывающие окна для этого сайта'); return; }
+  w.document.write(html);
+  w.document.close();
+};
+
 const OrderCardModal = memo(({ orderId, data, onClose, canEdit = false, onEditMaterials, onEditDeps }) => {
   if (!orderId) return null;
   const ord = data.orders.find(o => o.id === orderId);
@@ -947,6 +1083,10 @@ const OrderCardModal = memo(({ orderId, data, onClose, canEdit = false, onEditMa
           canEdit && !ord.isParentOrder && h('button', { onClick: () => { if (typeof generateFullPassport === 'function') generateFullPassport(ord, data); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '📄 Паспорт PDF'),
           canEdit && !ord.isParentOrder && h('button', { onClick: () => { if (typeof generateRouteSheet === 'function') generateRouteSheet(ord, data); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '📋 Маршрутный лист'),
           canEdit && onEditMaterials && h('button', { onClick: () => { onClose(); onEditMaterials(ord.id); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '🔩 Заявка на материалы'),
+          h('button', {
+            onClick: () => printOrderLabel(ord, data),
+            style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer', fontWeight: 500 }
+          }, '🖨 Бирка А4'),
           h('button', { onClick: onClose, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, 'Закрыть')
         )
       )
