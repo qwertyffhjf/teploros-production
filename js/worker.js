@@ -379,6 +379,17 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       addToast('Ошибка сохранения — данные не записаны', 'error');
       vibrateAction('error');
     });
+    // Push-уведомление ОТК если операция ушла на контроль
+    if (status === 'on_check' && 'serviceWorker' in navigator) {
+      const order = data.orders.find(o => o.id === op.orderId);
+      navigator.serviceWorker.ready.then(reg => {
+        reg.active?.postMessage({
+          type: 'NOTIFY_QC',
+          opName: op.name,
+          orderNumber: order?.number || '?'
+        });
+      });
+    }
     // Показать модал расхода материалов только если функция включена в настройках
     if ((status === 'done' || status === 'on_check') && data.materials.length > 0
         && data.settings?.materialTrackingEnabled) {
