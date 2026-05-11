@@ -695,6 +695,68 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
 
 
 // ==================== WarehouseScreen (Склад) ====================
+// ==================== Печать бирки группы материалов А4 ====================
+const printGroupLabel = (order, group, items) => {
+  const appUrl = window.location.origin + window.location.pathname + '?order=' + order.id;
+  const qrUrl  = 'https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=' + encodeURIComponent(appUrl);
+  const daysLeft = order.deadline ? Math.ceil((new Date(order.deadline) - Date.now()) / 86400000) : null;
+  const deadlineStr = order.deadline
+    ? new Date(order.deadline).toLocaleDateString('ru-RU') + (daysLeft !== null ? (daysLeft < 0 ? ' (просрочен ' + Math.abs(daysLeft) + ' дн.)' : ' (' + daysLeft + ' дн.)') : '')
+    : '—';
+  const deadlineColor = daysLeft === null ? '#888' : daysLeft < 0 ? '#E24B4A' : daysLeft <= 3 ? '#EF9F27' : '#333';
+  const ST_LABELS = { pending: 'Ожидается', ordered: 'Заказано', partial: 'Частично', received: 'Получено' };
+  const ST_COLORS = { pending: '#888', ordered: '#185FA5', partial: '#BA7517', received: '#0F6E56' };
+  const rows = items.map((item, i) => {
+    const stColor = ST_COLORS[item.status] || '#888';
+    const stLabel = ST_LABELS[item.status] || item.status;
+    const sub = [item.code, item.material, item.thickness ? item.thickness + 'мм' : null].filter(Boolean).join(' · ');
+    return '<tr style="background:' + (i % 2 === 0 ? '#fafaf8' : '#fff') + '">' +
+      '<td style="padding:7px 10px;font-size:12px;border-bottom:0.5px solid #eee;vertical-align:top">' +
+        '<div style="font-weight:500">' + item.name + '</div>' +
+        (sub ? '<div style="font-size:10px;color:#888;margin-top:2px">' + sub + '</div>' : '') +
+        (item.note ? '<div style="font-size:10px;color:#BA7517;margin-top:2px">⚠ ' + item.note + '</div>' : '') +
+      '</td>' +
+      '<td style="padding:7px 10px;font-size:12px;font-weight:600;text-align:center;border-bottom:0.5px solid #eee;white-space:nowrap">' +
+        item.qty + ' ' + (item.unit || 'шт') + (item.length ? ' × ' + item.length + 'м' : '') +
+      '</td>' +
+      '<td style="padding:7px 10px;font-size:11px;text-align:center;border-bottom:0.5px solid #eee">' +
+        '<span style="padding:2px 8px;border-radius:10px;background:' + stColor + '18;color:' + stColor + ';font-weight:500;white-space:nowrap">' + stLabel + '</span>' +
+      '</td></tr>';
+  }).join('');
+  const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Бирка ' + group.name + ' · Заказ ' + order.number + '</title>' +
+    '<style>@page{margin:12mm}@media print{.no-print{display:none!important}body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}body{font-family:system-ui,Arial,sans-serif;color:#111;background:#fff;margin:0}table{border-collapse:collapse;width:100%}</style></head><body>' +
+    '<div class="no-print" style="text-align:right;padding:8px 0 12px"><button onclick="window.print()" style="padding:8px 24px;font-size:13px;border-radius:6px;border:none;background:#EF9F27;color:#412402;cursor:pointer;font-weight:600">🖨 Печать</button></div>' +
+    '<div style="background:linear-gradient(135deg,#1a1a18 0%,#2d2a24 100%);color:#fff;padding:14px 18px;border-radius:8px 8px 0 0;display:flex;justify-content:space-between;align-items:flex-start">' +
+      '<div>' +
+        '<div style="font-size:10px;color:rgba(255,255,255,0.4);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:4px">📦 БИРКА ПОСТАВКИ</div>' +
+        '<div style="font-size:28px;font-weight:800;color:#EF9F27;letter-spacing:-1px">Заказ ' + order.number + '</div>' +
+        '<div style="font-size:14px;font-weight:500;color:#fff;margin-top:4px">' + (order.product || '—') + '</div>' +
+        (order.customer ? '<div style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:3px">Заказчик: ' + order.customer + '</div>' : '') +
+        '<div style="font-size:11px;color:' + deadlineColor + ';margin-top:5px;font-weight:600">📅 Срок: ' + deadlineStr + '</div>' +
+      '</div>' +
+      '<div style="text-align:center"><img src="' + qrUrl + '" width="90" height="90" style="background:#fff;padding:3px;border-radius:4px" alt="QR"><div style="font-size:9px;color:rgba(255,255,255,0.3);margin-top:4px">Карточка заказа</div></div>' +
+    '</div>' +
+    '<div style="border:0.5px solid #e0e0e0;border-top:none;border-radius:0 0 8px 8px;overflow:hidden">' +
+      '<div style="padding:8px 14px;background:#f5f5f2;border-bottom:0.5px solid #e0e0e0;display:flex;align-items:center;justify-content:space-between">' +
+        '<div style="font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:0.06em">' + group.name + '</div>' +
+        '<div style="font-size:11px;color:#888">' + items.length + ' позиций</div>' +
+      '</div>' +
+      '<table><thead><tr style="background:#f5f5f2">' +
+        '<td style="padding:6px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:#888;border-bottom:0.5px solid #e0e0e0">Наименование</td>' +
+        '<td style="padding:6px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:#888;border-bottom:0.5px solid #e0e0e0;text-align:center">Кол-во</td>' +
+        '<td style="padding:6px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:#888;border-bottom:0.5px solid #e0e0e0;text-align:center">Статус</td>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table>' +
+      '<div style="padding:10px 14px;border-top:0.5px solid #eee;display:flex;justify-content:space-between;align-items:center">' +
+        '<div style="font-size:10px;color:#aaa">Напечатано: ' + new Date().toLocaleString('ru-RU') + ' · teploros</div>' +
+        '<div style="font-size:9px;color:#ccc;font-family:monospace">' + order.id + '</div>' +
+      '</div>' +
+    '</div></body></html>';
+  const w = window.open('', '_blank', 'width=800,height=900');
+  if (!w) { alert('Разрешите всплывающие окна для этого сайта'); return; }
+  w.document.write(html);
+  w.document.close();
+};
+
 const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
   const [tab, setTab] = useState('stock');
   const [receiveForm, setReceiveForm] = useState({ materialId: '', qty: '', batch: '' });
@@ -1010,7 +1072,14 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
               // Группы и позиции
               Object.entries(groups).map(([groupId, { group, items }]) =>
                 h('div', { key: groupId },
-                  h('div', { style: { padding: '6px 14px', fontSize: 11, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em', background: 'var(--bg)', borderBottom: '0.5px solid var(--border-soft)' } }, group.name),
+                  h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 14px', background: 'var(--bg)', borderBottom: '0.5px solid var(--border-soft)' } },
+                    h('div', { style: { fontSize: 11, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em' } }, group.name),
+                    h('button', {
+                      title: 'Печать бирки группы',
+                      onClick: () => printGroupLabel(order, group, items),
+                      style: { fontSize: 11, padding: '2px 10px', border: '0.5px solid var(--border)', borderRadius: 5, background: 'transparent', cursor: 'pointer', color: 'var(--muted)', whiteSpace: 'nowrap' }
+                    }, '🖨 Бирка')
+                  ),
                   items.map(item => {
                     const st = ST[item.status] || ST.pending;
                     const key = `${orderId}_${groupId}_${item.id}`;
