@@ -200,7 +200,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     data.ops.filter(op => op.workerIds?.includes(workerId) && op.status === 'done').length,
   [data.ops, workerId]);
 
-  const [activeOp, setActiveOp] = useState(null);
+  const [activeOps, setActiveOps] = useState([]); // массив активных операций
   const [, setTick] = useState(0);
   const [defNote, setDefNote] = useState('');
   const [defectReasonId, setDefectReasonId] = useState('');
@@ -246,12 +246,12 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     await DB.save(d); onUpdate(d);
   }, [data, onUpdate]);
 
-  // Таймер только когда есть активная операция
+  // Таймер пока есть хотя бы одна активная операция
   useEffect(() => {
-    if (!activeOp) return;
+    if (!activeOps.length) return;
     const t = setInterval(() => setTick(n => n + 1), 1000);
     return () => clearInterval(t);
-  }, [activeOp]);
+  }, [activeOps.length]);
 
   useEffect(() => {
     if (initialOpId && workerId) {
@@ -274,10 +274,10 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       addToast('У вас нет компетенции для этой операции', 'error'); vibrateAction('error');
       return;
     }
-    // Блокировка двойного запуска: рабочий не может вести две операции одновременно
-    const alreadyActive = data.ops.find(o => o.status === 'in_progress' && o.workerIds?.includes(workerId) && o.id !== op.id);
+    // Проверяем что эта операция уже не запущена этим рабочим
+    const alreadyActive = activeOps.find(ao => ao.id === op.id);
     if (alreadyActive) {
-      addToast(`Сначала завершите "${alreadyActive.name}"`, 'error'); vibrateAction('error');
+      addToast(`«${op.name}» уже запущена`, 'error'); vibrateAction('error');
       return;
     }
     const result = buildStartUpdate(data, op, workerId);
@@ -285,14 +285,14 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
 
     // ── Optimistic update: обновляем UI мгновенно, не ждём Firebase ──
     const optimisticOp = { ...op, status: 'in_progress', startedAt: result._startedAt, workerIds: [...(op.workerIds || []), workerId] };
-    setActiveOp(optimisticOp);
+    setActiveOps(prev => [...prev, optimisticOp]);
     onUpdate(updated);  // UI обновляется немедленно
     vibrateAction('start');
     addToast(`Операция "${op.name}" начата` + (!result._hasCheckin ? ' · Рабочий день начат' : ''), 'success');
 
     // Сохраняем в Firebase в фоне — при ошибке откатываем
     DB.save(updated).catch(err => {
-      setActiveOp(null);
+      setActiveOps(prev => prev.filter(ao => ao.id !== op.id));
       onUpdate(data);  // откат к предыдущему состоянию
       addToast('Ошибка сохранения — проверьте соединение', 'error');
       vibrateAction('error');
@@ -379,6 +379,8 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       addToast('Ошибка сохранения — данные не записаны', 'error');
       vibrateAction('error');
     });
+    // Убираем завершённую операцию из activeOps
+    setActiveOps(prev => prev.filter(ao => ao.id !== op.id));
     // Push-уведомление ОТК если операция ушла на контроль
     if (status === 'on_check' && 'serviceWorker' in navigator) {
       const order = data.orders.find(o => o.id === op.orderId);
@@ -438,20 +440,28 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     const updated = { ...data, ops: data.ops.filter(o => o.id !== op.id) };
     const withLog = logAction(updated, 'worker_cancel_aux_op', { opId: op.id, opName: op.name, workerId });
     await DB.save(withLog); onUpdate(withLog);
-    if (activeOp?.id === op.id) setActiveOp(null);
+    setActiveOps(prev => prev.filter(ao => ao.id !== op.id));
     addToast(`«${op.name}» отменена`, 'info');
   }, [data, workerId, activeOp, onUpdate, addToast]);
 
-  // Автосброс activeOp если операция завершена внешним действием (напр. ОТК принял)
+  // Автосброс — убираем из массива операции завершённые извне (ОТК принял и т.д.)
   useEffect(() => {
-    if (!activeOp) return;
-    const opInData = data.ops.find(o => o.id === activeOp.id);
-    if (!opInData || opInData.status === 'done' || opInData.status === 'on_check' || opInData.status === 'defect' || opInData.status === 'approved') {
-      setActiveOp(null);
+    if (!activeOps.length) return;
+    const finished = activeOps.filter(ao => {
+      const op = data.ops.find(o => o.id === ao.id);
+      return !op || op.status === 'done' || op.status === 'on_check' || op.status === 'defect' || op.status === 'approved';
+    });
+    if (finished.length > 0) {
+      setActiveOps(prev => prev.filter(ao => !finished.find(f => f.id === ao.id)));
     }
-  }, [data.ops, activeOp]);
+  }, [data.ops]);
 
-  const active = activeOp ? data.ops.find(o => o.id === activeOp.id) : null;
+  // Получаем живые объекты операций из data.ops по ids в activeOps
+  const activeOpsList = activeOps
+    .map(ao => data.ops.find(o => o.id === ao.id))
+    .filter(Boolean)
+    .filter(o => o.status === 'in_progress');
+  const active = activeOpsList[0] || null; // первая активная для совместимости с формами брака/простоя
   const elapsed = active?.startedAt ? now() - active.startedAt : 0;
   const qrOp = initialOpId ? data.ops.find(o => o.id === initialOpId) : null;
   const canStartQr = qrOp && qrOp.status === 'pending' && !qrOp.workerIds?.length && !qrOp.archived;
@@ -756,8 +766,71 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
               )
       ),
 
+      // Активные операции — список карточек
+      activeOpsList.length > 0 && h('div', null,
+        activeOpsList.length > 1 && h('div', { style: { fontSize: 11, color: AM4, fontWeight: 500, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' } },
+          `В работе (${activeOpsList.length})`
+        ),
+        activeOpsList.map((activeItem, idx) => {
+          const isFirst = idx === 0;
+          const order = data.orders.find(o => o.id === activeItem.orderId);
+          const itemElapsed = activeItem.startedAt ? now() - activeItem.startedAt : 0;
+          const hh = String(Math.floor(itemElapsed / 3600000)).padStart(2,'0');
+          const mm = String(Math.floor((itemElapsed % 3600000) / 60000)).padStart(2,'0');
+          const ss = String(Math.floor((itemElapsed % 60000) / 1000)).padStart(2,'0');
+          return h('div', { key: activeItem.id, style: { ...S.card, marginBottom: 12, borderLeft: `3px solid ${AM}` } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 } },
+              h('div', null,
+                h('div', { style: { fontSize: 15, fontWeight: 500, marginBottom: 2 } }, activeItem.name),
+                h('div', { style: { fontSize: 11, color: AM4 } }, order?.number || '—')
+              ),
+              h('div', { style: { fontSize: 20, fontWeight: 500, color: AM, fontFamily: 'monospace' } },
+                `${hh}:${mm}:${ss}`
+              )
+            ),
+            // Показываем форму брака/завершения только для первой или если это единственная
+            isFirst && showDefForm
+              ? h('div', null,
+                  h('div', { style: { fontSize: 12, color: RD2, fontWeight: 500, marginBottom: 10, textTransform: 'uppercase' } },
+                    defectFromPrev ? '⚠ Брак с предыдущего участка' : '⚠ Брак текущего этапа'
+                  ),
+                  h('div', { style: { display: 'flex', gap: 8, marginBottom: 10 } },
+                    h('button', { style: defectFromPrev ? rbtn({ flex: 1, minHeight: 48, fontSize: 13 }) : gbtn({ flex: 1, minHeight: 48, fontSize: 13 }), onClick: () => setDefectFromPrev(true) }, 'С предыдущего участка'),
+                    h('button', { style: !defectFromPrev ? rbtn({ flex: 1, minHeight: 48, fontSize: 13 }) : gbtn({ flex: 1, minHeight: 48, fontSize: 13 }), onClick: () => setDefectFromPrev(false) }, 'Текущий этап')
+                  ),
+                  h('select', { style: { ...S.inp, marginBottom: 10 }, value: defectReasonId, onChange: e => setDefectReasonId(e.target.value) },
+                    h('option', { value: '' }, '— выберите причину —'),
+                    (data.defectReasons || []).map(r => h('option', { key: r.id, value: r.id }, r.name))
+                  ),
+                  h('textarea', { style: { ...S.inp, marginBottom: 10 }, rows: 2, placeholder: 'Опишите дефект...', value: defNote, onChange: e => setDefNote(e.target.value) }),
+                  h('div', { style: { display: 'flex', gap: 8 } },
+                    h('button', { style: rbtn({ flex: 1, minHeight: 52, fontSize: 14 }), onClick: () => { if (!validateDefectForm()) { vibrateAction('error'); return; } vibrateAction('error'); doFinish(activeItem, true, false, defectFromPrev ? 'previous_stage' : 'current'); setShowDefForm(false); } }, 'Зафиксировать брак'),
+                    h('button', { style: { ...gbtn({ flex: 1, minHeight: 52, fontSize: 14 }), color: AM2, borderColor: AM4 }, onClick: () => { if (!validateDefectForm()) { vibrateAction('error'); return; } navigator.vibrate?.([30]); doFinish(activeItem, false, true, defectFromPrev ? 'previous_stage' : 'current'); setShowDefForm(false); } }, 'На переделку'),
+                    h('button', { style: gbtn({ minHeight: 52, padding: '8px 14px' }), onClick: () => { navigator.vibrate?.([20]); setShowDefForm(false); setDefectFromPrev(false); setDefFormErrors({}); } }, 'Отмена')
+                  )
+                )
+              : h('div', null,
+                  h('button', { className: 'worker-btn worker-btn-stop', style: { marginBottom: 8 }, onClick: () => {
+                    vibrateAction('start');
+                    if (activeItem.requiresPressureTest || activeItem.name.toLowerCase().includes('опресс')) {
+                      setPressureOp(activeItem);
+                      setPressureForm({ workPressure: '', testPressure: '', duration: '10', tempC: '', pressureStart: '', pressureEnd: '', sweatingFound: false, defectDesc: '', verdict: 'pass' });
+                      setShowPressureForm(true);
+                    } else {
+                      doFinish(activeItem);
+                    }
+                  } }, '■ Завершить'),
+                  h('div', { style: { display: 'flex', gap: 8 } },
+                    h('button', { className: 'worker-btn-defect', style: { flex: 1 }, onClick: () => { navigator.vibrate?.([40]); setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
+                    h('button', { className: 'worker-btn-defect', style: { flex: 1 }, onClick: () => { navigator.vibrate?.([40]); setShowDefForm(true); setDefectFromPrev(true); } }, '⚠ Брак с уч.')
+                  )
+                )
+          );
+        })
+      ),
+
       // QR-операция
-      !active && canStartQr && h('div', { style: { ...S.card, border: `1.5px solid ${AM}`, background: AM3, marginBottom: 16 } },
+      canStartQr && h('div', { style: { ...S.card, border: `1.5px solid ${AM}`, background: AM3, marginBottom: 16 } },
         h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', marginBottom: 6 } }, 'Назначено по QR-коду'),
         h('div', { style: { fontSize: 15, fontWeight: 500, color: AM2, marginBottom: 4 } }, qrOp?.name),
         h('div', { style: { fontSize: 11, color: AM4, marginBottom: 16 } }, data.orders.find(o => o.id === qrOp?.orderId)?.number || ''),
@@ -765,10 +838,10 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       ),
 
       // Подсказка о достижении
-      achHint && !active && h('div', { style: { fontSize: 11, color: AM, textAlign: 'center', padding: '4px 0', marginBottom: 8 } }, `⭐ ${achHint}`),
+      achHint && !activeOpsList.length && h('div', { style: { fontSize: 11, color: AM, textAlign: 'center', padding: '4px 0', marginBottom: 8 } }, `⭐ ${achHint}`),
 
-      // Список заданий
-      !active && myOps.length > 0 && h('div', null,
+      // Список заданий — показываем всегда (параллельный запуск)
+      myOps.length > 0 && h('div', null,
         h('div', { style: { ...S.sec, marginBottom: 12 } }, `Задания (${myOps.length})`),
         myOps.map(op => {
           const order = data.orders.find(o => o.id === op.orderId);
