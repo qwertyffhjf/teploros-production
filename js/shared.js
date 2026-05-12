@@ -413,26 +413,58 @@ const ItemRow = memo(({ item, groupId, onUpdate, onDelete, canEdit, selected, on
 
   const rowBg = selected ? 'rgba(226,75,74,0.06)' : 'transparent';
 
-  if (editing) return h('tr', { style: { background: 'rgba(239,159,39,0.06)' } },
-    h('td', { style: { padding: '4px 6px' } }),
-    h('td', { style: { padding: '4px 4px' } }, inp('name', 'Наименование')),
+  const inpStyle = { width: '100%', fontSize: 12, padding: '5px 8px', border: '0.5px solid var(--border)', borderRadius: 6, background: 'var(--card)', color: 'var(--fg)', boxSizing: 'border-box', fontFamily: 'inherit' };
+  const lbl = (text) => h('div', { style: { fontSize: 10, color: 'var(--muted)', marginBottom: 3, fontWeight: 500 } }, text);
 
-    h('td', { style: { padding: '4px 4px' } }, inp('material', 'Материал')),
-    h('td', { style: { padding: '4px 4px', width: 70 } }, inp('thickness', 'мм', 70)),
-    h('td', { style: { padding: '4px 4px', width: 60 } }, inp('qty', '1', 60, 'number')),
-    h('td', { style: { padding: '4px 4px', width: 70 } },
-      h('select', { value: draft.unit, style: { fontSize: 12, padding: '3px 4px', border: '0.5px solid var(--border)', borderRadius: 4, background: 'var(--card)', color: 'var(--fg)' },
-        onChange: e => upd('unit', e.target.value) },
-        ITEM_UNITS.map(u => h('option', { key: u, value: u }, u)))),
-    h('td', { style: { padding: '4px 4px', width: 70 } }, inp('length', 'м', 70)),
-    h('td', { style: { padding: '4px 4px', minWidth: 160 } },
-      h('textarea', { value: draft.note ?? '', placeholder: 'Примечание',
-        rows: 2, style: { width: '100%', fontSize: 12, padding: '3px 6px', border: '0.5px solid var(--border)', borderRadius: 4, background: 'var(--card)', color: 'var(--fg)', resize: 'vertical', minHeight: 36, fontFamily: 'inherit' },
-        onChange: e => upd('note', e.target.value) })
-    ),
-    h('td', { style: { padding: '4px 6px', whiteSpace: 'nowrap' } },
-      h('button', { onClick: save,   style: { fontSize: 11, padding: '3px 8px', background: AM, color: AM2, border: 'none', borderRadius: 4, cursor: 'pointer', marginRight: 4, fontWeight: 500 } }, '✓'),
-      h('button', { onClick: cancel, style: { fontSize: 11, padding: '3px 8px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 4, cursor: 'pointer' } }, 'Отмена'))
+  if (editing) return h('tr', { style: { background: 'rgba(239,159,39,0.06)' } },
+    h('td', { colSpan: 9, style: { padding: '10px 12px' } },
+      h('div', { style: { marginBottom: 8 } },
+        lbl('Наименование'),
+        h('textarea', { value: draft.name ?? '', placeholder: 'Наименование позиции',
+          rows: 2,
+          style: { ...inpStyle, resize: 'vertical', minHeight: 40 },
+          onChange: e => upd('name', e.target.value) })
+      ),
+      h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 } },
+        h('div', { style: { flex: '2 1 160px' } },
+          lbl('Материал'),
+          h('input', { value: draft.material ?? '', placeholder: 'Материал', type: 'text',
+            style: inpStyle, onChange: e => upd('material', e.target.value) })
+        ),
+        h('div', { style: { flex: '0 1 80px' } },
+          lbl('Толщина, мм'),
+          h('input', { value: draft.thickness ?? '', placeholder: 'мм', type: 'text',
+            style: inpStyle, onChange: e => upd('thickness', e.target.value) })
+        ),
+        h('div', { style: { flex: '0 1 80px' } },
+          lbl('Кол-во'),
+          h('input', { value: draft.qty ?? '', placeholder: '1', type: 'number',
+            style: inpStyle, onChange: e => upd('qty', parseFloat(e.target.value) || 0) })
+        ),
+        h('div', { style: { flex: '0 1 80px' } },
+          lbl('Ед.'),
+          h('select', { value: draft.unit,
+            style: { ...inpStyle, cursor: 'pointer' },
+            onChange: e => upd('unit', e.target.value) },
+            ITEM_UNITS.map(u => h('option', { key: u, value: u }, u)))
+        ),
+        h('div', { style: { flex: '0 1 80px' } },
+          lbl('Длина, м'),
+          h('input', { value: draft.length ?? '', placeholder: 'м', type: 'text',
+            style: inpStyle, onChange: e => upd('length', e.target.value) })
+        ),
+        h('div', { style: { flex: '3 1 200px' } },
+          lbl('Примечание'),
+          h('textarea', { value: draft.note ?? '', placeholder: 'Примечание',
+            rows: 2, style: { ...inpStyle, resize: 'vertical', minHeight: 40 },
+            onChange: e => upd('note', e.target.value) })
+        )
+      ),
+      h('div', { style: { display: 'flex', gap: 8 } },
+        h('button', { onClick: save,   style: { fontSize: 12, padding: '5px 16px', background: AM, color: AM2, border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 } }, '✓ Сохранить'),
+        h('button', { onClick: cancel, style: { fontSize: 12, padding: '5px 16px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 6, cursor: 'pointer' } }, 'Отмена')
+      )
+    )
   );
 
   return h('tr', { style: { borderBottom: '0.5px solid var(--border-soft)', background: rowBg, transition: 'background 0.1s' } },
