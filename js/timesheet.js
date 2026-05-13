@@ -48,6 +48,19 @@ const calcDayData = (workerId, year, month, day, data) => {
     if (tsVal.code === 'ОЗ') return { type: 'vac', code: 'ОЗ', h: 0, src: 'табель' };
     if (tsVal.code === 'К')  return { type: 'full', code: 'К', h: tsVal.h || 8, src: 'табель' };
     if (tsVal.code === 'НН') return { type: 'abs', code: 'НН', h: 0, src: 'табель' };
+    if (tsVal.code === 'СД') {
+      // Сдельная оплата — считаем фактические часы из завершённых операций за этот день
+      const dayStart = new Date(year, month, day).getTime();
+      const dayEnd   = new Date(year, month, day, 23, 59, 59, 999).getTime();
+      const dayOps = (data.ops || []).filter(o =>
+        o.workerIds?.includes(workerId) && o.status === 'done' &&
+        o.startedAt >= dayStart && o.finishedAt <= dayEnd && o.startedAt && o.finishedAt
+      );
+      const opHours = dayOps.length > 0
+        ? Math.round(dayOps.reduce((s, o) => s + (o.finishedAt - o.startedAt), 0) / 3600000 * 10) / 10
+        : 8; // если операций нет — ставим стандартные 8ч как день явки
+      return { type: 'ops', code: 'СД', h: opHours, src: 'сдельная' };
+    }
     if (tsVal.h != null && tsVal.h > 0) return { type: tsVal.h >= 8 ? 'full' : 'ops', code: 'Я', h: tsVal.h, src: 'табель' };
   }
 
