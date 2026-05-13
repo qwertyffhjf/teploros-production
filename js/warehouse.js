@@ -751,10 +751,14 @@ const printGroupLabel = (order, group, items) => {
         '<div style="font-size:9px;color:#ccc;font-family:monospace">' + order.id + '</div>' +
       '</div>' +
     '</div></body></html>';
-  const w = window.open('', '_blank', 'width=800,height=900');
-  if (!w) { alert('Разрешите всплывающие окна для этого сайта'); return; }
-  w.document.write(html);
-  w.document.close();
+  // Печать через скрытый iframe — без нового окна
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:0;height:0;border:none';
+  document.body.appendChild(iframe);
+  iframe.contentDocument.open();
+  iframe.contentDocument.write(html);
+  iframe.contentDocument.close();
+  iframe.onload = () => { iframe.contentWindow.print(); setTimeout(() => document.body.removeChild(iframe), 2000); };
 };
 
 const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
@@ -1162,17 +1166,37 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
 
           return filtered.map(order => {
             const orderNeeds = needsAll[order.id];
-            const totalItems = orderNeeds ? (orderNeeds.groups || []).reduce((s, g) => s + (g.items || []).length, 0) : 0;
-            const receivedItems = orderNeeds ? (orderNeeds.groups || []).reduce((s, g) => s + (g.items || []).filter(i => i.status === 'received').length, 0) : 0;
+            const allItems = orderNeeds ? (orderNeeds.groups || []).reduce((s, g) => s.concat(g.items || []), []) : [];
+            const totalItems    = allItems.length;
+            const receivedItems = allItems.filter(i => i.status === 'received').length;
+            const orderedItems  = allItems.filter(i => i.status === 'ordered').length;
+            const partialItems  = allItems.filter(i => i.status === 'partial').length;
+            const pendingItems  = allItems.filter(i => !i.status || i.status === 'pending').length;
             const hasNeeds = totalItems > 0;
             const daysLeft = order.deadline ? Math.ceil((new Date(order.deadline) - Date.now()) / 86400000) : null;
+
+            // Вычисляем сводный статус заявки
+            let needsStatusLabel, needsStatusColor, needsStatusBg, needsStatusIcon;
+            if (!hasNeeds) {
+              needsStatusLabel = 'нет заявки'; needsStatusColor = 'var(--muted)'; needsStatusBg = 'transparent'; needsStatusIcon = '➕';
+            } else if (receivedItems === totalItems) {
+              needsStatusLabel = 'всё получено'; needsStatusColor = '#3B6D11'; needsStatusBg = '#EAF3DE'; needsStatusIcon = '✅';
+            } else if (receivedItems > 0 || partialItems > 0) {
+              needsStatusLabel = receivedItems + '/' + totalItems + ' получено'; needsStatusColor = '#854F0B'; needsStatusBg = '#FAEEDA'; needsStatusIcon = '📦';
+            } else if (orderedItems === totalItems) {
+              needsStatusLabel = 'всё заказано'; needsStatusColor = '#185FA5'; needsStatusBg = '#E6F1FB'; needsStatusIcon = '🚚';
+            } else if (orderedItems > 0) {
+              needsStatusLabel = orderedItems + '/' + totalItems + ' заказано'; needsStatusColor = '#185FA5'; needsStatusBg = '#E6F1FB'; needsStatusIcon = '🚚';
+            } else {
+              needsStatusLabel = totalItems + ' поз. ожидают'; needsStatusColor = '#888'; needsStatusBg = 'var(--bg)'; needsStatusIcon = '📝';
+            }
 
             return h('div', { key: order.id,
               style: { ...S.card, marginBottom: 8, padding: '10px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, transition: 'box-shadow 0.15s' },
               onClick: () => { setNeedsOrderId(order.id); setNeedsSearch(''); }
             },
               // Иконка статуса заявки
-              h('div', { style: { fontSize: 20, flexShrink: 0 } }, hasNeeds ? '📝' : '➕'),
+              h('div', { style: { fontSize: 20, flexShrink: 0 } }, needsStatusIcon),
               // Инфо о заказе
               h('div', { style: { flex: 1, minWidth: 0 } },
                 h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 } },
@@ -1186,16 +1210,14 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
                   )
                 )
               ),
-              // Прогресс заявки
-              h('div', { style: { flexShrink: 0, textAlign: 'right' } },
-                hasNeeds
-                  ? h('div', null,
-                      h('div', { style: { fontSize: 12, fontWeight: 500, color: receivedItems === totalItems ? GN : AM2 } },
-                        `${receivedItems}/${totalItems}`),
-                      h('div', { style: { fontSize: 10, color: 'var(--muted)' } }, 'получено')
-                    )
-                  : h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, 'нет заявки'),
-                h('div', { style: { fontSize: 11, color: BL, marginTop: 4 } }, '→ открыть')
+              // Статус заявки
+              h('div', { style: { flexShrink: 0, textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 } },
+                h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 12, background: needsStatusBg, border: '0.5px solid ' + needsStatusColor + '44' } },
+                  h('span', { style: { fontSize: 13 } }, needsStatusIcon),
+                  h('span', { style: { fontSize: 11, fontWeight: 500, color: needsStatusColor, whiteSpace: 'nowrap' } }, needsStatusLabel)
+                ),
+                hasNeeds && receivedItems < totalItems && pendingItems > 0 && h('div', { style: { fontSize: 10, color: 'var(--muted)' } }, pendingItems + ' ждут заказа'),
+                h('div', { style: { fontSize: 11, color: BL } }, '→ открыть')
               )
             );
           });
