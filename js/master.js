@@ -1115,7 +1115,38 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
             const matConsumption = (data.materialConsumptions || []).filter(mc => ops.some(op => op.id === mc.opId));
             const matCost = matConsumption.reduce((s, mc) => { const mat = data.materials.find(m => m.id === mc.materialId); return s + mc.qty * (mat?.unitCost || 0); }, 0);
 
-            const parentRow = h('tr', { key: ord.id, style: { background: ord.archived ? '#eee' : ord.isParentOrder ? 'rgba(239,159,39,0.04)' : 'transparent' } },
+            // Цвет полосы по дедлайну
+            const dlDays = ord.deadline ? Math.ceil((new Date(ord.deadline) - Date.now()) / 86400000) : null;
+            const allDone = st === 'done' || ord.shipped;
+            const rowBorderColor = ord.archived ? 'transparent'
+              : allDone ? '#639922'
+              : dlDays === null ? 'transparent'
+              : dlDays < 0 ? '#E24B4A'
+              : dlDays <= 3 ? '#EF9F27'
+              : 'transparent';
+            const rowBg = ord.archived ? '#eee'
+              : allDone ? 'transparent'
+              : dlDays !== null && dlDays < 0 ? '#FFF5F5'
+              : dlDays !== null && dlDays <= 3 ? '#FFFBF5'
+              : ord.isParentOrder ? 'rgba(239,159,39,0.04)' : 'transparent';
+
+            // Умный дедлайн — дата + сколько дней
+            const dlLabel = ord.deadline
+              ? (() => {
+                  if (allDone) return h('span', { style: { color: '#3B6D11', fontWeight: 500 } }, '✓ ' + ord.deadline);
+                  if (dlDays === null) return '—';
+                  const sub = dlDays < 0
+                    ? h('div', { style: { fontSize: 10, color: '#E24B4A', fontWeight: 500 } }, 'просрочен ' + Math.abs(dlDays) + ' дн.')
+                    : dlDays === 0
+                    ? h('div', { style: { fontSize: 10, color: '#E24B4A', fontWeight: 600 } }, 'сегодня!')
+                    : dlDays <= 3
+                    ? h('div', { style: { fontSize: 10, color: '#EF9F27', fontWeight: 500 } }, 'осталось ' + dlDays + ' дн.')
+                    : h('div', { style: { fontSize: 10, color: '#888' } }, 'осталось ' + dlDays + ' дн.');
+                  return h('div', null, h('div', { style: { color: dlDays < 0 ? '#E24B4A' : dlDays <= 3 ? '#EF9F27' : '#888' } }, ord.deadline), sub);
+                })()
+              : '—';
+
+            const parentRow = h('tr', { key: ord.id, style: { background: rowBg, borderLeft: rowBorderColor !== 'transparent' ? '3px solid ' + rowBorderColor : undefined } },
               h('td', { style: { ...S.td, fontWeight: 500 } },
                 ord.isParentOrder && h('button', {
                   onClick: () => toggleParent(ord.id),
@@ -1132,7 +1163,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
               ),
               h('td', { style: { ...S.td, fontSize: 11 } }, (productTypes.find(pt => pt.id === ord.productType)?.label) || '—'),
               h('td', { style: S.td }, ord.qty),
-              h('td', { style: { ...S.td, color: nearDeadline ? RD : '#888' } }, ord.deadline || '—'),
+              h('td', { style: S.td }, dlLabel),
               h('td', { style: { ...S.td, color: PRIORITY[ord.priority]?.color || '#888' } }, PRIORITY[ord.priority]?.label || '—'),
               h('td', { style: S.td }, ord.isParentOrder ? `${done}/${opsForProgress.length}` : `${done}/${ops.length}`, def > 0 && h('span', { style: { marginLeft: 4, color: RD } }, `⚠ ${def}`)),
               h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 11 } }, matConsumption.length > 0 ? `${matCost.toLocaleString()}₽` : '—'),
@@ -1157,7 +1188,26 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
               const subDone = subOps.filter(o => o.status === 'done').length;
               const subDef = subOps.filter(o => o.status === 'defect').length;
               const subSt = subOps.length === 0 ? 'pending' : subDone === subOps.length ? 'done' : subOps.some(o => o.status === 'in_progress') ? 'in_progress' : 'pending';
-              return h('tr', { key: sub.id, style: { background: 'rgba(239,159,39,0.02)', borderLeft: `3px solid ${AM3}` } },
+              const subDlDays = sub.deadline ? Math.ceil((new Date(sub.deadline) - Date.now()) / 86400000) : null;
+              const subAllDone = subSt === 'done' || sub.shipped;
+              const subBorderColor = subAllDone ? '#639922'
+                : subDlDays === null ? AM3
+                : subDlDays < 0 ? '#E24B4A'
+                : subDlDays <= 3 ? '#EF9F27'
+                : AM3;
+              const subDlLabel = sub.deadline
+                ? (() => {
+                    if (subAllDone) return h('span', { style: { color: '#3B6D11', fontSize: 12 } }, '✓ ' + sub.deadline);
+                    if (subDlDays === null) return sub.deadline || '—';
+                    const s = subDlDays < 0
+                      ? h('div', { style: { fontSize: 10, color: '#E24B4A', fontWeight: 500 } }, 'просрочен ' + Math.abs(subDlDays) + ' дн.')
+                      : subDlDays <= 3
+                      ? h('div', { style: { fontSize: 10, color: '#EF9F27', fontWeight: 500 } }, 'осталось ' + subDlDays + ' дн.')
+                      : h('div', { style: { fontSize: 10, color: '#888' } }, 'осталось ' + subDlDays + ' дн.');
+                    return h('div', null, h('div', { style: { fontSize: 12, color: subDlDays < 0 ? '#E24B4A' : subDlDays <= 3 ? '#EF9F27' : '#888' } }, sub.deadline), s);
+                  })()
+                : '—';
+              return h('tr', { key: sub.id, style: { background: subDlDays !== null && subDlDays < 0 ? '#FFF5F5' : 'rgba(239,159,39,0.02)', borderLeft: '3px solid ' + subBorderColor } },
                 h('td', { style: { ...S.td, fontWeight: 500, paddingLeft: 28 } },
                   h('span', { style: { color: AM4, fontSize: 11 } }, '└ '),
                   h('span', { style: { color: AM, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted', fontSize: 12 }, onClick: () => setViewOrderId(sub.id), title: 'Открыть карточку подзаказа' }, sub.number)
@@ -1168,7 +1218,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
                 ),
                 h('td', { style: { ...S.td, fontSize: 11, color: 'var(--muted)' } }, '—'),
                 h('td', { style: S.td }, '1'),
-                h('td', { style: { ...S.td, color: '#888', fontSize: 12 } }, sub.deadline || '—'),
+                h('td', { style: S.td }, subDlLabel),
                 h('td', { style: { ...S.td, color: PRIORITY[sub.priority]?.color || '#888', fontSize: 12 } }, PRIORITY[sub.priority]?.label || '—'),
                 h('td', { style: S.td }, `${subDone}/${subOps.length}`, subDef > 0 && h('span', { style: { marginLeft: 4, color: RD } }, `⚠ ${subDef}`)),
                 h('td', { style: S.td }, '—'),
