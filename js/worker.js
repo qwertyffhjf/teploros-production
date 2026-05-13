@@ -89,7 +89,9 @@ const WorkerHoursBlock = memo(({ workerId, data, activeOpsList }) => {
     const grid = days.map(d => {
       const dow = new Date(viewYear, viewMonth, d).getDay();
       const dd = calcDayData(workerId, viewYear, viewMonth, d, data);
-      if (dd.h > 0) { totH += dd.h; totDays++; }
+      if (dd.h > 0) totH += dd.h;
+      // Явка: числовые часы ИЛИ код присутствия без часов (СД, К итд)
+      if (dd.h > 0 || (dd.code && !['НН','Б','ОТ','ОЗ','В','we'].includes(dd.code) && dd.type !== 'we')) totDays++;
       if (dd.ops) totOps += dd.ops;
       return { d, dow, ...dd };
     });
