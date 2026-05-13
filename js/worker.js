@@ -363,7 +363,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     if (justEarned.length > 0) setTimeout(() => setAchQueue(q => [...q, ...justEarned.map(id => ACHIEVEMENTS[id]).filter(Boolean)]), 600);
     onUpdate(final);
     vibrateAction('finish');
-    setActiveOp(null);
+    if (pressureOp) setActiveOps(prev => prev.filter(ao => ao.id !== pressureOp.id));
     setShowPressureForm(false);
     setPressureOp(null);
     addToast(isDefect ? '⚠ Протокол ГИ сохранён — не выдержал. Уведомлён ОТК.' : '✓ Протокол ГИ сохранён — ожидает подписи ОТК', isDefect ? 'error' : 'success');
@@ -392,7 +392,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     const prevData = data;
     onUpdate(final);
     vibrateAction('finish');
-    setActiveOp(null); setShowDefForm(false); setDefNote(''); setDefectReasonId('');
+    setShowDefForm(false); setDefNote(''); setDefectReasonId('');
     setWeldParams({ seamNumber: '', electrode: '', result: 'ok' });
     addToast(`Операция "${op.name}" завершена (${STATUS[status]?.label || status})`, 'info');
 
@@ -1107,7 +1107,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
           const op = data.ops.find(o => o.id === opId);
           if (!op) { addToast('Операция не найдена', 'error'); return; }
           if (op.status === 'done' || op.status === 'defect') { addToast('Операция уже завершена', 'info'); return; }
-          setActiveOp(op); addToast('Операция найдена: ' + op.name, 'success');
+          setActiveOps(prev => prev.find(a => a.id === op.id) ? prev : [...prev, op]); addToast('Операция найдена: ' + op.name, 'success');
         } catch(e) { addToast('Неверный QR-код', 'error'); }
       }, onClose: () => setShowQRScanner(false) }),
       showMaterialModal && h(MaterialConsumptionModal, { data, opId: pendingFinishOp?.id, onSave: saveMaterialConsumption, onSkip: () => { setShowMaterialModal(false); setPendingFinishOp(null); } }),
