@@ -420,7 +420,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const recordDowntime = useCallback(async () => {
     if (!selectedDowntimeType) { addToast('Выберите причину простоя', 'error'); return; }
     const ts = now(); const shift = getCurrentShift(data?.settings?.shifts); const duration = downtimeStartedAt ? ts - downtimeStartedAt : 0;
-    const newEvent = { id: uid(), type: 'downtime', workerId, opId: activeOp?.id || null, ts, downtimeTypeId: selectedDowntimeType, shift, startedAt: downtimeStartedAt || ts, duration, equipmentId: downtimeEquipmentId || undefined };
+    const newEvent = { id: uid(), type: 'downtime', workerId, opId: active?.id || null, ts, downtimeTypeId: selectedDowntimeType, shift, startedAt: downtimeStartedAt || ts, duration, equipmentId: downtimeEquipmentId || undefined };
     const updated = { ...data, events: [...data.events, newEvent] };
     // ── Optimistic update для простоя ──
     const prevDataDowntime = data;
@@ -431,7 +431,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       onUpdate(prevDataDowntime);
       addToast('Ошибка сохранения простоя', 'error');
     });
-  }, [data, workerId, activeOp, selectedDowntimeType, downtimeStartedAt, onUpdate, addToast]);
+  }, [data, workerId, active, selectedDowntimeType, downtimeStartedAt, onUpdate, addToast]);
 
   // Отмена вспомогательной операции (только свои, pending/in_progress)
   const cancelAuxOp = useCallback(async (op) => {
@@ -442,7 +442,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     await DB.save(withLog); onUpdate(withLog);
     setActiveOps(prev => prev.filter(ao => ao.id !== op.id));
     addToast(`«${op.name}» отменена`, 'info');
-  }, [data, workerId, activeOp, onUpdate, addToast]);
+  }, [data, workerId, active, onUpdate, addToast]);
 
   // Автосброс — убираем из массива операции завершённые извне (ОТК принял и т.д.)
   useEffect(() => {
@@ -1252,4 +1252,3 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   confirmEl
   );
 });
-
