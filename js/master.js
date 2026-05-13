@@ -300,12 +300,12 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
     paginated.length === 0
       ? h('div', { style: S.card }, h(EmptyState, {
           icon: '🔧',
-          title: filters.search || filters.status !== 'all' ? 'Ничего не найдено' : 'Нет операций',
-          desc: filters.search || filters.status !== 'all'
+          title: filt !== 'all' ? 'Ничего не найдено' : 'Нет операций',
+          desc: filt !== 'all'
             ? 'Попробуйте изменить фильтры или сбросить поиск'
             : 'Назначьте операции для заказов чтобы начать производство',
-          action: filters.search || filters.status !== 'all' ? null : 'Добавить операцию',
-          onAction: filters.search || filters.status !== 'all' ? null : () => setShowForm(true),
+          action: filt !== 'all' ? null : 'Добавить операцию',
+          onAction: filt !== 'all' ? null : () => setShowForm(true),
         }))
       : h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
           h('thead', null, h('tr', null, [h('th', { style: { ...S.th, width: 44, textAlign: 'center', padding: '8px 4px' } }, h('input', { type: 'checkbox', style: { width: 18, height: 18, cursor: 'pointer' }, checked: selectedOps.size === opsToShow.length && opsToShow.length > 0, onChange: selectAllVisible, title: 'Выбрать все' })), ...['ID','Операция','Заказ','Исполнители','Участок','Оборуд.','План, ч','План. старт','Чертёж','Статус','Время',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t))])),
@@ -1089,12 +1089,10 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     paginated.length === 0
       ? h('div', { style: S.card }, h(EmptyState, {
           icon: '📋',
-          title: filters.search ? 'Ничего не найдено' : 'Нет заказов',
-          desc: filters.search
-            ? 'Попробуйте изменить поиск'
-            : 'Создайте первый заказ чтобы начать работу',
-          action: filters.search ? null : 'Создать заказ',
-          onAction: filters.search ? null : () => setShowForm(true),
+          title: 'Нет заказов',
+          desc: 'Создайте первый заказ чтобы начать работу',
+          action: 'Создать заказ',
+          onAction: () => setShowForm(true),
         }))
       : h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
           h('thead', null, h('tr', null, ['Номер','Изделие','Тип','Кол-во','Дата отгрузки','Приоритет','Операций','Материалы','Статус',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
