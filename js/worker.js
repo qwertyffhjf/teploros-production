@@ -105,7 +105,16 @@ const WorkerHoursBlock = memo(({ workerId, data }) => {
     'sick':RD2, 'vac':'#042C53', 'abs':'#ccc', 'we':'#ddd'
   }[type] || '#888');
 
+  // Предупреждение о давно незакрытой операции (>10 часов)
+  const staleOps = activeOpsList ? activeOpsList.filter(op => op.startedAt && (Date.now() - op.startedAt) > 10 * 3600000) : [];
+
   return h('div', { style: { ...S.card, marginBottom: 16 } },
+    staleOps.length > 0 && h('div', { style: { background: '#FCEBEB', border: '1px solid #F09595', borderRadius: 8, padding: '10px 14px', marginBottom: 12 } },
+      h('div', { style: { fontSize: 13, fontWeight: 600, color: '#A32D2D', marginBottom: 4 } }, '⚠ Незакрытая операция'),
+      staleOps.map(op => h('div', { key: op.id, style: { fontSize: 12, color: '#A32D2D' } },
+        '«' + op.name + '» — запущена ' + Math.round((Date.now() - op.startedAt) / 3600000) + 'ч назад. Завершите её.'
+      ))
+    ),
     // Заголовок
     h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom:12 } },
       h('div', { style: { ...S.sec, marginBottom:0, flex:1 } }, 'Мои часы'),
@@ -114,11 +123,12 @@ const WorkerHoursBlock = memo(({ workerId, data }) => {
       h('button', { style: gbtn({ padding:'4px 10px', fontSize:11 }), onClick:() => { let m=viewMonth+1,y=viewYear; if(m>11){m=0;y++;} setViewMonth(m); setViewYear(y); } }, '›')
     ),
 
-    // KPI строка
-    h('div', { style: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:12 } },
+    // Блок 1 — Табель (официальный учёт)
+    h('div', { style: { fontSize:10, color:'#888', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:6 } }, '📋 Табель'),
+    h('div', { style: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:14 } },
       h('div', { style:{ background:'#f8f8f5', borderRadius:8, padding:'8px 10px', textAlign:'center' } },
-        h('div', { style:{ fontSize:22, fontWeight:500, color:AM } }, `${monthData.totH}ч`),
-        h('div', { style:{ fontSize:10, color:'#888', textTransform:'uppercase', marginTop:2 } }, 'Отработано')
+        h('div', { style:{ fontSize:22, fontWeight:500, color:AM } }, monthData.totH + 'ч'),
+        h('div', { style:{ fontSize:10, color:'#888', textTransform:'uppercase', marginTop:2 } }, 'По табелю')
       ),
       h('div', { style:{ background:'#f8f8f5', borderRadius:8, padding:'8px 10px', textAlign:'center' } },
         h('div', { style:{ fontSize:22, fontWeight:500, color:GN } }, monthData.totDays),
@@ -127,6 +137,37 @@ const WorkerHoursBlock = memo(({ workerId, data }) => {
       h('div', { style:{ background:'#f8f8f5', borderRadius:8, padding:'8px 10px', textAlign:'center' } },
         h('div', { style:{ fontSize:22, fontWeight:500 } }, monthData.totOps),
         h('div', { style:{ fontSize:10, color:'#888', textTransform:'uppercase', marginTop:2 } }, 'Операций')
+      )
+    ),
+    // Блок 2 — Производительность (из операций)
+    h('div', { style: { fontSize:10, color:'#888', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:6 } }, '⚙ Производительность'),
+    h('div', { style: { display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:8, marginBottom:12 } },
+      h('div', { style:{ background:'#f8f8f5', borderRadius:8, padding:'8px 10px', textAlign:'center' } },
+        (() => {
+          const todayStart = new Date().setHours(0,0,0,0);
+          // Считаем время завершённых операций за текущий месяц
+          const ym = viewYear + '-' + String(viewMonth+1).padStart(2,'0');
+          const monthStart = new Date(viewYear, viewMonth, 1).getTime();
+          const monthEnd   = new Date(viewYear, viewMonth+1, 1).getTime();
+          const opTime = (data.ops || [])
+            .filter(op => op.workerIds?.includes(workerId) && op.status === 'done' && op.startedAt >= monthStart && op.finishedAt < monthEnd)
+            .reduce((s, op) => s + (op.finishedAt - op.startedAt), 0);
+          const hrs = Math.round(opTime / 3600000 * 10) / 10;
+          return h('div', { style:{ fontSize:22, fontWeight:500, color:'#185FA5' } }, hrs + 'ч');
+        })(),
+        h('div', { style:{ fontSize:10, color:'#888', textTransform:'uppercase', marginTop:2 } }, 'Время операций')
+      ),
+      h('div', { style:{ background:'#f8f8f5', borderRadius:8, padding:'8px 10px', textAlign:'center' } },
+        (() => {
+          const monthStart = new Date(viewYear, viewMonth, 1).getTime();
+          const monthEnd   = new Date(viewYear, viewMonth+1, 1).getTime();
+          const defects = (data.ops || []).filter(op => op.workerIds?.includes(workerId) && op.status === 'defect' && op.finishedAt >= monthStart && op.finishedAt < monthEnd).length;
+          const done    = (data.ops || []).filter(op => op.workerIds?.includes(workerId) && op.status === 'done'   && op.finishedAt >= monthStart && op.finishedAt < monthEnd).length;
+          const total = done + defects;
+          const q = total > 0 ? Math.round(done / total * 100) : 100;
+          return h('div', { style:{ fontSize:22, fontWeight:500, color: q >= 95 ? GN : q >= 80 ? AM : RD } }, q + '%');
+        })(),
+        h('div', { style:{ fontSize:10, color:'#888', textTransform:'uppercase', marginTop:2 } }, 'Качество')
       )
     ),
 
@@ -150,6 +191,96 @@ const WorkerHoursBlock = memo(({ workerId, data }) => {
         );
       })
     )
+  );
+});
+
+// ==================== WorkerSalaryBlock ====================
+const WorkerSalaryBlock = memo(({ workerId, data }) => {
+  const now_ = Date.now();
+  const worker = data.workers.find(w => w.id === workerId);
+  if (!worker) return null;
+
+  const payType   = worker.payType || 'hourly';
+  const hourlyRate = worker.hourlyRate || null;
+  const pieceRate  = worker.pieceRate  || null;
+
+  // Текущий месяц
+  const today = new Date();
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).getTime();
+  const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  const monthLabel = MONTHS_RU[today.getMonth()] + ' ' + today.getFullYear();
+
+  // Часы по табелю за текущий месяц
+  const ym = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
+  const tsMonth = data.timesheet?.[ym]?.[workerId] || data.timesheet?.[workerId] || {};
+  let tabHours = 0;
+  Object.values(tsMonth).forEach(cell => {
+    if (typeof cell === 'object' && cell !== null) {
+      tabHours += cell.hours || (cell.code === 'full' ? 8 : cell.code === 'half' ? 4 : 0);
+    } else if (typeof cell === 'number') {
+      tabHours += cell;
+    }
+  });
+
+  // Изделия за месяц (сдельная) — заказы отгруженные в этом месяце где участвовал рабочий
+  const shippedOrders = (data.orders || []).filter(o => {
+    if (!o.shipped || !o.shippedAt) return false;
+    return o.shippedAt >= monthStart;
+  });
+  const myShippedQty = shippedOrders.reduce((sum, ord) => {
+    const participated = (data.ops || []).some(op => op.orderId === ord.id && op.workerIds?.includes(workerId) && op.status === 'done');
+    return participated ? sum + (ord.qty || 1) : sum;
+  }, 0);
+
+  // Расчёт начисления
+  let earned = null;
+  let formula = '';
+  if (payType === 'hourly' && hourlyRate) {
+    earned = Math.round(tabHours * hourlyRate);
+    formula = tabHours + 'ч × ' + hourlyRate + ' руб/ч';
+  } else if (payType === 'piecework' && pieceRate) {
+    earned = Math.round(myShippedQty * pieceRate);
+    formula = myShippedQty + ' изд. × ' + pieceRate + ' руб/изд.';
+  }
+
+  const noRate = !hourlyRate && payType === 'hourly' || !pieceRate && payType === 'piecework';
+
+  return h('div', { style: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 12, padding: 16, marginBottom: 16 } },
+    h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 } },
+      h('div', { style: { fontSize: 13, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#888' } }, '💰 Моя зарплата'),
+      h('div', { style: { fontSize: 12, color: '#888' } }, monthLabel)
+    ),
+
+    noRate
+      ? h('div', { style: { fontSize: 13, color: '#aaa', textAlign: 'center', padding: '16px 0' } },
+          'Ставка не указана — обратитесь к руководителю'
+        )
+      : h('div', null,
+          h('div', { style: { fontSize: 36, fontWeight: 700, color: GN, textAlign: 'center', marginBottom: 4 } },
+            earned !== null ? earned.toLocaleString('ru-RU') + ' ₽' : '—'
+          ),
+          h('div', { style: { fontSize: 11, color: '#aaa', textAlign: 'center', marginBottom: 16 } },
+            formula + ' = начислено (до вычетов)'
+          ),
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 } },
+            payType === 'hourly'
+              ? h('div', { style: { background: '#f8f8f5', borderRadius: 8, padding: '8px 10px', textAlign: 'center' } },
+                  h('div', { style: { fontSize: 20, fontWeight: 500, color: AM } }, tabHours + 'ч'),
+                  h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase', marginTop: 2 } }, 'По табелю')
+                )
+              : h('div', { style: { background: '#f8f8f5', borderRadius: 8, padding: '8px 10px', textAlign: 'center' } },
+                  h('div', { style: { fontSize: 20, fontWeight: 500, color: AM } }, myShippedQty),
+                  h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase', marginTop: 2 } }, 'Изделий отгружено')
+                ),
+            h('div', { style: { background: '#f8f8f5', borderRadius: 8, padding: '8px 10px', textAlign: 'center' } },
+              h('div', { style: { fontSize: 20, fontWeight: 500, color: '#888' } }, payType === 'hourly' ? hourlyRate + ' ₽' : pieceRate + ' ₽'),
+              h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase', marginTop: 2 } }, payType === 'hourly' ? 'Руб/час' : 'Руб/изделие')
+            )
+          ),
+          h('div', { style: { fontSize: 10, color: '#bbb', marginTop: 10, textAlign: 'center', lineHeight: 1.5 } },
+            '* Показано начисление до налогов и удержаний. Итоговая сумма определяется бухгалтером.'
+          )
+        )
   );
 });
 
@@ -1160,6 +1291,9 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
 
       // Часы — личный табель
       h(WorkerHoursBlock, { workerId, data }),
+
+      // Зарплата
+      h(WorkerSalaryBlock, { workerId, data }),
 
       // Достижения
       h('div', { style: { ...S.sec, marginBottom: 12 } }, 'Достижения'),
