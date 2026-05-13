@@ -200,7 +200,12 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     data.ops.filter(op => op.workerIds?.includes(workerId) && op.status === 'done').length,
   [data.ops, workerId]);
 
-  const [activeOps, setActiveOps] = useState([]); // массив активных операций
+  const [activeOps, setActiveOps] = useState(() => {
+    // Восстанавливаем активные операции после перезагрузки страницы
+    // Ищем операции in_progress назначенные на этого рабочего
+    // data может быть не загружена при первом рендере — поэтому проверяем
+    return [];
+  }); // массив активных операций
   const [, setTick] = useState(0);
   const [defNote, setDefNote] = useState('');
   const [defectReasonId, setDefectReasonId] = useState('');
@@ -245,6 +250,24 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     })};
     await DB.save(d); onUpdate(d);
   }, [data, onUpdate]);
+
+  // Восстанавливаем activeOps из data.ops при загрузке / смене workerId
+  useEffect(() => {
+    if (!workerId || !data.ops) return;
+    const inProgress = data.ops.filter(o =>
+      o.status === 'in_progress' &&
+      o.workerIds?.includes(workerId) &&
+      !o.archived
+    );
+    if (inProgress.length > 0) {
+      setActiveOps(prev => {
+        // Добавляем только те которых ещё нет в массиве
+        const prevIds = new Set(prev.map(p => p.id));
+        const toAdd = inProgress.filter(o => !prevIds.has(o.id));
+        return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+      });
+    }
+  }, [workerId]); // только при смене рабочего — не при каждом data.ops
 
   // Таймер пока есть хотя бы одна активная операция
   useEffect(() => {
@@ -905,7 +928,12 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
                 }}, '▶ Принять и начать')
               : op.status === 'pending' && !depsComplete
                 ? h('div', { style: { textAlign: 'center', padding: '12px 0', color: '#888', fontSize: 12 } }, 'Ожидание предыдущих этапов')
-                : null
+                : op.status === 'in_progress' && !activeOps.find(ao => ao.id === op.id)
+                  ? h('button', { className: 'worker-btn worker-btn-stop', onClick: () => {
+                      // Восстанавливаем в activeOps и показываем карточку
+                      setActiveOps(prev => prev.find(ao => ao.id === op.id) ? prev : [...prev, op]);
+                    }}, '▶ Продолжить / Завершить')
+                  : null
           );
         })
       ),
