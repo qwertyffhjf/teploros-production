@@ -417,6 +417,14 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     addToast('Расход материалов записан', 'success');
   }, [data, workerId, pendingFinishOp, onUpdate, addToast]);
 
+  // Получаем живые объекты операций из data.ops по ids в activeOps
+  const activeOpsList = activeOps
+    .map(ao => data.ops.find(o => o.id === ao.id))
+    .filter(Boolean)
+    .filter(o => o.status === 'in_progress');
+  const active = activeOpsList[0] || null; // первая активная для совместимости с формами брака/простоя
+  const elapsed = active?.startedAt ? now() - active.startedAt : 0;
+
   const recordDowntime = useCallback(async () => {
     if (!selectedDowntimeType) { addToast('Выберите причину простоя', 'error'); return; }
     const ts = now(); const shift = getCurrentShift(data?.settings?.shifts); const duration = downtimeStartedAt ? ts - downtimeStartedAt : 0;
@@ -456,13 +464,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     }
   }, [data.ops]);
 
-  // Получаем живые объекты операций из data.ops по ids в activeOps
-  const activeOpsList = activeOps
-    .map(ao => data.ops.find(o => o.id === ao.id))
-    .filter(Boolean)
-    .filter(o => o.status === 'in_progress');
-  const active = activeOpsList[0] || null; // первая активная для совместимости с формами брака/простоя
-  const elapsed = active?.startedAt ? now() - active.startedAt : 0;
+  // activeOpsList и active объявлены выше (перед useCallback-ами)
   const qrOp = initialOpId ? data.ops.find(o => o.id === initialOpId) : null;
   const canStartQr = qrOp && qrOp.status === 'pending' && !qrOp.workerIds?.length && !qrOp.archived;
 
