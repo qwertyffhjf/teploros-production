@@ -28,7 +28,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
   const [thanksModal, setThanksModal] = useState(null);
   const { ask: askConfirm, confirmEl } = useConfirm();
   const [thanksNote, setThanksNote] = useState('');
-  const [form, setForm] = useState({ name: '', position: '', grade: '', tabNumber: '', pin: '', sectionId: '', competences: [], competenceLevels: {}, competenceMeta: {}, status: 'working', phone: '', hireDate: '', email: '', emergencyContact: '', medicalExamDate: '', medicalExamNextDate: '', licences: [] });
+  const [form, setForm] = useState({ name: '', position: '', grade: '', tabNumber: '', pin: '', sectionId: '', competences: [], competenceLevels: {}, competenceMeta: {}, status: 'working', phone: '', hireDate: '', email: '', emergencyContact: '', medicalExamDate: '', medicalExamNextDate: '', licences: [], payType: 'hourly', hourlyRate: '', pieceRate: '' });
 
   const resetForm = () => { setForm({ name: '', position: '', grade: '', tabNumber: '', pin: '', sectionId: '', competences: [], competenceLevels: {}, competenceMeta: {}, status: 'working', phone: '', hireDate: '', email: '', emergencyContact: '', medicalExamDate: '', medicalExamNextDate: '', licences: [] }); setEditingWorker(null); setShowAddForm(false); };
 
@@ -48,11 +48,11 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
     const existingWorker = editingWorker ? data.workers.find(w => w.id === editingWorker) : null;
     const newPin = pinChanged ? hashPin(form.pin.trim()) : (existingWorker?.pin || '');
     if (editingWorker) {
-      const d = { ...data, workers: data.workers.map(w => w.id === editingWorker ? { ...w, name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: newPin, sectionId: form.sectionId || null, competences: form.competences, competenceLevels: form.competenceLevels || {}, competenceMeta: form.competenceMeta || {}, status: form.status, phone: form.phone.trim(), hireDate: form.hireDate || null, email: form.email.trim(), emergencyContact: form.emergencyContact.trim(), medicalExamDate: form.medicalExamDate || null, medicalExamNextDate: form.medicalExamNextDate || null, licences: form.licences || [] } : w) };
+      const d = { ...data, workers: data.workers.map(w => w.id === editingWorker ? { ...w, name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: newPin, sectionId: form.sectionId || null, competences: form.competences, competenceLevels: form.competenceLevels || {}, competenceMeta: form.competenceMeta || {}, status: form.status, phone: form.phone.trim(), hireDate: form.hireDate || null, email: form.email.trim(), emergencyContact: form.emergencyContact.trim(), medicalExamDate: form.medicalExamDate || null, medicalExamNextDate: form.medicalExamNextDate || null, licences: form.licences || [], payType: form.payType || 'hourly', hourlyRate: form.hourlyRate || null, pieceRate: form.pieceRate || null } : w) };
       onUpdate(d); DB.save(d).catch(() => onUpdate(data));
       addToast(`Данные ${form.name.trim()} обновлены`, 'success');
     } else {
-      const w = { id: uid(), name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: newPin, sectionId: form.sectionId || null, competences: form.competences, competenceLevels: form.competenceLevels || {}, competenceMeta: form.competenceMeta || {}, status: form.status, phone: form.phone.trim(), hireDate: form.hireDate || null, email: form.email.trim(), emergencyContact: form.emergencyContact.trim(), medicalExamDate: form.medicalExamDate || null, medicalExamNextDate: form.medicalExamNextDate || null, licences: form.licences || [] };
+      const w = { id: uid(), name: form.name.trim(), position: form.position.trim(), grade: form.grade.trim(), tabNumber: form.tabNumber.trim(), pin: newPin, sectionId: form.sectionId || null, competences: form.competences, competenceLevels: form.competenceLevels || {}, competenceMeta: form.competenceMeta || {}, status: form.status, phone: form.phone.trim(), hireDate: form.hireDate || null, email: form.email.trim(), emergencyContact: form.emergencyContact.trim(), medicalExamDate: form.medicalExamDate || null, medicalExamNextDate: form.medicalExamNextDate || null, licences: form.licences || [], payType: form.payType || 'hourly', hourlyRate: form.hourlyRate || null, pieceRate: form.pieceRate || null };
       const d = { ...data, workers: [...data.workers, w] };
       onUpdate(d); DB.save(d).catch(() => onUpdate(data));
       addToast(`${form.name.trim()} добавлен в систему`, 'success');
@@ -86,7 +86,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
     addToast(`${data.workers.find(w=>w.id===id)?.name || 'Сотрудник'} удалён из системы`, 'info');
   }, [data, onUpdate, addToast]);
 
-  const edit = useCallback(w => { setForm({ name: w.name, position: w.position || '', grade: w.grade || '', tabNumber: w.tabNumber || '', pin: '', sectionId: w.sectionId || '', competences: w.competences || [], competenceLevels: w.competenceLevels || {}, competenceMeta: w.competenceMeta || {}, status: w.status || 'working', phone: w.phone || '', hireDate: w.hireDate || '', email: w.email || '', emergencyContact: w.emergencyContact || '', medicalExamDate: w.medicalExamDate || '', medicalExamNextDate: w.medicalExamNextDate || '', licences: w.licences || [] }); setEditingWorker(w.id); setShowAddForm(false); }, []);
+  const edit = useCallback(w => { setForm({ name: w.name, position: w.position || '', grade: w.grade || '', tabNumber: w.tabNumber || '', pin: '', sectionId: w.sectionId || '', competences: w.competences || [], competenceLevels: w.competenceLevels || {}, competenceMeta: w.competenceMeta || {}, status: w.status || 'working', phone: w.phone || '', hireDate: w.hireDate || '', email: w.email || '', emergencyContact: w.emergencyContact || '', medicalExamDate: w.medicalExamDate || '', medicalExamNextDate: w.medicalExamNextDate || '', licences: w.licences || [], payType: w.payType || 'hourly', hourlyRate: w.hourlyRate || '', pieceRate: w.pieceRate || '' }); setEditingWorker(w.id); setShowAddForm(false); }, []);
   const updateStatus = useCallback(async (id, status) => {
     let d = { ...data, workers: data.workers.map(w => w.id === id ? { ...w, status } : w) };
     // При выходе на смену ("working") — записываем 8ч в табель за сегодня если ещё пусто
@@ -239,6 +239,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
       { id: 'main',        label: 'Основное' },
       { id: 'contacts',    label: 'Контакты' },
       { id: 'competences', label: 'Компетенции' + (form.competences?.length > 0 ? ` (${form.competences.length})` : '') },
+      { id: 'pay',         label: '💰 Оплата' },
     ];
     return h('div', { style: isInline ? {} : { ...S.card, border: `1px solid ${AM}`, marginBottom: 16 } },
       !isInline && h('div', { style: { ...S.sec, display: 'flex', alignItems: 'center' } },
@@ -322,6 +323,40 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
             )
           )
         )
+      ),
+
+      // === Вкладка: Оплата ===
+      formTab === 'pay' && h('div', null,
+        h('div', { style: { fontSize:11, color:'#888', marginBottom:8, fontWeight:500, textTransform:'uppercase' } }, 'Тип оплаты'),
+        h('div', { style: { display:'flex', gap:8, marginBottom:14 } },
+          ['hourly', 'piecework'].map(type =>
+            h('button', { key: type, type:'button',
+              style: { flex:1, padding:'10px 8px', fontSize:13, borderRadius:8, cursor:'pointer', fontWeight:500,
+                background: form.payType === type ? AM3 : '#f5f5f5',
+                color:      form.payType === type ? AM2  : '#888',
+                border:     form.payType === type ? '1.5px solid ' + AM : '1px solid #ddd' },
+              onClick: () => setForm(p => ({ ...p, payType: type }))
+            }, type === 'hourly' ? '⏱ Почасовая' : '🔧 Сдельная')
+          )
+        ),
+        form.payType === 'hourly' && h('div', { style: { marginBottom:12 } },
+          h('div', { style: { fontSize:11, color:'#888', marginBottom:4 } }, 'Ставка, руб/час'),
+          h('div', { style: { display:'flex', gap:8, alignItems:'center' } },
+            h('input', { type:'number', min:0, style: { ...S.inp, width:150 }, placeholder:'например 300',
+              value: form.hourlyRate || '', onChange: e => setForm(p => ({ ...p, hourlyRate: parseFloat(e.target.value) || '' })) }),
+            h('span', { style: { fontSize:12, color:'#888' } }, 'руб/час')
+          )
+        ),
+        form.payType === 'piecework' && h('div', { style: { marginBottom:12 } },
+          h('div', { style: { fontSize:11, color:'#888', marginBottom:4 } }, 'Расценка за изделие, руб/шт'),
+          h('div', { style: { display:'flex', gap:8, alignItems:'center' } },
+            h('input', { type:'number', min:0, style: { ...S.inp, width:150 }, placeholder:'например 5000',
+              value: form.pieceRate || '', onChange: e => setForm(p => ({ ...p, pieceRate: parseFloat(e.target.value) || '' })) }),
+            h('span', { style: { fontSize:12, color:'#888' } }, 'руб/изделие')
+          ),
+          h('div', { style: { fontSize:11, color:'#aaa', marginTop:6 } }, 'Считается по количеству отгруженных изделий в которых участвовал рабочий')
+        ),
+        !form.payType && h('div', { style: { fontSize:13, color:'#aaa', padding:'20px', textAlign:'center' } }, 'Выберите тип оплаты выше')
       ),
 
       // === Вкладка: Компетенции ===
