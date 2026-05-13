@@ -1541,14 +1541,52 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
 
   // Сводка мастера — мемоизируем чтобы не пересчитывать на каждый рендер
   const masterSummary = useMemo(() => {
+    const now_ = Date.now();
     const activeOps   = data.ops.filter(o => o.status === 'in_progress' && !o.archived);
     const pendingOps  = data.ops.filter(o => o.status === 'pending' && !o.archived);
     const defectOps   = data.ops.filter(o => (o.status === 'defect' || o.status === 'rework') && !o.archived);
     const onCheckOps  = data.ops.filter(o => o.status === 'on_check' && !o.archived);
     const wipOrders   = data.orders.filter(o => !o.archived && !o.isParentOrder && data.ops.some(op => op.orderId === o.id && op.status === 'in_progress'));
     const freeWorkers = data.workers.filter(w => isWorkerOnShift(w, data.timesheet) && !data.ops.some(op => op.status === 'in_progress' && op.workerIds?.includes(w.id)));
-    return { activeOps, pendingOps, defectOps, onCheckOps, wipOrders, freeWorkers };
-  }, [data.ops, data.orders, data.workers]);
+
+    // Горящие заказы — дедлайн сегодня или просрочен, ещё не отгружены
+    const urgentOrders = data.orders.filter(o => {
+      if (o.archived || o.shipped || o.isParentOrder) return false;
+      if (!o.deadline) return false;
+      const daysLeft = Math.ceil((new Date(o.deadline) - now_) / 86400000);
+      return daysLeft <= 3;
+    }).map(o => {
+      const daysLeft = Math.ceil((new Date(o.deadline) - now_) / 86400000);
+      const orderOps = data.ops.filter(op => op.orderId === o.id && !op.archived);
+      const doneOps  = orderOps.filter(op => op.status === 'done' || op.status === 'approved').length;
+      const pct      = orderOps.length > 0 ? Math.round(doneOps / orderOps.length * 100) : 0;
+      return { ...o, daysLeft, pct, totalOps: orderOps.length, doneOps };
+    }).sort((a, b) => a.daysLeft - b.daysLeft);
+
+    // Узкие места — операции in_progress идущие дольше нормы * 1.5
+    const bottlenecks = activeOps.filter(op => {
+      if (!op.startedAt) return false;
+      const norm = data.opNorms?.[op.name];
+      const normMs = norm?.samples >= 2 ? (norm.totalMs / norm.samples) : (op.plannedHours ? op.plannedHours * 3600000 : null);
+      if (!normMs) return false;
+      return (now_ - op.startedAt) > normMs * 1.5;
+    }).map(op => {
+      const norm = data.opNorms?.[op.name];
+      const normMs = norm?.samples >= 2 ? (norm.totalMs / norm.samples) : op.plannedHours * 3600000;
+      const overMs = (now_ - op.startedAt) - normMs;
+      const order  = data.orders.find(o => o.id === op.orderId);
+      return { ...op, overMs, orderNumber: order?.number || '?' };
+    }).sort((a, b) => b.overMs - a.overMs);
+
+    // Свободные рабочие с компетенциями для горящих заказов
+    const pendingUrgent = pendingOps.filter(op => {
+      const order = data.orders.find(o => o.id === op.orderId);
+      if (!order?.deadline) return false;
+      return Math.ceil((new Date(order.deadline) - now_) / 86400000) <= 3;
+    });
+
+    return { activeOps, pendingOps, defectOps, onCheckOps, wipOrders, freeWorkers, urgentOrders, bottlenecks, pendingUrgent };
+  }, [data.ops, data.orders, data.workers, data.opNorms, data.timesheet]);
   return h('div', { style: { padding:'0 0 24px' } },
     qrOpData && h(QRModal, { ops:[qrOpData.op], order: data.orders.find(o => o.id === qrOpData.op.orderId), worker: qrOpData.worker, onClose: () => setQrOpData(null) }),
     // Онбординг мастера — автоматически скрывается когда всё настроено
@@ -1631,6 +1669,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
           h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500, color: GN } }, freeWorkers.length), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Свободны'))
         );
       })(),
+      h(MasterActionDashboard, { summary: masterSummary, data, onTabSwitch: setTab }),
       h(LoadForecastWidget, { data }),
       h(MasterOps, { data: filteredData, onUpdate, onShowQR: (op, worker) => setQrOpData({ op, worker }), addToast, onOrderClick, onWorkerClick })
     ),
@@ -1662,6 +1701,128 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
   );
 });
 
+
+// ==================== MasterActionDashboard ====================
+const MasterActionDashboard = memo(({ summary, data, onTabSwitch }) => {
+  const { urgentOrders, bottlenecks, freeWorkers, pendingUrgent, defectOps, onCheckOps } = summary;
+  const now_ = Date.now();
+
+  const fmtOvertime = ms => {
+    const h = Math.floor(ms / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    return h > 0 ? h + ' ч ' + m + ' мин' : m + ' мин';
+  };
+
+  // ── Блок «Что делать сейчас» ──────────────────────────────────────────────
+  const actions = [];
+  if (freeWorkers.length > 0 && pendingUrgent.length > 0)
+    actions.push({ icon: 'ti-user-check', color: '#EF9F27', bg: '#FAEEDA',
+      text: freeWorkers.length + ' свободных рабочих, ' + pendingUrgent.length + ' горящих операций без исполнителей — нужно назначение',
+      tab: 'recommend' });
+  if (defectOps.length > 0)
+    actions.push({ icon: 'ti-alert-triangle', color: '#E24B4A', bg: '#FCEBEB',
+      text: defectOps.length + ' операций с браком ожидают решения',
+      tab: 'ops' });
+  if (onCheckOps.length > 0)
+    actions.push({ icon: 'ti-eye-check', color: '#185FA5', bg: '#E6F1FB',
+      text: onCheckOps.length + ' операций ожидают проверки ОТК',
+      tab: 'ops' });
+  if (bottlenecks.length > 0)
+    actions.push({ icon: 'ti-clock-exclamation', color: '#854F0B', bg: '#FAEEDA',
+      text: bottlenecks.length + ' операций превышают нормативное время — возможны задержки',
+      tab: 'ops' });
+  if (urgentOrders.length === 0 && freeWorkers.length === 0 && bottlenecks.length === 0 && defectOps.length === 0)
+    actions.push({ icon: 'ti-circle-check', color: '#3B6D11', bg: '#EAF3DE',
+      text: 'Всё в порядке — проблем не обнаружено', tab: null });
+
+  const secStyle = { marginBottom: 16 };
+  const secTitleStyle = { fontSize: 11, fontWeight: 500, color: '#888', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 };
+  const cardStyle = { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '10px 14px', marginBottom: 8 };
+
+  return h('div', { style: { marginBottom: 16 } },
+
+    // ── Что делать сейчас ──
+    actions.length > 0 && h('div', { style: secStyle },
+      h('div', { style: secTitleStyle }, '⚡ Что делать сейчас'),
+      actions.map((a, i) => h('div', { key: i,
+        style: { ...cardStyle, display: 'flex', alignItems: 'center', gap: 10, cursor: a.tab ? 'pointer' : 'default',
+          background: a.bg, borderColor: a.color + '44' },
+        onClick: () => a.tab && onTabSwitch(a.tab) },
+        h('i', { className: 'ti ' + a.icon, style: { fontSize: 18, color: a.color, flexShrink: 0 }, 'aria-hidden': true }),
+        h('span', { style: { fontSize: 13, color: a.color.replace(')', ', 0.85)').replace('rgb', 'rgba'), fontWeight: 500 } }, a.text),
+        a.tab && h('i', { className: 'ti ti-chevron-right', style: { fontSize: 14, color: a.color, marginLeft: 'auto', flexShrink: 0 }, 'aria-hidden': true })
+      ))
+    ),
+
+    // ── Горящие заказы ──
+    urgentOrders.length > 0 && h('div', { style: secStyle },
+      h('div', { style: secTitleStyle }, '🔥 Горящие заказы (' + urgentOrders.length + ')'),
+      urgentOrders.map(ord => {
+        const isOverdue = ord.daysLeft < 0;
+        const isCritical = ord.daysLeft <= 1;
+        const accent = isOverdue ? '#E24B4A' : isCritical ? '#EF9F27' : '#854F0B';
+        return h('div', { key: ord.id, style: { ...cardStyle, borderLeft: '3px solid ' + accent } },
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 } },
+            h('div', null,
+              h('div', { style: { fontSize: 14, fontWeight: 500 } }, 'Заказ №' + ord.number),
+              h('div', { style: { fontSize: 12, color: '#888', marginTop: 2 } }, ord.product || '—')
+            ),
+            h('div', { style: { textAlign: 'right', flexShrink: 0 } },
+              h('div', { style: { fontSize: 13, fontWeight: 600, color: accent } },
+                isOverdue ? 'Просрочен на ' + Math.abs(ord.daysLeft) + ' дн.' : ord.daysLeft === 0 ? 'Сегодня' : 'Через ' + ord.daysLeft + ' дн.'
+              ),
+              h('div', { style: { fontSize: 11, color: '#888', marginTop: 2 } }, ord.deadline)
+            )
+          ),
+          h('div', { style: { marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 } },
+            h('div', { style: { flex: 1, height: 4, background: '#eee', borderRadius: 2, overflow: 'hidden' } },
+              h('div', { style: { width: ord.pct + '%', height: '100%', background: accent, borderRadius: 2, transition: 'width 0.3s' } })
+            ),
+            h('div', { style: { fontSize: 11, color: '#888', flexShrink: 0 } },
+              ord.doneOps + '/' + ord.totalOps + ' оп. · ' + ord.pct + '%'
+            )
+          )
+        );
+      })
+    ),
+
+    // ── Узкие места ──
+    bottlenecks.length > 0 && h('div', { style: secStyle },
+      h('div', { style: secTitleStyle }, '⏱ Узкие места (' + bottlenecks.length + ')'),
+      bottlenecks.slice(0, 4).map(op => {
+        const workers = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name || '?').join(', ');
+        return h('div', { key: op.id, style: { ...cardStyle, borderLeft: '3px solid #EF9F27' } },
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 } },
+            h('div', null,
+              h('div', { style: { fontSize: 13, fontWeight: 500 } }, op.name),
+              h('div', { style: { fontSize: 11, color: '#888', marginTop: 2 } },
+                'Заказ №' + op.orderNumber + (workers ? ' · ' + workers : '')
+              )
+            ),
+            h('div', { style: { textAlign: 'right', flexShrink: 0 } },
+              h('div', { style: { fontSize: 12, fontWeight: 600, color: '#EF9F27' } }, '+' + fmtOvertime(op.overMs)),
+              h('div', { style: { fontSize: 10, color: '#aaa', marginTop: 2 } }, 'сверх нормы')
+            )
+          )
+        );
+      })
+    ),
+
+    // ── Свободные рабочие ──
+    freeWorkers.length > 0 && h('div', { style: secStyle },
+      h('div', { style: secTitleStyle }, '👷 Свободные рабочие (' + freeWorkers.length + ')',
+        h('span', { style: { fontSize: 10, color: '#aaa', fontWeight: 400, marginLeft: 8, textTransform: 'none', letterSpacing: 0 }, onClick: () => onTabSwitch('recommend') },
+          '→ Перейти к назначениям'
+        )
+      ),
+      h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
+        freeWorkers.map(w => h('div', { key: w.id,
+          style: { padding: '4px 10px', background: '#EAF3DE', border: '0.5px solid #C0DD97', borderRadius: 14, fontSize: 12, color: '#3B6D11', fontWeight: 500 }
+        }, w.name))
+      )
+    )
+  );
+});
 
 // ==================== QMSScreen: Управление качеством ====================
 const QMSScreen = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
@@ -2015,6 +2176,3 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
     )
   );
 });
-
-
-
