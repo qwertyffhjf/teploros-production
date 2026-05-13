@@ -1875,12 +1875,12 @@ const DirectorScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     const topWorker = Object.entries(wmap).sort((a,b)=>b[1]-a[1])[0];
     if (topWorker) {
       const w = data.workers.find(x=>x.id===topWorker[0]);
-      if (w) issues.push({ title:`Брак: ${w.name.split(' ')[0]}`, sub:`${topWorker[1]} случаев за 30 дней`, sev:'high' });
+      if (w) issues.push({ title:`Брак: ${w.name.split(' ')[0]}`, sub:`${topWorker[1]} случаев за 30 дней`, sev:'high', tab:'analytics' });
     }
     // Просроченные заказы
-    if (overdue > 0) issues.push({ title:`Просрочено заказов: ${overdue}`, sub:'требуют немедленного внимания', sev:'critical' });
+    if (overdue > 0) issues.push({ title:`Просрочено заказов: ${overdue}`, sub:'требуют немедленного внимания', sev:'critical', tab:'orders' });
     // Рекламации
-    if (recCount > 0) issues.push({ title:`Рекламации: ${recCount}`, sub:'открытых и в работе', sev: recCount > 3 ? 'high' : 'medium' });
+    if (recCount > 0) issues.push({ title:`Рекламации: ${recCount}`, sub:'открытых и в работе', sev: recCount > 3 ? 'high' : 'medium', tab:'reclamations' });
     return issues;
   }, [data, overdue, recCount]);
 
@@ -1903,9 +1903,15 @@ const DirectorScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       h('div', { style:{ fontSize:12, fontWeight:500, marginBottom:10 } }, 'Ключевые проблемы — 30 дней'),
       topIssues.length === 0
         ? h('div', { style:{ ...S.card, textAlign:'center', color:'#888', padding:24 } }, '✓ Критических проблем нет')
-        : topIssues.map((issue, i) => h('div', { key:i, style:{ background: sevBg[issue.sev], border:`0.5px solid ${sevColor[issue.sev]}`, borderRadius:10, padding:'10px 14px', marginBottom:8 } },
-            h('div', { style:{ fontSize:13, fontWeight:500, color: sevColor[issue.sev] } }, issue.title),
-            h('div', { style:{ fontSize:11, color: sevColor[issue.sev], marginTop:2 } }, issue.sub)
+        : topIssues.map((issue, i) => h('div', { key:i,
+            style:{ background: sevBg[issue.sev], border:`0.5px solid ${sevColor[issue.sev]}`, borderRadius:10, padding:'10px 14px', marginBottom:8, cursor: issue.tab ? 'pointer' : 'default', display:'flex', alignItems:'center', justifyContent:'space-between' },
+            onClick: () => issue.tab && setTab(issue.tab)
+          },
+            h('div', null,
+              h('div', { style:{ fontSize:13, fontWeight:500, color: sevColor[issue.sev] } }, issue.title),
+              h('div', { style:{ fontSize:11, color: sevColor[issue.sev], marginTop:2 } }, issue.sub)
+            ),
+            issue.tab && h('div', { style:{ fontSize:18, color: sevColor[issue.sev], opacity:0.6 } }, '›')
           ))
     ),
     tab === 'analytics'    && h(AnalyticsDashboard, { data }),
