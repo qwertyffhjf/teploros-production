@@ -72,7 +72,7 @@ const WorkerOnboarding = memo(({ worker, myOps, onDone }) => {
 
 // ==================== WorkerScreen ====================
 // ==================== WorkerHoursBlock ====================
-const WorkerHoursBlock = memo(({ workerId, data }) => {
+const WorkerHoursBlock = memo(({ workerId, data, activeOpsList }) => {
   const today = new Date();
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [viewYear,  setViewYear]  = useState(today.getFullYear());
@@ -1290,7 +1290,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       ),
 
       // Часы — личный табель
-      h(WorkerHoursBlock, { workerId, data }),
+      h(WorkerHoursBlock, { workerId, data, activeOpsList }),
 
       // Зарплата
       h(WorkerSalaryBlock, { workerId, data }),
