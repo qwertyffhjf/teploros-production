@@ -4,6 +4,13 @@
 // ==================== DeliveryBoard ====================
 const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId }) => {
   const [filterStatus, setFilterStatus] = useState('pending'); // pending | all | confirmed
+  const [expandedOrders, setExpandedOrders] = useState(new Set()); // раскрытые заказы
+  const [showAnalytics, setShowAnalytics] = useState(false);
+  const toggleOrder = (orderId) => setExpandedOrders(prev => {
+    const s = new Set(prev);
+    s.has(orderId) ? s.delete(orderId) : s.add(orderId);
+    return s;
+  });
   const [confirmModal, setConfirmModal] = useState(null); // {delivery, partialQty}
   const [partialQty, setPartialQty] = useState('');
   const [confirmNote, setConfirmNote] = useState('');
@@ -100,43 +107,158 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId }) => {
             : h(EmptyState, { icon: '📦', title: 'Нет поставок', desc: 'Добавьте первую поставку материалов', action: 'Добавить поставку', onAction: () => setShowForm(true) })
         )
       : h('div', null,
-          deliveries.map((del, idx) => {
-            const mat = data.materials.find(m => m.id === del.materialId);
-            const order = data.orders.find(o => o.id === del.orderId);
-            const isPending = del.status === 'pending';
-            const isPartial = del.status === 'partial';
-            const isDone    = del.status === 'confirmed';
-            const borderColor = isDone ? GN : isPartial ? AM : '#dedad3';
-
-            return h('div', { key: del.id, className: 'op-card-anim', style: { ...S.card, borderLeft: `4px solid ${borderColor}`, marginBottom: 10, animationDelay: `${idx * 0.05}s`, transition: 'box-shadow 0.15s, transform 0.15s' }, onMouseEnter: e => { e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.08)'; e.currentTarget.style.transform = 'translateY(-1px)'; }, onMouseLeave: e => { e.currentTarget.style.boxShadow = ''; e.currentTarget.style.transform = ''; } },
-              h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 } },
-                h('div', { style: { flex: 1 } },
-                  h('div', { style: { fontSize: 14, fontWeight: 500, marginBottom: 3 } }, mat?.name || del.materialId),
-                  h('div', { style: { fontSize: 12, color: '#888', marginBottom: 6 } },
-                    `Заказ: `, h('span', { style: { color: AM2, fontWeight: 500, cursor: order ? 'pointer' : 'default', textDecoration: order ? 'underline' : 'none', textDecorationStyle: 'dotted' }, onClick: () => order && setViewOrderId(order.id) }, order?.number || del.orderId),
-                    ` · Этап: ${del.stageName}`
-                  ),
-                  h('div', { style: { display: 'flex', gap: 12, fontSize: 12 } },
-                    h('span', null, `Нужно: `, h('b', null, `${del.requiredQty} ${del.unit}`)),
-                    del.deliveredQty > 0 && h('span', { style: { color: isPartial ? AM2 : GN2 } }, `Поступило: `, h('b', null, `${del.deliveredQty} ${del.unit}`))
-                  ),
-                  del.confirmedAt && h('div', { style: { fontSize: 11, color: '#aaa', marginTop: 4 } },
-                    `Подтверждено: ${new Date(del.confirmedAt).toLocaleString('ru')}`
-                  ),
-                  del.note && h('div', { style: { fontSize: 11, color: '#666', marginTop: 3, fontStyle: 'italic' } }, del.note)
+          // ── Аналитическая сводка ──────────────────────────────────────────
+          h('div', { style: { ...S.card, marginBottom: 12, padding: '10px 14px' } },
+            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: showAnalytics ? 10 : 0 } },
+              h('div', { style: { display: 'flex', gap: 16 } },
+                h('div', { style: { textAlign: 'center' } },
+                  h('div', { style: { fontSize: 20, fontWeight: 500, color: AM } }, deliveries.length),
+                  h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'Позиций')
                 ),
-                h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 } },
-                  h('span', { style: {
-                    padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 500, textAlign: 'center',
-                    background: isDone ? GN3 : isPartial ? AM3 : '#f0ede8',
-                    color: isDone ? GN2 : isPartial ? AM2 : '#888'
-                  }}, isDone ? '✓ Поставлено' : isPartial ? '⚡ Частично' : '⏳ Ожидаем'),
-                  !isDone && h('button', { style: abtn({ fontSize: 12 }), onClick: () => { navigator.vibrate?.([30]); openConfirm(del); } }, '📥 Подтвердить'),
-                  h('button', { style: gbtn({ fontSize: 12 }), onClick: () => printQR(del) }, '🖨 QR-код')
+                h('div', { style: { textAlign: 'center' } },
+                  h('div', { style: { fontSize: 20, fontWeight: 500, color: '#888' } },
+                    new Set(deliveries.map(d => d.orderId)).size),
+                  h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'Заказов')
+                ),
+                h('div', { style: { textAlign: 'center' } },
+                  h('div', { style: { fontSize: 20, fontWeight: 500, color: GN2 } },
+                    deliveries.filter(d => d.status === 'confirmed').length),
+                  h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'Получено')
+                ),
+                h('div', { style: { textAlign: 'center' } },
+                  h('div', { style: { fontSize: 20, fontWeight: 500, color: RD2 } },
+                    deliveries.filter(d => d.status === 'pending').length),
+                  h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'Ожидают')
+                )
+              ),
+              h('button', { style: gbtn({ fontSize: 11, padding: '4px 10px' }),
+                onClick: () => setShowAnalytics(v => !v) },
+                showAnalytics ? '▲ Скрыть сводку' : '▼ Сводка по материалам')
+            ),
+            // Сводная таблица по материалам
+            showAnalytics && h('div', null,
+              h('div', { style: { fontSize: 11, color: '#888', fontWeight: 500, textTransform: 'uppercase', marginBottom: 6 } }, 'Итого по позициям'),
+              h('div', { style: { overflowX: 'auto' } },
+                h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 } },
+                  h('thead', null, h('tr', null,
+                    ['Материал', 'Нужно', 'Получено', 'Статус'].map((t, i) =>
+                      h('th', { key: i, style: { padding: '5px 8px', textAlign: i > 0 ? 'center' : 'left', color: '#888', fontWeight: 500, borderBottom: '0.5px solid var(--border)', fontSize: 11 } }, t)
+                    )
+                  )),
+                  h('tbody', null,
+                    // Группируем по materialId
+                    Object.values(
+                      deliveries.reduce((acc, d) => {
+                        const mat = data.materials.find(m => m.id === d.materialId);
+                        const key = d.materialId;
+                        if (!acc[key]) acc[key] = { name: mat?.name || d.materialId, unit: d.unit, required: 0, delivered: 0, total: 0, done: 0 };
+                        acc[key].required += d.requiredQty || 0;
+                        acc[key].delivered += d.deliveredQty || 0;
+                        acc[key].total++;
+                        if (d.status === 'confirmed') acc[key].done++;
+                        return acc;
+                      }, {})
+                    ).sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+                    .map((row, i) => h('tr', { key: i, style: { background: i % 2 === 0 ? 'var(--bg)' : 'transparent' } },
+                      h('td', { style: { padding: '5px 8px', fontWeight: 500 } }, row.name),
+                      h('td', { style: { padding: '5px 8px', textAlign: 'center' } }, row.required + ' ' + row.unit),
+                      h('td', { style: { padding: '5px 8px', textAlign: 'center', color: row.delivered >= row.required ? GN2 : AM2, fontWeight: 500 } },
+                        row.delivered + ' ' + row.unit),
+                      h('td', { style: { padding: '5px 8px', textAlign: 'center' } },
+                        h('span', { style: { padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 500,
+                          background: row.done === row.total ? GN3 : row.delivered > 0 ? AM3 : '#f0ede8',
+                          color: row.done === row.total ? GN2 : row.delivered > 0 ? AM2 : '#888' } },
+                          row.done + '/' + row.total)
+                      )
+                    ))
+                  )
                 )
               )
-            );
-          })
+            )
+          ),
+
+          // ── Группировка по заказам ────────────────────────────────────────
+          (() => {
+            const groups = {};
+            deliveries.forEach(d => {
+              if (!groups[d.orderId]) groups[d.orderId] = [];
+              groups[d.orderId].push(d);
+            });
+            return Object.entries(groups).map(([orderId, items]) => {
+              const order = data.orders.find(o => o.id === orderId);
+              const isExpanded = expandedOrders.has(orderId);
+              const doneCount = items.filter(d => d.status === 'confirmed').length;
+              const allDone = doneCount === items.length;
+              const hasPartial = items.some(d => d.status === 'partial');
+              const groupColor = allDone ? GN : hasPartial ? AM : '#dedad3';
+
+              return h('div', { key: orderId, style: { marginBottom: 8 } },
+                // Заголовок группы — кликабельный
+                h('div', {
+                  style: { ...S.card, padding: '10px 14px', marginBottom: isExpanded ? 0 : 0,
+                    borderLeft: '4px solid ' + groupColor,
+                    borderRadius: isExpanded ? '8px 8px 0 0' : 8,
+                    cursor: 'pointer', userSelect: 'none',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+                  onClick: () => toggleOrder(orderId)
+                },
+                  h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flex: 1 } },
+                    h('span', { style: { fontSize: 16 } }, isExpanded ? '▼' : '▶'),
+                    h('div', null,
+                      h('div', { style: { fontSize: 14, fontWeight: 500 } },
+                        'Заказ №' + (order?.number || orderId)
+                      ),
+                      h('div', { style: { fontSize: 12, color: '#888', marginTop: 1 } },
+                        (order?.product || '') + (order?.customer ? ' · ' + order.customer : '')
+                      )
+                    )
+                  ),
+                  h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 } },
+                    h('span', { style: { fontSize: 12, color: allDone ? GN2 : AM2, fontWeight: 500 } },
+                      doneCount + '/' + items.length + ' получено'),
+                    h('span', { style: { padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 500,
+                      background: allDone ? GN3 : hasPartial ? AM3 : '#f0ede8',
+                      color: allDone ? GN2 : hasPartial ? AM2 : '#888' } },
+                      allDone ? '✓ Всё получено' : hasPartial ? '⚡ Частично' : '⏳ Ожидаем')
+                  )
+                ),
+                // Раскрытый список позиций
+                isExpanded && h('div', { style: { border: '0.5px solid var(--border)', borderTop: 'none', borderRadius: '0 0 8px 8px', overflow: 'hidden' } },
+                  items.map((del, idx) => {
+                    const mat = data.materials.find(m => m.id === del.materialId);
+                    const isPending = del.status === 'pending';
+                    const isPartial = del.status === 'partial';
+                    const isDone    = del.status === 'confirmed';
+                    return h('div', { key: del.id,
+                      style: { padding: '10px 14px', borderBottom: idx < items.length - 1 ? '0.5px solid var(--border-soft)' : 'none',
+                        background: isDone ? 'rgba(99,153,34,0.04)' : 'transparent',
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 } },
+                      h('div', { style: { flex: 1 } },
+                        h('div', { style: { fontSize: 13, fontWeight: 500, marginBottom: 2 } }, mat?.name || del.materialId),
+                        h('div', { style: { fontSize: 11, color: '#888', marginBottom: 4 } }, 'Этап: ' + del.stageName),
+                        h('div', { style: { display: 'flex', gap: 12, fontSize: 12 } },
+                          h('span', null, 'Нужно: ', h('b', null, del.requiredQty + ' ' + del.unit)),
+                          del.deliveredQty > 0 && h('span', { style: { color: isPartial ? AM2 : GN2 } },
+                            'Получено: ', h('b', null, del.deliveredQty + ' ' + del.unit))
+                        ),
+                        del.note && h('div', { style: { fontSize: 11, color: '#666', marginTop: 3, fontStyle: 'italic' } }, del.note)
+                      ),
+                      h('div', { style: { display: 'flex', flexDirection: 'column', gap: 5, flexShrink: 0, alignItems: 'flex-end' } },
+                        h('span', { style: { padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 500,
+                          background: isDone ? GN3 : isPartial ? AM3 : '#f0ede8',
+                          color: isDone ? GN2 : isPartial ? AM2 : '#888' } },
+                          isDone ? '✓ Получено' : isPartial ? '⚡ Частично' : '⏳ Ожидаем'),
+                        !isDone && h('button', { style: abtn({ fontSize: 11, padding: '4px 10px' }),
+                          onClick: () => { navigator.vibrate?.([30]); openConfirm(del); } }, '📥 Принять'),
+                        h('button', { style: gbtn({ fontSize: 11, padding: '3px 8px' }),
+                          onClick: () => printQR(del) }, '🖨 QR')
+                      )
+                    );
+                  })
+                )
+              );
+            });
+          })()
         ),
 
     // Модал подтверждения поставки
