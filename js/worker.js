@@ -576,11 +576,16 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     addToast('Расход материалов записан', 'success');
   }, [data, workerId, pendingFinishOp, onUpdate, addToast]);
 
-  // Получаем живые объекты операций из data.ops по ids в activeOps
-  const activeOpsList = activeOps
-    .map(ao => data.ops.find(o => o.id === ao.id))
-    .filter(Boolean)
-    .filter(o => o.status === 'in_progress');
+  // Получаем живые объекты операций из data.ops по ids в activeOps (дедупликация по id)
+  const activeOpsList = Array.from(
+    new Map(
+      activeOps
+        .map(ao => data.ops.find(o => o.id === ao.id))
+        .filter(Boolean)
+        .filter(o => o.status === 'in_progress')
+        .map(o => [o.id, o])
+    ).values()
+  );
   const active = activeOpsList[0] || null; // первая активная для совместимости с формами брака/простоя
   const elapsed = active?.startedAt ? now() - active.startedAt : 0;
 
