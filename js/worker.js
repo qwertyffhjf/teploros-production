@@ -999,9 +999,13 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       achHint && !activeOpsList.length && h('div', { style: { fontSize: 11, color: AM, textAlign: 'center', padding: '4px 0', marginBottom: 8 } }, `⭐ ${achHint}`),
 
       // Список заданий — показываем всегда (параллельный запуск)
-      myOps.length > 0 && h('div', null,
-        h('div', { style: { ...S.sec, marginBottom: 12 } }, `Задания (${myOps.length})`),
-        myOps.map(op => {
+      (() => {
+        // Скрываем из списка операции которые уже показываются как активные карточки
+        const activeIds = new Set(activeOpsList.map(o => o.id));
+        const pendingOps = myOps.filter(op => !activeIds.has(op.id));
+        return pendingOps.length > 0 && h('div', null,
+          h('div', { style: { ...S.sec, marginBottom: 12 } }, 'Задания (' + pendingOps.length + ')'),
+          pendingOps.map(op => {
           const order = data.orders.find(o => o.id === op.orderId);
           const deadlineMs = order?.deadline ? new Date(order.deadline).getTime() : null;
           const timeLeft = deadlineMs ? deadlineMs - now() : null;
@@ -1208,6 +1212,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
             })
           )
         );
+        })()
       })(),
 
       // Модалки
