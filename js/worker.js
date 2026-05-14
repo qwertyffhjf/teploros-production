@@ -384,23 +384,26 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     await DB.save(d); onUpdate(d);
   }, [data, onUpdate]);
 
-  // Восстанавливаем activeOps из data.ops при загрузке / смене workerId
+  // Восстанавливаем activeOps из data.ops при загрузке
+  // Запускаем при каждом обновлении data.ops — добавляем только новые, не сбрасываем существующие
   useEffect(() => {
-    if (!workerId || !data.ops) return;
+    if (!workerId || !data.ops?.length) return;
     const inProgress = data.ops.filter(o =>
       o.status === 'in_progress' &&
       o.workerIds?.includes(workerId) &&
       !o.archived
     );
-    if (inProgress.length > 0) {
-      setActiveOps(prev => {
-        // Добавляем только те которых ещё нет в массиве
-        const prevIds = new Set(prev.map(p => p.id));
-        const toAdd = inProgress.filter(o => !prevIds.has(o.id));
-        return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
-      });
-    }
-  }, [workerId]); // только при смене рабочего — не при каждом data.ops
+    setActiveOps(prev => {
+      const prevIds = new Set(prev.map(p => p.id));
+      const toAdd = inProgress.filter(o => !prevIds.has(o.id));
+      // Также убираем из activeOps операции которые больше не in_progress
+      const inProgressIds = new Set(inProgress.map(o => o.id));
+      const filtered = prev.filter(o => inProgressIds.has(o.id));
+      if (toAdd.length > 0) return [...filtered, ...toAdd];
+      if (filtered.length !== prev.length) return filtered;
+      return prev;
+    });
+  }, [workerId, data.ops]);
 
   // Таймер пока есть хотя бы одна активная операция
   useEffect(() => {
