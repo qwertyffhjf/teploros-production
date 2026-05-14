@@ -868,15 +868,25 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
           const hh = String(Math.floor(itemElapsed / 3600000)).padStart(2,'0');
           const mm = String(Math.floor((itemElapsed % 3600000) / 60000)).padStart(2,'0');
           const ss = String(Math.floor((itemElapsed % 60000) / 1000)).padStart(2,'0');
-          return h('div', { key: activeItem.id, style: { ...S.card, marginBottom: 12, borderLeft: `3px solid ${AM}` } },
+          const drawUrl = activeItem.drawingUrl || data.orders.find(o => o.id === activeItem.orderId)?.drawingUrl;
+          return h('div', { key: activeItem.id, style: { ...S.card, marginBottom: 12, borderLeft: `3px solid ${AM}`, background: isFirst ? AM3 : undefined } },
             h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 } },
               h('div', null,
+                isFirst && h('div', { style: { fontSize: 9, color: AM4, textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 4, fontWeight: 700 } }, '▶ В работе сейчас'),
                 h('div', { style: { fontSize: 15, fontWeight: 500, marginBottom: 2 } }, activeItem.name),
+                activeItem.qty && h('div', { style: { fontSize: 12, color: AM4 } }, `📦 Ваша доля: ${activeItem.workerQty?.[workerId] || '—'} из ${activeItem.qty} шт`),
                 h('div', { style: { fontSize: 11, color: AM4 } }, order?.number || '—')
               ),
               h('div', { style: { fontSize: 20, fontWeight: 500, color: AM, fontFamily: 'monospace' } },
                 `${hh}:${mm}:${ss}`
               )
+            ),
+            drawUrl && h('a', { href: drawUrl, target: '_blank', rel: 'noopener', style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: BL, textDecoration: 'none', padding: '6px 10px', background: 'rgba(255,255,255,0.8)', borderRadius: 6, marginBottom: 10 } }, '📐 Чертёж / ТЗ'),
+            // Комментарий
+            isFirst && h('div', { style: { display: 'flex', gap: 6, marginBottom: 12 } },
+              h('input', { style: { ...S.inp, flex: 1, fontSize: 14 }, placeholder: 'Комментарий к операции...', value: opComment, onChange: e => setOpComment(e.target.value), onKeyDown: e => e.key === 'Enter' && saveComment(activeItem.id) }),
+              h(VoiceButton, { onResult: (t) => setOpComment(prev => prev ? prev + ' ' + t : t) }),
+              opComment.trim() && h('button', { style: abtn({ padding: '8px 12px', fontSize: 13 }), onClick: () => saveComment(activeItem.id) }, '💬')
             ),
             // Показываем форму брака/завершения только для первой или если это единственная
             isFirst && showDefForm
@@ -913,7 +923,8 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
                   h('div', { style: { display: 'flex', gap: 8 } },
                     h('button', { className: 'worker-btn-defect', style: { flex: 1 }, onClick: () => { navigator.vibrate?.([40]); setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
                     h('button', { className: 'worker-btn-defect', style: { flex: 1 }, onClick: () => { navigator.vibrate?.([40]); setShowDefForm(true); setDefectFromPrev(true); } }, '⚠ Брак с уч.')
-                  )
+                  ),
+                  isFirst && h('button', { className: 'worker-btn-pause', style: { marginTop: 8 }, onClick: () => { navigator.vibrate?.([30]); setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Зафиксировать простой')
                 )
           );
         })
@@ -934,7 +945,8 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       (() => {
         // Скрываем из списка операции которые уже показываются как активные карточки
         const activeIds = new Set(activeOpsList.map(o => o.id));
-        const pendingOps = myOps.filter(op => !activeIds.has(op.id));
+        // Показываем только pending операции — in_progress уже в карточках выше
+        const pendingOps = myOps.filter(op => op.status === 'pending' || op.status === 'on_check');
         return pendingOps.length > 0 && h('div', null,
           h('div', { style: { ...S.sec, marginBottom: 12 } }, 'Задания (' + pendingOps.length + ')'),
           pendingOps.map(op => {
@@ -1355,4 +1367,3 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   confirmEl
   );
 });
-
