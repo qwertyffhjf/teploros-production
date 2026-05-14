@@ -588,6 +588,8 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   );
   const active = activeOpsList[0] || null; // первая активная для совместимости с формами брака/простоя
   const elapsed = active?.startedAt ? now() - active.startedAt : 0;
+  // Отладка — временный глобальный стейт
+  window._workerDebug = { activeOpsLen: activeOps.length, activeOpsListLen: activeOpsList.length, workerId };
 
   const recordDowntime = useCallback(async () => {
     if (!selectedDowntimeType) { addToast('Выберите причину простоя', 'error'); return; }
@@ -1374,3 +1376,4 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   confirmEl
   );
 });
+
