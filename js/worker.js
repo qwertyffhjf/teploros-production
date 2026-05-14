@@ -912,7 +912,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
               : h('div', null,
                   h('button', { className: 'worker-btn worker-btn-stop', style: { marginBottom: 8 }, onClick: () => {
                     vibrateAction('start');
-                    if (activeItem.requiresPressureTest || activeItem.name.toLowerCase().includes('опресс')) {
+                    if (activeItem.requiresPressureTest || activeItem.name.toLowerCase().includes('опрес') || activeItem.name.toLowerCase().includes('гидравл')) {
                       setPressureOp(activeItem);
                       setPressureForm({ workPressure: '', testPressure: '', duration: '10', tempC: '', pressureStart: '', pressureEnd: '', sweatingFound: false, defectDesc: '', verdict: 'pass' });
                       setShowPressureForm(true);
@@ -945,8 +945,8 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       (() => {
         // Скрываем из списка операции которые уже показываются как активные карточки
         const activeIds = new Set(activeOpsList.map(o => o.id));
-        // Показываем только pending операции — in_progress уже в карточках выше
-        const pendingOps = myOps.filter(op => op.status === 'pending' || op.status === 'on_check');
+        // Показываем все незавершённые операции кроме тех что уже в активных карточках
+        const pendingOps = myOps.filter(op => !activeIds.has(op.id));
         return pendingOps.length > 0 && h('div', null,
           h('div', { style: { ...S.sec, marginBottom: 12 } }, 'Задания (' + pendingOps.length + ')'),
           pendingOps.map(op => {
@@ -1367,3 +1367,4 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   confirmEl
   );
 });
+
