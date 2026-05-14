@@ -947,6 +947,13 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
         const activeIds = new Set(activeOpsList.map(o => o.id));
         // Показываем все незавершённые операции кроме тех что уже в активных карточках
         const pendingOps = myOps.filter(op => !activeIds.has(op.id));
+        if (pendingOps.length === 0 && myOps.length > 0) {
+          // Все назначенные операции уже запущены — показываем карточки выше
+          return null;
+        }
+        if (pendingOps.length === 0) {
+          return h('div', { style: { textAlign: 'center', padding: '24px 0', color: '#aaa', fontSize: 13 } }, 'Нет назначенных заданий');
+        }
         return pendingOps.length > 0 && h('div', null,
           h('div', { style: { ...S.sec, marginBottom: 12 } }, 'Задания (' + pendingOps.length + ')'),
           pendingOps.map(op => {
@@ -1367,4 +1374,3 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   confirmEl
   );
 });
-
