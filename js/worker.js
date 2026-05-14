@@ -855,82 +855,6 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     // ════════════════════════════════════════════
     workerTab === 'tasks' && h('div', null,
 
-      // Активная операция
-      active && h('div', { style: { background: AM3, border: `1.5px solid ${AM4}`, borderRadius: 16, padding: 16, marginBottom: 20, boxShadow: `0 2px 0 ${AM4}, 0 4px 24px rgba(239,159,39,.2)` } },
-        h('div', { style: { fontSize: 9, color: AM4, textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 8, fontWeight: 700 } }, '▶ В работе сейчас'),
-        h('div', { style: { fontSize: 18, fontWeight: 600, color: AM2, marginBottom: 2, lineHeight: 1.3 } }, active.name),
-        active.qty && h('div', { style: { fontSize: 13, color: AM4, fontWeight: 500, marginBottom: 4 } }, 
-          `📦 Ваша доля: ${active.workerQty?.[workerId] || '—'} из ${active.qty} шт`
-        ),
-        h('div', { style: { fontSize: 12, color: AM4, marginBottom: 14, opacity: .8 } }, data.orders.find(o => o.id === active.orderId)?.number || ''),
-        h(ElapsedTimer, { startedAt: active.startedAt, style: { fontSize: 36, fontWeight: 600, color: AM2, marginBottom: 14, display: 'block', fontFamily: 'monospace', letterSpacing: '-0.02em' } }),
-        (() => {
-          const drawUrl = active.drawingUrl || data.orders.find(o => o.id === active.orderId)?.drawingUrl;
-          return drawUrl && h('a', { href: drawUrl, target: '_blank', rel: 'noopener', style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: BL, textDecoration: 'none', padding: '6px 10px', background: 'rgba(255,255,255,0.8)', borderRadius: 6, marginBottom: 12 } }, '📐 Чертёж / ТЗ');
-        })(),
-        // Чек-лист
-        active.checklist?.length > 0 && h('div', { style: { background: 'rgba(255,255,255,0.7)', borderRadius: 8, padding: '10px 12px', marginBottom: 14 } },
-          h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, fontWeight: 500 } },
-            `Чек-лист (${active.checklist.filter(c => c.checked).length}/${active.checklist.length})`
-          ),
-          active.checklist.map((item, idx) =>
-            h('label', { key: idx, style: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', cursor: 'pointer', fontSize: 14 } },
-              h('input', { type: 'checkbox', checked: item.checked || false, onChange: () => toggleCheckItem(active.id, idx), style: { width: 20, height: 20, accentColor: GN, flexShrink: 0 } }),
-              h('span', { style: { textDecoration: item.checked ? 'line-through' : 'none', color: item.checked ? '#888' : '#333' } }, item.text)
-            )
-          )
-        ),
-        // Комментарий
-        h('div', { style: { display: 'flex', gap: 6, marginBottom: 16 } },
-          h('input', { style: { ...S.inp, flex: 1, fontSize: 14 }, placeholder: 'Комментарий к операции...', value: opComment, onChange: e => setOpComment(e.target.value), onKeyDown: e => e.key === 'Enter' && saveComment(active.id) }),
-          h(VoiceButton, { onResult: (t) => setOpComment(prev => prev ? prev + ' ' + t : t) }),
-          opComment.trim() && h('button', { style: abtn({ padding: '8px 12px', fontSize: 13 }), onClick: () => saveComment(active.id) }, '💬')
-        ),
-        // ── КНОПКИ ДЕЙСТВИЙ — крупные с отступами ──
-        (active.checklist?.length > 0 && active.checklist.some(c => !c.checked))
-          ? h('div', { style: { textAlign: 'center', padding: '12px 0', color: '#888', fontSize: 13 } }, '⚠ Выполните все пункты чек-листа')
-          : showDefForm
-            ? h('div', null,
-                h('div', { style: { fontSize: 12, color: RD2, fontWeight: 500, marginBottom: 10, textTransform: 'uppercase' } },
-                  defectFromPrev ? '⚠ Брак с предыдущего участка' : '⚠ Брак текущего этапа'
-                ),
-                h('div', { style: { display: 'flex', gap: 8, marginBottom: 10 } },
-                  h('button', { style: defectFromPrev ? rbtn({ flex: 1, minHeight: 48, fontSize: 13 }) : gbtn({ flex: 1, minHeight: 48, fontSize: 13 }), onClick: () => setDefectFromPrev(true) }, 'С предыдущего участка'),
-                  h('button', { style: !defectFromPrev ? rbtn({ flex: 1, minHeight: 48, fontSize: 13 }) : gbtn({ flex: 1, minHeight: 48, fontSize: 13 }), onClick: () => setDefectFromPrev(false) }, 'Текущий этап')
-                ),
-                h('select', { style: { ...S.inp, marginBottom: 10 }, value: defectReasonId, onChange: e => setDefectReasonId(e.target.value) },
-                  h('option', { value: '' }, '— выберите причину —'),
-                  (data.defectReasons || []).map(r => h('option', { key: r.id, value: r.id }, r.name))
-                ),
-                h('textarea', { style: { ...S.inp, marginBottom: 10 }, rows: 2, placeholder: 'Опишите дефект...', value: defNote, onChange: e => setDefNote(e.target.value) }),
-                h('div', { style: { display: 'flex', gap: 8 } },
-                  h('button', { style: rbtn({ flex: 1, minHeight: 52, fontSize: 14 }), onClick: () => { if (!validateDefectForm()) { vibrateAction('error'); return; } vibrateAction('error'); doFinish(active, true, false, defectFromPrev ? 'previous_stage' : 'current'); } }, 'Зафиксировать брак'),
-                  h('button', { style: { ...gbtn({ flex: 1, minHeight: 52, fontSize: 14 }), color: AM2, borderColor: AM4 }, onClick: () => { if (!validateDefectForm()) { vibrateAction('error'); return; } navigator.vibrate?.([30]); doFinish(active, false, true, defectFromPrev ? 'previous_stage' : 'current'); } }, 'На переделку'),
-                  h('button', { style: gbtn({ minHeight: 52, padding: '8px 14px' }), onClick: () => { navigator.vibrate?.([20]); setShowDefForm(false); setDefectFromPrev(false); setDefFormErrors({}); } }, 'Отмена')
-                )
-              )
-            : h('div', null,
-                // СТОП — самая крупная кнопка
-                h('button', { className: 'worker-btn worker-btn-stop', style: { marginBottom: 12 }, onClick: () => {
-                vibrateAction('start');
-                if (active.requiresPressureTest || active.name.toLowerCase().includes('опресс')) {
-                  const order = data.orders.find(o => o.id === active.orderId);
-                  setPressureOp(active);
-                  setPressureForm({ workPressure: '', testPressure: '', duration: '10', tempC: '', pressureStart: '', pressureEnd: '', sweatingFound: false, defectDesc: '', verdict: 'pass' });
-                  setShowPressureForm(true);
-                } else {
-                  doFinish(active);
-                }
-              } }, '■ Завершить операцию'),
-                // Брак — две средние кнопки рядом
-                h('div', { style: { display: 'flex', gap: 10, marginBottom: 12 } },
-                  h('button', { className: 'worker-btn-defect', onClick: () => { navigator.vibrate?.([40]); setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
-                  h('button', { className: 'worker-btn-defect', onClick: () => { navigator.vibrate?.([40]); setShowDefForm(true); setDefectFromPrev(true); } }, '⚠ Брак с уч.')
-                ),
-                // Простой — отдельная строка
-                h('button', { className: 'worker-btn-pause', onClick: () => { navigator.vibrate?.([30]); setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Зафиксировать простой')
-              )
-      ),
 
       // Активные операции — список карточек
       activeOpsList.length > 0 && h('div', null,
@@ -1431,3 +1355,4 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   confirmEl
   );
 });
+
