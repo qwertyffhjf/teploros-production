@@ -1130,7 +1130,7 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
       workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
       archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null,
       plannedHours: stage.plannedHours || undefined, drawingUrl: stage.drawingUrl || undefined,
-      requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.includes('Опресовка'),
+      requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.toLowerCase().includes('опресс'),
       requiresPressureTest: stage.name.toLowerCase().includes('опресс'),
     })) : [];
 
@@ -1360,7 +1360,7 @@ const SubOrderSplitStep = memo(({ data, onUpdate, addToast, onClose, parentOrder
             workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
             archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null,
             plannedHours: stage.plannedHours || undefined, drawingUrl: stage.drawingUrl || undefined,
-            requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.includes('Опресовка'),
+            requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.toLowerCase().includes('опресс'),
             requiresPressureTest: stage.name.toLowerCase().includes('опресс'),
           });
         });
@@ -1931,7 +1931,7 @@ const HRScreen = memo(({ data, onUpdate, addToast }) => {
   const TABS = [
     ['workers','Сотрудники'],['time','Табель'],
     ['instructions','Инструктажи ОТ'],['vacations','Отпуска'],
-    ['kpi','KPI / Премии'],['reports','Отчёты']
+    ['kpi','KPI / Премии'],['payroll','💰 Зарплата'],['reports','Отчёты']
   ];
 
   const active = useMemo(() => data.workers.filter(w => !w.archived), [data.workers]);
@@ -1968,6 +1968,7 @@ const HRScreen = memo(({ data, onUpdate, addToast }) => {
     tab === 'instructions' && h(InstructionsTracker,   { data, onUpdate, addToast }),
     tab === 'vacations'    && h(VacationPlanner,       { data, onUpdate, addToast }),
     tab === 'kpi'          && h(KPIReport,             { data }),
+    tab === 'payroll'      && h(PayrollExport,          { data }),
     tab === 'reports'      && h(ReportsBuilder,        { data })
   );
 });
