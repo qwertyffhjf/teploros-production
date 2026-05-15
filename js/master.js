@@ -680,6 +680,217 @@ const DependencyEditorInline = memo(({ data, orderId, onUpdate, addToast }) => {
   );
 });
 
+
+// ==================== OrdersDashboard ====================
+const OrdersDashboard = memo(({ data }) => {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).getTime();
+
+  const stats = useMemo(() => {
+    const active    = data.orders.filter(o => !o.archived && !o.shipped && !o.parentOrderId);
+    const overdue   = active.filter(o => o.deadline && new Date(o.deadline) < today);
+    const burning   = active.filter(o => {
+      if (!o.deadline) return false;
+      const d = Math.ceil((new Date(o.deadline) - Date.now()) / 86400000);
+      return d >= 0 && d <= 3;
+    });
+    const shippedMonth = data.orders.filter(o => o.shipped && o.shippedAt >= monthStart);
+
+    // Некомплект
+    const noComponents = active.filter(o => {
+      const comps = o.components || [];
+      return comps.length > 0 && comps.some(c => c.status !== 'confirmed');
+    });
+
+    // Горящие с прогрессом + некомплект
+    const burningRows = burning.map(o => {
+      const ops = data.ops.filter(op => op.orderId === o.id && !op.archived);
+      const done = ops.filter(op => op.status === 'done' || op.status === 'defect').length;
+      const pct  = ops.length > 0 ? Math.round(done / ops.length * 100) : 0;
+      const daysLeft = Math.ceil((new Date(o.deadline) - Date.now()) / 86400000);
+      const comps = o.components || [];
+      const confirmedComps = comps.filter(c => c.status === 'confirmed').length;
+      const blocked = comps.length > 0 && confirmedComps === 0;
+      const partial = comps.length > 0 && confirmedComps > 0 && confirmedComps < comps.length;
+      const fullComps = comps.length > 0 && confirmedComps === comps.length;
+      return { o, pct, daysLeft, comps, confirmedComps, blocked, partial, fullComps };
+    }).sort((a, b) => a.daysLeft - b.daysLeft);
+
+    // Просроченные с некомплектом
+    const overdueRows = overdue.map(o => {
+      const daysOver = Math.ceil((Date.now() - new Date(o.deadline)) / 86400000);
+      const comps = o.components || [];
+      const confirmedComps = comps.filter(c => c.status === 'confirmed').length;
+      const blocked = comps.length > 0 && confirmedComps === 0;
+      const partial = comps.length > 0 && confirmedComps > 0 && confirmedComps < comps.length;
+      const fullComps = comps.length > 0 && confirmedComps === comps.length;
+      return { o, daysOver, comps, confirmedComps, blocked, partial, fullComps };
+    }).sort((a, b) => b.daysOver - a.daysOver);
+
+    // Некомплект — все активные с неполной комплектацией, сортируем: сначала 0/N, потом частичные
+    const noCompRows = noComponents.map(o => {
+      const comps = o.components || [];
+      const confirmed = comps.filter(c => c.status === 'confirmed').length;
+      const total = comps.length;
+      const blocked = confirmed === 0;
+      return { o, confirmed, total, blocked };
+    }).sort((a, b) => {
+      if (a.blocked !== b.blocked) return a.blocked ? -1 : 1;
+      return (a.confirmed / a.total) - (b.confirmed / b.total);
+    });
+
+    // По типам
+    const byType = {};
+    active.forEach(o => {
+      const t = o.productType || 'other';
+      byType[t] = (byType[t] || 0) + 1;
+    });
+    const productTypes = data.settings?.productTypes || [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }];
+    const typeRows = Object.entries(byType)
+      .map(([id, cnt]) => ({ label: productTypes.find(p => p.id === id)?.label || id, cnt }))
+      .sort((a, b) => b.cnt - a.cnt);
+
+    // По приоритету
+    const byPriority = { critical: 0, high: 0, medium: 0, low: 0 };
+    active.forEach(o => { if (byPriority[o.priority] !== undefined) byPriority[o.priority]++; });
+
+    return { active: active.length, overdue: overdue.length, burning: burning.length,
+             noComp: noComponents.length, shippedMonth: shippedMonth.length,
+             burningRows, overdueRows, noCompRows, typeRows, byPriority };
+  }, [data.orders, data.ops, data.settings]);
+
+  if (stats.active === 0) return null;
+
+  const pctColor = (p) => p >= 75 ? GN : p >= 40 ? AM : RD;
+
+  const CompBadge = ({ confirmed, total, blocked, fullComps }) => {
+    if (!total) return null;
+    if (fullComps) return h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 8, background: GN3, color: GN2, border: `0.5px solid ${GN}`, whiteSpace: 'nowrap' } }, '✓ компл.');
+    if (blocked)  return h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 8, background: RD3, color: RD2, border: `0.5px solid ${RD}`, whiteSpace: 'nowrap' } }, `📦 0/${total} 🔒`);
+    return h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 8, background: AM3, color: AM2, border: `0.5px solid ${AM4}`, whiteSpace: 'nowrap' } }, `📦 ${confirmed}/${total}`);
+  };
+
+  const maxType = Math.max(...stats.typeRows.map(r => r.cnt), 1);
+  const maxPri  = Math.max(stats.byPriority.critical, stats.byPriority.high, stats.byPriority.medium, 1);
+  const PRIO = [
+    { key: 'critical', label: 'Критический', color: RD },
+    { key: 'high',     label: 'Высокий',     color: AM },
+    { key: 'medium',   label: 'Средний',     color: '#888780' },
+  ];
+
+  return h('div', { style: { marginBottom: 12 } },
+
+    // ── Плитки ──
+    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 8, marginBottom: 8 } },
+      [
+        { v: stats.active,       l: 'Активных',    sub: 'в работе',        c: 'var(--fg)',  bc: 'var(--border)' },
+        { v: stats.overdue,      l: 'Просрочено',  sub: 'дедлайн прошёл',  c: RD2,          bc: RD,             show: stats.overdue > 0 },
+        { v: stats.burning,      l: 'Срок ≤ 3 дня',sub: 'горят',           c: AM2,          bc: AM4,            show: stats.burning > 0 },
+        { v: stats.noComp,       l: 'Некомплект',  sub: 'ждут поставку',   c: AM2,          bc: AM4,            show: stats.noComp > 0, bg: AM3 + '44' },
+        { v: stats.shippedMonth, l: 'Отгружено',   sub: 'за этот месяц',   c: GN2,          bc: GN },
+      ].map(({ v, l, sub, c, bc, show = true, bg }) =>
+        h('div', { key: l, style: { background: show && bg ? bg : 'var(--card)', border: `0.5px solid ${show ? bc : 'var(--border)'}`, borderRadius: 8, padding: '11px 8px', textAlign: 'center' } },
+          h('div', { style: { fontSize: 24, fontWeight: 500, color: show ? c : 'var(--muted)', lineHeight: 1.1, marginBottom: 3 } }, v),
+          h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, l),
+          h('div', { style: { fontSize: 10, marginTop: 3, color: show ? c : '#aaa' } }, sub)
+        )
+      )
+    ),
+
+    // ── Горящие + Просроченные ──
+    (stats.burningRows.length > 0 || stats.overdueRows.length > 0) && h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 } },
+
+      // Горящие
+      stats.burningRows.length > 0 && h('div', { style: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: 12 } },
+        h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--muted)', marginBottom: 8 } },
+          h('span', { style: { color: RD } }, '● '), 'Горящие заказы (≤3 дня)'),
+        stats.burningRows.map(({ o, pct, daysLeft, comps, confirmedComps, blocked, partial, fullComps }) =>
+          h('div', { key: o.id, style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7 } },
+            h('span', { style: { fontSize: 11, color: 'var(--muted)', width: 52, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, o.number),
+            h('div', { style: { flex: 1, height: 7, background: 'var(--bg)', borderRadius: 4, overflow: 'hidden' } },
+              h('div', { style: { height: '100%', width: `${pct}%`, background: pctColor(pct), borderRadius: 4, transition: 'width 0.3s' } })
+            ),
+            h('span', { style: { fontSize: 11, color: pctColor(pct), width: 28, textAlign: 'right', flexShrink: 0 } }, `${pct}%`),
+            h(CompBadge, { confirmed: confirmedComps, total: comps.length, blocked, fullComps })
+          )
+        )
+      ),
+
+      // Просроченные
+      stats.overdueRows.length > 0 && h('div', { style: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: 12 } },
+        h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--muted)', marginBottom: 8 } },
+          h('span', { style: { color: RD } }, '● '), 'Просроченные'),
+        stats.overdueRows.slice(0, 6).map(({ o, daysOver, comps, confirmedComps, blocked, partial, fullComps }) =>
+          h('div', { key: o.id, style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 0', borderBottom: '0.5px solid var(--border-soft)', gap: 6 } },
+            h('span', { style: { fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fg)' } }, `${o.number} · ${o.product}`),
+            h('div', { style: { display: 'flex', gap: 4, flexShrink: 0, alignItems: 'center' } },
+              h(CompBadge, { confirmed: confirmedComps, total: comps.length, blocked, fullComps }),
+              h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 8, background: RD3, color: RD2, border: `0.5px solid ${RD}`, whiteSpace: 'nowrap' } }, `−${daysOver} дн`)
+            )
+          )
+        )
+      )
+    ),
+
+    // ── Некомплект ──
+    stats.noCompRows.length > 0 && h('div', { style: { background: 'var(--card)', border: `0.5px solid ${AM4}`, borderRadius: 8, padding: 12, marginBottom: 8 } },
+      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 } },
+        h('div', { style: { fontSize: 11, fontWeight: 500, color: AM2 } }, '📦 Заказы с неполной комплектацией'),
+        h('span', { style: { fontSize: 11, padding: '2px 8px', borderRadius: 10, background: AM3, color: AM2, border: `0.5px solid ${AM4}`, fontWeight: 500 } }, `${stats.noCompRows.length} заказов`)
+      ),
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+        stats.noCompRows.map(({ o, confirmed, total, blocked }) =>
+          h('div', { key: o.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '7px 8px', borderRadius: 8, background: AM3 + '33', border: `0.5px solid ${AM3}` } },
+            h('span', { style: { fontSize: 12, fontWeight: 500, color: 'var(--fg)', width: 56, flexShrink: 0 } }, o.number),
+            h('span', { style: { fontSize: 12, color: 'var(--muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, o.product),
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 } },
+              h('div', { style: { width: 56, height: 5, background: AM3, borderRadius: 3, overflow: 'hidden', border: `0.5px solid ${AM4}44` } },
+                h('div', { style: { height: '100%', width: `${Math.round(confirmed / total * 100)}%`, background: AM, borderRadius: 3 } })
+              ),
+              h('span', { style: { fontSize: 11, color: AM2, fontWeight: 500, width: 32, textAlign: 'right' } }, `${confirmed}/${total}`)
+            ),
+            blocked
+              ? h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 8, background: RD3, color: RD2, border: `0.5px solid ${RD}`, flexShrink: 0 } }, '🔒 блок.')
+              : h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 8, background: 'var(--bg)', color: 'var(--muted)', border: '0.5px solid var(--border)', flexShrink: 0 } }, 'частично')
+          )
+        )
+      )
+    ),
+
+    // ── Нижний ряд: по типам + по приоритету ──
+    h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 } },
+
+      // По типам
+      stats.typeRows.length > 0 && h('div', { style: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: 12 } },
+        h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--muted)', marginBottom: 8 } }, 'По типам изделий'),
+        stats.typeRows.map(({ label, cnt }) =>
+          h('div', { key: label, style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 } },
+            h('span', { style: { fontSize: 11, color: 'var(--muted)', width: 68, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, label),
+            h('div', { style: { flex: 1, height: 6, background: 'var(--bg)', borderRadius: 3, overflow: 'hidden' } },
+              h('div', { style: { height: '100%', width: `${Math.round(cnt / maxType * 100)}%`, background: GN, borderRadius: 3 } })
+            ),
+            h('span', { style: { fontSize: 11, color: 'var(--muted)', width: 18, textAlign: 'right', flexShrink: 0 } }, cnt)
+          )
+        )
+      ),
+
+      // По приоритету
+      h('div', { style: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: 12 } },
+        h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--muted)', marginBottom: 8 } }, 'По приоритету'),
+        PRIO.filter(p => stats.byPriority[p.key] > 0).map(p =>
+          h('div', { key: p.key, style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 } },
+            h('span', { style: { fontSize: 11, color: 'var(--muted)', width: 80, flexShrink: 0 } }, p.label),
+            h('div', { style: { flex: 1, height: 6, background: 'var(--bg)', borderRadius: 3, overflow: 'hidden' } },
+              h('div', { style: { height: '100%', width: `${Math.round(stats.byPriority[p.key] / maxPri * 100)}%`, background: p.color, borderRadius: 3 } })
+            ),
+            h('span', { style: { fontSize: 11, color: 'var(--muted)', width: 18, textAlign: 'right', flexShrink: 0 } }, stats.byPriority[p.key])
+          )
+        )
+      )
+    )
+  );
+});
+
 const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [form, setForm] = useState({ number: '', product: '',
  qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '' });
@@ -1041,6 +1252,10 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       return h(QRModal, { ops: pOps, order: pOrder, worker: null, onClose: () => setPrintOrderId(null) });
     })(),
     showImport1C && h(Import1CModal, { data, onUpdate, addToast, onClose: () => setShowImport1C(false) }),
+
+    // ==================== Мини-дашборд заказов ====================
+    h(OrdersDashboard, { data }),
+
     h('div', { style: S.card },
       h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
         h('div', { style: { minWidth: 120 } }, h('input', { style: S.inp, placeholder: 'Номер', value: form.number, onChange: e => setForm(p => ({ ...p, number: e.target.value })) }), fieldErrors.number && h('div', { className: 'error-message' }, fieldErrors.number)),
