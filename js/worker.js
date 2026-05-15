@@ -420,7 +420,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       onUpdate(prevDataDowntime);
       addToast('Ошибка сохранения простоя', 'error');
     });
-  }, [data, workerId, active, selectedDowntimeType, downtimeStartedAt, onUpdate, addToast]);
+  }, [data, workerId, activeOps, selectedDowntimeType, downtimeStartedAt, onUpdate, addToast]);
 
   // Отмена вспомогательной операции (только свои, pending/in_progress)
   const cancelAuxOp = useCallback(async (op) => {
@@ -431,7 +431,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     await DB.save(withLog); onUpdate(withLog);
     setActiveOps(prev => prev.filter(ao => ao.id !== op.id));
     addToast(`«${op.name}» отменена`, 'info');
-  }, [data, workerId, active, onUpdate, addToast]);
+  }, [data, workerId, activeOps, onUpdate, addToast]);
 
   // Автосброс activeOp если операция завершена внешним действием (напр. ОТК принял)
   // Автосброс через useEffect восстановления (уже обрабатывается)
@@ -1150,4 +1150,3 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   confirmEl
   );
 });
-
