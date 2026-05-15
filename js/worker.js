@@ -193,6 +193,154 @@ const WorkerNotificationsBlock = memo(({ workerId, data }) => {
   );
 });
 
+
+// ==================== WorkerOpsHistoryBlock ====================
+const WorkerOpsHistoryBlock = memo(({ workerId, data }) => {
+  const today = new Date();
+  const [viewMonth, setViewMonth] = useState(today.getMonth());
+  const [viewYear,  setViewYear]  = useState(today.getFullYear());
+  const [search,    setSearch]    = useState('');
+  const [filter,    setFilter]    = useState('all'); // all | done | defect | in_progress
+
+  const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+
+  const monthStart = new Date(viewYear, viewMonth, 1).getTime();
+  const monthEnd   = new Date(viewYear, viewMonth + 1, 0, 23, 59, 59, 999).getTime();
+
+  const ops = useMemo(() => {
+    return (data.ops || [])
+      .filter(op => {
+        if (op.archived) return false;
+        if (!(op.workerIds || []).includes(workerId)) return false;
+        // Попадает в месяц если начата или завершена в этом месяце
+        const ts = op.finishedAt || op.startedAt || op.createdAt || 0;
+        return ts >= monthStart && ts <= monthEnd;
+      })
+      .map(op => {
+        const order = data.orders.find(o => o.id === op.orderId);
+        const dur = (op.startedAt && op.finishedAt) ? op.finishedAt - op.startedAt : null;
+        const durMin = dur ? Math.round(dur / 60000) : null;
+        const ts = op.finishedAt || op.startedAt || 0;
+        return { op, order, durMin, ts };
+      })
+      .sort((a, b) => b.ts - a.ts);
+  }, [data.ops, data.orders, workerId, monthStart, monthEnd]);
+
+  const filtered = useMemo(() => {
+    return ops.filter(({ op, order }) => {
+      if (filter !== 'all' && op.status !== filter) return false;
+      if (search.trim()) {
+        const q = search.trim().toLowerCase();
+        const orderNum = order ? String(order.number) : '';
+        const product  = order ? (order.product || '').toLowerCase() : '';
+        return op.name.toLowerCase().includes(q) || orderNum.includes(q) || product.includes(q);
+      }
+      return true;
+    });
+  }, [ops, filter, search]);
+
+  const summary = useMemo(() => ({
+    total:      ops.length,
+    done:       ops.filter(x => x.op.status === 'done').length,
+    defect:     ops.filter(x => x.op.status === 'defect').length,
+    inProgress: ops.filter(x => x.op.status === 'in_progress').length,
+  }), [ops]);
+
+  const fmtDate = (ts) => {
+    const d = new Date(ts);
+    return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}`;
+  };
+  const fmtTime = (ts) => {
+    const d = new Date(ts);
+    return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  };
+  const fmtDurLocal = (min) => {
+    if (!min) return '—';
+    if (min < 60) return `${min}мин`;
+    return `${Math.floor(min/60)}ч ${min%60 > 0 ? `${min%60}м` : ''}`.trim();
+  };
+
+  const FILTERS = [
+    { id: 'all', label: 'Все' },
+    { id: 'done', label: 'Выполнено' },
+    { id: 'in_progress', label: 'В работе' },
+    { id: 'defect', label: 'Брак' },
+  ];
+
+  return h('div', { style: { ...S.card, marginBottom: 16 } },
+
+    // Заголовок + навигация по месяцам
+    h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom:12 } },
+      h('div', { style: { ...S.sec, marginBottom:0, flex:1 } }, 'История операций'),
+      h('button', { style: gbtn({ padding:'4px 10px', fontSize:11 }), onClick:() => { let m=viewMonth-1,y=viewYear; if(m<0){m=11;y--;} setViewMonth(m); setViewYear(y); } }, '‹'),
+      h('span', { style:{ fontSize:13, fontWeight:500, minWidth:120, textAlign:'center' } }, `${MONTHS_RU[viewMonth]} ${viewYear}`),
+      h('button', { style: gbtn({ padding:'4px 10px', fontSize:11 }), onClick:() => { let m=viewMonth+1,y=viewYear; if(m>11){m=0;y++;} setViewMonth(m); setViewYear(y); } }, '›')
+    ),
+
+    // Сводка — 4 плитки
+    ops.length > 0 && h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:6, marginBottom:12 } },
+      [
+        { v: summary.total,      l: 'Всего',      c: '#888'  },
+        { v: summary.done,       l: 'Выполнено',  c: GN2     },
+        { v: summary.inProgress, l: 'В работе',   c: AM2     },
+        { v: summary.defect,     l: 'Брак',       c: RD2     },
+      ].map(({ v, l, c }) =>
+        h('div', { key: l, style:{ background: 'var(--bg2,#f8f8f5)', borderRadius:8, padding:'8px 6px', textAlign:'center' } },
+          h('div', { style:{ fontSize:18, fontWeight:500, color: c } }, v),
+          h('div', { style:{ fontSize:10, color:'#888', marginTop:1 } }, l)
+        )
+      )
+    ),
+
+    // Поиск
+    ops.length > 0 && h('input', {
+      type: 'text',
+      placeholder: 'Поиск по операции, заказу, изделию…',
+      value: search,
+      onChange: e => setSearch(e.target.value),
+      style: { width:'100%', boxSizing:'border-box', fontSize:13, padding:'8px 10px', borderRadius:8, border:'0.5px solid rgba(0,0,0,0.15)', background:'var(--bg,#fff)', color:'var(--fg,#222)', marginBottom:8, outline:'none' }
+    }),
+
+    // Фильтры
+    ops.length > 0 && h('div', { style:{ display:'flex', gap:6, marginBottom:10, flexWrap:'wrap' } },
+      FILTERS.map(f =>
+        h('button', { key:f.id, onClick:()=>setFilter(f.id), style:{
+          fontSize:11, padding:'4px 10px', borderRadius:20, cursor:'pointer', fontWeight: filter===f.id ? 600 : 400,
+          background: filter===f.id ? AM3 : 'transparent',
+          color:      filter===f.id ? AM2 : '#888',
+          border:     filter===f.id ? `0.5px solid ${AM4}` : '0.5px solid rgba(0,0,0,0.12)'
+        }}, f.label)
+      )
+    ),
+
+    // Список
+    filtered.length === 0
+      ? h('div', { style:{ fontSize:13, color:'#aaa', textAlign:'center', padding:'16px 0' } },
+          ops.length === 0 ? 'Нет операций в этом месяце' : 'Ничего не найдено'
+        )
+      : h('div', { style:{ display:'flex', flexDirection:'column', gap:4 } },
+          filtered.map(({ op, order, durMin, ts }) => {
+            const st = STATUS[op.status] || STATUS.pending;
+            return h('div', { key:op.id, style:{ padding:'9px 10px', borderRadius:9, background:'var(--bg2,#f8f8f5)', border:'0.5px solid rgba(0,0,0,0.06)' } },
+              // Строка 1: название операции + статус
+              h('div', { style:{ display:'flex', alignItems:'center', gap:6, marginBottom:4 } },
+                h('span', { style:{ flex:1, fontSize:13, fontWeight:500, color:'var(--fg,#222)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, op.name),
+                h('span', { style:{ fontSize:11, padding:'2px 7px', borderRadius:10, background:st.bg, color:st.cl, border:`0.5px solid ${st.br}`, flexShrink:0, whiteSpace:'nowrap' } }, st.label)
+              ),
+              // Строка 2: заказ + дата/время + длительность
+              h('div', { style:{ display:'flex', gap:10, fontSize:11, color:'#888', flexWrap:'wrap' } },
+                order
+                  ? h('span', null, `Заказ №${order.number}${order.product ? ` · ${order.product}` : ''}`)
+                  : h('span', null, '— без заказа —'),
+                ts > 0 && h('span', null, `${fmtDate(ts)} в ${fmtTime(ts)}`),
+                durMin && h('span', null, `⏱ ${fmtDurLocal(durMin)}`)
+              )
+            );
+          })
+        )
+  );
+});
+
 // ==================== WorkerSalaryBlock ====================
 const WorkerSalaryBlock = memo(({ workerId, data }) => {
   const today = new Date();
@@ -1317,6 +1465,9 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
 
       // Зарплата
       h(WorkerSalaryBlock, { workerId, data }),
+
+      // История операций
+      h(WorkerOpsHistoryBlock, { workerId, data }),
 
       // Часы — личный табель
       h(WorkerHoursBlock, { workerId, data }),
