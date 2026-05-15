@@ -1239,8 +1239,11 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
 
           return filtered.map(order => {
             const orderNeeds = needsAll[order.id];
-            const totalItems = orderNeeds ? (orderNeeds.groups || []).reduce((s, g) => s + (g.items || []).length, 0) : 0;
-            const receivedItems = orderNeeds ? (orderNeeds.groups || []).reduce((s, g) => s + (g.items || []).filter(i => i.status === 'received').length, 0) : 0;
+            const allItems = orderNeeds ? (orderNeeds.groups || []).reduce((s, g) => s.concat(g.items || []), []) : [];
+            const totalItems    = allItems.length;
+            const receivedItems = allItems.filter(i => i.status === 'received').length;
+            const orderedItems  = allItems.filter(i => i.status === 'ordered').length;
+            const pendingItems  = allItems.filter(i => !i.status || i.status === 'pending').length;
             const hasNeeds = totalItems > 0;
             const daysLeft = order.deadline ? Math.ceil((new Date(order.deadline) - Date.now()) / 86400000) : null;
 
@@ -1263,16 +1266,30 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
                   )
                 )
               ),
-              // Прогресс заявки
-              h('div', { style: { flexShrink: 0, textAlign: 'right' } },
-                hasNeeds
-                  ? h('div', null,
-                      h('div', { style: { fontSize: 12, fontWeight: 500, color: receivedItems === totalItems ? GN : AM2 } },
-                        `${receivedItems}/${totalItems}`),
-                      h('div', { style: { fontSize: 10, color: 'var(--muted)' } }, 'получено')
-                    )
-                  : h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, 'нет заявки'),
-                h('div', { style: { fontSize: 11, color: BL, marginTop: 4 } }, '→ открыть')
+              // Статус заявки с иконкой
+              h('div', { style: { flexShrink: 0, textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 } },
+                (() => {
+                  let icon, label, color, bg;
+                  if (!hasNeeds) {
+                    icon = '➕'; label = 'нет заявки'; color = 'var(--muted)'; bg = 'transparent';
+                  } else if (receivedItems === totalItems) {
+                    icon = '✅'; label = 'всё получено'; color = '#3B6D11'; bg = '#EAF3DE';
+                  } else if (receivedItems > 0) {
+                    icon = '📦'; label = receivedItems + '/' + totalItems + ' получено'; color = '#854F0B'; bg = '#FAEEDA';
+                  } else if (orderedItems === totalItems) {
+                    icon = '🚚'; label = 'всё заказано'; color = '#185FA5'; bg = '#E6F1FB';
+                  } else if (orderedItems > 0) {
+                    icon = '🚚'; label = orderedItems + '/' + totalItems + ' заказано'; color = '#185FA5'; bg = '#E6F1FB';
+                  } else {
+                    icon = '📝'; label = totalItems + ' поз. ожидают'; color = '#888'; bg = 'var(--bg)';
+                  }
+                  return h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 10, background: bg, border: '0.5px solid ' + color + '44' } },
+                    h('span', { style: { fontSize: 13 } }, icon),
+                    h('span', { style: { fontSize: 11, fontWeight: 500, color, whiteSpace: 'nowrap' } }, label)
+                  );
+                })(),
+                hasNeeds && receivedItems < totalItems && pendingItems > 0 && h('div', { style: { fontSize: 10, color: 'var(--muted)' } }, pendingItems + ' ждут заказа'),
+                h('div', { style: { fontSize: 11, color: BL } }, '→ открыть')
               )
             );
           });
