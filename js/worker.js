@@ -72,6 +72,127 @@ const WorkerOnboarding = memo(({ worker, myOps, onDone }) => {
 
 // ==================== WorkerScreen ====================
 
+
+// ==================== WorkerNotificationsBlock ====================
+const WorkerNotificationsBlock = memo(({ workerId, data }) => {
+  const [dismissed, setDismissed] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem(`notif_dismissed_${workerId}`) || '[]'); } catch(e) { return []; }
+  });
+
+  const dismiss = React.useCallback((key) => {
+    setDismissed(prev => {
+      const next = [...prev, key];
+      try { localStorage.setItem(`notif_dismissed_${workerId}`, JSON.stringify(next)); } catch(e) {}
+      return next;
+    });
+  }, [workerId]);
+
+  const notifs = React.useMemo(() => {
+    const items = [];
+    const worker = data.workers.find(w => w.id === workerId);
+    if (!worker) return items;
+
+    const today = new Date();
+    const WARN_DAYS = 30;
+
+    // 1. Просроченные / истекающие удостоверения
+    (worker.licences || []).forEach(lic => {
+      if (!lic.expiryDate) return;
+      const exp = new Date(lic.expiryDate);
+      const days = Math.ceil((exp - today) / 86400000);
+      if (days < 0) {
+        items.push({ id: `lic_${lic.name}`, sev: 'danger', icon: '📋', title: `Удостоверение просрочено`, sub: `${lic.name} — истекло ${Math.abs(days)} дн. назад` });
+      } else if (days <= WARN_DAYS) {
+        items.push({ id: `lic_${lic.name}_warn`, sev: 'warn', icon: '📋', title: `Удостоверение истекает`, sub: `${lic.name} — через ${days} дн.` });
+      }
+    });
+
+    // 2. Медосмотр
+    if (worker.medicalExamNextDate) {
+      const exp = new Date(worker.medicalExamNextDate);
+      const days = Math.ceil((exp - today) / 86400000);
+      if (days < 0) {
+        items.push({ id: 'medical_expired', sev: 'danger', icon: '🏥', title: 'Медосмотр просрочен', sub: `Истёк ${Math.abs(days)} дн. назад — запишитесь к врачу` });
+      } else if (days <= WARN_DAYS) {
+        items.push({ id: 'medical_warn', sev: 'warn', icon: '🏥', title: 'Медосмотр скоро', sub: `До следующего медосмотра ${days} дн.` });
+      }
+    }
+
+    // 3. Инструктаж (повторный ежегодно)
+    if (worker.instructions && worker.instructions.length > 0) {
+      const lastRepeat = worker.instructions
+        .filter(i => i.type === 'repeat')
+        .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+      if (lastRepeat) {
+        const nextDue = new Date(lastRepeat.date);
+        nextDue.setFullYear(nextDue.getFullYear() + 1);
+        const days = Math.ceil((nextDue - today) / 86400000);
+        if (days < 0) {
+          items.push({ id: 'instruction_expired', sev: 'danger', icon: '📝', title: 'Инструктаж просрочен', sub: `Повторный инструктаж нужно пройти` });
+        } else if (days <= WARN_DAYS) {
+          items.push({ id: 'instruction_warn', sev: 'warn', icon: '📝', title: 'Инструктаж скоро', sub: `До повторного инструктажа ${days} дн.` });
+        }
+      }
+    }
+
+    // 4. Новые назначенные операции (назначены за последние 24ч, ещё pending)
+    const since24h = Date.now() - 86400000;
+    const newOps = (data.ops || []).filter(o =>
+      !o.archived &&
+      o.status === 'pending' &&
+      (o.workerIds || []).includes(workerId) &&
+      o.createdAt && o.createdAt >= since24h
+    );
+    newOps.forEach(op => {
+      const order = data.orders.find(o => o.id === op.orderId);
+      items.push({ id: `op_${op.id}`, sev: 'info', icon: '🔧', title: 'Новое задание', sub: `${op.name}${order ? ` — заказ №${order.number}` : ''}` });
+    });
+
+    // 5. Новые благодарности
+    const lastSeenKey = `thanks_seen_${workerId}`;
+    const lastSeen = Number(localStorage.getItem(lastSeenKey)) || 0;
+    const newThanks = (data.events || []).filter(e => e.type === 'thanks' && e.toWorkerId === workerId && e.ts > lastSeen);
+    newThanks.forEach(t => {
+      const from = t.fromWorkerId === 'master' ? 'Начальник цеха' : (data.workers.find(w => w.id === t.fromWorkerId)?.name || 'Коллега');
+      items.push({ id: `thanks_${t.ts}`, sev: 'success', icon: '🤝', title: `Благодарность от ${from}`, sub: t.note || 'Коллега отметил вашу работу' });
+    });
+
+    return items.filter(n => !dismissed.includes(n.id));
+  }, [data, workerId, dismissed]);
+
+  if (notifs.length === 0) return null;
+
+  const sevStyle = (sev) => ({
+    danger:  { bg: '#FCEBEB', border: '#E24B4A', icon: '#A32D2D', text: '#501313' },
+    warn:    { bg: '#FAEEDA', border: '#BA7517', icon: '#854F0B', text: '#412402' },
+    info:    { bg: '#E6F1FB', border: '#378ADD', icon: '#185FA5', text: '#042C53' },
+    success: { bg: '#E1F5EE', border: '#1D9E75', icon: '#0F6E56', text: '#04342C' },
+  }[sev] || { bg: '#f8f8f5', border: '#ccc', icon: '#888', text: '#333' });
+
+  return h('div', { style: { marginBottom: 16 } },
+    h('div', { style: { ...S.sec, marginBottom: 8 } },
+      `Уведомления`,
+      h('span', { style: { marginLeft: 8, fontSize: 12, fontWeight: 500, background: RD3, color: RD2, border: `0.5px solid ${RD}`, borderRadius: 10, padding: '1px 7px' } }, notifs.length)
+    ),
+    h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+      notifs.map(n => {
+        const st = sevStyle(n.sev);
+        return h('div', { key: n.id, style: { display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', borderRadius: 10, background: st.bg, border: `0.5px solid ${st.border}` } },
+          h('span', { style: { fontSize: 18, flexShrink: 0, lineHeight: 1.3 } }, n.icon),
+          h('div', { style: { flex: 1 } },
+            h('div', { style: { fontSize: 13, fontWeight: 500, color: st.text, marginBottom: 2 } }, n.title),
+            h('div', { style: { fontSize: 12, color: st.icon } }, n.sub)
+          ),
+          h('button', {
+            onClick: () => dismiss(n.id),
+            style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: st.icon, padding: '0 0 0 4px', lineHeight: 1, flexShrink: 0 }
+          }, '×')
+        );
+      })
+    )
+  );
+});
+
 // ==================== WorkerSalaryBlock ====================
 const WorkerSalaryBlock = memo(({ workerId, data }) => {
   const today = new Date();
@@ -822,7 +943,17 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
 
     // ── Вкладки ──────────────────────────────────────────────────────────
     h('div', { style: { display: 'flex', gap: 0, marginBottom: 16, marginTop: 8, borderBottom: '0.5px solid rgba(0,0,0,0.1)' } },
-      [['tasks', `Задания${myOps.length > 0 ? ` (${myOps.length})` : ''}`], ['profile', 'Мой профиль']].map(([id, label]) =>
+      ((() => {
+        const w = data.workers.find(x => x.id === workerId);
+        const today = new Date();
+        let nc = 0;
+        (w?.licences||[]).forEach(l => { if (l.expiryDate && Math.ceil((new Date(l.expiryDate)-today)/86400000) <= 30) nc++; });
+        if (w?.medicalExamNextDate && Math.ceil((new Date(w.medicalExamNextDate)-today)/86400000) <= 30) nc++;
+        const lastSeen = Number(localStorage.getItem(`thanks_seen_${workerId}`)) || 0;
+        nc += (data.events||[]).filter(e => e.type==='thanks' && e.toWorkerId===workerId && e.ts>lastSeen).length;
+        nc += (data.ops||[]).filter(o => !o.archived && o.status==='pending' && (o.workerIds||[]).includes(workerId) && o.createdAt && o.createdAt >= Date.now()-86400000).length;
+        return [['tasks', `Задания${myOps.length > 0 ? ` (${myOps.length})` : ''}`], ['profile', nc > 0 ? `Мой профиль 🔴` : 'Мой профиль']];
+      })()).map(([id, label]) =>
         h('button', { key: id, onClick: () => setWorkerTab(id), style: {
           flex: 1, background: 'none', border: 'none',
           borderBottom: workerTab === id ? `2.5px solid ${AM}` : '2.5px solid transparent',
@@ -1145,6 +1276,9 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     // ВКЛАДКА: МОЙ ПРОФИЛЬ
     // ════════════════════════════════════════════
     workerTab === 'profile' && h('div', null,
+      // Уведомления
+      h(WorkerNotificationsBlock, { workerId, data }),
+
       // Карточка сотрудника
       h('div', { style: { ...S.card, display: 'flex', alignItems: 'center', gap: 14, padding: 16, marginBottom: 16 } },
         h('div', { style: { width: 56, height: 56, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 500, color: AM2, flexShrink: 0, position: 'relative' } },
