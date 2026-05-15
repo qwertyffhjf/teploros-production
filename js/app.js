@@ -705,6 +705,7 @@ const Dashboard = memo(({ data, addToast, onOrderClick }) => {
   const downtimesToday = useMemo(() => { const t = new Date().setHours(0,0,0,0); return data.events.filter(e => e.type === 'downtime' && e.ts >= t); }, [data.events]);
   const totalDowntimeMin = useMemo(() => Math.round(downtimesToday.reduce((s, e) => s + (e.duration || 0), 0) / 60000), [downtimesToday]);
   const activeWorkers = useMemo(() => data.workers.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet)), [data.workers]);
+  const activeOps = useMemo(() => data.ops.filter(o => o.status === 'in_progress' && !o.archived), [data.ops]);
   const busyWorkers = useMemo(() => new Set(activeOps.flatMap(op => op.workerIds || [])), [activeOps]);
   const freeWorkers = useMemo(() => activeWorkers.filter(w => !busyWorkers.has(w.id)), [activeWorkers, busyWorkers]);
   const criticalMaterials = useMemo(() => data.materials.filter(m => m.minStock && m.quantity <= m.minStock), [data.materials]);
@@ -1824,18 +1825,12 @@ const PDOScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [tab, setTab] = useState('orders');
   const TABS = [['orders','Заказы'],['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['plan','План'],['reports','Отчёты'],['auxops','Доп. работы'],['journal','Журнал'],['notifications','Уведомления']];
 
-  const overdueOrders = useMemo(() => data.orders.filter(o => !o.archived && !o.isParentOrder && o.deadline && new Date(o.deadline) < new Date()).length, [data.orders]);
-  const activeOrders  = useMemo(() => data.orders.filter(o => !o.archived && !o.isParentOrder).length, [data.orders]);
-  const inProgOps     = useMemo(() => data.ops.filter(o => o.status === 'in_progress' && !o.archived).length, [data.ops]);
+
 
   return h('div', null,
     h(SectionAnalytics, { section: 'production', data }),
     // Сводка
-    h('div', { className: 'metrics-grid', style: { display:'grid', gap:8, marginBottom:14 } },
-      h(MC, { v: activeOrders, l: 'Заказов' }),
-      h(MC, { v: overdueOrders, l: 'Просрочено', c: overdueOrders > 0 ? RD : GN }),
-      h(MC, { v: inProgOps, l: 'В работе', c: AM })
-    ),
+    // Сводка перенесена в OrdersDashboard внутри MasterOrders
     // Вкладки
     h(TabBar, { tabs: TABS, tab, setTab }),
     tab === 'orders'        && h(MasterOrders,              { data, onUpdate, addToast, onOrderClick }),
