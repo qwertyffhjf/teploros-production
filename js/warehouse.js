@@ -829,7 +829,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
   // Заявки на материалы (из чата)
   // Загружать заявки из MaterialsDB при переключении на вкладку приёмки
   React.useEffect(() => {
-    if (tab !== 'receive' || !MaterialsDB) return;
+    if ((tab !== 'receive' && tab !== 'needs') || !MaterialsDB) return;
     setNeedsLoading(true);
     MaterialsDB.loadAll().then(orders => {
       setNeedsAll(orders || {});
