@@ -583,17 +583,8 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
 
   const myOps = useMemo(() => data.ops.filter(o => {
     if (o.status === 'done' || o.status === 'defect' || o.archived) return false;
-    // 1. Явно назначена на этого рабочего — всегда показываем
+    // Только явно назначенные на этого рабочего
     if (o.workerIds?.includes(workerId)) return true;
-    // 2. Не назначена ни на кого — показываем только если:
-    //    - совпадает участок
-    //    - у рабочего ЕСТЬ компетенции и они включают эту операцию
-    if (!o.workerIds?.length && sectionId && o.sectionId === sectionId) {
-      const w = data.workers.find(w => w.id === workerId);
-      // Без компетенций — не показываем неназначенные (только явно назначенные)
-      if (!w?.competences?.length) return false;
-      return w.competences.includes(o.name);
-    }
     return false;
   }).sort((a,b) => {
     const t = Date.now(); // кешируем один раз для всей сортировки
