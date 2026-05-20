@@ -966,7 +966,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     return {
       first_op: { cur: s.doneCount, target: 1 }, ops_10: { cur: s.doneCount, target: 10 }, ops_50: { cur: s.doneCount, target: 50 },
       ops_100: { cur: s.doneCount, target: 100 }, ops_500: { cur: s.doneCount, target: 500 },
-      quality_star: { cur: s.doneCount, target: 50, extra: `брак ${s.defectRate.toFixed(1)}%` },
+      quality_star: { cur: s.doneCount, target: 50, extra: `брак ${(s.defectRate != null && !isNaN(s.defectRate)) ? s.defectRate.toFixed(1) : '0'}%` },
       weld_master: { cur: s.weldCount, target: 50 }, speed_demon: { cur: s.doneWithPlan, target: 10, extra: `${Math.round((1 - s.avgRatio) * 100)}% быстрее` },
       no_downtime: { cur: s.downtimes30d === 0 ? 1 : 0, target: 1 }, streak_5: { cur: s.currentStreak, target: 5 }, streak_20: { cur: s.currentStreak, target: 20 },
       multi_skill: { cur: s.uniqueOpTypes, target: 5 }, detective_10: { cur: s.detectedDefects, target: 10 }, thanks_5: { cur: s.thanksReceived, target: 5 },
