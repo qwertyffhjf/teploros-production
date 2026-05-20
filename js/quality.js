@@ -542,7 +542,16 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
                   [0, 1, 2, 3, 4, 5, 6, 7].map(i => h('div', { key: i, style: { flex: 1, height: 4, borderRadius: 2, background: i < completedSteps ? GN : i === completedSteps ? AM : '#e0e0e0' } }))
                 )
               ),
-              h('span', { style: { fontSize: 11, color: '#aaa', flexShrink: 0, marginLeft: 8 } }, isExpanded ? '▾' : '▸')
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, marginLeft: 8 } },
+                h('button', {
+                  title: 'Удалить рекламацию',
+                  onClick: (e) => { e.stopPropagation(); delRec(rec.id); },
+                  style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, color: '#ccc', padding: '2px 4px', borderRadius: 4, lineHeight: 1, transition: 'color 0.15s' },
+                  onMouseEnter: e => e.currentTarget.style.color = RD,
+                  onMouseLeave: e => e.currentTarget.style.color = '#ccc',
+                }, '✕'),
+                h('span', { style: { fontSize: 11, color: '#aaa' } }, isExpanded ? '▾' : '▸')
+              )
             ),
             // 8D визард
             isExpanded && h('div', { style: { padding: '0 14px 14px', borderTop: '0.5px solid rgba(0,0,0,0.06)' } },
