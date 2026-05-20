@@ -943,7 +943,7 @@ ${subOrders.length > 0 ? `
   iframe.onload = () => { iframe.contentWindow.print(); setTimeout(() => document.body.removeChild(iframe), 2000); };
 };
 
-const OrderCardModal = memo(({ orderId, data, onClose, canEdit = false, onEditMaterials, onEditDeps }) => {
+const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false, onEditMaterials, onEditDeps }) => {
   if (!orderId) return null;
   const ord = data.orders.find(o => o.id === orderId);
   if (!ord) return null;
@@ -1037,20 +1037,7 @@ const OrderCardModal = memo(({ orderId, data, onClose, canEdit = false, onEditMa
           h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 8 } },
             `📦 Комплектующие (${components.length} поз.)`
           ),
-          h('div', { style: { border: '0.5px solid var(--border-soft)', borderRadius: 8, overflow: 'hidden' } },
-            h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 120px 50px 40px', background: 'var(--bg)', padding: '5px 12px', fontSize: 10, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em' } },
-              h('span', null, 'Наименование'), h('span', null, 'Код'), h('span', { style: { textAlign: 'center' } }, 'Кол-во'), h('span', { style: { textAlign: 'center' } }, 'Ед.')
-            ),
-            components.map((c, i) => h('div', { key: i, style: { display: 'grid', gridTemplateColumns: '1fr 120px 50px 40px', padding: '8px 12px', borderTop: '0.5px solid var(--border-soft)', fontSize: 12, alignItems: 'center', background: c.status === 'confirmed' ? 'rgba(29,158,117,0.04)' : 'transparent' } },
-              h('span', null, c.name || c.description || '—'),
-              h('span', { style: { color: 'var(--muted)', fontFamily: 'monospace', fontSize: 11 } }, c.code || c.article || '—'),
-              h('span', { style: { textAlign: 'center', fontWeight: 500 } }, c.qty || 1),
-              h('span', { style: { textAlign: 'center', color: 'var(--muted)', fontSize: 11 } }, c.unit || 'шт')
-            ))
-          ),
-          components.some(c => c.status !== 'confirmed') && h('div', { style: { marginTop: 5, padding: '5px 10px', background: 'rgba(239,159,39,0.08)', border: '0.5px solid #EF9F27', borderRadius: 6, fontSize: 11, color: '#BA7517' } },
-            '⚠ Ожидается получение комплектующих'
-          )
+          h(OrderComponentsBlock, { order: ord, data, onUpdate })
         ),
 
         // Операции
