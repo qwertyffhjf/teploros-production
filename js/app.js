@@ -1453,13 +1453,20 @@ const OrderComponentsBlock = memo(({ order, data, onUpdate }) => {
   const confirmed = components.filter(c => c.status === 'confirmed').length;
   const allOk = confirmed === components.length;
 
+  // Нормализация: components может быть строкой из Firebase
+  const parseComps = (raw) => {
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === 'string') { try { const p = JSON.parse(raw); return Array.isArray(p) ? p : []; } catch(e) { return []; } }
+    return [];
+  };
+
   const confirmComponent = async (compId) => {
     if (!onUpdate) return;
     const updated = {
       ...data,
       orders: data.orders.map(o => o.id === order.id ? {
         ...o,
-        components: (o.components || []).map(c =>
+        components: parseComps(o.components).map(c =>
           c.id === compId ? { ...c, status: 'confirmed', confirmedAt: now() } : c
         )
       } : o)
@@ -1474,7 +1481,7 @@ const OrderComponentsBlock = memo(({ order, data, onUpdate }) => {
       ...data,
       orders: data.orders.map(o => o.id === order.id ? {
         ...o,
-        components: (o.components || []).map(c =>
+        components: parseComps(o.components).map(c =>
           c.id === compId ? { ...c, status: 'pending', confirmedAt: null } : c
         )
       } : o)
