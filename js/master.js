@@ -1069,10 +1069,47 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const resetOrderForm = () => { setEditingId(null); setForm(EMPTY_ORDER_FORM); setFieldErrors({}); };
   const guardedResetOrder = useDirtyGuard(isDirtyOrder, resetOrderForm, 'Заказ не сохранён. Закрыть форму?');
 
-  const ordersToShow = useMemo(() => data.orders.filter(o => (showArchived ? true : !o.archived) && (!o.shipped || showShipped) && (!filterType || o.productType === filterType) && !o.parentOrderId).sort((a,b) => { const priorityOrder = { critical:0, high:1, medium:2, low:3 }; return (priorityOrder[a.priority]||4) - (priorityOrder[b.priority]||4) || (b.createdAt||0) - (a.createdAt||0); }), [data.orders, showArchived, showShipped, filterType]);
+  const ordersToShow = useMemo(() => {
+    const filtered_ = data.orders.filter(o =>
+      (showArchived ? true : !o.archived) &&
+      (!o.shipped || showShipped) &&
+      (!filterType || o.productType === filterType) &&
+      !o.parentOrderId
+    );
+    if (sortMode === 'created') {
+      return [...filtered_].sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+    }
+    if (sortMode === 'deadline') {
+      return [...filtered_].sort((a,b) => {
+        const da = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+        const db = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+        return da - db;
+      });
+    }
+    // 'urgency' — по критичности
+    const getUrgency = (o) => {
+      if (o.shipped || o.archived) return 5;
+      const ops_ = data.ops.filter(x => x.orderId === o.id && !x.archived);
+      const allDone_ = ops_.length > 0 && ops_.every(x => x.status === 'done');
+      if (allDone_) return 4;
+      const dl = o.deadline ? Math.ceil((new Date(o.deadline) - Date.now()) / 86400000) : null;
+      if (dl !== null && dl < 0) return 0;   // просрочен
+      if (dl !== null && dl <= 3) return 1;  // горит
+      if (ops_.some(x => x.status === 'in_progress')) return 2; // в работе
+      return 3; // ожидает
+    };
+    return [...filtered_].sort((a,b) => {
+      const ua = getUrgency(a), ub = getUrgency(b);
+      if (ua !== ub) return ua - ub;
+      const da = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+      const db = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+      return da - db;
+    });
+  }, [data.orders, data.ops, showArchived, showShipped, filterType, sortMode]);
   const paginated = useMemo(() => { const start = (page-1)*pageSize; return ordersToShow.slice(start, start+pageSize); }, [ordersToShow, page]);
   // Состояние раскрытых родительских заказов
   const [expandedParents, setExpandedParents] = useState({});
+  const [sortMode, setSortMode] = useState('urgency'); // 'urgency' | 'deadline' | 'created'
   const toggleParent = (orderId) => setExpandedParents(prev => ({ ...prev, [orderId]: !prev[orderId] }));
   useEffect(() => { setPage(1); }, [showArchived]);
 
@@ -1301,9 +1338,13 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
         h('button', { style: !filterType ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setFilterType('') }, 'Все'),
         productTypes.map(pt => h('button', { key: pt.id, style: filterType === pt.id ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setFilterType(pt.id) }, pt.label))
       ),
-      h('label', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 } },
-        h('input', { type: 'checkbox', checked: showArchived, onChange: e => setShowArchived(e.target.checked) }), 'Архивные'
+      h('div', { style: { display: 'flex', gap: 4 } },
+        [['urgency','🔥 По срочности'],['deadline','📅 По дате'],['created','📋 По порядку']].map(([id, label]) =>
+          h('button', { key: id, style: sortMode === id ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setSortMode(id) }, label)
+        )
       ),
+      h('label', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 } },
+        h('input', { type: 'checkbox', checked: showArchived, onChange: e => setShowArchived(e.target.checked) }), 'Архивные'      ),
       h('label', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 } },
         h('input', { type: 'checkbox', checked: showShipped, onChange: e => setShowShipped(e.target.checked) }), 'Отгружен'
       )
@@ -1317,8 +1358,30 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
           onAction: () => setShowForm(true),
         }))
       : h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null, ['Номер','Изделие','Тип','Кол-во','Дата отгрузки','Приоритет','Операций','Материалы','Статус',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
-          h('tbody', null, paginated.flatMap(ord => {
+          h('thead', null, h('tr', null, ['Номер','Изделие','Тип','Кол-во','Дата отгрузки','Приоритет','Прогресс','Материалы','Статус',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
+          h('tbody', null, paginated.flatMap((ord, _oi, _arr) => {
+            // Группировочные разделители при сортировке по срочности
+            const GROUP_LABELS = {
+              0: { label: '🔴 Просрочено', bg: '#FFF5F5', color: RD2 },
+              1: { label: '🟡 Горит (≤ 3 дня)', bg: '#FFFBF5', color: AM2 },
+              2: { label: '🔵 В работе', bg: 'transparent', color: '#0C447C' },
+              3: { label: '⚪ Ожидает', bg: 'transparent', color: '#888' },
+              4: { label: '✅ Выполнено', bg: 'transparent', color: GN2 },
+              5: { label: '📦 Отгружено / Архив', bg: 'transparent', color: '#888' },
+            };
+            const getUrgencyGroup = (o) => {
+              if (o.shipped || o.archived) return 5;
+              const ops_ = data.ops.filter(x => x.orderId === o.id && !x.archived);
+              const allDone_ = ops_.length > 0 && ops_.every(x => x.status === 'done');
+              if (allDone_) return 4;
+              const dl = o.deadline ? Math.ceil((new Date(o.deadline) - Date.now()) / 86400000) : null;
+              if (dl !== null && dl < 0) return 0;
+              if (dl !== null && dl <= 3) return 1;
+              if (ops_.some(x => x.status === 'in_progress')) return 2;
+              return 3;
+            };
+            const prevOrd = _oi > 0 ? _arr[_oi - 1] : null;
+            const prevGroup = prevOrd && sortMode === 'urgency' ? getUrgencyGroup(prevOrd) : -1;
             // Получаем подзаказы если это родительский заказ
             const subOrders = ord.isParentOrder ? data.orders.filter(o => o.parentOrderId === ord.id && !o.archived) : [];
             const isExpanded = expandedParents[ord.id];
@@ -1385,7 +1448,50 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
               h('td', { style: S.td }, ord.qty),
               h('td', { style: S.td }, dlLabel),
               h('td', { style: { ...S.td, color: PRIORITY[ord.priority]?.color || '#888' } }, PRIORITY[ord.priority]?.label || '—'),
-              h('td', { style: S.td }, ord.isParentOrder ? `${done}/${opsForProgress.length}` : `${done}/${ops.length}`, def > 0 && h('span', { style: { marginLeft: 4, color: RD } }, `⚠ ${def}`)),
+              h('td', { style: { ...S.td, minWidth: 130 } },
+                h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+                  // Прогресс-бар операций
+                  h('div', { style: { display: 'flex', alignItems: 'center', gap: 5 } },
+                    h('div', { style: { flex: 1, height: 5, background: 'var(--bg2,#f0ede8)', borderRadius: 3, overflow: 'hidden', minWidth: 48 } },
+                      h('div', { style: {
+                        height: '100%', borderRadius: 3,
+                        width: `${opsForProgress.length > 0 ? Math.round((done / opsForProgress.length) * 100) : 0}%`,
+                        background: st === 'done' ? GN : st === 'in_progress' ? AM : '#ccc',
+                        transition: 'width 0.3s'
+                      }})
+                    ),
+                    h('span', { style: { fontSize: 10, color: 'var(--muted)', whiteSpace: 'nowrap' } },
+                      `${done}/${opsForProgress.length}`
+                    ),
+                    def > 0 && h('span', { style: { fontSize: 10, color: RD } }, `⚠${def}`)
+                  ),
+                  // Статус комплектации
+                  (() => {
+                    const comps = parseComps(ord.components);
+                    if (comps.length === 0) return null;
+                    const confirmed = comps.filter(c => c.status === 'confirmed').length;
+                    const allConfirmed = confirmed === comps.length;
+                    return h('span', { style: {
+                      fontSize: 10, padding: '1px 5px', borderRadius: 6, whiteSpace: 'nowrap', display: 'inline-block',
+                      background: allConfirmed ? GN3 : RD3,
+                      color: allConfirmed ? GN2 : RD2,
+                    }}, allConfirmed ? `✓ компл.` : `📦 ${confirmed}/${comps.length}`)
+                  })(),
+                  // Текущий исполнитель (кто сейчас в работе)
+                  (() => {
+                    const activeOp = data.ops.find(o => o.orderId === ord.id && o.status === 'in_progress' && !o.archived);
+                    if (!activeOp || !activeOp.workerIds?.length) return null;
+                    const workerNames = activeOp.workerIds.map(wid => {
+                      const w = data.workers.find(x => x.id === wid);
+                      return w ? w.name.split(' ')[0] : null;
+                    }).filter(Boolean);
+                    if (!workerNames.length) return null;
+                    return h('span', { style: { fontSize: 10, color: GN2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110, display: 'block' }, title: workerNames.join(', ') },
+                      `👷 ${workerNames.join(', ')}`
+                    );
+                  })()
+                )
+              ),
               h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 11 } }, matConsumption.length > 0 ? `${matCost.toLocaleString()}₽` : '—'),
               h('td', { style: S.td }, h(Badge, { st: ord.shipped ? 'shipped' : st })),
               h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
@@ -1453,7 +1559,17 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
               );
             }) : [];
 
-            return [parentRow, ...subRows];
+            // Разделитель группы при urgency-сортировке
+            const group = sortMode === 'urgency' ? getUrgencyGroup(ord) : -1;
+            const groupRow = (sortMode === 'urgency' && group !== prevGroup && GROUP_LABELS[group])
+              ? h('tr', { key: `grp-${group}-${_oi}` },
+                  h('td', { colSpan: 10, style: { padding: '6px 12px 4px', fontSize: 10, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: GROUP_LABELS[group].color, background: GROUP_LABELS[group].bg, borderTop: '0.5px solid rgba(0,0,0,0.06)' } },
+                    GROUP_LABELS[group].label
+                  )
+                )
+              : null;
+
+            return [groupRow, parentRow, ...subRows].filter(Boolean);
           }))
         ))),
     h('div', { className: 'pagination' },
