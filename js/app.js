@@ -1102,7 +1102,30 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
     if (!parsed) return;
     const orderId = uid();
 
-    const productType = data.settings?.productTypes?.[0]?.id || 'boiler';
+    // Определяем тип изделия по названию из 1С
+    const _productName = (parsed.product || '').toLowerCase();
+    const _productTypes = data.settings?.productTypes || [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }];
+    const _detectProductType = (name) => {
+      // Ищем совпадение по label (нечувствительно к регистру)
+      for (const pt of _productTypes) {
+        const ptLabel = (pt.label || '').toLowerCase();
+        const keywords = ptLabel.split(/[\s,/]+/).filter(w => w.length > 2);
+        if (keywords.some(kw => name.includes(kw))) return pt.id;
+      }
+      // Запасные ключевые слова для котлов
+      if (name.includes('котел') || name.includes('котёл') || name.includes('boiler') ||
+          name.includes('duplex') || name.includes('teplofor') || name.includes('lex')) {
+        const boilerId = _productTypes.find(p => p.id === 'boiler' || p.label?.toLowerCase().includes('котел'))?.id;
+        if (boilerId) return boilerId;
+      }
+      // Запасные ключевые слова для БМК
+      if (name.includes('бмк') || name.includes('bmk') || name.includes('блочно')) {
+        const bmkId = _productTypes.find(p => p.id === 'bmk' || p.label?.toLowerCase().includes('бмк'))?.id;
+        if (bmkId) return bmkId;
+      }
+      return _productTypes[0]?.id || 'boiler';
+    };
+    const productType = _detectProductType(_productName);
     const stages = (data.productionStages || []).filter(s => !s.productType || s.productType === productType);
 
     // Родительский заказ — всегда без операций если qty > 1
@@ -1121,6 +1144,7 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
       archived: false,
       createdAt: now(),
       source: '1c_import',
+      productType,
       components: parsed.components,
       isParentOrder: parsed.productQty > 1,
     };
@@ -1310,7 +1334,8 @@ const SubOrderSplitStep = memo(({ data, onUpdate, addToast, onClose, parentOrder
   const parentOrder = data.orders.find(o => o.id === parentOrderId);
   const qty = parsed?.productQty || parentOrder?.qty || 1;
   const baseNumber = parentOrder?.number || '';
-  const productType = data.settings?.productTypes?.[0]?.id || 'boiler';
+  // Берём productType из parentOrder (уже определён при импорте) или fallback
+  const productType = parentOrder?.productType || data.settings?.productTypes?.[0]?.id || 'boiler';
   const stages = (data.productionStages || []).filter(s => !s.productType || s.productType === productType);
 
   // Инициализируем подзаказы: номер авто, шильдик пустой
