@@ -1184,7 +1184,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
               ),
               // Прогресс-бар
               ops.length > 0 && h('div', { style: { height: 6, background: 'var(--bg)', borderRadius: 3, marginBottom: 10, overflow: 'hidden' } },
-                h('div', { style: { height: '100%', width: `${Math.round(done/ops.length*100)}%`, background: GN, borderRadius: 3, transition: 'width 0.3s' } })
+                h('div', { style: { height: '100%', width: `${ops.length > 0 ? Math.round(done/ops.length*100) : 0}%`, background: GN, borderRadius: 3, transition: 'width 0.3s' } })
               ),
               h('div', { style: { border: '0.5px solid var(--border-soft)', borderRadius: 8, overflow: 'hidden', maxHeight: 280, overflowY: 'auto' } },
                 ops.length === 0
