@@ -486,15 +486,22 @@ const cleanStaleLocalStorageKeys = () => {
 // Проверяет готовность заказа к отгрузке с учётом комплектующих
 const canShipOrder = (order) => {
   if (!order) return false;
-  const components = order.components || [];
-  if (components.length === 0) return true;
+  // Защита: components может прийти как строка '[]' или '[{...}]' из Firebase
+  let components = order.components || [];
+  if (typeof components === 'string') {
+    try { components = JSON.parse(components); } catch(e) { components = []; }
+  }
+  if (!Array.isArray(components) || components.length === 0) return true;
   return components.every(c => c.status === 'confirmed');
 };
 
 // Статус комплектующих заказа
 const getComponentsStatus = (order) => {
-  const components = order?.components || [];
-  if (components.length === 0) return null;
+  let components = order?.components || [];
+  if (typeof components === 'string') {
+    try { components = JSON.parse(components); } catch(e) { components = []; }
+  }
+  if (!Array.isArray(components) || components.length === 0) return null;
   const confirmed = components.filter(c => c.status === 'confirmed').length;
   const total = components.length;
   if (confirmed === total) return { label: `✓ Все комплектующие (${total})`, color: GN, ok: true };
@@ -1179,6 +1186,18 @@ const migrateData = (d) => {
       return o;
     })};
   }
+  // Нормализуем order.components: строка '[]' или '[{...}]' → массив
+  if (d.orders?.some(o => typeof o.components === 'string')) {
+    d = { ...d, orders: d.orders.map(o => {
+      if (typeof o.components !== 'string') return o;
+      try {
+        const parsed = JSON.parse(o.components);
+        return { ...o, components: Array.isArray(parsed) ? parsed : [] };
+      } catch(e) { return { ...o, components: [] }; }
+    })};
+    console.log('Миграция: нормализованы components из строки в массив');
+  }
+
   // Удаляем операции с orderId: null (осиротевшие операции)
   if (d.ops?.some(op => !op.orderId)) {
     const before = d.ops.length;
