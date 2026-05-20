@@ -194,6 +194,186 @@ const WorkerNotificationsBlock = memo(({ workerId, data }) => {
 });
 
 
+
+// ==================== WorkerOutputChart ====================
+const WorkerOutputChart = memo(({ workerId, data }) => {
+  const today = new Date();
+  const [viewMonth, setViewMonth] = useState(today.getMonth());
+  const [viewYear,  setViewYear]  = useState(today.getFullYear());
+
+  const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+
+  const chartData = useMemo(() => {
+    const dim = new Date(viewYear, viewMonth + 1, 0).getDate();
+    const days = Array.from({ length: dim }, (_, i) => i + 1);
+
+    // Считаем операции по дням (done + defect)
+    const byDay = {};
+    (data.ops || []).forEach(op => {
+      if (op.archived) return;
+      if (!(op.workerIds || []).includes(workerId)) return;
+      if (op.status !== 'done' && op.status !== 'defect') return;
+      const ts = op.finishedAt;
+      if (!ts) return;
+      const d = new Date(ts);
+      if (d.getFullYear() !== viewYear || d.getMonth() !== viewMonth) return;
+      const day = d.getDate();
+      if (!byDay[day]) byDay[day] = { done: 0, defect: 0 };
+      if (op.status === 'done')   byDay[day].done++;
+      if (op.status === 'defect') byDay[day].defect++;
+    });
+
+    const rows = days.map(d => ({
+      d,
+      done:   (byDay[d]?.done   || 0),
+      defect: (byDay[d]?.defect || 0),
+      total:  (byDay[d]?.done   || 0) + (byDay[d]?.defect || 0),
+      isToday: viewYear === today.getFullYear() && viewMonth === today.getMonth() && d === today.getDate(),
+      isWeekend: [0, 6].includes(new Date(viewYear, viewMonth, d).getDay()),
+    }));
+
+    const maxVal = Math.max(...rows.map(r => r.total), 1);
+    const totalDone   = rows.reduce((s, r) => s + r.done,   0);
+    const totalDefect = rows.reduce((s, r) => s + r.defect, 0);
+    const activeDays  = rows.filter(r => r.total > 0).length;
+    const avgPerDay   = activeDays > 0 ? Math.round((totalDone + totalDefect) / activeDays * 10) / 10 : 0;
+
+    return { rows, maxVal, totalDone, totalDefect, activeDays, avgPerDay };
+  }, [data.ops, workerId, viewMonth, viewYear]);
+
+  const [tooltip, setTooltip] = useState(null);
+
+  if (chartData.totalDone === 0 && chartData.totalDefect === 0) return null;
+
+  const BAR_H = 64; // высота зоны баров px (в SVG координатах)
+  const DIM   = chartData.rows.length;
+  const W     = 480; // viewBox ширина
+  const barW  = Math.max(Math.floor((W - DIM * 1) / DIM), 4);
+  const gap   = (W - barW * DIM) / Math.max(DIM - 1, 1);
+
+  return h('div', { style: { ...S.card, marginBottom: 16 } },
+
+    // Заголовок + навигация
+    h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom:10 } },
+      h('div', { style: { ...S.sec, marginBottom:0, flex:1 } }, 'Выработка по дням'),
+      h('button', { style: gbtn({ padding:'4px 10px', fontSize:11 }), onClick:() => { let m=viewMonth-1,y=viewYear; if(m<0){m=11;y--;} setViewMonth(m); setViewYear(y); } }, '‹'),
+      h('span', { style:{ fontSize:13, fontWeight:500, minWidth:120, textAlign:'center' } }, `${MONTHS_RU[viewMonth]} ${viewYear}`),
+      h('button', { style: gbtn({ padding:'4px 10px', fontSize:11 }), onClick:() => { let m=viewMonth+1,y=viewYear; if(m>11){m=0;y++;} setViewMonth(m); setViewYear(y); } }, '›')
+    ),
+
+    // Сводные цифры
+    h('div', { style:{ display:'flex', gap:8, marginBottom:10, flexWrap:'wrap' } },
+      [
+        { v: chartData.totalDone + chartData.totalDefect, l: 'операций',  c: 'var(--color-text-primary)' },
+        { v: chartData.activeDays,                        l: 'рабочих дней', c: GN2 },
+        { v: `${chartData.avgPerDay}`,                    l: 'в среднем/день', c: AM2 },
+        chartData.totalDefect > 0 && { v: chartData.totalDefect, l: 'брак', c: RD2 },
+      ].filter(Boolean).map(({ v, l, c }) =>
+        h('div', { key:l, style:{ background:'var(--bg2,#f8f8f5)', borderRadius:8, padding:'6px 10px', textAlign:'center', minWidth:64 } },
+          h('div', { style:{ fontSize:17, fontWeight:500, color: c } }, v),
+          h('div', { style:{ fontSize:10, color:'#888', marginTop:1 } }, l)
+        )
+      )
+    ),
+
+    // SVG чарт
+    h('div', { style:{ position:'relative' } },
+      h('svg', {
+        viewBox: `0 0 ${W} ${BAR_H + 18}`,
+        style:{ width:'100%', height:'auto', display:'block', overflow:'visible' },
+        onMouseLeave: () => setTooltip(null)
+      },
+        // Линия среднего
+        chartData.avgPerDay > 0 && h('line', {
+          x1: 0, y1: BAR_H - (chartData.avgPerDay / chartData.maxVal * BAR_H),
+          x2: W, y2: BAR_H - (chartData.avgPerDay / chartData.maxVal * BAR_H),
+          stroke: AM + '66', strokeWidth: 1, strokeDasharray: '3 3'
+        }),
+
+        // Бары
+        ...chartData.rows.map(({ d, done, defect, total, isToday, isWeekend }, i) => {
+          const x     = i * (barW + gap);
+          const totalH = total > 0 ? Math.max(total / chartData.maxVal * BAR_H, 3) : 0;
+          const doneH  = done > 0  ? Math.max(done  / chartData.maxVal * BAR_H, 2) : 0;
+          const defH   = defect > 0 ? Math.max(defect / chartData.maxVal * BAR_H, 2) : 0;
+          const baseY  = BAR_H;
+          const barColor = isToday ? AM : (defect > 0 && done === 0) ? RD : GN;
+          const opacity  = isWeekend && total === 0 ? 0.25 : 1;
+
+          return h('g', {
+            key: d,
+            style:{ cursor: total > 0 ? 'pointer' : 'default' },
+            onMouseEnter: total > 0 ? () => setTooltip({ d, done, defect, total, x }) : null,
+          },
+            // Фон выходного
+            isWeekend && h('rect', { x, y: 0, width: barW, height: BAR_H + 14, fill: '#0000000a', rx: 2 }),
+            // Бар done (снизу)
+            done > 0 && h('rect', {
+              x, y: baseY - doneH,
+              width: barW, height: doneH,
+              fill: isToday ? AM : GN,
+              rx: barW > 6 ? 2 : 1,
+              opacity,
+              style:{ transition: 'height 0.3s, y 0.3s' }
+            }),
+            // Бар defect (сверху)
+            defect > 0 && h('rect', {
+              x, y: baseY - doneH - defH,
+              width: barW, height: defH,
+              fill: RD,
+              rx: barW > 6 ? 2 : 1,
+              opacity,
+            }),
+            // Метка числа дня
+            (d % (DIM > 20 ? 5 : 2) === 0 || d === 1 || d === DIM) && h('text', {
+              x: x + barW / 2, y: BAR_H + 13,
+              textAnchor: 'middle', fontSize: 8,
+              fill: isToday ? AM2 : 'var(--color-text-secondary, #888)',
+              fontWeight: isToday ? 600 : 400,
+            }, d),
+            // Значение сверху бара (только если не тесно)
+            total > 0 && barW >= 10 && h('text', {
+              x: x + barW / 2,
+              y: baseY - totalH - 3,
+              textAnchor: 'middle', fontSize: 8,
+              fill: isToday ? AM2 : GN2,
+              fontWeight: 500,
+            }, total)
+          );
+        })
+      ),
+
+      // Тултип
+      tooltip && h('div', {
+        style:{
+          position:'absolute',
+          left: `${Math.min(tooltip.x / W * 100, 75)}%`,
+          top: '-8px',
+          background:'var(--card,#fff)',
+          border:`0.5px solid ${AM4}`,
+          borderRadius:7, padding:'6px 10px',
+          fontSize:11, pointerEvents:'none',
+          boxShadow:'0 2px 8px rgba(0,0,0,0.12)',
+          whiteSpace:'nowrap', zIndex:10,
+          transform:'translateX(-50%)',
+        }
+      },
+        h('div', { style:{ fontWeight:600, color:'var(--fg,#222)', marginBottom:2 } }, `${tooltip.d} ${MONTHS_RU[viewMonth]}`),
+        h('div', { style:{ color:GN2 } }, `✓ Выполнено: ${tooltip.done}`),
+        tooltip.defect > 0 && h('div', { style:{ color:RD2 } }, `✗ Брак: ${tooltip.defect}`)
+      )
+    ),
+
+    // Легенда
+    h('div', { style:{ display:'flex', gap:12, marginTop:6, fontSize:11, color:'#888' } },
+      h('span', null, h('span', { style:{ color:GN, fontWeight:600 } }, '■ '), 'выполнено'),
+      h('span', null, h('span', { style:{ color:RD, fontWeight:600 } }, '■ '), 'брак'),
+      h('span', null, h('span', { style:{ color:AM + '99', fontWeight:600 } }, '- '), 'среднее'),
+      h('span', null, h('span', { style:{ color:AM, fontWeight:600 } }, '■ '), 'сегодня')
+    )
+  );
+});
+
 // ==================== WorkerOpsHistoryBlock ====================
 const WorkerOpsHistoryBlock = memo(({ workerId, data }) => {
   const today = new Date();
@@ -1453,6 +1633,9 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
           h('div', { style: { fontSize: 11, color: '#888' } }, new Date(t.ts).toLocaleDateString())
         ))
       ),
+
+      // График выработки
+      h(WorkerOutputChart, { workerId, data }),
 
       // Зарплата
       h(WorkerSalaryBlock, { workerId, data }),
