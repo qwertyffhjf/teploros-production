@@ -131,7 +131,7 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
                   [
                     ['Давление исп.', `${test.testPressure} бар`],
                     ['Выдержка',     `${test.duration} мин`],
-                    ['Падение',      `${drop.toFixed(2)} бар`],
+                    ['Падение',      `${(drop != null && !isNaN(drop)) ? drop.toFixed(2) : '—'} бар`],
                     ['Потение швов', test.sweatingFound ? '⚠ Да' : 'Нет'],
                   ].map(([l,v], i) => h('div', { key: i, style: { background: 'var(--bg)', borderRadius: 6, padding: '6px 8px' } },
                     h('div', { style: { fontSize: 10, color: '#888' } }, l),
