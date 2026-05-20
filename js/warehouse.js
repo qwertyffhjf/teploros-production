@@ -930,31 +930,31 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
       await MaterialsDB.save(orderId, updNeeds);
       setNeedsAll(prev => ({ ...prev, [orderId]: updNeeds }));
 
-      // Синхронизируем order.components при полном получении позиции
-      if (newStatus === 'received') {
-        const itemName = (updNeeds.groups.flatMap(g => g.items).find(i => i.id === itemId)?.name || '').toLowerCase().trim();
-        if (itemName) {
-          const updOrders = data.orders.map(o => {
-            if (o.id !== orderId) return o;
-            const comps = o.components || [];
-            if (comps.length === 0) return o;
-            const updComps = comps.map(c => {
-              if (c.status === 'confirmed') return c;
-              const cName = (c.name || '').toLowerCase().trim();
-              if (cName === itemName || cName.includes(itemName) || itemName.includes(cName)) {
-                return { ...c, status: 'confirmed', confirmedAt: now() };
-              }
-              return c;
-            });
-            const changed = updComps.some((c, i) => c.status !== (comps[i]?.status));
-            return changed ? { ...o, components: updComps } : o;
-          });
-          const hasChanges = updOrders !== data.orders;
-          if (hasChanges) {
-            const dSync = { ...data, orders: updOrders };
-            onUpdate(dSync);
-            DB.save(dSync).catch(e => console.warn('saveNeedsReceipt sync failed:', e));
-          }
+      // Авто-подтверждение order.components если ВСЕ позиции заявки получены
+      const allItemsReceived = updNeeds.groups.every(g =>
+        g.items.every(i => i.status === 'received')
+      );
+      if (allItemsReceived) {
+        const ts = now();
+        const parseComps = (raw) => {
+          if (Array.isArray(raw)) return raw;
+          if (typeof raw === 'string') { try { const p = JSON.parse(raw); return Array.isArray(p) ? p : []; } catch(e) { return []; } }
+          return [];
+        };
+        const updOrders = data.orders.map(o => {
+          if (o.id !== orderId) return o;
+          const comps = parseComps(o.components);
+          if (comps.length === 0) return o;
+          const allConfirmed = comps.every(c => c.status === 'confirmed');
+          if (allConfirmed) return o; // уже всё подтверждено
+          return { ...o, components: comps.map(c => ({ ...c, status: 'confirmed', confirmedAt: c.confirmedAt || ts })) };
+        });
+        const hasChanges = updOrders.some((o, i) => o !== data.orders[i]);
+        if (hasChanges) {
+          const dSync = { ...data, orders: updOrders };
+          onUpdate(dSync);
+          DB.save(dSync).catch(e => console.warn('auto-confirm components failed:', e));
+          addToast('✓ Все материалы получены — комплектующие подтверждены автоматически', 'success');
         }
       }
 
