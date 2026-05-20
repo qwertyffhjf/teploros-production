@@ -1069,6 +1069,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const resetOrderForm = () => { setEditingId(null); setForm(EMPTY_ORDER_FORM); setFieldErrors({}); };
   const guardedResetOrder = useDirtyGuard(isDirtyOrder, resetOrderForm, 'Заказ не сохранён. Закрыть форму?');
 
+  const [sortMode, setSortMode] = useState('urgency'); // 'urgency' | 'deadline' | 'created'
   const ordersToShow = useMemo(() => {
     const filtered_ = data.orders.filter(o =>
       (showArchived ? true : !o.archived) &&
@@ -1109,7 +1110,6 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const paginated = useMemo(() => { const start = (page-1)*pageSize; return ordersToShow.slice(start, start+pageSize); }, [ordersToShow, page]);
   // Состояние раскрытых родительских заказов
   const [expandedParents, setExpandedParents] = useState({});
-  const [sortMode, setSortMode] = useState('urgency'); // 'urgency' | 'deadline' | 'created'
   const toggleParent = (orderId) => setExpandedParents(prev => ({ ...prev, [orderId]: !prev[orderId] }));
   useEffect(() => { setPage(1); }, [showArchived]);
 
