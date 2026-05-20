@@ -1223,6 +1223,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 
     viewOrderId && h(OrderCardModal, {
       orderId: viewOrderId, data,
+      onUpdate,
       onClose: () => setViewOrderId(null),
       canEdit: true,
       onEditMaterials: (id) => setMaterialOrderId(id),
