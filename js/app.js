@@ -1444,7 +1444,12 @@ const SubOrderSplitStep = memo(({ data, onUpdate, addToast, onClose, parentOrder
 // ==================== OrderComponentsBlock ====================
 // Блок комплектующих в карточке заказа
 const OrderComponentsBlock = memo(({ order, data, onUpdate }) => {
-  const components = order.components || [];
+  // Защита: components может быть строкой из Firebase
+  let components = order.components || [];
+  if (typeof components === 'string') {
+    try { components = JSON.parse(components); } catch(e) { components = []; }
+  }
+  if (!Array.isArray(components)) components = [];
   const confirmed = components.filter(c => c.status === 'confirmed').length;
   const allOk = confirmed === components.length;
 
