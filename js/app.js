@@ -1490,6 +1490,35 @@ const OrderComponentsBlock = memo(({ order, data, onUpdate }) => {
     onUpdate(updated);
   };
 
+  const confirmAll = async () => {
+    if (!onUpdate) return;
+    const ts = now();
+    const updated = {
+      ...data,
+      orders: data.orders.map(o => o.id === order.id ? {
+        ...o,
+        components: parseComps(o.components).map(c =>
+          c.status === 'confirmed' ? c : { ...c, status: 'confirmed', confirmedAt: ts }
+        )
+      } : o)
+    };
+    await DB.save(updated);
+    onUpdate(updated);
+  };
+
+  const unconfirmAll = async () => {
+    if (!onUpdate) return;
+    const updated = {
+      ...data,
+      orders: data.orders.map(o => o.id === order.id ? {
+        ...o,
+        components: parseComps(o.components).map(c => ({ ...c, status: 'pending', confirmedAt: null }))
+      } : o)
+    };
+    await DB.save(updated);
+    onUpdate(updated);
+  };
+
   return h('div', { style: { padding: '14px 20px', borderBottom: '0.5px solid rgba(0,0,0,0.06)' } },
     // Заголовок с прогрессом
     h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 } },
@@ -1504,6 +1533,20 @@ const OrderComponentsBlock = memo(({ order, data, onUpdate }) => {
     // Прогресс-бар
     h('div', { style: { height: 4, background: '#f0ede8', borderRadius: 3, overflow: 'hidden', marginBottom: 12 } },
       h('div', { style: { height: '100%', width: `${components.length > 0 ? confirmed/components.length*100 : 0}%`, background: allOk ? GN : AM, borderRadius: 3, transition: 'width .3s' } })
+    ),
+
+    // Кнопки управления
+    onUpdate && h('div', { style: { display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' } },
+      !allOk && h('button', {
+        onClick: confirmAll,
+        style: { fontSize: 12, padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontWeight: 500,
+          background: GN3, color: GN2, border: `0.5px solid ${GN}` }
+      }, '✓ Подтвердить всё'),
+      allOk && h('button', {
+        onClick: unconfirmAll,
+        style: { fontSize: 12, padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontWeight: 400,
+          background: 'transparent', color: '#aaa', border: '0.5px solid #ddd' }
+      }, '↩ Снять все подтверждения')
     ),
 
     // Если не подтверждены — предупреждение
