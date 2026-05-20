@@ -697,8 +697,14 @@ const OrdersDashboard = memo(({ data }) => {
     const shippedMonth = data.orders.filter(o => o.shipped && o.shippedAt >= monthStart);
 
     // Некомплект
+    const parseComps = (raw) => {
+      if (Array.isArray(raw)) return raw;
+      if (typeof raw === 'string') { try { const p = JSON.parse(raw); return Array.isArray(p) ? p : []; } catch(e) { return []; } }
+      return [];
+    };
+
     const noComponents = active.filter(o => {
-      const comps = o.components || [];
+      const comps = parseComps(o.components);
       return comps.length > 0 && comps.some(c => c.status !== 'confirmed');
     });
 
@@ -729,7 +735,7 @@ const OrdersDashboard = memo(({ data }) => {
 
     // Некомплект — все активные с неполной комплектацией, сортируем: сначала 0/N, потом частичные
     const noCompRows = noComponents.map(o => {
-      const comps = o.components || [];
+      const comps = parseComps(o.components);
       const confirmed = comps.filter(c => c.status === 'confirmed').length;
       const total = comps.length;
       const blocked = confirmed === 0;
