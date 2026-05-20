@@ -834,43 +834,93 @@ const DB = {
         });
       }
 
-      // Ограничиваем размер массивов
-      if (toSave.events?.length > 2000)               toSave.events               = toSave.events.slice(-2000);
-      if (toSave.materialConsumptions?.length > 2000)  toSave.materialConsumptions = toSave.materialConsumptions.slice(-2000);
-      if (toSave.reclamations?.length > 500)           toSave.reclamations         = toSave.reclamations.slice(-500);
-      if (toSave.messages?.length > 200)               toSave.messages             = toSave.messages.slice(-200);
-      if (toSave.duels?.length > 100)                  toSave.duels                = toSave.duels.slice(-100);
+      // Ограничиваем размер вспомогательных массивов
+      if (toSave.reclamations?.length > 500) toSave.reclamations = toSave.reclamations.slice(-500);
+      if (toSave.messages?.length > 200)     toSave.messages     = toSave.messages.slice(-200);
+      if (toSave.duels?.length > 100)        toSave.duels        = toSave.duels.slice(-100);
 
-      // ── Архивация старых заказов в отдельный документ Firestore ──
-      const archiveThreshold = Date.now() - 90 * 86400000;
-      const toArchive = (toSave.orders || []).filter(o =>
+      // ── Архивация по месяцам: заказы + ops + events + materialConsumptions ──
+      // Всё старше порога → production_archive/{YYYY-MM}, из основного документа удаляется
+      const archiveThreshold = Date.now() - 60 * 86400000; // 60 дней в основном документе
+
+      // Группировщик по месяцу
+      const byMonth = {};
+      const ensureMonth = (key) => {
+        if (!byMonth[key]) byMonth[key] = { orders:[], ops:[], events:[], materialConsumptions:[] };
+      };
+      const monthKey = (ts) => {
+        const d = new Date(ts || Date.now());
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      };
+
+      // Заказы старше порога
+      const toArchiveOrders = (toSave.orders || []).filter(o =>
         o.archived && (o.archivedAt || o.createdAt || 0) < archiveThreshold
       );
-      if (toArchive.length > 0) {
-        const archiveIds = new Set(toArchive.map(o => o.id));
-        const archiveOps = (toSave.ops || []).filter(o => archiveIds.has(o.orderId));
-        const byMonth = {};
-        toArchive.forEach(o => {
-          const d = new Date(o.archivedAt || o.createdAt || Date.now());
-          const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-          if (!byMonth[key]) byMonth[key] = { orders:[], ops:[] };
-          byMonth[key].orders.push(o);
-          byMonth[key].ops.push(...archiveOps.filter(op => op.orderId === o.id));
+      const archiveOrderIds = new Set(toArchiveOrders.map(o => o.id));
+      toArchiveOrders.forEach(o => {
+        const key = monthKey(o.archivedAt || o.createdAt);
+        ensureMonth(key);
+        byMonth[key].orders.push(o);
+      });
+
+      // Операции архивированных заказов
+      const toArchiveOps = (toSave.ops || []).filter(o => archiveOrderIds.has(o.orderId));
+      toArchiveOps.forEach(op => {
+        const key = monthKey(op.createdAt || op.finishedAt);
+        ensureMonth(key);
+        byMonth[key].ops.push(op);
+      });
+
+      // Events старше порога (кроме 'thanks' — благодарности всегда храним в основном документе)
+      const eventsToArchive = (toSave.events || []).filter(e =>
+        e.type !== 'thanks' && (e.ts || 0) < archiveThreshold
+      );
+      eventsToArchive.forEach(e => {
+        const key = monthKey(e.ts);
+        ensureMonth(key);
+        byMonth[key].events.push(e);
+      });
+      const archivedEventIds = new Set(eventsToArchive.map(e => e.id));
+
+      // materialConsumptions старше порога
+      const consToArchive = (toSave.materialConsumptions || []).filter(c =>
+        (c.ts || c.createdAt || 0) < archiveThreshold
+      );
+      consToArchive.forEach(c => {
+        const key = monthKey(c.ts || c.createdAt);
+        ensureMonth(key);
+        byMonth[key].materialConsumptions.push(c);
+      });
+      const archivedConsIds = new Set(consToArchive.map(c => c.id));
+
+      // Сохраняем в Firestore архив
+      const hasArchiveData = Object.keys(byMonth).length > 0;
+      if (hasArchiveData && DB._online) {
+        Object.entries(byMonth).forEach(([month, chunk]) => {
+          const update = { updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
+          if (chunk.orders.length)              update.orders              = firebase.firestore.FieldValue.arrayUnion(...chunk.orders);
+          if (chunk.ops.length)                 update.ops                 = firebase.firestore.FieldValue.arrayUnion(...chunk.ops);
+          if (chunk.events.length)              update.events              = firebase.firestore.FieldValue.arrayUnion(...chunk.events);
+          if (chunk.materialConsumptions.length) update.materialConsumptions = firebase.firestore.FieldValue.arrayUnion(...chunk.materialConsumptions);
+          firebase.firestore().collection(ARCHIVE_COLL).doc(month)
+            .set(update, { merge: true })
+            .catch(e => console.warn('Archive save error:', e));
         });
-        if (DB._online) {
-          Object.entries(byMonth).forEach(([month, chunk]) => {
-            firebase.firestore().collection(ARCHIVE_COLL).doc(month)
-              .set({ orders: firebase.firestore.FieldValue.arrayUnion(...chunk.orders),
-                     ops:    firebase.firestore.FieldValue.arrayUnion(...chunk.ops),
-                     updatedAt: firebase.firestore.FieldValue.serverTimestamp() },
-                   { merge: true })
-              .catch(e => console.warn('Archive save error:', e));
-          });
-        }
-        toSave.orders = toSave.orders.filter(o => !archiveIds.has(o.id));
-        toSave.ops    = (toSave.ops || []).filter(o => !archiveIds.has(o.orderId));
-        console.log(`Архивировано: ${toArchive.length} заказов → ${Object.keys(byMonth).join(', ')}`);
+        const totalArchived = Object.values(byMonth).reduce((s,c) =>
+          s + c.orders.length + c.events.length + c.materialConsumptions.length, 0);
+        console.log(`Архивировано: ${totalArchived} записей → ${Object.keys(byMonth).join(', ')}`);
       }
+
+      // Удаляем из основного документа всё что ушло в архив
+      if (archiveOrderIds.size > 0) {
+        toSave.orders = toSave.orders.filter(o => !archiveOrderIds.has(o.id));
+        toSave.ops    = (toSave.ops || []).filter(o => !archiveOrderIds.has(o.orderId));
+      }
+      if (archivedEventIds.size > 0)
+        toSave.events = (toSave.events || []).filter(e => !archivedEventIds.has(e.id));
+      if (archivedConsIds.size > 0)
+        toSave.materialConsumptions = (toSave.materialConsumptions || []).filter(c => !archivedConsIds.has(c.id));
 
       // ── Контроль размера ──
       const payload  = JSON.stringify(toSave);
@@ -891,13 +941,20 @@ const DB = {
       };
 
       if (sizeKb > 900) {
-        toSave.events               = (toSave.events || []).slice(-1000);
-        toSave.materialConsumptions = (toSave.materialConsumptions || []).slice(-1000);
+        // Аварийная защита — архивация должна была сработать раньше
+        // Оставляем только благодарности и события за последние 30 дней
+        const emergency30 = Date.now() - 30 * 86400000;
+        toSave.events = (toSave.events || []).filter(e =>
+          e.type === 'thanks' || (e.ts || 0) > emergency30
+        );
+        toSave.materialConsumptions = (toSave.materialConsumptions || []).filter(c =>
+          (c.ts || c.createdAt || 0) > emergency30
+        );
         // Оставляем только последние 3 месяца табеля
         toSave.timesheet = pruneTimesheet(toSave.timesheet, 3);
         const sizeAfter = Math.round(JSON.stringify(toSave).length / 1024);
-        DB._lastError = `⚠ Данных ${sizeKb}→${sizeAfter} КБ — лимит 1 МБ. Старые данные очищены.`;
-        console.warn(`Payload: ${sizeKb} KB → ${sizeAfter} KB after pruning`);
+        DB._lastError = `⚠ Данных ${sizeKb}→${sizeAfter} КБ — аварийная очистка. Данные сохранены в архив.`;
+        console.warn(`Payload: ${sizeKb} KB → ${sizeAfter} KB after emergency pruning`);
       } else if (sizeKb > 700) {
         // Превентивно: оставляем последние 6 месяцев
         toSave.timesheet = pruneTimesheet(toSave.timesheet, 6);
