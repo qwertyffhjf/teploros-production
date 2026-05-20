@@ -59,8 +59,31 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId }) => {
       note: confirmNote
     };
 
-    const d = { ...data, materialDeliveries: updDeliveries, materials: updMaterials, events: [...data.events, event] };
-    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    // Синхронизируем order.components: если поставка confirmed — помечаем совпадающий компонент
+    let updOrders = data.orders;
+    if (status === 'confirmed' && confirmModal.orderId) {
+      const mat = data.materials.find(m => m.id === confirmModal.materialId);
+      const matName = mat?.name || '';
+      updOrders = data.orders.map(o => {
+        if (o.id !== confirmModal.orderId) return o;
+        const comps = o.components || [];
+        if (comps.length === 0) return o;
+        // Ищем компонент по совпадению имени (нечувствительно к регистру)
+        const updComps = comps.map(c => {
+          if (c.status === 'confirmed') return c;
+          const cName = (c.name || '').toLowerCase().trim();
+          const mName = matName.toLowerCase().trim();
+          if (cName === mName || (mName && cName.includes(mName)) || (cName && mName.includes(cName))) {
+            return { ...c, status: 'confirmed', confirmedAt: now() };
+          }
+          return c;
+        });
+        return { ...o, components: updComps };
+      });
+    }
+
+    const d = { ...data, materialDeliveries: updDeliveries, materials: updMaterials, events: [...data.events, event], orders: updOrders };
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения — проверьте соединение', 'error'); });
 
     const label = isPartial ? `Частичная поставка: ${qty} ${confirmModal.unit}` : `Поставка подтверждена: ${qty} ${confirmModal.unit}`;
     addToast(`✓ ${label}`, 'success');
@@ -70,21 +93,34 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId }) => {
   const printQR = (delivery) => {
     const mat = data.materials.find(m => m.id === delivery.materialId);
     const order = data.orders.find(o => o.id === delivery.orderId);
-    const url = `${location.origin}${location.pathname}?receive=${delivery.id}`;
+    const url = `${location.origin}${location.pathname}?receive=${encodeURIComponent(delivery.id)}`;
     const w = window.open('', '_blank', 'width=400,height=500');
+    // Проверка: браузер мог заблокировать всплывающее окно
+    if (!w || w.closed) {
+      addToast('Браузер заблокировал всплывающее окно — разрешите в настройках', 'error');
+      return;
+    }
+    // XSS-защита: экранируем данные из БД перед вставкой в HTML
+    const esc = (s) => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    const matName  = esc(mat?.name || delivery.materialId);
+    const ordNum   = esc(order?.number || delivery.orderId);
+    const stageName = esc(delivery.stageName);
+    const reqQty   = esc(delivery.requiredQty);
+    const unit     = esc(delivery.unit);
+    const safeUrl  = esc(url);
     w.document.write(`<!DOCTYPE html><html><head><title>QR поставки</title>
-      <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script></head>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script></head>
       <body style="font-family:sans-serif;padding:20px;text-align:center">
         <div style="border:2px solid #333;padding:16px;display:inline-block;border-radius:8px">
           <div style="font-size:11px;color:#888;margin-bottom:4px">ПОСТАВКА МАТЕРИАЛА</div>
-          <div style="font-size:15px;font-weight:bold;margin-bottom:2px">${mat?.name || delivery.materialId}</div>
-          <div style="font-size:12px;color:#666;margin-bottom:12px">Заказ: ${order?.number || delivery.orderId} · Этап: ${delivery.stageName}</div>
-          <div style="font-size:12px;margin-bottom:12px">Требуется: <b>${delivery.requiredQty} ${delivery.unit}</b></div>
+          <div style="font-size:15px;font-weight:bold;margin-bottom:2px">${matName}</div>
+          <div style="font-size:12px;color:#666;margin-bottom:12px">Заказ: ${ordNum} · Этап: ${stageName}</div>
+          <div style="font-size:12px;margin-bottom:12px">Требуется: <b>${reqQty} ${unit}</b></div>
           <div id="qr" style="margin:0 auto 12px;width:180px"></div>
-          <div style="font-size:9px;color:#aaa;word-break:break-all">${url}</div>
+          <div style="font-size:9px;color:#aaa;word-break:break-all">${safeUrl}</div>
         </div>
         <br><button onclick="window.print()" style="margin-top:12px;padding:8px 24px;font-size:13px;border-radius:6px;border:none;background:#EF9F27;color:#412402;cursor:pointer">🖨 Печать</button>
-        <script>new QRCode(document.getElementById("qr"),{text:"${url}",width:180,height:180,colorDark:"#000",colorLight:"#fff"});</script>
+        <script>new QRCode(document.getElementById("qr"),{text:"${safeUrl}",width:180,height:180,colorDark:"#000",colorLight:"#fff"});<\/script>
       </body></html>`);
     w.document.close();
   };
@@ -155,7 +191,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId }) => {
             const groups = {};
             deliveries.forEach(d => { if (!groups[d.orderId]) groups[d.orderId]=[]; groups[d.orderId].push(d); });
             return Object.entries(groups).map(([orderId, items]) => {
-              const order = data.orders.find(o => o.id === orderId);
+              const order = data.orders.find(o => o.id === orderId) || { number: orderId, product: '', customer: '' };
               const isExpanded = expandedOrders.has(orderId);
               const doneCount = items.filter(d=>d.status==='confirmed').length;
               const allDone = doneCount===items.length;
@@ -235,9 +271,9 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId }) => {
       h('div', { style: { background: '#faf9f6', borderRadius: 12, padding: 24, width: 'min(420px, calc(100vw - 32px))' } },
         h('div', { style: { fontSize: 16, fontWeight: 500, marginBottom: 4 } }, '📦 Подтвердить поставку'),
         h('div', { style: { fontSize: 13, color: '#888', marginBottom: 20 } },
-          (data.materials.find(m => m.id === confirmModal.materialId))?.name,
+          data.materials.find(m => m.id === confirmModal.materialId)?.name || confirmModal.materialId,
           ` · Заказ `,
-          (data.orders.find(o => o.id === confirmModal.orderId))?.number
+          data.orders.find(o => o.id === confirmModal.orderId)?.number || confirmModal.orderId
         ),
 
         h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 } },
@@ -804,9 +840,11 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
   const [showImport, setShowImport] = useState(false);
   const [selectedStock, setSelectedStock] = React.useState(new Set());
 
-  const delSelectedStock = React.useCallback(() => {
+  const { ask, confirmEl } = useConfirm();
+  const delSelectedStock = React.useCallback(async () => {
     if (selectedStock.size === 0) return;
-    if (!window.confirm(`Удалить ${selectedStock.size} позиций? Действие необратимо.`)) return;
+    const ok = await ask({ message: `Удалить ${selectedStock.size} позиций?`, detail: 'Действие необратимо — материалы будут удалены из справочника', danger: true });
+    if (!ok) return;
     const d = { ...data, materials: data.materials.filter(m => !selectedStock.has(m.id)) };
     onUpdate(d); DB.save(d).catch(() => onUpdate(data));
     setSelectedStock(new Set());
@@ -829,11 +867,16 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
   // Заявки на материалы (из чата)
   // Загружать заявки из MaterialsDB при переключении на вкладку приёмки
   React.useEffect(() => {
-    if ((tab !== 'receive' && tab !== 'needs') || !MaterialsDB) return;
+    if (tab !== 'receive') return;
+    if (!MaterialsDB) { setNeedsLoading(false); return; }
     setNeedsLoading(true);
     MaterialsDB.loadAll().then(orders => {
       setNeedsAll(orders || {});
       setNeedsLoading(false);
+    }).catch(e => {
+      console.error('MaterialsDB.loadAll failed:', e);
+      setNeedsLoading(false);
+      addToast('Не удалось загрузить заявки', 'error');
     });
   }, [tab]);
 
@@ -861,13 +904,13 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
       const ctx = [e.invoiceNumber ? `Накл. ${e.invoiceNumber}` : null, e.supplier || null, e.invoiceDate || null, e.batch ? `Партия: ${e.batch}` : null].filter(Boolean).join(' · ') || '—';
       list.push({ ts: e.ts, type: 'in', materialName: mat?.name || '?', qty: e.qty, unit: mat?.unit || e.unit || '', context: ctx });
     });
-    return list.sort((a, b) => b.ts - a.ts).slice(0, 50);
+    return list.sort((a, b) => b.ts - a.ts).slice(0, 200);
   }, [data.materialConsumptions, data.events, data.materials, data.ops, data.orders]);
 
   // Приёмка материала
   // Сохранить приёмку позиции из заявки (частичная или полная)
   const saveNeedsReceipt = React.useCallback(async (orderId, groupId, itemId, receivedQty, totalQty) => {
-    if (!MaterialsDB) return;
+    if (!MaterialsDB) { addToast('База материалов недоступна', 'error'); return; }
     const needs = needsAll[orderId];
     if (!needs) return;
     const newStatus = receivedQty >= totalQty ? 'received' : receivedQty > 0 ? 'partial' : 'pending';
@@ -883,10 +926,44 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
         })
       })
     };
-    await MaterialsDB.save(orderId, updNeeds);
-    setNeedsAll(prev => ({ ...prev, [orderId]: updNeeds }));
-    addToast(newStatus === 'received' ? '✓ Принято полностью' : `Принято частично: ${receivedQty} из ${totalQty}`, 'success');
-    setReceiveQtys(prev => { const n = { ...prev }; delete n[`${orderId}_${groupId}_${itemId}`]; return n; });
+    try {
+      await MaterialsDB.save(orderId, updNeeds);
+      setNeedsAll(prev => ({ ...prev, [orderId]: updNeeds }));
+
+      // Синхронизируем order.components при полном получении позиции
+      if (newStatus === 'received') {
+        const itemName = (updNeeds.groups.flatMap(g => g.items).find(i => i.id === itemId)?.name || '').toLowerCase().trim();
+        if (itemName) {
+          const updOrders = data.orders.map(o => {
+            if (o.id !== orderId) return o;
+            const comps = o.components || [];
+            if (comps.length === 0) return o;
+            const updComps = comps.map(c => {
+              if (c.status === 'confirmed') return c;
+              const cName = (c.name || '').toLowerCase().trim();
+              if (cName === itemName || cName.includes(itemName) || itemName.includes(cName)) {
+                return { ...c, status: 'confirmed', confirmedAt: now() };
+              }
+              return c;
+            });
+            const changed = updComps.some((c, i) => c.status !== (comps[i]?.status));
+            return changed ? { ...o, components: updComps } : o;
+          });
+          const hasChanges = updOrders !== data.orders;
+          if (hasChanges) {
+            const dSync = { ...data, orders: updOrders };
+            onUpdate(dSync);
+            DB.save(dSync).catch(e => console.warn('saveNeedsReceipt sync failed:', e));
+          }
+        }
+      }
+
+      addToast(newStatus === 'received' ? '✓ Принято полностью' : `Принято частично: ${receivedQty} из ${totalQty}`, 'success');
+      setReceiveQtys(prev => { const n = { ...prev }; delete n[`${orderId}_${groupId}_${itemId}`]; return n; });
+    } catch(e) {
+      console.error('saveNeedsReceipt failed:', e);
+      addToast('Ошибка сохранения — проверьте соединение', 'error');
+    }
   }, [needsAll, currentUserId, addToast]);
 
   const receiveMaterial = useCallback(async () => {
@@ -895,22 +972,35 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
     const updatedMaterials = data.materials.map(m => m.id === receiveForm.materialId ? { ...m, quantity: m.quantity + qty, batch: receiveForm.batch || m.batch } : m);
     const event = { id: uid(), type: 'material_receive', materialId: receiveForm.materialId, qty, batch: receiveForm.batch, ts: now() };
     const d = { ...data, materials: updatedMaterials, events: [...data.events, event] };
-    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
     const mat = data.materials.find(m => m.id === receiveForm.materialId);
-    setReceiveForm({ materialId: '', qty: '', batch: '' });
-    addToast(`Принято: ${mat?.name} +${qty} ${mat?.unit}`, 'success');
+    try {
+      onUpdate(d);
+      await DB.save(d);
+      setReceiveForm({ materialId: '', qty: '', batch: '' });
+      addToast(`Принято: ${mat?.name} +${qty} ${mat?.unit}`, 'success');
+    } catch(e) {
+      onUpdate(data);
+      addToast('Ошибка сохранения — проверьте соединение', 'error');
+    }
   }, [data, receiveForm, onUpdate, addToast]);
 
   // Выдача по заявке
   const fulfillRequest = useCallback(async (eventId) => {
     const d = { ...data, events: data.events.map(e => e.id === eventId ? { ...e, fulfilled: true, fulfilledAt: now() } : e) };
-    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
-    addToast('Заявка выполнена ✓', 'success');
+    try {
+      onUpdate(d);
+      await DB.save(d);
+      addToast('Заявка выполнена ✓', 'success');
+    } catch(e) {
+      onUpdate(data);
+      addToast('Ошибка сохранения', 'error');
+    }
   }, [data, onUpdate, addToast]);
 
   const totalValue = data.materials.reduce((s, m) => s + m.quantity * (m.unitCost || 0), 0);
 
   return h('div', { style: { maxWidth: 800, margin: '0 auto', padding: '0 0 24px' } },
+    confirmEl,
     h(SectionAnalytics, { section: 'warehouse', data }),
     viewOrderId && h(OrderCardModal, {
       orderId: viewOrderId, data,
@@ -994,11 +1084,11 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
               h('td', { style: { ...S.td, textAlign: 'center' } }, m.unitCost ? `${m.unitCost}₽` : '—'),
               h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'right' } }, m.unitCost ? `${(m.quantity * m.unitCost).toLocaleString()}₽` : '—'),
               h('td', { style: S.td },
-                h('button', { onClick: () => {
-                  if (window.confirm(`Удалить «${m.name}»?`)) {
+                h('button', { onClick: async () => {
+                  const ok = await ask({ message: `Удалить «${m.name}»?`, detail: 'Материал будет удалён из справочника', danger: true });
+                  if (ok) {
                     const d = { ...data, materials: data.materials.filter(x => x.id !== m.id) };
-                    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
-                    addToast('Удалено', 'info');
+                    try { onUpdate(d); await DB.save(d); addToast('Удалено', 'info'); } catch(e) { onUpdate(data); addToast('Ошибка удаления', 'error'); }
                   }
                 }, style: { fontSize: 13, color: RD, background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 4px' }, title: 'Удалить' }, '🗑')
               )
