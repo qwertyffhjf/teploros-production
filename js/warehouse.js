@@ -1004,6 +1004,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
     h(SectionAnalytics, { section: 'warehouse', data }),
     viewOrderId && h(OrderCardModal, {
       orderId: viewOrderId, data,
+      onUpdate,
       onClose: () => setViewOrderId(null),
       canEdit: false,
     }),
