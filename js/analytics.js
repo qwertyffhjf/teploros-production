@@ -316,8 +316,14 @@ const FullAnalyticsModal = memo(({ section, data, onClose }) => {
         h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
           // Период
           h('div', { style: { display: 'flex', gap: 4 } },
-            [7, 14, 30, 90].map(d => h('button', { key: d, style: period === d ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => setPeriod(d) }, `${d}д`))
+            [7, 14, 30, 90, 180, 365].map(d => h('button', {
+              key: d,
+              style: period === d ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }),
+              onClick: () => setPeriod(d),
+              title: d > 60 ? 'Данные загружаются из архива' : undefined
+            }, d >= 365 ? '1г' : d >= 180 ? '6м' : `${d}д`))
           ),
+          archiveLoading && h('span', { style: { fontSize: 11, color: '#EF9F27', animation: 'pulse 1s infinite' } }, '⏳ архив...'),
           h('button', { style: gbtn({ fontSize: 11 }), onClick: () => {
             const wb = XLSX.utils.book_new();
             if (section === 'warehouse' && computed.topMats) {
@@ -636,13 +642,64 @@ const AssignmentRecommendations = memo(({ data, onUpdate, addToast }) => {
 const AnalyticsDashboard = memo(({ data, onWorkerClick }) => {
   const [period, setPeriod] = useState(30);
   const periodStart = useMemo(() => now() - period * 86400000, [period]);
+
+  // ── Загрузка архивных данных для периодов > 60 дней ──
+  const [archiveData, setArchiveData] = useState(null);
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  const [archiveMonthsList, setArchiveMonthsList] = useState([]);
+
+  // Загружаем список доступных архивных месяцев
+  useEffect(() => {
+    DB.listArchiveMonths().then(months => setArchiveMonthsList(months)).catch(() => {});
+  }, []);
+
+  // При выборе периода > 60 дней — подгружаем нужные архивные месяцы
+  useEffect(() => {
+    if (period <= 60) { setArchiveData(null); return; }
+    setArchiveLoading(true);
+    const needed = [];
+    const now_ = Date.now();
+    for (let i = 0; i < Math.ceil(period / 30) + 1; i++) {
+      const d = new Date(now_ - i * 30 * 86400000);
+      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      if (!needed.includes(key)) needed.push(key);
+    }
+    Promise.all(needed.map(m => DB.loadArchive(m).catch(() => null)))
+      .then(results => {
+        const merged = { orders:[], ops:[], events:[], materialConsumptions:[] };
+        results.filter(Boolean).forEach(r => {
+          ['orders','ops','events','materialConsumptions'].forEach(k => {
+            if (Array.isArray(r[k])) merged[k].push(...r[k]);
+          });
+        });
+        setArchiveData(merged);
+        setArchiveLoading(false);
+      })
+      .catch(() => setArchiveLoading(false));
+  }, [period]);
+
+  // Объединённые данные: текущие + архивные
+  const allData = useMemo(() => {
+    if (!archiveData || period <= 60) return data;
+    const mergeById = (curr, arch) => {
+      const ids = new Set((curr||[]).map(x=>x.id));
+      return [...(curr||[]), ...(arch||[]).filter(x=>!ids.has(x.id))];
+    };
+    return {
+      ...data,
+      orders: mergeById(data.orders, archiveData.orders),
+      ops:    mergeById(data.ops,    archiveData.ops),
+      events: mergeById(data.events, archiveData.events),
+      materialConsumptions: mergeById(data.materialConsumptions, archiveData.materialConsumptions),
+    };
+  }, [data, archiveData, period]);
   const chartRef1 = useRef(null); const canvasRef1 = useRef(null);
   const chartRef2 = useRef(null); const canvasRef2 = useRef(null);
 
   // ===== 1. Lead Time по заказам =====
   const leadTimeData = useMemo(() => {
-    return data.orders.filter(o => !o.archived).map(order => {
-      const ops = data.ops.filter(op => op.orderId === order.id);
+    return allData.orders.filter(o => !o.archived).map(order => {
+      const ops = allData.ops.filter(op => op.orderId === order.id);
       const doneOps = ops.filter(op => op.status === 'done' && op.startedAt && op.finishedAt);
       if (doneOps.length === 0) return null;
       const firstStart = Math.min(...doneOps.map(op => op.startedAt));
@@ -661,7 +718,7 @@ const AnalyticsDashboard = memo(({ data, onWorkerClick }) => {
   // ===== 2. Автонормирование =====
   const normSuggestions = useMemo(() => {
     const byName = {};
-    data.ops.filter(op => op.status === 'done' && op.startedAt && op.finishedAt && op.finishedAt >= periodStart).forEach(op => {
+    allData.ops.filter(op => op.status === 'done' && op.startedAt && op.finishedAt && op.finishedAt >= periodStart).forEach(op => {
       if (!byName[op.name]) byName[op.name] = { times: [], currentNorm: null };
       byName[op.name].times.push((op.finishedAt - op.startedAt) / 3600000);
       if (op.plannedHours) byName[op.name].currentNorm = op.plannedHours;
