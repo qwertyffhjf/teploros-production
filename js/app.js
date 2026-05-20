@@ -2353,7 +2353,7 @@ function App() {
           effectiveRole === 'warehouse' && h(WarehouseScreen, { data, onUpdate: save, addToast, currentUserId: workerId }),
           effectiveRole === 'dashboard' && h(Dashboard, { data, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId })
         ),
-    selectedOrderId && h(OrderCardModal, { orderId: selectedOrderId, data, onClose: () => setSelectedOrderId(null), canEdit: true, onEditMaterials: (id) => { setSelectedOrderId(null); } }),
+    selectedOrderId && h(OrderCardModal, { orderId: selectedOrderId, data, onUpdate: save, onClose: () => setSelectedOrderId(null), canEdit: true, onEditMaterials: (id) => { setSelectedOrderId(null); } }),
     // 🌍 Глобальная карточка сотрудника — открывается из любого места системы
     selectedWorkerId && (() => {
       const worker = data.workers.find(w => w.id === selectedWorkerId);
