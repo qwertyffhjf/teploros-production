@@ -398,7 +398,7 @@ firebase.initializeApp({
 const firestore = typeof firebase !== 'undefined' ? firebase.firestore() : null;
 const DOC_REF    = firestore ? firestore.collection('app').doc('production_v14') : null;
 const WH_DOC_REF = firestore ? firestore.collection('app').doc('warehouse_v1') : null;   // Склад — отдельный документ
-const PRESENCE_REF = firestore.collection('presence');
+const PRESENCE_REF = firestore ? firestore.collection('presence') : null;
 
 // Поля которые живут в warehouse_v1 (не в production_v14)
 const WH_FIELDS = ['materials','bomTemplates','materialConsumptions','materialReservations','materialDeliveries','equipment'];
@@ -407,7 +407,7 @@ const WH_FIELDS = ['materials','bomTemplates','materialConsumptions','materialRe
 const Presence = {
   _id: null,
   start(userId, userName) {
-    if (!userId) return;
+    if (!userId || !PRESENCE_REF) return;
     this._id = userId;
     const ref = PRESENCE_REF.doc(userId);
     const update = () => ref.set({ userId, userName: userName || '?', lastSeen: Date.now(), online: true }).catch(() => {});
@@ -421,6 +421,7 @@ const Presence = {
   },
   async getOnline() {
     try {
+      if (!PRESENCE_REF) return [];
       const snap = await PRESENCE_REF.get();
       const threshold = Date.now() - 60000; // 60 сек
       return snap.docs.map(d => d.data()).filter(u => u.online && u.lastSeen > threshold);
@@ -532,7 +533,7 @@ const isWorkerOnShift = (worker, timesheet) => {
 // Хук управления темой: light / dark / system
 // Сохраняет выбор в localStorage, применяет класс на <html>
 const useTheme = () => {
-  const stored = localStorage.getItem('tp_theme') || 'system';
+  const stored = (() => { try { return localStorage.getItem('tp_theme') || 'system'; } catch(e) { return 'system'; } })();
   const [theme, setThemeState] = React.useState(stored);
 
   React.useEffect(() => {
@@ -550,7 +551,7 @@ const useTheme = () => {
   }, [theme]);
 
   const setTheme = (t) => {
-    localStorage.setItem('tp_theme', t);
+    try { localStorage.setItem('tp_theme', t); } catch(e) {}
     setThemeState(t);
   };
 
@@ -718,14 +719,20 @@ const DB = {
         WH_DOC_REF.get()
       ]);
       if (snap.exists) {
-        let parsed = typeof snap.data().payload === 'string'
-          ? JSON.parse(snap.data().payload)
-          : snap.data();
+        let parsed;
+        try {
+          parsed = typeof snap.data().payload === 'string'
+            ? JSON.parse(snap.data().payload)
+            : snap.data();
+        } catch(e) { console.error('DB.load main JSON.parse failed', e); parsed = {}; }
         // Подмешиваем данные склада
         if (whSnap.exists) {
-          let whParsed = typeof whSnap.data().payload === 'string'
-            ? JSON.parse(whSnap.data().payload)
-            : whSnap.data();
+          let whParsed;
+          try {
+            whParsed = typeof whSnap.data().payload === 'string'
+              ? JSON.parse(whSnap.data().payload)
+              : whSnap.data();
+          } catch(e) { console.error('DB.load wh JSON.parse failed', e); whParsed = {}; }
           WH_FIELDS.forEach(f => { if (whParsed[f] !== undefined) parsed[f] = whParsed[f]; });
           try { localStorage.setItem(WH_CACHE_KEY, JSON.stringify({ data: whParsed, savedAt: Date.now() })); } catch(e) {}
         }
@@ -924,7 +931,8 @@ const DB = {
                 console.log('📝 Conflict detected: remote version is newer — merging changes');
                 // ── Мержим вместо перезаписи: берём удалённые данные как базу, накладываем наши изменения ──
                 try {
-                  const remoteData = typeof snap.data().payload === 'string' ? JSON.parse(snap.data().payload) : snap.data();
+                  let remoteData;
+                  try { remoteData = typeof snap.data().payload === 'string' ? JSON.parse(snap.data().payload) : snap.data(); } catch(e) { remoteData = {}; }
                   // Мержим массивы: наши новые записи добавляем к удалённым
                   const mergeArrayById = (remote, local, key) => {
                     const remoteMap = new Map((remote || []).map(item => [item[key], item]));
@@ -1087,9 +1095,13 @@ const DB = {
         DB._online = true;
         if (DB._saving) return; // Блокируем входящие пока сами сохраняем
         if (snap.exists) {
-          lastMain = typeof snap.data().payload === 'string'
-            ? JSON.parse(snap.data().payload)
-            : snap.data();
+          try {
+            lastMain = typeof snap.data().payload === 'string'
+              ? JSON.parse(snap.data().payload)
+              : snap.data();
+          } catch(e) {
+            console.error('onSnapshot main: JSON.parse failed', e);
+          }
           merge();
         }
       },
@@ -1100,9 +1112,13 @@ const DB = {
       snap => {
         if (DB._saving) return;
         if (snap.exists) {
-          lastWh = typeof snap.data().payload === 'string'
-            ? JSON.parse(snap.data().payload)
-            : snap.data();
+          try {
+            lastWh = typeof snap.data().payload === 'string'
+              ? JSON.parse(snap.data().payload)
+              : snap.data();
+          } catch(e) {
+            console.error('onSnapshot wh: JSON.parse failed', e);
+          }
           merge();
         }
       },
