@@ -681,6 +681,13 @@ const DependencyEditorInline = memo(({ data, orderId, onUpdate, addToast }) => {
 });
 
 
+// Вспомогательная функция — парсинг components из строки или массива
+const parseComps = (raw) => {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string') { try { const p = JSON.parse(raw); return Array.isArray(p) ? p : []; } catch(e) { return []; } }
+  return [];
+};
+
 // ==================== OrdersDashboard ====================
 const OrdersDashboard = memo(({ data }) => {
   const today = new Date(); today.setHours(0,0,0,0);
@@ -697,12 +704,6 @@ const OrdersDashboard = memo(({ data }) => {
     const shippedMonth = data.orders.filter(o => o.shipped && o.shippedAt >= monthStart);
 
     // Некомплект
-    const parseComps = (raw) => {
-      if (Array.isArray(raw)) return raw;
-      if (typeof raw === 'string') { try { const p = JSON.parse(raw); return Array.isArray(p) ? p : []; } catch(e) { return []; } }
-      return [];
-    };
-
     const noComponents = active.filter(o => {
       const comps = parseComps(o.components);
       return comps.length > 0 && comps.some(c => c.status !== 'confirmed');
