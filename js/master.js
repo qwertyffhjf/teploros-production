@@ -1583,6 +1583,579 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 
 
 
+
+// ==================== SmartGantt — планировщик ====================
+
+// ── Ядро планировщика ──────────────────────────────────────────────
+const buildSchedule = (data) => {
+  const DAY_MS = 86400000;
+  const shifts = data.settings?.shifts || [{ id: 1, start: 8, end: 17 }];
+  const shiftHours = shifts.reduce((s, sh) => s + (sh.end - sh.start), 0) || 8;
+
+  // Начало рабочего дня (первая смена)
+  const dayStartH = shifts.reduce((mn, sh) => Math.min(mn, sh.start), 23);
+
+  // Получить timestamp начала рабочего дня для даты
+  const dayStart = (ts) => {
+    const d = new Date(ts); d.setHours(dayStartH, 0, 0, 0); return d.getTime();
+  };
+
+  // Является ли день рабочим (не выходной)
+  const isWorkday = (ts) => {
+    const dow = new Date(ts).getDay();
+    return dow !== 0 && dow !== 6;
+  };
+
+  // Следующий рабочий момент после ts
+  const nextWorkMoment = (ts) => {
+    let t = ts;
+    const d = new Date(t);
+    const h = d.getHours() + d.getMinutes() / 60;
+    const lastShift = shifts[shifts.length - 1];
+    // Если после конца смен — переходим на следующий рабочий день
+    if (h >= lastShift.end) {
+      t = dayStart(t + DAY_MS);
+      while (!isWorkday(t)) t += DAY_MS;
+    }
+    if (!isWorkday(t)) {
+      t = dayStart(t);
+      while (!isWorkday(t)) t += DAY_MS;
+    }
+    return t;
+  };
+
+  // Добавить рабочие миллисекунды к ts
+  const addWorkMs = (ts, ms) => {
+    let t = nextWorkMoment(ts);
+    let remaining = ms;
+    let guard = 0;
+    while (remaining > 0 && guard++ < 500) {
+      const d = new Date(t);
+      const h = d.getHours() + d.getMinutes() / 60;
+      const lastShift = shifts[shifts.length - 1];
+      const tillEnd = (lastShift.end - Math.max(h, dayStartH)) * 3600000;
+      if (tillEnd <= 0) {
+        // Уже за концом смены — переходим на следующий рабочий день
+        t = dayStart(t + DAY_MS);
+        while (!isWorkday(t)) t += DAY_MS;
+        continue;
+      }
+      if (remaining <= tillEnd) {
+        t += remaining;
+        remaining = 0;
+      } else {
+        remaining -= tillEnd;
+        t = dayStart(t + DAY_MS);
+        while (!isWorkday(t)) t += DAY_MS;
+      }
+    }
+    return t;
+  };
+
+  // Оценка длительности операции (мс)
+  const opDurationMs = (op) => {
+    if (op.plannedHours) return op.plannedHours * 3600000;
+    const norm = data.opNorms?.[op.name];
+    if (norm?.samples > 0) return norm.totalMs / norm.samples;
+    return 8 * 3600000; // дефолт — 8 часов
+  };
+
+  // Доступность рабочего: недоступен в периоде (отпуск/больничный)
+  const isWorkerUnavailable = (workerId, ts) => {
+    return (data.workerAvailabilities || []).some(a =>
+      a.workerId === workerId && ts >= a.startDate && ts <= a.endDate
+    );
+  };
+
+  // Занятость рабочих: карта workerId → массив [{start, end}]
+  const workerBusy = {};
+  const addBusy = (workerId, start, end) => {
+    if (!workerBusy[workerId]) workerBusy[workerId] = [];
+    workerBusy[workerId].push({ start, end });
+  };
+
+  // Найти ближайший свободный слот у рабочего после notBefore
+  const findFreeSlot = (workerId, notBefore, durationMs) => {
+    let t = nextWorkMoment(notBefore);
+    const busy = (workerBusy[workerId] || []).sort((a, b) => a.start - b.start);
+    let attempts = 0;
+    while (attempts++ < 200) {
+      if (isWorkerUnavailable(workerId, t)) {
+        t = dayStart(t + DAY_MS);
+        while (!isWorkday(t) || isWorkerUnavailable(workerId, t)) t += DAY_MS;
+        continue;
+      }
+      const end = addWorkMs(t, durationMs);
+      const conflict = busy.find(b => b.start < end && b.end > t);
+      if (!conflict) return t;
+      t = nextWorkMoment(conflict.end);
+    }
+    return t;
+  };
+
+  // Дата готовности поставки для заказа
+  const getDeliveryReady = (orderId) => {
+    const deliveries = (data.materialDeliveries || []).filter(d =>
+      d.orderId === orderId && d.status !== 'confirmed'
+    );
+    if (deliveries.length === 0) return 0;
+    // Берём максимальную ожидаемую дату поставки
+    const maxEta = deliveries.reduce((mx, d) => {
+      const eta = d.expectedDate || d.eta || 0;
+      return Math.max(mx, typeof eta === 'string' ? new Date(eta).getTime() : eta);
+    }, 0);
+    return maxEta;
+  };
+
+  // Топологическая сортировка операций с учётом зависимостей
+  const topoSort = (ops) => {
+    const map = {};
+    ops.forEach(op => { map[op.id] = { op, deps: op.dependsOn || [], done: false }; });
+    const result = [];
+    const visit = (id, stack = new Set()) => {
+      if (stack.has(id)) return; // цикл — пропускаем
+      if (map[id]?.done) return;
+      stack.add(id);
+      (map[id]?.deps || []).forEach(d => visit(d, new Set(stack)));
+      if (map[id]) { map[id].done = true; result.push(map[id].op); }
+    };
+    ops.forEach(op => visit(op.id));
+    return result;
+  };
+
+  // ── Основной алгоритм ──────────────────────────────────────────
+
+  const now_ = Date.now();
+  const activeOrders = data.orders.filter(o => !o.archived && !o.shipped);
+  const allOps = data.ops.filter(o => !o.archived && o.status !== 'done' && o.status !== 'defect');
+
+  // Режим B: прямой расчёт (реальный старт с учётом загрузки)
+  const scheduledB = {}; // opId → {start, end}
+  const opFinish = {}; // opId → timestamp завершения
+
+  // Сортируем заказы по приоритету
+  const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+  const sortedOrders = [...activeOrders].sort((a, b) =>
+    (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2)
+  );
+
+  sortedOrders.forEach(order => {
+    const orderOps = allOps.filter(o => o.orderId === order.id);
+    const sorted = topoSort(orderOps);
+    const deliveryReady = getDeliveryReady(order.id);
+
+    sorted.forEach(op => {
+      const durMs = opDurationMs(op);
+
+      // Операция не может начаться раньше:
+      // 1. Сейчас (или факт. начало если in_progress)
+      // 2. Готовности всех зависимостей
+      // 3. Готовности поставок
+      let notBefore = op.status === 'in_progress' && op.startedAt ? op.startedAt : now_;
+      (op.dependsOn || []).forEach(depId => {
+        if (opFinish[depId]) notBefore = Math.max(notBefore, opFinish[depId]);
+      });
+      if (deliveryReady > 0) notBefore = Math.max(notBefore, deliveryReady);
+
+      // Если уже in_progress — фиксируем текущий старт
+      if (op.status === 'in_progress' && op.startedAt) {
+        const end = addWorkMs(op.startedAt, durMs);
+        scheduledB[op.id] = { start: op.startedAt, end, fixed: true };
+        opFinish[op.id] = end;
+        (op.workerIds || []).forEach(wid => addBusy(wid, op.startedAt, end));
+        return;
+      }
+
+      // Для каждого назначенного рабочего найти свободный слот
+      if (!op.workerIds?.length) {
+        // Нет назначенных — ставим от notBefore без учёта занятости
+        const start = nextWorkMoment(notBefore);
+        const end = addWorkMs(start, durMs);
+        scheduledB[op.id] = { start, end };
+        opFinish[op.id] = end;
+        return;
+      }
+
+      // С назначенными — берём наиболее ранний общий слот
+      let bestStart = null;
+      op.workerIds.forEach(wid => {
+        const slot = findFreeSlot(wid, notBefore, durMs);
+        bestStart = bestStart === null ? slot : Math.max(bestStart, slot);
+      });
+      const start = bestStart || nextWorkMoment(notBefore);
+      const end = addWorkMs(start, durMs);
+      scheduledB[op.id] = { start, end };
+      opFinish[op.id] = end;
+      op.workerIds.forEach(wid => addBusy(wid, start, end));
+    });
+  });
+
+  // Режим A: обратный расчёт от дедлайна
+  const scheduledA = {};
+  activeOrders.forEach(order => {
+    if (!order.deadline) return;
+    const deadlineTs = new Date(order.deadline).getTime() + 86399000; // конец дня
+    const orderOps = allOps.filter(o => o.orderId === order.id);
+    const sorted = topoSort(orderOps).reverse(); // от конца к началу
+
+    let cursor = deadlineTs;
+    sorted.forEach(op => {
+      const durMs = opDurationMs(op);
+      const end = cursor;
+      // Вычитаем рабочее время назад с учётом выходных
+      let start = end;
+      let remaining = durMs;
+      let guard = 0;
+      while (remaining > 0 && guard++ < 500) {
+        const d = new Date(start);
+        if (!isWorkday(start)) { start -= DAY_MS; continue; }
+        const h = d.getHours() + d.getMinutes() / 60;
+        const dayEnd = shifts[shifts.length - 1].end;
+        const availBack = (Math.min(h, dayEnd) - dayStartH) * 3600000;
+        if (availBack <= 0) { start = dayStart(start) - DAY_MS; continue; }
+        if (remaining <= availBack) { start -= remaining; remaining = 0; }
+        else { remaining -= availBack; start = dayStart(start) - DAY_MS; }
+      }
+      scheduledA[op.id] = { start, end };
+      cursor = start;
+    });
+  });
+
+  // Детектор конфликтов
+  const conflicts = [];
+
+  // Конфликт 1: реальное завершение позже дедлайна
+  activeOrders.forEach(order => {
+    if (!order.deadline) return;
+    const deadlineTs = new Date(order.deadline).getTime() + 86399000;
+    const orderOps = allOps.filter(o => o.orderId === order.id);
+    const finishTimes = orderOps.map(o => scheduledB[o.id]?.end || 0).filter(t => t > 0);
+    if (finishTimes.length === 0) return;
+    const lastFinish = Math.max(...finishTimes);
+    if (lastFinish > deadlineTs) {
+      const daysDiff = Math.ceil((lastFinish - deadlineTs) / 86400000);
+      conflicts.push({ type: 'deadline', orderId: order.id, orderNumber: order.number, daysDiff, lastFinish, deadline: order.deadline });
+    }
+  });
+
+  // Конфликт 2: два заказа претендуют на рабочего в одно время
+  const workerConflicts = {};
+  allOps.forEach(op => {
+    const sch = scheduledB[op.id];
+    if (!sch) return;
+    (op.workerIds || []).forEach(wid => {
+      if (!workerConflicts[wid]) workerConflicts[wid] = [];
+      workerConflicts[wid].push({ opId: op.id, orderId: op.orderId, start: sch.start, end: sch.end, name: op.name });
+    });
+  });
+  // Конфликты рабочих: показываем только если обе операции 'in_progress' одновременно
+  // (планировщик уже избегает будущих конфликтов через findFreeSlot)
+  Object.entries(workerConflicts).forEach(([wid, ops]) => {
+    const sorted_ = ops.sort((a, b) => a.start - b.start);
+    for (let i = 0; i < sorted_.length - 1; i++) {
+      const a = sorted_[i], b_ = sorted_[i+1];
+      // Реальный конфликт: перекрытие у уже запущенных операций
+      const bothFixed = a.fixed && b_.fixed;
+      if (bothFixed && a.end > b_.start) {
+        const worker = data.workers.find(w => w.id === wid);
+        conflicts.push({ type: 'worker', workerId: wid, workerName: worker?.name || '?', op1: a, op2: b_ });
+      }
+    }
+  });
+
+  return { scheduledA, scheduledB, conflicts };
+};
+
+// ── SmartGantt компонент ──────────────────────────────────────────
+const SmartGantt = memo(({ data, onUpdate, addToast }) => {
+  const [mode, setMode] = useState('B'); // 'A' | 'B'
+  const [schedule, setSchedule] = useState(null);
+  const [swapDialog, setSwapDialog] = useState(null); // конфликт для диалога перестановки
+  const [seenConflicts, setSeenConflicts] = useState(new Set());
+  const [viewStart, setViewStart] = useState(() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); });
+  const [viewDays, setViewDays] = useState(21);
+
+  const MONTHS_RU = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+
+  // Пересчёт при изменении данных
+  useEffect(() => {
+    const s = buildSchedule(data);
+    setSchedule(s);
+
+    // Показываем диалог для новых конфликтов дедлайна
+    const newDeadlineConflicts = s.conflicts.filter(c =>
+      c.type === 'deadline' && !seenConflicts.has(c.orderId)
+    );
+    if (newDeadlineConflicts.length > 0) {
+      setSwapDialog(newDeadlineConflicts[0]);
+    }
+  }, [data.ops, data.orders, data.materialDeliveries, data.workerAvailabilities]);
+
+  if (!schedule) return h('div', { style: S.card }, 'Строю расписание...');
+
+  const { scheduledA, scheduledB, conflicts } = schedule;
+  const scheduled = mode === 'A' ? scheduledA : scheduledB;
+  const viewEnd = viewStart + viewDays * 86400000;
+
+  // Строим временную шкалу
+  const days = [];
+  for (let i = 0; i < viewDays; i++) {
+    const ts = viewStart + i * 86400000;
+    const d = new Date(ts);
+    days.push({ ts, day: d.getDate(), month: d.getMonth(), dow: d.getDay() });
+  }
+
+  // Группируем операции по заказам
+  const activeOrders = data.orders.filter(o => !o.archived && !o.shipped)
+    .sort((a, b) => (({ critical:0,high:1,medium:2,low:3 })[a.priority]??2) - (({ critical:0,high:1,medium:2,low:3 })[b.priority]??2));
+
+  const pctOf = (ts) => Math.max(0, Math.min(100, (ts - viewStart) / (viewEnd - viewStart) * 100));
+  const todayTs = (() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
+
+  const fmtDate = (ts) => { const d = new Date(ts); return `${d.getDate()} ${MONTHS_RU[d.getMonth()]}`; };
+
+  // Перестановка заказов
+  const handleSwap = (conflictOrderId, otherOrderId) => {
+    // Помечаем что видели этот конфликт
+    setSeenConflicts(prev => new Set([...prev, conflictOrderId]));
+    // Меняем приоритет: поднимаем conflictOrder выше otherOrder
+    const conflictOrder = data.orders.find(o => o.id === conflictOrderId);
+    const otherOrder = data.orders.find(o => o.id === otherOrderId);
+    if (!conflictOrder || !otherOrder) { setSwapDialog(null); return; }
+    const priorityLadder = ['critical','high','medium','low'];
+    const conflictIdx = priorityLadder.indexOf(conflictOrder.priority || 'medium');
+    const newPriority = conflictIdx > 0 ? priorityLadder[conflictIdx - 1] : 'critical';
+    const updated = { ...data, orders: data.orders.map(o =>
+      o.id === conflictOrderId ? { ...o, priority: newPriority } : o
+    )};
+    onUpdate(updated);
+    DB.save(updated).catch(() => onUpdate(data));
+    addToast(`Приоритет заказа ${conflictOrder.number} повышен → ${newPriority}`, 'success');
+    setSwapDialog(null);
+  };
+
+  return h('div', { style: S.card },
+
+    // ── Диалог перестановки ──
+    swapDialog && (() => {
+      const conflict = swapDialog;
+      const order = data.orders.find(o => o.id === conflict.orderId);
+      if (!order) return null;
+      // Ищем заказ с которым конфликтует (занимает рабочих в то же время)
+      const workerConflict = conflicts.find(c =>
+        c.type === 'worker' && (c.op1.orderId === conflict.orderId || c.op2.orderId === conflict.orderId)
+      );
+      const otherOrderId = workerConflict
+        ? (workerConflict.op1.orderId === conflict.orderId ? workerConflict.op2.orderId : workerConflict.op1.orderId)
+        : null;
+      const otherOrder = otherOrderId ? data.orders.find(o => o.id === otherOrderId) : null;
+
+      return h('div', { style: { position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:200, display:'flex', alignItems:'center', justifyContent:'center', padding:16 } },
+        h('div', { style: { background:'var(--card)', borderRadius:12, padding:24, maxWidth:480, width:'100%' } },
+          h('div', { style: { fontSize:16, fontWeight:600, marginBottom:8, color: RD2 } }, '⚠ Заказ не успевает к дедлайну'),
+          h('div', { style: { fontSize:13, color:'var(--muted)', marginBottom:16, lineHeight:1.6 } },
+            `Заказ `, h('b', null, order.number), ` (дедлайн ${order.deadline}) завершится примерно `,
+            h('b', { style: { color: RD } }, fmtDate(conflict.lastFinish)),
+            ` — опоздание ~${conflict.daysDiff} дн.`,
+            otherOrder && h('span', null, ` из-за конкурирующего заказа `, h('b', null, otherOrder.number), `.`)
+          ),
+          h('div', { style: { display:'flex', gap:8, flexWrap:'wrap' } },
+            otherOrder && h('button', {
+              style: abtn(),
+              onClick: () => handleSwap(conflict.orderId, otherOrderId)
+            }, `Поднять приоритет ${order.number}`),
+            h('button', {
+              style: gbtn(),
+              onClick: () => { setSeenConflicts(prev => new Set([...prev, conflict.orderId])); setSwapDialog(null); }
+            }, 'Оставить как есть'),
+            h('button', {
+              style: rbtn(),
+              onClick: () => setSwapDialog(null)
+            }, 'Закрыть')
+          )
+        )
+      );
+    })(),
+
+    // ── Заголовок ──
+    h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom:12, flexWrap:'wrap' } },
+      h('div', { style: { ...S.sec, marginBottom:0, flex:1 } }, 'Гант — умное расписание'),
+
+      // Переключатель режимов
+      h('div', { style: { display:'flex', borderRadius:8, overflow:'hidden', border:`0.5px solid var(--border)` } },
+        h('button', {
+          style: { ...( mode === 'A' ? abtn() : gbtn()), borderRadius:0, border:'none', fontSize:12, padding:'6px 12px' },
+          onClick: () => setMode('A'),
+          title: 'Обратный расчёт от дедлайна — когда нужно было начать'
+        }, '📅 Нужно запустить'),
+        h('button', {
+          style: { ...(mode === 'B' ? abtn() : gbtn()), borderRadius:0, border:'none', borderLeft:`0.5px solid var(--border)`, fontSize:12, padding:'6px 12px' },
+          onClick: () => setMode('B'),
+          title: 'Прямой расчёт от загрузки — когда реально запустится'
+        }, '⚙ Реально запустится')
+      ),
+
+      // Конфликты
+      conflicts.length > 0 && h('button', {
+        style: { ...rbtn({ fontSize:11, padding:'4px 10px' }) },
+        onClick: () => { const c = conflicts.find(c => c.type === 'deadline'); if (c) setSwapDialog(c); }
+      }, `⚠ ${conflicts.filter(c=>c.type==='deadline').length} конфл.`),
+
+      // Навигация
+      h('button', { style: gbtn({ fontSize:11, padding:'4px 8px' }), onClick:() => setViewStart(v => v - 7*86400000) }, '‹‹'),
+      h('button', { style: gbtn({ fontSize:11, padding:'4px 8px' }), onClick:() => setViewStart(v => v - 86400000) }, '‹'),
+      h('span', { style: { fontSize:12, minWidth:80, textAlign:'center' } }, fmtDate(viewStart)),
+      h('button', { style: gbtn({ fontSize:11, padding:'4px 8px' }), onClick:() => setViewStart(v => v + 86400000) }, '›'),
+      h('button', { style: gbtn({ fontSize:11, padding:'4px 8px' }), onClick:() => setViewStart(v => v + 7*86400000) }, '››'),
+      h('button', { style: gbtn({ fontSize:11, padding:'4px 8px' }), onClick:() => { const d = new Date(); d.setHours(0,0,0,0); setViewStart(d.getTime()); } }, 'Сегодня'),
+
+      // Масштаб
+      h('select', { style: { ...gbtn({ fontSize:11, padding:'4px 8px' }), cursor:'pointer' }, value:viewDays, onChange:e=>setViewDays(Number(e.target.value)) },
+        [7,14,21,30,60].map(d => h('option', { key:d, value:d }, `${d} дней`))
+      )
+    ),
+
+    // ── Легенда режима ──
+    h('div', { style: { fontSize:11, color:'var(--muted)', marginBottom:8, padding:'6px 10px', background:'var(--bg)', borderRadius:6 } },
+      mode === 'A'
+        ? '📅 Обратный расчёт от дедлайна — когда нужно было запустить операции чтобы успеть. Красная полоса = уже опоздали.'
+        : '⚙ Прямой расчёт — реальный старт с учётом загрузки рабочих и поставок. Серая = ожидает поставку.'
+    ),
+
+    // ── Временная шкала ──
+    h('div', { style: { overflowX:'auto' } },
+      h('div', { style: { minWidth: 600 } },
+
+        // Заголовок дней
+        h('div', { style: { display:'flex', marginLeft:160 } },
+          days.map(({ ts, day, month, dow }) =>
+            h('div', { key:ts, style: {
+              flex:1, textAlign:'center', fontSize:10, padding:'3px 0',
+              background: dow === 0 || dow === 6 ? 'rgba(255,0,0,0.05)' : 'transparent',
+              borderLeft:'0.5px solid var(--border-soft)',
+              fontWeight: ts === todayTs ? 700 : 400,
+              color: ts === todayTs ? AM : dow===0||dow===6 ? '#aaa' : 'var(--muted)'
+            } }, `${day}.${month+1}`)
+          )
+        ),
+
+        // Строки заказов
+        activeOrders.map(order => {
+          const orderOps = data.ops.filter(o => o.orderId === order.id && !o.archived && o.status !== 'done' && o.status !== 'defect');
+          if (orderOps.length === 0) return null;
+
+          const schOps = orderOps.map(op => ({ op, sch: scheduled[op.id] })).filter(x => x.sch);
+          if (schOps.length === 0) return null;
+
+          const orderStart = Math.min(...schOps.map(x => x.sch.start));
+          const orderEnd   = Math.max(...schOps.map(x => x.sch.end));
+          const deadlineTs = order.deadline ? new Date(order.deadline).getTime() + 86399000 : null;
+          const isLate = deadlineTs && orderEnd > deadlineTs;
+          const isOutOfView = orderEnd < viewStart || orderStart > viewEnd;
+          if (isOutOfView) return null;
+
+          const PRIORITY_COLORS = { critical: RD, high: AM, medium: '#378ADD', low: '#888' };
+          const barColor = PRIORITY_COLORS[order.priority] || '#378ADD';
+
+          return h('div', { key: order.id, style: { display:'flex', alignItems:'stretch', borderBottom:`0.5px solid var(--border-soft)`, minHeight:36 } },
+
+            // Метка заказа
+            h('div', { style: { width:160, flexShrink:0, padding:'4px 8px', fontSize:11, display:'flex', alignItems:'center', gap:4, borderRight:`0.5px solid var(--border-soft)` } },
+              h('span', { style: { fontWeight:500, color: AM } }, order.number),
+              isLate && h('span', { style: { color: RD, fontSize:10 } }, '⚠'),
+              h('span', { style: { fontSize:10, color:'var(--muted)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, order.product?.slice(0,20))
+            ),
+
+            // Полосы операций
+            h('div', { style: { flex:1, position:'relative', minHeight:36 } },
+              // Линия дедлайна
+              deadlineTs && deadlineTs >= viewStart && deadlineTs <= viewEnd && h('div', { style: {
+                position:'absolute', top:0, bottom:0, width:2,
+                left: `${pctOf(deadlineTs)}%`,
+                background: isLate ? RD : GN,
+                zIndex:2, opacity:0.6
+              } }),
+              // Выходные
+              days.filter(d => d.dow === 0 || d.dow === 6).map(d =>
+                h('div', { key:d.ts, style: { position:'absolute', top:0, bottom:0, left:`${pctOf(d.ts)}%`, width:`${100/viewDays}%`, background:'rgba(0,0,0,0.03)' } })
+              ),
+              // Полосы операций
+              schOps.map(({ op, sch }) => {
+                if (sch.end < viewStart || sch.start > viewEnd) return null;
+                const left = pctOf(sch.start);
+                const width = Math.max(0.5, pctOf(sch.end) - left);
+                const hasDeliveryBlock = (() => {
+                  const deliveries = (data.materialDeliveries || []).filter(d => d.orderId === op.orderId && d.status !== 'confirmed');
+                  return deliveries.length > 0 && sch.start <= Date.now();
+                })();
+                const workerNames = (op.workerIds || []).map(wid => {
+                  const w = data.workers.find(x => x.id === wid);
+                  return w ? w.name.split(' ')[0] : '?';
+                }).join(', ');
+
+                return h('div', { key: op.id,
+                  title: `${op.name}\n${workerNames || 'нет исполнителя'}\n${fmtDate(sch.start)} → ${fmtDate(sch.end)}`,
+                  style: {
+                    position:'absolute',
+                    left:`${left}%`, width:`${width}%`,
+                    top:4, height:28,
+                    background: op.status === 'in_progress' ? AM
+                      : hasDeliveryBlock ? '#aaa'
+                      : barColor,
+                    borderRadius:4,
+                    opacity: op.workerIds?.length ? 1 : 0.5,
+                    overflow:'hidden',
+                    display:'flex', alignItems:'center',
+                    padding:'0 4px',
+                    fontSize:9, color:'#fff', fontWeight:500,
+                    boxSizing:'border-box',
+                    cursor:'default',
+                    border: op.status === 'in_progress' ? `1.5px solid ${AM2}` : 'none',
+                  }
+                }, width > 5 ? (op.name.slice(0,12) + (op.name.length>12?'…':'')) : '')
+              })
+            )
+          );
+        }).filter(Boolean)
+      )
+    ),
+
+    // ── Список конфликтов внизу ──
+    conflicts.length > 0 && h('div', { style: { marginTop:12, borderTop:`0.5px solid var(--border-soft)`, paddingTop:10 } },
+      h('div', { style: { fontSize:11, fontWeight:600, color: RD2, marginBottom:6 } }, `⚠ Конфликты (${conflicts.length})`),
+      h('div', { style: { display:'flex', flexDirection:'column', gap:4 } },
+        conflicts.slice(0,5).map((c, i) =>
+          c.type === 'deadline'
+            ? h('div', { key:i, style:{ fontSize:11, padding:'5px 8px', background: RD3, borderRadius:6, color: RD2, display:'flex', justifyContent:'space-between', alignItems:'center' } },
+                h('span', null, `📅 Заказ ${c.orderNumber} — опоздание ~${c.daysDiff} дн. (завершится ${fmtDate(c.lastFinish)}, дедлайн ${c.deadline})`),
+                h('button', { style: rbtn({ fontSize:10, padding:'2px 8px' }), onClick:() => setSwapDialog(c) }, 'Решить')
+              )
+            : h('div', { key:i, style:{ fontSize:11, padding:'5px 8px', background: AM3, borderRadius:6, color: AM2 } },
+                `👷 ${c.workerName} занят двумя задачами одновременно: «${c.op1.name}» и «${c.op2.name}»`
+              )
+        )
+      )
+    ),
+
+    // ── Легенда цветов ──
+    h('div', { style: { display:'flex', gap:12, marginTop:10, fontSize:10, color:'var(--muted)', flexWrap:'wrap' } },
+      [
+        { color: AM,    label: 'В работе' },
+        { color: RD,    label: 'Критический' },
+        { color: AM,    label: 'Высокий' },
+        { color: '#378ADD', label: 'Средний' },
+        { color: '#aaa', label: 'Ждёт поставку' },
+        { color: '#888', label: 'Нет исполнителя', opacity: 0.5 },
+      ].map(({ color, label, opacity }) =>
+        h('span', { key:label, style:{ display:'flex', alignItems:'center', gap:4 } },
+          h('span', { style:{ width:14, height:8, borderRadius:2, background:color, opacity:opacity||1, display:'inline-block' } }),
+          label
+        )
+      )
+    )
+  );
+});
+
 // ==================== GanttChart ====================
 const GanttChart = memo(({ data }) => {
   const [startDate, setStartDate] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 7); return d; });
@@ -2062,7 +2635,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
     ),
     tab === 'recommend' && h(AssignmentRecommendations, { data, onUpdate, addToast }),
     tab === 'kanban' && h(MasterKanban, { data, onUpdate, addToast }),
-    tab === 'gantt' && h(GanttChart, { data }),
+    tab === 'gantt' && h(SmartGantt, { data, onUpdate, addToast }),
     tab === 'calendar' && h(ResourceCalendar, { data, onUpdate, addToast, onWorkerClick }),
     tab === 'deps' && h(DepsScreen, { data, onUpdate, addToast }),
     tab === 'orders' && h(MasterOrders, { data, onUpdate, addToast, onOrderClick }),
