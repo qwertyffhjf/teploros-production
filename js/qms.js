@@ -201,6 +201,6 @@ const calculateAverageResolutionTime = (defects) => {
   const resolved = defects.filter(d => d.status === 'resolved' && d.investigationDate && d.createdAt);
   if (resolved.length === 0) return 0;
   
-  const avgMs = resolved.reduce((sum, d) => sum + (d.investigationDate - d.createdAt), 0) / resolved.length;
+  const avgMs = resolved.length > 0 ? resolved.reduce((sum, d) => sum + (d.investigationDate - d.createdAt), 0) / resolved.length : 0;
   return Math.round(avgMs / 3600000); // часы
 };
