@@ -241,7 +241,7 @@ const MaterialsDB = (() => {
         let payload = {};
         if (snap.exists) {
           const d = snap.data();
-          payload = d.payload ? JSON.parse(d.payload) : d;
+          try { payload = d.payload ? JSON.parse(d.payload) : d; } catch(e) { payload = d; console.error('shared JSON.parse failed', e); }
         }
         if (!payload.orders) payload.orders = {};
         payload.orders[orderId] = needs;
