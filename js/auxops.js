@@ -41,7 +41,7 @@ const AuxOpsViewer = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
       const catOps = auxOps.filter(o => (o.auxCategory || 'other') === cat && o.status === 'done' && o.startedAt && o.finishedAt);
       if (catOps.length > 0) {
         const catMs = catOps.reduce((s, o) => s + (o.finishedAt - o.startedAt), 0);
-        avgByCat[cat] = Math.round(catMs / catOps.length / 60000);
+        avgByCat[cat] = catOps.length > 0 ? Math.round(catMs / catOps.length / 60000) : 0;
       }
     });
     return { total: auxOps.length, byCat, byWorker, totalHours: Math.round(totalMs / 3600000 * 10) / 10, doneCount, pctOfTotal, avgByCat };
