@@ -959,7 +959,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     const prevData = data;
     onUpdate(final);
     vibrateAction('finish');
-    setActiveOp(null); setShowDefForm(false); setDefNote(''); setDefectReasonId('');
+    setActiveOps([]); setShowDefForm(false); setDefNote(''); setDefectReasonId('');
     setWeldParams({ seamNumber: '', electrode: '', result: 'ok' });
     addToast(`Операция "${op.name}" завершена (${STATUS[status]?.label || status})`, 'info');
 
