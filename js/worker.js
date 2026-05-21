@@ -1661,11 +1661,11 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       // Зарплата
       h(WorkerSalaryBlock, { workerId, data }),
 
-      // История операций
-      h(WorkerOpsHistoryBlock, { workerId, data }),
-
       // Часы — личный табель
       h(WorkerHoursBlock, { workerId, data }),
+
+      // История операций
+      h(WorkerOpsHistoryBlock, { workerId, data }),
 
       // Достижения
       h('div', { style: { ...S.sec, marginBottom: 12 } }, 'Достижения'),
