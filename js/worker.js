@@ -1166,8 +1166,25 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     const total30 = myDone30.length + myDefect30.length;
     const quality = total30 > 0 ? Math.round(myDone30.length / total30 * 100) : 100;
     const todayOps = myDone.filter(op => op.finishedAt >= todayStart && op.startedAt && op.finishedAt);
-    const workedToday = todayOps.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0);
-    const activeTime = active?.startedAt ? now() - active.startedAt : 0;
+    // Считаем реальный рабочий период через объединение интервалов (union of intervals)
+    // Параллельные операции не суммируются — считается фактически проведённое время
+    const intervals = [
+      ...todayOps.map(op => ({ start: Math.max(op.startedAt, todayStart), end: op.finishedAt })),
+      // Добавляем текущую активную операцию
+      ...(active?.startedAt ? [{ start: Math.max(active.startedAt, todayStart), end: now() }] : [])
+    ].filter(iv => iv.end > iv.start).sort((a, b) => a.start - b.start);
+
+    // Merge overlapping intervals
+    const merged = [];
+    intervals.forEach(iv => {
+      if (!merged.length || iv.start > merged[merged.length-1].end) {
+        merged.push({ ...iv });
+      } else {
+        merged[merged.length-1].end = Math.max(merged[merged.length-1].end, iv.end);
+      }
+    });
+    const workedToday = merged.reduce((s, iv) => s + (iv.end - iv.start), 0);
+    const activeTime = 0; // уже включён в intervals выше
     const withPlan = myDone30.filter(op => op.plannedHours && op.startedAt && op.finishedAt);
     const productivity = withPlan.length > 0 ? Math.round(withPlan.reduce((s, op) => s + op.plannedHours * 3600000, 0) / withPlan.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0) * 100) : null;
     const downtimeHrs = Math.round(data.events.filter(e => e.workerId === workerId && e.type === 'downtime' && e.ts >= period30).reduce((s, e) => s + (e.duration || 0), 0) / 3600000 * 10) / 10;
