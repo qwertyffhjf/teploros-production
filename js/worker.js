@@ -613,8 +613,12 @@ const WorkerSalaryBlock = memo(({ workerId, data }) => {
     // Итоговая сумма
     !noRate && h('div', { style:{ background: payType === 'hourly' ? AM3 : GN3, border:`0.5px solid ${payType === 'hourly' ? AM4 : GN}`, borderRadius:10, padding:'14px 16px', marginBottom:12, display:'flex', alignItems:'center', justifyContent:'space-between' } },
       h('div', null,
-        h('div', { style:{ fontSize:11, color: payType === 'hourly' ? AM4 : GN2, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:2 } }, 'Итого за месяц'),
-        h('div', { style:{ fontSize:28, fontWeight:500, color: payType === 'hourly' ? AM2 : GN2 } }, `${fmt(salaryData.grandTotal)} ₽`)
+        h('div', { style:{ display:'flex', alignItems:'baseline', gap:6, flexWrap:'wrap', marginBottom:2 } },
+          h('span', { style:{ fontSize:11, color: payType === 'hourly' ? AM4 : GN2, textTransform:'uppercase', letterSpacing:'0.06em' } }, 'Итого за месяц'),
+          h('span', { style:{ fontSize:10, color: payType === 'hourly' ? AM4 : GN, opacity:0.75 } }, '(расчётная сумма)')
+        ),
+        h('div', { style:{ fontSize:28, fontWeight:500, color: payType === 'hourly' ? AM2 : GN2 } }, `${fmt(salaryData.grandTotal)} ₽`),
+        h('div', { style:{ fontSize:10, color: payType === 'hourly' ? AM4 : GN, marginTop:4, opacity:0.8 } }, '* точную сумму уточняйте у бухгалтера')
       ),
       payType === 'hourly'
         ? h('div', { style:{ textAlign:'right' } },
