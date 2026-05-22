@@ -1491,6 +1491,55 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
       h('div', { style: { fontSize: 10, color: '#888', marginTop: 6 } }, '💡 Заполняйте только те поля, которые хотите изменить. Пустые поля сохранят текущие значения.')
     ),
     h('div', { style: S.card },
+      h('div', { style: S.sec }, '🤖 AI-аналитик'),
+      h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 12, lineHeight: 1.6 } },
+        'Для работы AI-аналитика нужен API ключ. ',
+        h('b', null, 'Gemini Flash — бесплатно'),
+        ': получить на ',
+        h('a', { href: 'https://aistudio.google.com/apikey', target: '_blank', style: { color: AM } }, 'aistudio.google.com'),
+        '. Claude API: ',
+        h('a', { href: 'https://console.anthropic.com/', target: '_blank', style: { color: AM } }, 'console.anthropic.com')
+      ),
+      h('div', { style: { display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 } },
+        h('div', { style: { flex: 1, minWidth: 200 } },
+          h('label', { style: S.lbl }, 'Gemini API Key (бесплатный)'),
+          h('div', { style: { display: 'flex', gap: 6 } },
+            h('input', {
+              type: 'password',
+              style: { ...S.inp, flex: 1, fontFamily: 'monospace' },
+              placeholder: 'AIza...',
+              value: data.settings?.geminiApiKey || '',
+              onChange: e => {
+                const d = { ...data, settings: { ...data.settings, geminiApiKey: e.target.value.trim() } };
+                onUpdate(d); DB.save(d).catch(() => {});
+              }
+            })
+          ),
+          h('div', { style: { fontSize: 10, color: 'var(--muted)', marginTop: 4 } }, '1500 запросов/день · данные могут использоваться Google')
+        ),
+        h('div', { style: { flex: 1, minWidth: 200 } },
+          h('label', { style: S.lbl }, 'Claude API Key (платный, лучше качество)'),
+          h('div', { style: { display: 'flex', gap: 6 } },
+            h('input', {
+              type: 'password',
+              style: { ...S.inp, flex: 1, fontFamily: 'monospace' },
+              placeholder: 'sk-ant-...',
+              value: data.settings?.aiApiKey || '',
+              onChange: e => {
+                const d = { ...data, settings: { ...data.settings, aiApiKey: e.target.value.trim() } };
+                onUpdate(d); DB.save(d).catch(() => {});
+              }
+            })
+          ),
+          h('div', { style: { fontSize: 10, color: 'var(--muted)', marginTop: 4 } }, '~$0.001 за запрос · данные не хранятся')
+        )
+      ),
+      (data.settings?.geminiApiKey || data.settings?.aiApiKey)
+        ? h('div', { style: { fontSize: 12, color: GN2, padding: '6px 10px', background: GN3, borderRadius: 6 } }, '✓ API ключ сохранён — AI-аналитик доступен в разделе Аналитика')
+        : h('div', { style: { fontSize: 12, color: AM2, padding: '6px 10px', background: AM3, borderRadius: 6 } }, '⚠ Ключ не задан — AI-аналитик недоступен')
+    ),
+
+    h('div', { style: S.card },
       h('div', { style: S.sec }, 'Текст главной страницы'),
       h('div', { style: { display:'flex', gap:12, flexWrap:'wrap', marginBottom:12 } },
         h('div', { style: { flex:1, minWidth:180 } }, h('label', { style: S.lbl }, 'Заголовок'), h('input', { type:'text', style: { ...S.inp, width:'100%' }, value: welcomeTitle, onChange: e => setWelcomeTitle(e.target.value) })),
