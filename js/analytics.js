@@ -638,6 +638,220 @@ const AssignmentRecommendations = memo(({ data, onUpdate, addToast }) => {
 
 
 
+
+// ==================== AiAnalyst ====================
+const AiAnalyst = memo(({ data, period, allData }) => {
+  const [loading,  setLoading]  = useState(false);
+  const [result,   setResult]   = useState(null);
+  const [error,    setError]    = useState(null);
+  const [expanded, setExpanded] = useState(true);
+  const [question, setQuestion] = useState('');
+  const [mode,     setMode]     = useState('auto'); // 'auto' | 'custom'
+
+  const hasKey = !!(data.settings?.geminiApiKey || data.settings?.aiApiKey);
+
+  const buildContext = () => {
+    const periodStart = Date.now() - period * 86400000;
+    const src = allData || data;
+
+    // Заказы
+    const activeOrders = src.orders.filter(o => !o.archived && !o.shipped);
+    const overdueOrders = activeOrders.filter(o => o.deadline && new Date(o.deadline) < new Date());
+    const shippedMonth = src.orders.filter(o => o.shipped && (o.shippedAt||0) > periodStart);
+
+    // Операции
+    const ops = src.ops.filter(o => (o.finishedAt||0) > periodStart);
+    const done = ops.filter(o => o.status === 'done');
+    const defect = ops.filter(o => o.status === 'defect');
+    const quality = ops.length > 0 ? Math.round(done.length / (done.length + defect.length) * 100) : 100;
+
+    // Топ-рабочих по операциям
+    const byWorker = {};
+    done.forEach(op => (op.workerIds||[]).forEach(wid => {
+      if (!byWorker[wid]) byWorker[wid] = { done: 0, defect: 0 };
+      byWorker[wid].done++;
+    }));
+    defect.forEach(op => (op.workerIds||[]).forEach(wid => {
+      if (!byWorker[wid]) byWorker[wid] = { done: 0, defect: 0 };
+      if (byWorker[wid]) byWorker[wid].defect++;
+    }));
+    const workerStats = Object.entries(byWorker).map(([wid, s]) => {
+      const w = data.workers.find(x => x.id === wid);
+      return { name: w?.name || 'ID:'+wid.slice(-4), done: s.done, defect: s.defect,
+               quality: s.done+s.defect > 0 ? Math.round(s.done/(s.done+s.defect)*100) : 100 };
+    }).sort((a,b) => b.done - a.done).slice(0, 8);
+
+    // Нормы (топ отклонений)
+    const normAlerts = Object.entries(src.opNorms||{})
+      .filter(([,n]) => n.samples >= 3 && n.planned)
+      .map(([name, n]) => ({ name, planned: n.planned, avg: Math.round(n.totalMs/n.samples/3600000*10)/10 }))
+      .filter(n => Math.abs(n.avg - n.planned) / n.planned > 0.2)
+      .sort((a,b) => Math.abs(b.avg-b.planned)/b.planned - Math.abs(a.avg-a.planned)/a.planned)
+      .slice(0, 5);
+
+    // Простои
+    const downtimes = (src.events||[]).filter(e => e.type === 'downtime' && e.ts > periodStart);
+    const downtimeH = Math.round(downtimes.reduce((s,e) => s+(e.duration||0),0)/3600000*10)/10;
+    const downtimeByType = {};
+    downtimes.forEach(e => {
+      const t = (src.downtimeTypes||[]).find(x=>x.id===e.downtimeTypeId)?.name || 'Прочее';
+      downtimeByType[t] = (downtimeByType[t]||0) + (e.duration||0);
+    });
+
+    // Рекламации
+    const recl = (src.reclamations||[]).filter(r => (r.createdAt||0) > periodStart);
+
+    return `ПРОИЗВОДСТВЕННАЯ СТАТИСТИКА за последние ${period} дней:
+
+ЗАКАЗЫ:
+- Активных: ${activeOrders.length}, из них просрочено: ${overdueOrders.length}
+- Отгружено за период: ${shippedMonth.length}
+- Просроченные: ${overdueOrders.slice(0,5).map(o=>`${o.number} (${o.product||''})`).join(', ')}
+
+ОПЕРАЦИИ:
+- Выполнено: ${done.length}, брак: ${defect.length}, качество: ${quality}%
+- Всего операций в работе сейчас: ${src.ops.filter(o=>o.status==='in_progress'&&!o.archived).length}
+
+РАБОЧИЕ (топ по операциям):
+${workerStats.map(w=>`- ${w.name}: ${w.done} оп., качество ${w.quality}%${w.defect>0?`, брак ${w.defect}`:''}`).join('\n')}
+
+ПРОСТОИ: ${downtimeH}ч за период
+${Object.entries(downtimeByType).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([t,ms])=>`- ${t}: ${Math.round(ms/3600000*10)/10}ч`).join('\n')}
+
+НОРМЫ (отклонения >20%):
+${normAlerts.length > 0 ? normAlerts.map(n=>`- ${n.name}: план ${n.planned}ч, факт ${n.avg}ч`).join('\n') : '- отклонений нет'}
+
+РЕКЛАМАЦИИ за период: ${recl.length}`;
+  };
+
+  const analyze = async (customQuestion) => {
+    const apiKey = data.settings?.geminiApiKey || data.settings?.aiApiKey;
+    if (!apiKey) { setError('API ключ не задан. Добавьте Gemini API Key в Система → Настройки.'); return; }
+
+    setLoading(true); setResult(null); setError(null);
+
+    const context = buildContext();
+    const userPrompt = customQuestion || `Проанализируй производственную статистику. Дай:
+1. Главные проблемы (2-3 пункта)
+2. Что идёт хорошо (1-2 пункта)  
+3. Конкретные рекомендации (2-3 пункта)
+Пиши кратко и по делу, как опытный производственник.`;
+
+    try {
+      // Пробуем Gemini Flash (бесплатный)
+      const geminiKey = data.settings?.geminiApiKey;
+      if (geminiKey) {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: context + '\n\n' + userPrompt }] }],
+            generationConfig: { maxOutputTokens: 800, temperature: 0.3 }
+          })
+        });
+        const d = await r.json();
+        if (d.candidates?.[0]?.content?.parts?.[0]?.text) {
+          setResult(d.candidates[0].content.parts[0].text);
+          setLoading(false); return;
+        }
+        if (d.error) throw new Error(d.error.message);
+      }
+
+      // Fallback: Claude API
+      const claudeKey = data.settings?.aiApiKey;
+      if (claudeKey) {
+        const r = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': claudeKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+          body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 800,
+            system: 'Ты аналитик производственной системы. Отвечай кратко и по делу на русском.',
+            messages: [{ role: 'user', content: context + '\n\n' + userPrompt }] })
+        });
+        const d = await r.json();
+        if (d.content?.[0]?.text) { setResult(d.content[0].text); setLoading(false); return; }
+        if (d.error) throw new Error(d.error.message || JSON.stringify(d.error));
+      }
+
+      throw new Error('Нет доступного API ключа');
+    } catch(e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const QUICK = [
+    'Кто из рабочих показывает лучшие результаты и почему?',
+    'Какие операции чаще всего дают брак?',
+    'Есть ли риск срыва дедлайнов на этой неделе?',
+    'Что делать с простоями?',
+  ];
+
+  return h('div', { style: { ...S.card, marginBottom: 12, border: `0.5px solid ${AM4}` } },
+
+    // Заголовок
+    h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom: expanded ? 12 : 0 } },
+      h('span', { style: { fontSize:18 } }, '🤖'),
+      h('div', { style: { flex:1 } },
+        h('div', { style: { fontWeight:600, fontSize:14 } }, 'AI-аналитик'),
+        h('div', { style: { fontSize:11, color:'var(--muted)' } }, hasKey ? 'Gemini Flash · готов к работе' : '⚠ API ключ не задан')
+      ),
+      result && h('button', { style: gbtn({ fontSize:11, padding:'4px 10px' }), onClick:()=>setExpanded(v=>!v) }, expanded ? '▾' : '▸'),
+      h('button', {
+        style: loading ? gbtn({ fontSize:12, padding:'6px 14px', opacity:0.6 }) : abtn({ fontSize:12, padding:'6px 14px' }),
+        onClick: () => { setExpanded(true); analyze(mode === 'custom' ? question : null); },
+        disabled: loading
+      }, loading ? '⏳ Анализирую...' : '✦ Анализировать')
+    ),
+
+    expanded && h('div', null,
+
+      // Быстрые вопросы
+      !result && !loading && h('div', { style: { marginBottom:10 } },
+        h('div', { style:{ fontSize:11, color:'var(--muted)', marginBottom:6 } }, 'Быстрые вопросы:'),
+        h('div', { style:{ display:'flex', flexWrap:'wrap', gap:6 } },
+          QUICK.map(q => h('button', { key:q, style: gbtn({ fontSize:11, padding:'4px 10px' }),
+            onClick: () => { setExpanded(true); analyze(q); }
+          }, q))
+        )
+      ),
+
+      // Своё поле вопроса
+      !result && !loading && h('div', { style:{ display:'flex', gap:8, marginTop:8 } },
+        h('input', { type:'text', placeholder:'Или задай свой вопрос...', value: question,
+          onChange: e => setQuestion(e.target.value),
+          onKeyDown: e => e.key === 'Enter' && question.trim() && analyze(question),
+          style:{ flex:1, fontSize:13, padding:'7px 10px', borderRadius:8, border:'0.5px solid rgba(0,0,0,0.15)',
+            background:'var(--bg,#fff)', color:'var(--fg,#222)', outline:'none' }
+        }),
+        h('button', { style: abtn({ fontSize:12, padding:'6px 14px' }),
+          onClick: () => question.trim() && analyze(question)
+        }, 'Спросить')
+      ),
+
+      // Ошибка
+      error && h('div', { style:{ padding:'10px 12px', background: RD3, borderRadius:8, fontSize:12, color: RD2, marginTop:8 } },
+        '⚠ ', error,
+        error.includes('API ключ') && h('span', null, ' → Система → Настройки → Gemini API Key')
+      ),
+
+      // Результат
+      result && h('div', { style:{ marginTop:8 } },
+        h('div', { style:{ padding:'12px 14px', background:'var(--bg,#f8f8f5)', borderRadius:10,
+          fontSize:13, lineHeight:1.7, whiteSpace:'pre-wrap', color:'var(--fg,#222)' } }, result),
+        h('div', { style:{ display:'flex', gap:8, marginTop:8 } },
+          h('button', { style: gbtn({ fontSize:11, padding:'4px 10px' }),
+            onClick: () => { setResult(null); setError(null); }
+          }, '← Новый вопрос'),
+          h('button', { style: gbtn({ fontSize:11, padding:'4px 10px' }),
+            onClick: () => analyze(mode === 'custom' ? question : null)
+          }, '↺ Обновить')
+        )
+      )
+    )
+  );
+});
+
 // ==================== AnalyticsDashboard (Волна 1: Lead Time, Такт, Нормы, Парето, Тренды) ====================
 const AnalyticsDashboard = memo(({ data, onWorkerClick }) => {
   const [period, setPeriod] = useState(30);
@@ -826,9 +1040,13 @@ const AnalyticsDashboard = memo(({ data, onWorkerClick }) => {
 
   return h('div', null,
     // Период
-    h('div', { style: { display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' } },
-      [7, 14, 30, 60, 90].map(d => h('button', { key: d, style: period === d ? abtn({ fontSize: 11 }) : gbtn({ fontSize: 11 }), onClick: () => setPeriod(d) }, `${d} дней`))
+    h('div', { style: { display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap', alignItems:'center' } },
+      [7, 14, 30, 60, 90].map(d => h('button', { key: d, style: period === d ? abtn({ fontSize: 11 }) : gbtn({ fontSize: 11 }), onClick: () => setPeriod(d) }, `${d} дней`)),
+      archiveLoading && h('span', { style: { fontSize: 11, color: '#EF9F27' } }, '⏳ архив...')
     ),
+
+    // AI-аналитик
+    h(AiAnalyst, { data, period, allData }),
 
     // Алерт: тренд качества
     qualityTrends.trending && h('div', { role: 'alert', style: { ...S.card, background: RD3, border: `0.5px solid ${RD}`, marginBottom: 12, padding: 12 } },
