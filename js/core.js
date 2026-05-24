@@ -517,10 +517,18 @@ const calcPieceworkEarnings = (data, workerId, orderId) => {
   const heatSectionId   = findSection('теплообменник');
   const coverSectionId  = findSection('крышк');
 
+  // Проверяем что участок сдельный или смешанный
+  const isSectionPiecework = (sectionId) => {
+    if (!sectionId) return false;
+    const sec = sections.find(s => s.id === sectionId);
+    return sec?.payType === 'piecework' || sec?.payType === 'mixed';
+  };
+
   const orderOps = data.ops.filter(o => o.orderId === orderId && !o.archived);
 
   const calcShare = (sectionId, rateAmount) => {
     if (!sectionId || !rateAmount) return 0;
+    if (!isSectionPiecework(sectionId)) return 0; // только сдельные/смешанные участки
     const sectionOps = orderOps.filter(o => o.sectionId === sectionId);
     // Уникальные рабочие участвовавшие в операциях этого участка
     const workerSet = new Set();
