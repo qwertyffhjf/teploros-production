@@ -2063,7 +2063,7 @@ const HRScreen = memo(({ data, onUpdate, addToast }) => {
 const AdminScreen = memo(({ data, onUpdate, addToast }) => {
   const [tab, setTab] = useState('stages');
   const TABS = [
-    ['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],
+    ['stages','Этапы'],['piecework','🔧 Расценки'],['defectReasons','Причины брака'],['downtimes','Простои'],
     ['equipment','Оборудование'],['materials','Материалы'],['bom','Спецификации'],
     ['sections','Участки'],['workers','Сотрудники'],['time','Табель'],['admin','Настройки']
   ];
@@ -2075,15 +2075,13 @@ const AdminScreen = memo(({ data, onUpdate, addToast }) => {
     ),
     h(TabBar, { tabs: TABS, tab, setTab }),
     tab === 'stages'        && h(MasterProductionStages, { data, onUpdate, addToast }),
+    tab === 'piecework'     && h(PieceworkRatesEditor,   { data, onUpdate, addToast }),
     tab === 'defectReasons' && h(MasterDefectReasons,    { data, onUpdate, addToast }),
     tab === 'downtimes'     && h(MasterDowntimes,        { data, onUpdate, addToast }),
     tab === 'equipment'     && h(MasterEquipment,        { data, onUpdate, addToast }),
     tab === 'materials'     && h(MasterMaterials,        { data, onUpdate, addToast }),
     tab === 'bom'           && h(MasterBOM,              { data, onUpdate, addToast }),
-    tab === 'sections'      && h('div', null,
-      h(MasterSections,         { data, onUpdate, addToast }),
-      h(PieceworkRatesEditor,   { data, onUpdate, addToast })
-    ),
+    tab === 'sections'      && h(MasterSections, { data, onUpdate, addToast }),
     tab === 'workers'       && h(MasterWorkers,          { data, onUpdate, addToast }),
     tab === 'time'          && h(MasterTimeTracking,     { data, onUpdate, addToast, onWorkerClick: (wid) => setTab('workers') }),
     tab === 'admin'         && h(MasterAdmin,            { data, onUpdate, addToast })
