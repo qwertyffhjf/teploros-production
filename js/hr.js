@@ -1297,37 +1297,43 @@ const PayrollExport = memo(({ data }) => {
       const hourlyRate = parseFloat(w.hourlyRate) || 0;
       const pieceRate  = parseFloat(w.pieceRate)  || 0;
 
-      // Часы из событий табеля
-      const workerOps = data.ops.filter(op =>
-        !op.archived && (op.workerIds||[]).includes(w.id) &&
-        op.status === 'done' && op.finishedAt >= monthStart && op.finishedAt <= monthEnd
-      );
+      // Часы из табеля (явки) через calcDayData — единый источник с личным кабинетом
+      const dim = new Date(viewYear, viewMonth + 1, 0).getDate();
+      let hours = 0;
+      for (let d = 1; d <= dim; d++) {
+        const dd = calcDayData(w.id, viewYear, viewMonth, d, data);
+        if (dd.h > 0) hours += dd.h;
+      }
+      hours = Math.round(hours * 10) / 10;
 
-      // Union of intervals для часов
-      const intervals = workerOps
-        .filter(op => op.startedAt && op.finishedAt)
-        .map(op => ({ start: Math.max(op.startedAt, monthStart), end: op.finishedAt }))
-        .filter(iv => iv.end > iv.start)
-        .sort((a,b) => a.start - b.start);
-      const merged = [];
-      intervals.forEach(iv => {
-        if (!merged.length || iv.start > merged[merged.length-1].end) merged.push({...iv});
-        else merged[merged.length-1].end = Math.max(merged[merged.length-1].end, iv.end);
-      });
-      const totalMs = merged.reduce((s,iv) => s+(iv.end-iv.start), 0);
-      const hours = Math.round(totalMs / 3600000 * 10) / 10;
-
-      // Сдельные — отгруженные заказы
+      // Сдельные — через calcPieceworkEarnings по участкам
       const shippedOrders = (data.orders||[]).filter(o => o.shipped && o.shippedAt >= monthStart && o.shippedAt <= monthEnd);
-      const pieceCount = shippedOrders.filter(o =>
-        (data.ops||[]).some(op => op.orderId === o.id && (op.workerIds||[]).includes(w.id))
-      ).reduce((s,o) => s + (o.qty||1), 0);
+
+      let pieceEarned = 0;
+      let pieceCount  = 0;
+      const pieceDetails = [];
+      shippedOrders.forEach(o => {
+        const earnings = calcPieceworkEarnings(data, w.id, o.id);
+        if (earnings && earnings.total > 0) {
+          pieceEarned += earnings.total;
+          pieceCount++;
+          pieceDetails.push({ order: o, earnings });
+        } else {
+          // Fallback: pieceRate × qty
+          const hasOp = (data.ops||[]).some(op => op.orderId === o.id && (op.workerIds||[]).includes(w.id));
+          if (hasOp && pieceRate) {
+            const earn = Math.round((o.qty||1) * pieceRate);
+            pieceEarned += earn;
+            pieceCount++;
+          }
+        }
+      });
 
       const earned = payType === 'hourly'
         ? Math.round(hours * hourlyRate)
-        : Math.round(pieceCount * pieceRate);
+        : pieceEarned;
 
-      return { w, payType, hourlyRate, pieceRate, hours, pieceCount, earned };
+      return { w, payType, hourlyRate, pieceRate, hours, pieceCount, pieceEarned, earned };
     });
   }, [data.workers, data.ops, data.orders, viewMonth, viewYear]);
 
@@ -1389,7 +1395,7 @@ const PayrollExport = memo(({ data }) => {
                 payType==='hourly' ? `${fmt(hourlyRate)} р/ч` : `${fmt(pieceRate)} р/изд`
               ),
               h('td', { style:{ padding:'8px 10px', fontWeight:500 } },
-                payType==='hourly' ? `${hours}ч` : `${pieceCount} изд`
+                payType==='hourly' ? `${hours}ч` : `${pieceCount} заказов`
               ),
               h('td', { style:{ padding:'8px 10px', fontWeight:600, color: earned > 0 ? AM2 : 'var(--muted)' } },
                 earned > 0 ? `${fmt(earned)} ₽` : '—'
