@@ -327,10 +327,12 @@ const MasterSections = memo(({ data, onUpdate, addToast }) => {
                 const d = { ...data, sections: data.sections.map(x => x.id === s.id ? { ...x, payType: e.target.value } : x) };
                 await DB.save(d); onUpdate(d);
               },
-              style: { fontSize: 11, padding: '3px 7px', borderRadius: 6, border: '0.5px solid rgba(0,0,0,0.15)', background: 'transparent', cursor: 'pointer', color: s.payType === 'piecework' ? AM2 : 'var(--muted)' }
+              style: { fontSize: 11, padding: '3px 7px', borderRadius: 6, border: '0.5px solid rgba(0,0,0,0.15)', background: 'transparent', cursor: 'pointer',
+                color: s.payType === 'piecework' ? AM2 : s.payType === 'mixed' ? GN2 : 'var(--muted)' }
             },
               h('option', { value: 'hourly' }, '⏱ Часовая'),
-              h('option', { value: 'piecework' }, '🔧 Сдельная')
+              h('option', { value: 'piecework' }, '🔧 Сдельная'),
+              h('option', { value: 'mixed' }, '⚡ Смешанная')
             ),
             h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': `Удалить участок ${s.name}`, onClick: () => del(s.id) }, 'Удалить')
           )
