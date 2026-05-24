@@ -1297,25 +1297,14 @@ const PayrollExport = memo(({ data }) => {
       const hourlyRate = parseFloat(w.hourlyRate) || 0;
       const pieceRate  = parseFloat(w.pieceRate)  || 0;
 
-      // Часы из событий табеля
-      const workerOps = data.ops.filter(op =>
-        !op.archived && (op.workerIds||[]).includes(w.id) &&
-        op.status === 'done' && op.finishedAt >= monthStart && op.finishedAt <= monthEnd
-      );
-
-      // Union of intervals для часов
-      const intervals = workerOps
-        .filter(op => op.startedAt && op.finishedAt)
-        .map(op => ({ start: Math.max(op.startedAt, monthStart), end: op.finishedAt }))
-        .filter(iv => iv.end > iv.start)
-        .sort((a,b) => a.start - b.start);
-      const merged = [];
-      intervals.forEach(iv => {
-        if (!merged.length || iv.start > merged[merged.length-1].end) merged.push({...iv});
-        else merged[merged.length-1].end = Math.max(merged[merged.length-1].end, iv.end);
-      });
-      const totalMs = merged.reduce((s,iv) => s+(iv.end-iv.start), 0);
-      const hours = Math.round(totalMs / 3600000 * 10) / 10;
+      // Часы из табеля (явки) через calcDayData — единый источник с личным кабинетом
+      const dim = new Date(viewYear, viewMonth + 1, 0).getDate();
+      let hours = 0;
+      for (let d = 1; d <= dim; d++) {
+        const dd = calcDayData(w.id, viewYear, viewMonth, d, data);
+        if (dd.h > 0) hours += dd.h;
+      }
+      hours = Math.round(hours * 10) / 10;
 
       // Сдельные — отгруженные заказы
       const shippedOrders = (data.orders||[]).filter(o => o.shipped && o.shippedAt >= monthStart && o.shippedAt <= monthEnd);
