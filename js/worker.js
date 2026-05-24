@@ -539,7 +539,7 @@ const WorkerSalaryBlock = memo(({ workerId, data }) => {
     const dim = new Date(viewYear, viewMonth + 1, 0).getDate();
     const days = Array.from({ length: dim }, (_, i) => i + 1);
 
-    // Почасовая: суммируем часы по calcDayData
+    // Почасовая: суммируем часы из табеля (явки) через calcDayData
     let totalHours = 0;
     const dayRows = [];
     days.forEach(d => {
@@ -550,7 +550,7 @@ const WorkerSalaryBlock = memo(({ workerId, data }) => {
       }
     });
 
-    // Сдельная: считаем отгруженные заказы в которых участвовал рабочий
+    // Сдельная: считаем по участкам через calcPieceworkEarnings
     const monthStart = new Date(viewYear, viewMonth, 1).getTime();
     const monthEnd   = new Date(viewYear, viewMonth + 1, 0, 23, 59, 59, 999).getTime();
 
@@ -559,20 +559,23 @@ const WorkerSalaryBlock = memo(({ workerId, data }) => {
       return o.shippedAt >= monthStart && o.shippedAt <= monthEnd;
     });
 
-    // Для каждого заказа проверяем участие рабочего в хотя бы одной операции
-    const pieceRows = shippedOrders
-      .filter(o => {
+    // Для каждого заказа считаем сдельный заработок через прайс
+    const pieceRows = shippedOrders.map(o => {
+      const earnings = calcPieceworkEarnings(data, workerId, o.id);
+      if (!earnings || earnings.total === 0) {
+        // Fallback: старая логика — pieceRate × qty если нет прайса
         const ops = (data.ops || []).filter(op => op.orderId === o.id && (op.workerIds || []).includes(workerId));
-        return ops.length > 0;
-      })
-      .map(o => ({
-        id:     o.id,
-        number: o.number,
-        product: o.product || '—',
-        qty:    o.qty || 1,
-        earn:   Math.round((o.qty || 1) * pieceRate),
-        date:   new Date(o.shippedAt).toLocaleDateString('ru-RU', { day:'2-digit', month:'2-digit' }),
-      }));
+        if (!ops.length) return null;
+        const earn = Math.round((o.qty || 1) * pieceRate);
+        if (!earn) return null;
+        return { id: o.id, number: o.number, product: o.product || '—', qty: o.qty || 1,
+          earn, date: new Date(o.shippedAt).toLocaleDateString('ru-RU', { day:'2-digit', month:'2-digit' }),
+          breakdown: null };
+      }
+      return { id: o.id, number: o.number, product: o.product || '—', qty: o.qty || 1,
+        earn: earnings.total, date: new Date(o.shippedAt).toLocaleDateString('ru-RU', { day:'2-digit', month:'2-digit' }),
+        breakdown: earnings };
+    }).filter(Boolean);
 
     const hourlyTotal  = Math.round(totalHours * hourlyRate);
     const pieceTotal   = pieceRows.reduce((s, r) => s + r.earn, 0);
@@ -662,11 +665,18 @@ const WorkerSalaryBlock = memo(({ workerId, data }) => {
         ? h('div', { style:{ fontSize:13, color:'#aaa', textAlign:'center', padding:'12px 0' } }, 'Нет отгруженных изделий в этом месяце')
         : h('div', { style:{ display:'flex', flexDirection:'column', gap:3 } },
             salaryData.pieceRows.map(({ id, number, product, qty, earn, date }) =>
-              h('div', { key:id, style:{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'5px 10px', borderRadius:6, background:'#f8f8f5', fontSize:13, gap:6 } },
-                h('span', { style:{ color:'#888', flexShrink:0 } }, date),
-                h('span', { style:{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, `№${number} ${product}`),
-                h('span', { style:{ color:'#888', flexShrink:0 } }, `${qty}шт`),
-                h('span', { style:{ fontWeight:500, color:GN2, flexShrink:0 } }, `${fmt(earn)} ₽`)
+              h('div', { key:id, style:{ padding:'6px 10px', borderRadius:6, background:'#f8f8f5', fontSize:13 } },
+                h('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:6 } },
+                  h('span', { style:{ color:'#888', flexShrink:0 } }, date),
+                  h('span', { style:{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, `№${number} ${product}`),
+                  h('span', { style:{ color:'#888', flexShrink:0 } }, `${qty}шт`),
+                  h('span', { style:{ fontWeight:500, color:GN2, flexShrink:0 } }, `${fmt(earn)} ₽`)
+                ),
+                breakdown && h('div', { style:{ display:'flex', gap:8, marginTop:4, fontSize:11, color:'#888', flexWrap:'wrap' } },
+                  breakdown.heatExchanger > 0 && h('span', null, `Теплообменник: ${fmt(breakdown.heatExchanger)} ₽`),
+                  breakdown.coverFront > 0    && h('span', null, `Крышка пер.: ${fmt(breakdown.coverFront)} ₽`),
+                  breakdown.coverBack > 0     && h('span', null, `Крышка зад.: ${fmt(breakdown.coverBack)} ₽`)
+                )
               )
             ),
             h('div', { style:{ display:'flex', justifyContent:'space-between', padding:'7px 10px', borderTop:`0.5px solid rgba(0,0,0,0.08)`, marginTop:4, fontSize:13, fontWeight:500 } },
