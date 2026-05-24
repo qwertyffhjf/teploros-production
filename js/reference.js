@@ -174,6 +174,112 @@ const PasteImportWidget = memo(({ columns, onImport, addToast, hint }) => {
   );
 });
 
+
+// ==================== PieceworkRatesEditor ====================
+const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
+  const rates = data.pieceworkRates || [];
+  const [form, setForm] = useState({ type:'v2d', powerMin:'', powerMax:'', heatExchanger:'', coverFront:'', coverBack:'' });
+  const [editId, setEditId] = useState(null);
+
+  const BOILER_TYPES = [
+    { id: 'v2d', label: 'Lex V2-D (двухходовой)' },
+    { id: 'v3d', label: 'Lex V3-D (трёхходовой)' },
+  ];
+
+  const save = async () => {
+    if (!form.powerMin || !form.powerMax) { addToast('Укажите диапазон мощности', 'error'); return; }
+    const entry = {
+      id: editId || uid(),
+      type: form.type,
+      powerMin: Math.max(0, Number(form.powerMin) || 0),
+      powerMax: Math.max(0, Number(form.powerMax) || 0),
+      heatExchanger: Math.max(0, Number(form.heatExchanger) || 0),
+      coverFront:    Math.max(0, Number(form.coverFront)    || 0),
+      coverBack:     Math.max(0, Number(form.coverBack)     || 0),
+    };
+    const updated = editId
+      ? rates.map(r => r.id === editId ? entry : r)
+      : [...rates, entry];
+    const d = { ...data, pieceworkRates: updated.sort((a,b) => a.type.localeCompare(b.type) || a.powerMin - b.powerMin) };
+    await DB.save(d); onUpdate(d);
+    setForm({ type:'v2d', powerMin:'', powerMax:'', heatExchanger:'', coverFront:'', coverBack:'' });
+    setEditId(null);
+    addToast(editId ? 'Расценка обновлена' : 'Расценка добавлена', 'success');
+  };
+
+  const del = async (id) => {
+    const d = { ...data, pieceworkRates: rates.filter(r => r.id !== id) };
+    await DB.save(d); onUpdate(d); addToast('Расценка удалена', 'info');
+  };
+
+  const edit = (r) => {
+    setForm({ type: r.type, powerMin: String(r.powerMin), powerMax: String(r.powerMax),
+      heatExchanger: String(r.heatExchanger), coverFront: String(r.coverFront), coverBack: String(r.coverBack) });
+    setEditId(r.id);
+  };
+
+  const fmt = n => n ? Number(n).toLocaleString('ru-RU') : '—';
+
+  const inp = (key, placeholder, type='number') => h('input', {
+    type, placeholder, value: form[key],
+    onChange: e => setForm(p => ({ ...p, [key]: e.target.value })),
+    style: { ...S.inp, width: '100%' }
+  });
+
+  return h('div', { style: S.card },
+    h('div', { style: S.sec }, '🔧 Сдельные расценки'),
+    h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 12 } },
+      'Стоимость работ по участкам для сдельной оплаты. Используется для расчёта зарплаты рабочих теплообменника и крышек.'
+    ),
+
+    // Форма добавления
+    h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 80px 80px 110px 110px 110px auto', gap: 6, marginBottom: 12, alignItems: 'end' } },
+      h('div', null,
+        h('label', { style: S.lbl }, 'Тип котла'),
+        h('select', { style: { ...S.inp, width: '100%' }, value: form.type, onChange: e => setForm(p => ({ ...p, type: e.target.value })) },
+          BOILER_TYPES.map(t => h('option', { key: t.id, value: t.id }, t.label))
+        )
+      ),
+      h('div', null, h('label', { style: S.lbl }, 'кВт от'), inp('powerMin', '100')),
+      h('div', null, h('label', { style: S.lbl }, 'кВт до'), inp('powerMax', '250')),
+      h('div', null, h('label', { style: S.lbl }, 'Теплообменник ₽'), inp('heatExchanger', '10300')),
+      h('div', null, h('label', { style: S.lbl }, 'Крышка передн. ₽'), inp('coverFront', '2500')),
+      h('div', null, h('label', { style: S.lbl }, 'Крышка задн. ₽'), inp('coverBack', '1785')),
+      h('div', null,
+        h('label', { style: { ...S.lbl, opacity: 0 } }, '.'),
+        h('button', { style: abtn({ width: '100%' }), onClick: save }, editId ? '✓ Сохранить' : '+ Добавить')
+      )
+    ),
+    editId && h('button', { style: gbtn({ fontSize: 11, marginBottom: 12 }), onClick: () => { setEditId(null); setForm({ type:'v2d', powerMin:'', powerMax:'', heatExchanger:'', coverFront:'', coverBack:'' }); } }, '✕ Отмена'),
+
+    // Таблица расценок
+    rates.length === 0
+      ? h('div', { style: { textAlign:'center', color:'var(--muted)', padding: 20, fontSize: 13 } }, 'Расценки не заданы')
+      : h('table', { style: { width:'100%', borderCollapse:'collapse', fontSize: 12 } },
+          h('thead', null,
+            h('tr', null, ['Тип котла','Мощность, кВт','Теплообменник','Крышка пер.','Крышка зад.',''].map(col =>
+              h('th', { key: col, style: { textAlign:'left', padding:'6px 8px', fontSize:10, fontWeight:600, textTransform:'uppercase', letterSpacing:'0.06em', color:'var(--muted)', borderBottom:'0.5px solid var(--border)' } }, col)
+            ))
+          ),
+          h('tbody', null,
+            rates.map(r =>
+              h('tr', { key: r.id, style: { borderBottom: '0.5px solid var(--border-soft)' } },
+                h('td', { style: { padding:'7px 8px', fontWeight:500 } }, BOILER_TYPES.find(t=>t.id===r.type)?.label || r.type),
+                h('td', { style: { padding:'7px 8px' } }, `${r.powerMin} – ${r.powerMax} кВт`),
+                h('td', { style: { padding:'7px 8px', color: AM2, fontWeight:500 } }, `${fmt(r.heatExchanger)} ₽`),
+                h('td', { style: { padding:'7px 8px' } }, `${fmt(r.coverFront)} ₽`),
+                h('td', { style: { padding:'7px 8px' } }, `${fmt(r.coverBack)} ₽`),
+                h('td', { style: { padding:'7px 8px', display:'flex', gap:4 } },
+                  h('button', { style: gbtn({ fontSize:10, padding:'3px 8px' }), onClick: () => edit(r) }, '✎'),
+                  h('button', { style: rbtn({ fontSize:10, padding:'3px 8px' }), onClick: () => del(r.id) }, '✕')
+                )
+              )
+            )
+          )
+        )
+  );
+});
+
 // ==================== MasterSections ====================
 
 
@@ -182,7 +288,7 @@ const MasterSections = memo(({ data, onUpdate, addToast }) => {
   const { ask: askConfirm, confirmEl } = useConfirm();
   const add = useCallback(async () => {
     if (!newName.trim()) return;
-    const newSection = { id: uid(), name: newName.trim() };
+    const newSection = { id: uid(), name: newName.trim(), payType: 'hourly' };
     const d = { ...data, sections: [...data.sections, newSection] };
     await DB.save(d); onUpdate(d); setNewName(''); addToast('Участок добавлен', 'success');
   }, [data, newName, onUpdate, addToast]);
@@ -213,8 +319,19 @@ const MasterSections = memo(({ data, onUpdate, addToast }) => {
     data.sections.length === 0
       ? h('div', { style: { ...S.card, textAlign: 'center' } }, 'Нет участков')
       : h('div', { style: { ...S.card } }, data.sections.map(s =>
-          h('div', { key: s.id, style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)' } },
-            h('span', { style: { fontSize: 13 } }, s.name),
+          h('div', { key: s.id, style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', gap: 8 } },
+            h('span', { style: { fontSize: 13, flex: 1 } }, s.name),
+            h('select', {
+              value: s.payType || 'hourly',
+              onChange: async e => {
+                const d = { ...data, sections: data.sections.map(x => x.id === s.id ? { ...x, payType: e.target.value } : x) };
+                await DB.save(d); onUpdate(d);
+              },
+              style: { fontSize: 11, padding: '3px 7px', borderRadius: 6, border: '0.5px solid rgba(0,0,0,0.15)', background: 'transparent', cursor: 'pointer', color: s.payType === 'piecework' ? AM2 : 'var(--muted)' }
+            },
+              h('option', { value: 'hourly' }, '⏱ Часовая'),
+              h('option', { value: 'piecework' }, '🔧 Сдельная')
+            ),
             h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': `Удалить участок ${s.name}`, onClick: () => del(s.id) }, 'Удалить')
           )
         ))
