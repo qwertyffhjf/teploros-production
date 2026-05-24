@@ -1901,6 +1901,7 @@ const ShiftSettings = memo(({ data, onUpdate, addToast }) => {
 
 // ==================== PieceworkRatesEditor ====================
 const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
+  console.log('PieceworkRatesEditor RENDER', !!data, !!onUpdate);
   const rates = data.pieceworkRates || [];
   const [form, setForm] = useState({ type:'v2d', powerMin:'', powerMax:'', heatExchanger:'', coverFront:'', coverBack:'' });
   const [editId, setEditId] = useState(null);
@@ -1950,8 +1951,8 @@ const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
     style: { ...S.inp, width: '100%' }
   });
 
-  return h('div', { style: S.card },
-    h('div', { style: S.sec }, '🔧 Сдельные расценки'),
+  return h('div', { style: { ...S.card, marginTop: 16, border: `2px solid ${AM}` } },
+    h('div', { style: { ...S.sec, color: AM2 } }, '🔧 Сдельные расценки по мощности котла'),
     h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 12 } },
       'Стоимость работ по участкам для сдельной оплаты. Используется для расчёта зарплаты рабочих теплообменника и крышек.'
     ),
