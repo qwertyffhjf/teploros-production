@@ -435,6 +435,7 @@ const EMPTY_DATA = {
   instructions: [],   // инструктажи ОТ: [{id, workerId, type, date, nextDate, conductedBy, note}]
   vacations: [],      // плановые отпуска: [{id, workerId, startDate, endDate, approved, note}]
   opNorms: {},        // нормы операций: {opName: {planned: N, samples: N, totalMs: N}}
+  pieceworkRates: [], // сдельные расценки: [{id, type:'v2d'|'v3d', powerMin, powerMax, heatExchanger, coverFront, coverBack}]
   auxStats: {},       // агрегация вспомогательных работ: {"YYYY-MM": {total, totalMs, byCategory:{cat:{count,ms}}, byWorker:{wid:{count,ms}}}}
   messages: [], reclamations: [], duels: [], materialReservations: [], defects: [],
   pressureTests: [],   // протоколы гидравлических испытаний
@@ -481,6 +482,60 @@ const cleanStaleLocalStorageKeys = () => {
 };
 
 
+
+
+// ==================== Сдельная оплата ====================
+// Найти расценку для котла по типу и мощности
+const findPieceworkRate = (data, boilerType, powerKw) => {
+  const rates = data.pieceworkRates || [];
+  if (!rates.length || !boilerType || !powerKw) return null;
+  return rates.find(r =>
+    r.type === boilerType &&
+    powerKw >= (r.powerMin || 0) &&
+    powerKw <= (r.powerMax || Infinity)
+  ) || null;
+};
+
+// Рассчитать сдельный заработок рабочего за заказ
+// Возвращает { heatExchanger: N, coverFront: N, coverBack: N, total: N }
+const calcPieceworkEarnings = (data, workerId, orderId) => {
+  const order = data.orders.find(o => o.id === orderId);
+  if (!order) return null;
+
+  const boilerType  = order.boilerType || null;   // 'v2d' | 'v3d'
+  const powerKw     = order.powerKw || 0;
+  const qty         = order.qty || 1;
+  const rate        = findPieceworkRate(data, boilerType, powerKw);
+  if (!rate) return null;
+
+  const sections = data.sections || [];
+
+  // Найти sectionId по ключевому слову
+  const findSection = (keyword) =>
+    sections.find(s => s.name.toLowerCase().includes(keyword.toLowerCase()))?.id;
+
+  const heatSectionId   = findSection('теплообменник');
+  const coverSectionId  = findSection('крышк');
+
+  const orderOps = data.ops.filter(o => o.orderId === orderId && !o.archived);
+
+  const calcShare = (sectionId, rateAmount) => {
+    if (!sectionId || !rateAmount) return 0;
+    const sectionOps = orderOps.filter(o => o.sectionId === sectionId);
+    // Уникальные рабочие участвовавшие в операциях этого участка
+    const workerSet = new Set();
+    sectionOps.forEach(op => (op.workerIds||[]).forEach(wid => workerSet.add(wid)));
+    if (!workerSet.has(workerId) || workerSet.size === 0) return 0;
+    return Math.round(rateAmount * qty / Math.max(workerSet.size, 1));
+  };
+
+  const heatExchanger = calcShare(heatSectionId,  rate.heatExchanger);
+  const coverFront    = calcShare(coverSectionId,  rate.coverFront);
+  const coverBack     = calcShare(coverSectionId,  rate.coverBack);
+  const total         = heatExchanger + coverFront + coverBack;
+
+  return { heatExchanger, coverFront, coverBack, total, rate, boilerType, powerKw };
+};
 
 // ==================== canShipOrder ====================
 // Проверяет готовность заказа к отгрузке с учётом комплектующих
