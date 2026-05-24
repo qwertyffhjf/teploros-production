@@ -1145,6 +1145,17 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
       createdAt: now(),
       source: '1c_import',
       productType,
+      boilerType: (() => {
+        const n = (parsed.product || '').toLowerCase();
+        if (n.includes('v3') || n.includes('трёхходов') || n.includes('трехходов')) return 'v3d';
+        return 'v2d';
+      })(),
+      powerKw: (() => {
+        // Парсим мощность из specs: '300 кВт, 6 бар' → 300
+        const s = parsed.specs || '';
+        const m = s.match(/([0-9]+[.,]?[0-9]*)\s*кВт/i);
+        return m ? Number(m[1].replace(',','.')) : 0;
+      })(),
       components: parsed.components,
       isParentOrder: parsed.productQty > 1,
     };
@@ -2069,7 +2080,10 @@ const AdminScreen = memo(({ data, onUpdate, addToast }) => {
     tab === 'equipment'     && h(MasterEquipment,        { data, onUpdate, addToast }),
     tab === 'materials'     && h(MasterMaterials,        { data, onUpdate, addToast }),
     tab === 'bom'           && h(MasterBOM,              { data, onUpdate, addToast }),
-    tab === 'sections'      && h(MasterSections,         { data, onUpdate, addToast }),
+    tab === 'sections'      && h('div', null,
+      h(MasterSections,         { data, onUpdate, addToast }),
+      h(PieceworkRatesEditor,   { data, onUpdate, addToast })
+    ),
     tab === 'workers'       && h(MasterWorkers,          { data, onUpdate, addToast }),
     tab === 'time'          && h(MasterTimeTracking,     { data, onUpdate, addToast, onWorkerClick: (wid) => setTab('workers') }),
     tab === 'admin'         && h(MasterAdmin,            { data, onUpdate, addToast })
@@ -2107,7 +2121,7 @@ function App() {
         const orderOps = d.ops.filter(op => op.orderId === order.id);
         if (orderOps.length === 0) return order;
         const allDone = orderOps.every(op => op.status === 'done' || op.status === 'defect');
-        const lastFinished = Math.max(...orderOps.map(op => op.finishedAt || 0));
+        const lastFinished = orderOps.length > 0 ? Math.max(...orderOps.map(op => op.finishedAt || 0)) : 0;
         if (allDone && lastFinished > 0 && lastFinished < threshold) { archiveCount++; return { ...order, archived: true, autoArchived: true }; }
         return order;
       })};
