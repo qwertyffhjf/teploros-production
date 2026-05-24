@@ -1278,3 +1278,130 @@ const VacationTimeline = memo(({ data }) => {
         )
   );
 });
+
+
+// ==================== PayrollExport ====================
+const PayrollExport = memo(({ data }) => {
+  const today = new Date();
+  const [viewMonth, setViewMonth] = useState(today.getMonth());
+  const [viewYear,  setViewYear]  = useState(today.getFullYear());
+
+  const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+
+  const monthStart = new Date(viewYear, viewMonth, 1).getTime();
+  const monthEnd   = new Date(viewYear, viewMonth + 1, 0, 23, 59, 59, 999).getTime();
+
+  const rows = useMemo(() => {
+    return data.workers.filter(w => !w.archived).map(w => {
+      const payType    = w.payType || 'hourly';
+      const hourlyRate = parseFloat(w.hourlyRate) || 0;
+      const pieceRate  = parseFloat(w.pieceRate)  || 0;
+
+      // Часы из событий табеля
+      const workerOps = data.ops.filter(op =>
+        !op.archived && (op.workerIds||[]).includes(w.id) &&
+        op.status === 'done' && op.finishedAt >= monthStart && op.finishedAt <= monthEnd
+      );
+
+      // Union of intervals для часов
+      const intervals = workerOps
+        .filter(op => op.startedAt && op.finishedAt)
+        .map(op => ({ start: Math.max(op.startedAt, monthStart), end: op.finishedAt }))
+        .filter(iv => iv.end > iv.start)
+        .sort((a,b) => a.start - b.start);
+      const merged = [];
+      intervals.forEach(iv => {
+        if (!merged.length || iv.start > merged[merged.length-1].end) merged.push({...iv});
+        else merged[merged.length-1].end = Math.max(merged[merged.length-1].end, iv.end);
+      });
+      const totalMs = merged.reduce((s,iv) => s+(iv.end-iv.start), 0);
+      const hours = Math.round(totalMs / 3600000 * 10) / 10;
+
+      // Сдельные — отгруженные заказы
+      const shippedOrders = (data.orders||[]).filter(o => o.shipped && o.shippedAt >= monthStart && o.shippedAt <= monthEnd);
+      const pieceCount = shippedOrders.filter(o =>
+        (data.ops||[]).some(op => op.orderId === o.id && (op.workerIds||[]).includes(w.id))
+      ).reduce((s,o) => s + (o.qty||1), 0);
+
+      const earned = payType === 'hourly'
+        ? Math.round(hours * hourlyRate)
+        : Math.round(pieceCount * pieceRate);
+
+      return { w, payType, hourlyRate, pieceRate, hours, pieceCount, earned };
+    });
+  }, [data.workers, data.ops, data.orders, viewMonth, viewYear]);
+
+  const total = rows.reduce((s,r) => s + r.earned, 0);
+  const fmt = n => n.toLocaleString('ru-RU');
+
+  const exportExcel = () => {
+    if (typeof XLSX === 'undefined') { alert('XLSX не загружен'); return; }
+    const wsData = [
+      ['ФИО', 'Должность', 'Тип оплаты', 'Ставка', 'Часы / Изделий', 'Расчётная сумма'],
+      ...rows.map(r => [
+        r.w.name, r.w.position || '—',
+        r.payType === 'hourly' ? 'Почасовая' : 'Сдельная',
+        r.payType === 'hourly' ? `${fmt(r.hourlyRate)} руб/ч` : `${fmt(r.pieceRate)} руб/изд`,
+        r.payType === 'hourly' ? r.hours : r.pieceCount,
+        r.earned
+      ]),
+      ['', '', '', '', 'ИТОГО:', total]
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `Зарплата ${MONTHS_RU[viewMonth]} ${viewYear}`);
+    XLSX.writeFile(wb, `payroll_${viewYear}_${String(viewMonth+1).padStart(2,'0')}.xlsx`);
+  };
+
+  return h('div', null,
+    h('div', { style: { ...S.card, marginBottom: 12 } },
+      h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom:14 } },
+        h('div', { style: { ...S.sec, marginBottom:0, flex:1 } }, '💰 Зарплата за месяц'),
+        h('button', { style: gbtn({ padding:'4px 10px', fontSize:11 }), onClick:()=>{ let m=viewMonth-1,y=viewYear; if(m<0){m=11;y--;} setViewMonth(m); setViewYear(y); } }, '‹'),
+        h('span', { style:{ fontSize:13, fontWeight:500, minWidth:130, textAlign:'center' } }, `${MONTHS_RU[viewMonth]} ${viewYear}`),
+        h('button', { style: gbtn({ padding:'4px 10px', fontSize:11 }), onClick:()=>{ let m=viewMonth+1,y=viewYear; if(m>11){m=0;y++;} setViewMonth(m); setViewYear(y); } }, '›'),
+        h('button', { style: abtn({ fontSize:12 }), onClick: exportExcel }, '⬇ Excel')
+      ),
+
+      h('div', { style:{ fontSize:11, color: AM2, background: AM3, border:`0.5px solid ${AM4}`, borderRadius:7, padding:'7px 12px', marginBottom:14 } },
+        '* Расчётные суммы на основе фактических данных системы. Для начисления используйте данные бухгалтерии.'
+      ),
+
+      h('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:13 } },
+        h('thead', null,
+          h('tr', null,
+            ['Сотрудник','Должность','Тип','Ставка','Отработано','Расчётная сумма'].map(col =>
+              h('th', { key:col, style:{ textAlign:'left', padding:'7px 10px', fontSize:10, fontWeight:600, letterSpacing:'0.06em', textTransform:'uppercase', color:'var(--muted)', borderBottom:'0.5px solid var(--border)' } }, col)
+            )
+          )
+        ),
+        h('tbody', null,
+          rows.map(({ w, payType, hourlyRate, pieceRate, hours, pieceCount, earned }) =>
+            h('tr', { key:w.id, style:{ borderBottom:'0.5px solid var(--border-soft)' } },
+              h('td', { style:{ padding:'8px 10px', fontWeight:500 } }, w.name),
+              h('td', { style:{ padding:'8px 10px', color:'var(--muted)', fontSize:12 } }, w.position||'—'),
+              h('td', { style:{ padding:'8px 10px' } },
+                h('span', { style:{ fontSize:10, padding:'2px 7px', borderRadius:8, background: payType==='hourly' ? AM3 : GN3, color: payType==='hourly' ? AM2 : GN2, border:`0.5px solid ${payType==='hourly' ? AM4 : GN}` } },
+                  payType==='hourly' ? '⏱ Часовая' : '🔧 Сдельная'
+                )
+              ),
+              h('td', { style:{ padding:'8px 10px', fontSize:12, color:'var(--muted)' } },
+                payType==='hourly' ? `${fmt(hourlyRate)} р/ч` : `${fmt(pieceRate)} р/изд`
+              ),
+              h('td', { style:{ padding:'8px 10px', fontWeight:500 } },
+                payType==='hourly' ? `${hours}ч` : `${pieceCount} изд`
+              ),
+              h('td', { style:{ padding:'8px 10px', fontWeight:600, color: earned > 0 ? AM2 : 'var(--muted)' } },
+                earned > 0 ? `${fmt(earned)} ₽` : '—'
+              )
+            )
+          ),
+          h('tr', null,
+            h('td', { colSpan:5, style:{ padding:'10px 10px', fontWeight:600, textAlign:'right', borderTop:`1px solid var(--border)`, fontSize:13 } }, 'ИТОГО:'),
+            h('td', { style:{ padding:'10px 10px', fontWeight:700, color: AM2, borderTop:`1px solid var(--border)`, fontSize:15 } }, `${fmt(total)} ₽`)
+          )
+        )
+      )
+    )
+  );
+});
