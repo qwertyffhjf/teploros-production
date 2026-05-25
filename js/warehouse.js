@@ -1340,7 +1340,9 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
 
             return h('div', { key: order.id,
               style: { ...S.card, marginBottom: 8, padding: '10px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, transition: 'box-shadow 0.15s' },
-              onClick: () => { setNeedsOrderId(order.id); setNeedsSearch(''); }
+              onMouseEnter: e => { e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.08)'; },
+              onMouseLeave: e => { e.currentTarget.style.boxShadow = ''; },
+              onClick: () => setViewOrderId(order.id)
             },
               // Иконка статуса заявки
               h('div', { style: { fontSize: 20, flexShrink: 0 } }, hasNeeds ? '📝' : '➕'),
@@ -1380,7 +1382,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
                   );
                 })(),
                 hasNeeds && receivedItems < totalItems && pendingItems > 0 && h('div', { style: { fontSize: 10, color: 'var(--muted)' } }, pendingItems + ' ждут заказа'),
-                h('div', { style: { fontSize: 11, color: BL } }, '→ открыть')
+                h('div', { style: { fontSize: 11, color: BL } }, '→ карточка заказа')
               )
             );
           });
