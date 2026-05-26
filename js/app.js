@@ -2272,6 +2272,27 @@ function App() {
   // Определяем «настоящую» роль для рендера — chat_master и chat_controller рендерятся как чат
   const effectiveRole = role === 'chat_master' || role === 'chat_controller' ? 'chat' : role;
 
+  // Цветовое зонирование по роли — меняем CSS переменные
+  useEffect(() => {
+    const ROLE_THEMES = {
+      worker:      { brand: '#EF9F27', brandInk: '#412402', brandSoft: '#fdf3e0', brandPress: '#d88a17' }, // тёплый янтарь
+      master:      { brand: '#1D6FA4', brandInk: '#0a2a40', brandSoft: '#e6f1fb', brandPress: '#155d8a' }, // синий — контроль
+      shop_master: { brand: '#1D6FA4', brandInk: '#0a2a40', brandSoft: '#e6f1fb', brandPress: '#155d8a' },
+      pdo:         { brand: '#1D6FA4', brandInk: '#0a2a40', brandSoft: '#e6f1fb', brandPress: '#155d8a' },
+      director:    { brand: '#5C4DB1', brandInk: '#1a1040', brandSoft: '#eeedfe', brandPress: '#4a3d9a' }, // фиолетовый — стратегия
+      controller:  { brand: '#1D8A3A', brandInk: '#0a2a14', brandSoft: '#e1f5ee', brandPress: '#166e2e' }, // зелёный — качество
+      warehouse:   { brand: '#0077B6', brandInk: '#001f3f', brandSoft: '#e6f4fb', brandPress: '#005f99' }, // морской — логистика
+      hr:          { brand: '#C2185B', brandInk: '#3f0020', brandSoft: '#fce4ec', brandPress: '#a31545' }, // малиновый — люди
+      dashboard:   { brand: '#EF9F27', brandInk: '#412402', brandSoft: '#fdf3e0', brandPress: '#d88a17' },
+    };
+    const theme = ROLE_THEMES[effectiveRole] || ROLE_THEMES.worker;
+    const el = document.documentElement;
+    el.style.setProperty('--brand',       theme.brand);
+    el.style.setProperty('--brand-ink',   theme.brandInk);
+    el.style.setProperty('--brand-soft',  theme.brandSoft);
+    el.style.setProperty('--brand-press', theme.brandPress);
+  }, [effectiveRole]);
+
   // Текущий пользователь для чата
   const currentUser = useMemo(() => {
     if (role === 'worker' || role === 'chat') { const w = data.workers.find(w => w.id === workerId); return { id: workerId, name: w?.name || 'Сотрудник', role: 'worker' }; }
