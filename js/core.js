@@ -1597,31 +1597,32 @@ const DirtyBadge = memo(() =>
 //   h(EmptyState, { icon: '📋', title: 'Нет заказов', desc: 'Создайте первый заказ', action: 'Создать заказ', onAction: () => setShowForm(true) })
 //   h(EmptyState, { icon: '🔍', title: 'Ничего не найдено', desc: 'Попробуйте изменить фильтры' })
 //   h(EmptyState, { icon: '✓', title: 'Всё выполнено', desc: 'Нет операций в работе', positive: true })
-const EmptyState = memo(({ icon, title, desc, action, onAction, positive = false, compact = false }) => {
+const EmptyState = memo(({ icon, title, desc, action, onAction, positive = false, compact = false, hint = null }) => {
   return h('div', {
     className: 'op-card-anim',
     style: {
       textAlign: 'center',
-      padding: compact ? '20px 16px' : '36px 24px',
+      padding: compact ? '20px 16px' : '40px 24px',
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
       gap: compact ? 6 : 10,
     }
   },
-    // Иконка в кружке
+    // Иконка в кружке с лёгкой пульсацией для позитивных состояний
     h('div', {
       style: {
-        width:  compact ? 44 : 64,
-        height: compact ? 44 : 64,
+        width:  compact ? 44 : 72,
+        height: compact ? 44 : 72,
         borderRadius: '50%',
-        background: positive ? GN3 : 'var(--border-soft, #f0ede8)',
+        background: positive ? GN3 : 'var(--brand-soft, #fdf3e0)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        fontSize: compact ? 20 : 28,
-        marginBottom: compact ? 0 : 4,
+        fontSize: compact ? 20 : 32,
+        marginBottom: compact ? 0 : 6,
         flexShrink: 0,
+        boxShadow: positive ? `0 0 0 8px ${GN3}` : '0 0 0 8px var(--brand-soft, #fdf3e0)',
       }
     }, icon),
 
@@ -1664,7 +1665,10 @@ const EmptyState = memo(({ icon, title, desc, action, onAction, positive = false
       onMouseLeave: e => { e.currentTarget.style.background = AM3; e.currentTarget.style.color = AM2; },
       onMouseDown:  e => { e.currentTarget.style.transform = 'scale(0.97)'; },
       onMouseUp:    e => { e.currentTarget.style.transform = ''; },
-    }, `+ ${action}`)
+    }, `+ ${action}`),
+    hint && h('div', {
+      style: { fontSize: 11, color: 'var(--muted, #888)', marginTop: 6, opacity: 0.75, lineHeight: 1.5, maxWidth: 260 }
+    }, hint)
   );
 });
 
