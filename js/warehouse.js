@@ -1391,8 +1391,19 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
       needsOrderId && (() => {
         const order = data.orders.find(o => o.id === needsOrderId);
         return h('div', null,
-          h('div', { style: { marginBottom: 12, padding: '8px 12px', background: 'var(--bg)', borderRadius: 8, fontSize: 12, color: 'var(--muted)' } },
-            `📦 Заказ ${order?.number} — ${order?.product || ''}`
+          h('div', { style: { marginBottom: 12, padding: '8px 12px', background: 'var(--bg)', borderRadius: 8, fontSize: 12, color: 'var(--muted)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
+            h('span', null, `📦 Заказ ${order?.number} — ${order?.product || ''}`),
+            order?.drawingUrl && h('a', {
+              href: order.drawingUrl,
+              target: '_blank',
+              rel: 'noopener noreferrer',
+              style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 500,
+                padding: '5px 12px', borderRadius: 8, background: GN3, color: GN2,
+                border: `0.5px solid ${GN}`, textDecoration: 'none', flexShrink: 0,
+                transition: 'background 0.15s' },
+              onMouseEnter: e => e.currentTarget.style.background = GN,
+              onMouseLeave: e => e.currentTarget.style.background = GN3
+            }, '📐 Открыть чертёж')
           ),
           h(OrderMaterialsEditor, { order, data, onUpdate, addToast, canEdit: true,
             onNeedsLoaded: (yr, needs) => {
