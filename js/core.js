@@ -545,6 +545,122 @@ const calcPieceworkEarnings = (data, workerId, orderId) => {
   return { heatExchanger, coverFront, coverBack, total, rate, boilerType, powerKw };
 };
 
+
+// ==================== OfflineQueue — очередь операций для IndexedDB ====================
+// Когда нет сети: сохраняем снапшот данных в IndexedDB
+// При восстановлении: отправляем в Firebase и чистим очередь
+const OfflineQueue = (() => {
+  const DB_NAME = 'teploros_offline';
+  const STORE   = 'pending_saves';
+  const DB_VER  = 1;
+  let _db = null;
+
+  const open = () => new Promise((resolve, reject) => {
+    if (_db) { resolve(_db); return; }
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE)) {
+        db.createObjectStore(STORE, { keyPath: 'id', autoIncrement: true });
+      }
+    };
+    req.onsuccess = e => { _db = e.target.result; resolve(_db); };
+    req.onerror   = () => reject(req.error);
+  });
+
+  return {
+    // Добавить снапшот данных в очередь
+    async enqueue(data, label = '') {
+      try {
+        const db = await open();
+        const tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).add({
+          payload: JSON.stringify(data),
+          ts: Date.now(),
+          label,
+        });
+        await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+        console.log(`[OfflineQueue] Сохранено офлайн: ${label}`);
+        return true;
+      } catch(e) {
+        console.error('[OfflineQueue] enqueue failed:', e);
+        return false;
+      }
+    },
+
+    // Получить все записи из очереди
+    async getAll() {
+      try {
+        const db = await open();
+        const tx = db.transaction(STORE, 'readonly');
+        return await new Promise((res, rej) => {
+          const req = tx.objectStore(STORE).getAll();
+          req.onsuccess = () => res(req.result || []);
+          req.onerror   = () => rej(req.error);
+        });
+      } catch(e) { return []; }
+    },
+
+    // Удалить запись по id
+    async remove(id) {
+      try {
+        const db = await open();
+        const tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).delete(id);
+        await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+      } catch(e) { console.error('[OfflineQueue] remove failed:', e); }
+    },
+
+    // Очистить всю очередь
+    async clear() {
+      try {
+        const db = await open();
+        const tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).clear();
+        await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+      } catch(e) {}
+    },
+
+    // Количество записей в очереди
+    async count() {
+      try {
+        const db = await open();
+        const tx = db.transaction(STORE, 'readonly');
+        return await new Promise((res) => {
+          const req = tx.objectStore(STORE).count();
+          req.onsuccess = () => res(req.result || 0);
+          req.onerror   = () => res(0);
+        });
+      } catch(e) { return 0; }
+    },
+
+    // Отправить всё из очереди в Firebase (вызывается при восстановлении сети)
+    async flush(onProgress) {
+      const items = await this.getAll();
+      if (items.length === 0) return 0;
+
+      console.log(`[OfflineQueue] Отправляем ${items.length} записей в Firebase...`);
+      let sent = 0;
+
+      for (const item of items) {
+        try {
+          const data = JSON.parse(item.payload);
+          await DB.save(data);
+          await this.remove(item.id);
+          sent++;
+          if (onProgress) onProgress(sent, items.length, item.label);
+        } catch(e) {
+          console.error(`[OfflineQueue] flush error for id=${item.id}:`, e);
+          break; // останавливаемся при ошибке — сеть снова пропала
+        }
+      }
+
+      console.log(`[OfflineQueue] Отправлено ${sent} из ${items.length}`);
+      return sent;
+    }
+  };
+})();
+
 // ==================== canShipOrder ====================
 // Проверяет готовность заказа к отгрузке с учётом комплектующих
 const canShipOrder = (order) => {
