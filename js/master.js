@@ -300,7 +300,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
     paginated.length === 0
       ? h('div', { style: S.card }, h(EmptyState, {
           icon: '🔧',
-          title: filt !== 'all' ? 'Ничего не найдено' : 'Нет операций',
+          title: filt !== 'all' ? 'Ничего не найдено' : 'Операций пока нет',
           desc: filt !== 'all'
             ? 'Попробуйте изменить фильтры или сбросить поиск'
             : 'Назначьте операции для заказов чтобы начать производство',
@@ -1353,8 +1353,8 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     paginated.length === 0
       ? h('div', { style: S.card }, h(EmptyState, {
           icon: '📋',
-          title: 'Нет заказов',
-          desc: 'Создайте первый заказ чтобы начать работу',
+          title: 'Заказов пока нет',
+          desc: 'Создайте первый заказ или импортируйте из 1С — всё готово!',
           action: 'Создать заказ',
           onAction: () => setShowForm(true),
         }))
