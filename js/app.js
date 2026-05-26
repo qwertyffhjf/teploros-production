@@ -515,6 +515,15 @@ const GreetingBanner = memo(({ role, name, data, workerId }) => {
         myPending.length > 0 ? { icon: '⏳', label: 'Ожидают тебя',    val: myPending.length, color: '#555' } : null,
         myDone.length    > 0 ? { icon: '✓',  label: 'Готово сегодня',  val: myDone.length,    color: GN   } : null,
       ].filter(Boolean);
+      // Мотивирующая фраза для рабочего
+      const MOTIVATIONS = [
+        'Хорошего рабочего дня! 🛠',
+        'Сделаем сегодня всё по плану! 💪',
+        'Ты справишься — вперёд! ⚡',
+        'Качество — наш приоритет! 🎯',
+        'Команда на тебя рассчитывает! 🤝',
+      ];
+      const motivation = MOTIVATIONS[new Date().getDay() % MOTIVATIONS.length];
     }
 
     if (role === 'master' || role === 'shop_master') {
@@ -607,6 +616,9 @@ const GreetingBanner = memo(({ role, name, data, workerId }) => {
     h('div', { style: { flexShrink: 0 } },
       h('div', { style: { fontSize: 13, fontWeight: 600, color: '#fff', lineHeight: 1.3 } },
         `${timeGreeting}, ${name} 👋`
+      ),
+      role === 'worker' && h('div', { style: { fontSize: 11, color: 'rgba(255,255,255,0.65)', marginTop: 2 } },
+        typeof motivation !== 'undefined' ? motivation : ''
       ),
       h('div', { style: { fontSize: 10, color: 'rgba(255,255,255,0.5)', marginTop: 1 } },
         new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' })
