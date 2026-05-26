@@ -1001,12 +1001,29 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       addToast(`Операция "${op.name}" завершена`, 'info');
     }
 
-    // Сохраняем в Firebase в фоне
-    DB.save(final).catch(err => {
-      onUpdate(prevData);  // откат
-      addToast('Ошибка сохранения — данные не записаны', 'error');
-      vibrateAction('error');
-    });
+    // Сохраняем в Firebase — или в IndexedDB если нет сети
+    if (DB._online !== false) {
+      DB.save(final).catch(async err => {
+        console.warn('[doFinish] Firebase недоступен, сохраняем офлайн:', err.message);
+        const queued = await OfflineQueue.enqueue(final, `Операция "${op.name}"`);
+        if (queued) {
+          addToast('📴 Нет сети — сохранено офлайн. Отправим при восстановлении.', 'info', { ttl: 6000 });
+        } else {
+          onUpdate(prevData); // крайний случай — откат
+          addToast('Ошибка сохранения — данные не записаны', 'error');
+          vibrateAction('error');
+        }
+      });
+    } else {
+      // Сразу в офлайн-очередь без попытки Firebase
+      const queued = await OfflineQueue.enqueue(final, `Операция "${op.name}"`);
+      if (queued) {
+        addToast('📴 Нет сети — сохранено офлайн. Отправим при восстановлении.', 'info', { ttl: 6000 });
+      } else {
+        onUpdate(prevData);
+        addToast('Ошибка сохранения', 'error');
+      }
+    }
     // Push-уведомление ОТК
     if (status === 'on_check' && 'serviceWorker' in navigator) {
       const order = data.orders.find(o => o.id === op.orderId);
@@ -1260,6 +1277,49 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const [showThanksHistory, setShowThanksHistory] = useState(false);
   const [showAddOp, setShowAddOp] = useState(false);
   const [addOpForm, setAddOpForm] = useState({ category: '', name: '', orderId: '', comment: '' });
+
+  // ── Синхронизация офлайн-очереди при восстановлении сети ──
+  const [offlineCount, setOfflineCount] = useState(0);
+  const [syncing, setSyncing] = useState(false);
+
+  // Проверяем очередь при старте
+  useEffect(() => {
+    OfflineQueue.count().then(n => setOfflineCount(n)).catch(() => {});
+  }, []);
+
+  // При восстановлении сети — автоматически flush
+  useEffect(() => {
+    const handleOnline = async () => {
+      const count = await OfflineQueue.count().catch(() => 0);
+      if (count === 0) return;
+      setSyncing(true);
+      addToast(`🔄 Сеть восстановлена — отправляем ${count} сохранённых операций...`, 'info', { ttl: 4000 });
+      const sent = await OfflineQueue.flush((done, total, label) => {
+        addToast(`📤 Синхронизировано ${done}/${total}: ${label}`, 'success', { ttl: 2000 });
+      }).catch(() => 0);
+      setSyncing(false);
+      setOfflineCount(0);
+      if (sent > 0) {
+        addToast(`✅ Синхронизировано ${sent} операций — данные в порядке!`, 'success', { ttl: 5000 });
+        // Перезагружаем данные из Firebase
+        DB.load().then(d => { if (d) onUpdate({ ...EMPTY_DATA, ...d }); }).catch(() => {});
+      }
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [addToast, onUpdate]);
+
+  // Ручная синхронизация
+  const syncOfflineQueue = useCallback(async () => {
+    if (syncing) return;
+    setSyncing(true);
+    const sent = await OfflineQueue.flush().catch(() => 0);
+    setSyncing(false);
+    const remaining = await OfflineQueue.count().catch(() => 0);
+    setOfflineCount(remaining);
+    if (sent > 0) addToast(`✅ Синхронизировано ${sent} операций`, 'success');
+    else addToast('Нечего синхронизировать', 'info');
+  }, [syncing, addToast]);
 
   // Категории из core.js (глобальные AUX_CATEGORIES)
 
@@ -1708,6 +1768,24 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
           h('div', { style: { fontSize: 11, color: '#888' } }, msg)
         );
       })(),
+
+      // Индикатор офлайн-очереди
+      offlineCount > 0 && h('div', {
+        style: { marginBottom: 12, padding: '10px 14px', background: '#FFF8E1', border: '0.5px solid #FFC107',
+          borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' },
+        onClick: syncOfflineQueue
+      },
+        h('span', { style: { fontSize: 18 } }, syncing ? '🔄' : '📴'),
+        h('div', { style: { flex: 1 } },
+          h('div', { style: { fontSize: 13, fontWeight: 600, color: '#7B5800' } },
+            syncing ? 'Синхронизация...' : `${offlineCount} операций ждут отправки`
+          ),
+          h('div', { style: { fontSize: 11, color: '#A07000' } },
+            syncing ? 'Отправляем данные в систему...' : 'Нажмите чтобы отправить сейчас'
+          )
+        ),
+        !syncing && h('span', { style: { fontSize: 12, color: '#A07000', fontWeight: 500 } }, '↑ Sync')
+      ),
 
       // KPI — 2×2 сетка
       h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 } },
