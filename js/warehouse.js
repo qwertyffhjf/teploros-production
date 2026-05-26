@@ -1306,16 +1306,34 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
       })()
     ), // закрытие receive tab div
 
-    // Движение
+    // Заявки на материалы
     tab === 'needs' && h('div', null,
-      // Поиск заказа
-      h('div', { style: { display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' } },
-        h('input', { placeholder: '🔍 Поиск заказа по номеру или изделию…', value: needsSearch,
-          onChange: e => { setNeedsSearch(e.target.value); setNeedsOrderId(null); },
-          style: { ...S.inp, flex: 1 } }),
-        needsOrderId && h('button', { onClick: () => setNeedsOrderId(null),
-          style: { fontSize: 12, padding: '6px 12px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer', whiteSpace: 'nowrap' } },
-          '← К списку заказов')
+      // Единая шапка
+      h('div', { style: { ...S.card, marginBottom: 12, padding: '10px 14px' } },
+        // Строка 1: поиск + кнопка назад
+        h('div', { style: { display: 'flex', gap: 8, marginBottom: needsOrderId ? 10 : 0, alignItems: 'center' } },
+          needsOrderId && h('button', { onClick: () => setNeedsOrderId(null),
+            style: { fontSize: 12, padding: '6px 10px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 } },
+            '← Все заказы'),
+          h('input', { placeholder: '🔍 Поиск заказа по номеру или изделию…', value: needsSearch,
+            onChange: e => { setNeedsSearch(e.target.value); setNeedsOrderId(null); },
+            style: { ...S.inp, flex: 1, margin: 0 } })
+        ),
+        // Строка 2: название заказа + кнопка чертежа (только когда выбран заказ)
+        needsOrderId && (() => {
+          const order = data.orders.find(o => o.id === needsOrderId);
+          return h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, paddingTop: 8, borderTop: '0.5px solid var(--border-soft)' } },
+            h('div', { style: { flex: 1, fontSize: 13, fontWeight: 500, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+              `📦 Заказ ${order?.number} — ${order?.product || ''}`
+            ),
+            order?.drawingUrl && h('a', {
+              href: order.drawingUrl, target: '_blank', rel: 'noopener noreferrer',
+              style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 500,
+                padding: '5px 10px', borderRadius: 7, background: GN3, color: GN2,
+                border: `0.5px solid ${GN}`, textDecoration: 'none', flexShrink: 0 }
+            }, '📐 Чертёж')
+          );
+        })()
       ),
 
       // Если заказ не выбран — показываем список
@@ -1390,27 +1408,11 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
       // Если заказ выбран — показываем редактор заявки
       needsOrderId && (() => {
         const order = data.orders.find(o => o.id === needsOrderId);
-        return h('div', null,
-          h('div', { style: { marginBottom: 12, padding: '8px 12px', background: 'var(--bg)', borderRadius: 8, fontSize: 12, color: 'var(--muted)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
-            h('span', null, `📦 Заказ ${order?.number} — ${order?.product || ''}`),
-            order?.drawingUrl && h('a', {
-              href: order.drawingUrl,
-              target: '_blank',
-              rel: 'noopener noreferrer',
-              style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 500,
-                padding: '5px 12px', borderRadius: 8, background: GN3, color: GN2,
-                border: `0.5px solid ${GN}`, textDecoration: 'none', flexShrink: 0,
-                transition: 'background 0.15s' },
-              onMouseEnter: e => e.currentTarget.style.background = GN,
-              onMouseLeave: e => e.currentTarget.style.background = GN3
-            }, '📐 Открыть чертёж')
-          ),
-          h(OrderMaterialsEditor, { order, data, onUpdate, addToast, canEdit: true,
-            onNeedsLoaded: (yr, needs) => {
-              if (needs) setNeedsAll(prev => ({ ...prev, [needsOrderId]: needs }));
-            }
-          })
-        );
+        return h(OrderMaterialsEditor, { order, data, onUpdate, addToast, canEdit: true,
+          onNeedsLoaded: (yr, needs) => {
+            if (needs) setNeedsAll(prev => ({ ...prev, [needsOrderId]: needs }));
+          }
+        });
       })()
     ),
 
