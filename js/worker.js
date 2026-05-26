@@ -975,7 +975,31 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     vibrateAction('finish');
     setActiveOps([]); setShowDefForm(false); setDefNote(''); setDefectReasonId('');
     setWeldParams({ seamNumber: '', electrode: '', result: 'ok' });
-    addToast(`Операция "${op.name}" завершена (${STATUS[status]?.label || status})`, 'info');
+    // Эмоциональный тост — меняется в зависимости от результата и серии
+    const todayDone = (final.ops || []).filter(o =>
+      !o.archived && (o.workerIds||[]).includes(workerId) &&
+      o.status === 'done' && o.finishedAt >= (() => { const d=new Date(); d.setHours(0,0,0,0); return d.getTime(); })()
+    ).length;
+    const DONE_MESSAGES = [
+      '🎯 Отлично! Так держать.',
+      '💪 Сделано! Ты в ударе.',
+      '⚡ Быстро и чисто!',
+      '🔥 Огонь! Продолжай.',
+      '✅ Готово. Молодец!',
+    ];
+    const STREAK_MESSAGES = {
+      3:  '🎯 3 подряд! Хороший темп.',
+      5:  '🔥 5 операций сегодня! Ты в зоне.',
+      10: '🏆 10 операций! Рекордный день.',
+    };
+    if (status === 'done') {
+      const msg = STREAK_MESSAGES[todayDone] || DONE_MESSAGES[todayDone % DONE_MESSAGES.length];
+      addToast(msg, 'success');
+    } else if (status === 'defect') {
+      addToast('⚠ Зафиксировано как брак. Не страшно — бывает.', 'error');
+    } else {
+      addToast(`Операция "${op.name}" завершена`, 'info');
+    }
 
     // Сохраняем в Firebase в фоне
     DB.save(final).catch(err => {
@@ -1648,6 +1672,42 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
           )
         )
       ),
+
+      // Прогресс дня
+      (() => {
+        const todayStart = (() => { const d=new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
+        const myOps = (data.ops||[]).filter(o => !o.archived && (o.workerIds||[]).includes(workerId));
+        const doneToday = myOps.filter(o => o.status==='done' && (o.finishedAt||0) >= todayStart).length;
+        const totalToday = myOps.filter(o => ['done','defect','in_progress','pending'].includes(o.status)).length;
+        if (totalToday === 0) return null;
+        const pct = Math.min(doneToday / totalToday, 1);
+        const messages = [
+          { min: 0,    max: 0.3, text: 'Начало положено — вперёд! 💪' },
+          { min: 0.3,  max: 0.6, text: 'Хороший темп, продолжай! 🔥' },
+          { min: 0.6,  max: 0.9, text: 'Почти готово — осталось чуть-чуть! ⚡' },
+          { min: 0.9,  max: 1.0, text: 'Финишная прямая! 🏁' },
+          { min: 1.0,  max: 1.1, text: '🎉 Все задания выполнены! Отличный день!' },
+        ];
+        const msg = messages.find(m => pct >= m.min && pct < m.max)?.text || messages[messages.length-1].text;
+        const barColor = pct >= 1 ? GN : pct >= 0.6 ? AM : '#378ADD';
+        return h('div', { style: { marginBottom: 16, padding: '12px 14px', background: 'var(--card,#fff)', borderRadius: 12, border: '0.5px solid rgba(0,0,0,0.06)' } },
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 } },
+            h('div', { style: { fontSize: 12, fontWeight: 600, color: 'var(--fg,#222)' } }, 'Прогресс дня'),
+            h('div', { style: { fontSize: 13, fontWeight: 700, color: barColor } }, `${doneToday} / ${totalToday}`)
+          ),
+          h('div', { style: { height: 8, background: '#eee', borderRadius: 4, overflow: 'hidden', marginBottom: 6 } },
+            h('div', { style: {
+              height: 8, borderRadius: 4,
+              width: `${pct * 100}%`,
+              background: pct >= 1
+                ? `linear-gradient(90deg, ${GN}, #2ECC71)`
+                : `linear-gradient(90deg, ${barColor}, ${barColor}cc)`,
+              transition: 'width 0.6s cubic-bezier(0.4,0,0.2,1)',
+            } })
+          ),
+          h('div', { style: { fontSize: 11, color: '#888' } }, msg)
+        );
+      })(),
 
       // KPI — 2×2 сетка
       h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 } },
