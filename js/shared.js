@@ -943,7 +943,7 @@ ${subOrders.length > 0 ? `
   iframe.onload = () => { iframe.contentWindow.print(); setTimeout(() => document.body.removeChild(iframe), 2000); };
 };
 
-const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false, onEditMaterials, onEditDeps }) => {
+const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false, onEditMaterials, onEditDeps, userRole }) => {
   if (!orderId) return null;
   const ord = data.orders.find(o => o.id === orderId);
   if (!ord) return null;
@@ -1037,7 +1037,7 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
           h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 8 } },
             `📦 Комплектующие (${components.length} поз.)`
           ),
-          h(OrderComponentsBlock, { order: ord, data, onUpdate })
+          h(OrderComponentsBlock, { order: ord, data, onUpdate, userRole })
         ),
 
         // Операции
