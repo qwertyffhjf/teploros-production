@@ -1932,6 +1932,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     orderId: viewOrderId, data,
     onClose: () => setViewOrderId(null),
     canEdit: false,
+    userRole: 'worker',
   }),
   confirmEl
   );
