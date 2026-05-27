@@ -1491,7 +1491,7 @@ const SubOrderSplitStep = memo(({ data, onUpdate, addToast, onClose, parentOrder
 
 // ==================== OrderComponentsBlock ====================
 // Блок комплектующих в карточке заказа
-const OrderComponentsBlock = memo(({ order, data, onUpdate }) => {
+const OrderComponentsBlock = memo(({ order, data, onUpdate, userRole }) => {
   // Защита: components может быть строкой из Firebase
   let components = order.components || [];
   if (typeof components === 'string') {
@@ -1584,7 +1584,7 @@ const OrderComponentsBlock = memo(({ order, data, onUpdate }) => {
     ),
 
     // Кнопки управления
-    onUpdate && h('div', { style: { display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' } },
+    onUpdate && userRole !== 'worker' && h('div', { style: { display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' } },
       !allOk && h('button', {
         onClick: confirmAll,
         style: { fontSize: 12, padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontWeight: 500,
@@ -1629,11 +1629,16 @@ const OrderComponentsBlock = memo(({ order, data, onUpdate }) => {
                   )
             ),
             h('td', { style: { ...S.td, textAlign: 'right' } },
-              onUpdate && (
+              onUpdate && userRole !== 'worker' && (
                 isConfirmed
                   ? h('button', { style: gbtn({ fontSize: 10, padding: '3px 8px' }), onClick: () => unconfirmComponent(comp.id) }, '↩ Отменить')
                   : h('button', { style: abtn({ fontSize: 10, padding: '3px 8px' }), onClick: () => confirmComponent(comp.id) }, '✓ Получено')
-              )
+              ),
+              onUpdate && userRole === 'worker' && h('span', {
+                style: { fontSize: 11, padding: '3px 8px', borderRadius: 6,
+                  color: isConfirmed ? GN2 : '#888',
+                  background: isConfirmed ? GN3 : 'transparent' }
+              }, isConfirmed ? '✓ Получено' : '⏳ Ожидается')
             )
           );
         }))
@@ -2429,7 +2434,7 @@ function App() {
           effectiveRole === 'warehouse' && h(WarehouseScreen, { data, onUpdate: save, addToast, currentUserId: workerId }),
           effectiveRole === 'dashboard' && h(Dashboard, { data, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId })
         ),
-    selectedOrderId && h(OrderCardModal, { orderId: selectedOrderId, data, onUpdate: save, onClose: () => setSelectedOrderId(null), canEdit: true, onEditMaterials: (id) => { setSelectedOrderId(null); } }),
+    selectedOrderId && h(OrderCardModal, { orderId: selectedOrderId, data, onUpdate: save, onClose: () => setSelectedOrderId(null), canEdit: true, userRole: effectiveRole, onEditMaterials: (id) => { setSelectedOrderId(null); } }),
     // 🌍 Глобальная карточка сотрудника — открывается из любого места системы
     selectedWorkerId && (() => {
       const worker = data.workers.find(w => w.id === selectedWorkerId);
