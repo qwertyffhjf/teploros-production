@@ -206,6 +206,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
   const [expandedId, setExpandedId] = useState(null);
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterType, setFilterType] = useState('all');
+  const [filterSeverity, setFilterSeverity] = useState('');
   const [d8Steps, setD8Steps] = useState({});
   const { ask: askConfirm, confirmEl } = useConfirm();
 
