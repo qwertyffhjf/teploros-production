@@ -280,6 +280,7 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
     if (pinMatch(p, settings.hrPin         || 'H_18DBN9T')) return { role: 'hr',          workerId: null, sectionId: null, name: 'HR' };
     if (pinMatch(p, settings.shopMasterPin || 'H_18DCFV9')) return { role: 'shop_master', workerId: null, sectionId: null, name: 'Сменный мастер' };
     if (pinMatch(p, settings.adminPin      || 'H_18DD8GP')) return { role: 'admin',       workerId: null, sectionId: null, name: 'Администратор' };
+    if (pinMatch(p, settings.salesPin      || 'H_18SALES1')) return { role: 'sales',       workerId: null, sectionId: null, name: 'Менеджер' };
     const worker = data.workers.find(w => pinMatch(p, w.pin));
     if (worker) return { role: 'worker', workerId: worker.id, sectionId: worker.sectionId || null, name: worker.name };
     return null;
@@ -382,6 +383,7 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
     ['shop_master', 'Сменный мастер'],
     ['controller',  'Контролёр',    onCheckCount > 0 ? onCheckCount : null],
     ['warehouse',   'Склад'],
+    ['sales',       'Менеджер'],
   ];
   const groupManagement = [
     ['pdo',      'ПДО'],
@@ -2114,6 +2116,183 @@ const AdminScreen = memo(({ data, onUpdate, addToast }) => {
 
 
 // ==================== App ====================
+// ==================== SalesScreen — менеджер по продажам (только просмотр) ====================
+const SalesScreen = memo(({ data, addToast, onOrderClick }) => {
+  const [search, setSearch]       = useState('');
+  const [filterType, setFilterType] = useState('all');
+  const [sortMode, setSortMode]   = useState('urgency');
+
+  const PRIORITY_LABEL = { critical:'Критический', high:'Высокий', medium:'Средний', low:'Низкий' };
+  const STATUS_COLOR   = { shipped: GN2, done: GN2, active: AM2, waiting: '#888' };
+
+  const orders = useMemo(() => {
+    let list = data.orders.filter(o => !o.archived);
+    if (filterType !== 'all') list = list.filter(o => o.productType === filterType);
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      list = list.filter(o =>
+        (o.number||'').toLowerCase().includes(q) ||
+        (o.product||'').toLowerCase().includes(q) ||
+        (o.customer||'').toLowerCase().includes(q)
+      );
+    }
+    if (sortMode === 'urgency') {
+      const pri = { critical:0, high:1, medium:2, low:3 };
+      list = [...list].sort((a,b) => {
+        const da = a.deadline ? new Date(a.deadline) : new Date('2099-01-01');
+        const db = b.deadline ? new Date(b.deadline) : new Date('2099-01-01');
+        return da - db || (pri[a.priority]??2) - (pri[b.priority]??2);
+      });
+    } else if (sortMode === 'deadline') {
+      list = [...list].sort((a,b) => {
+        const da = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+        const db = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+        return da - db;
+      });
+    }
+    return list;
+  }, [data.orders, search, filterType, sortMode]);
+
+  const productTypes = useMemo(() => {
+    const types = [...new Set(data.orders.filter(o=>o.productType).map(o=>o.productType))];
+    return types;
+  }, [data.orders]);
+
+  const getOrderStatus = (order) => {
+    if (order.shipped)  return { label:'Отгружен', color: GN2, bg: GN3 };
+    const ops = data.ops.filter(o => o.orderId === order.id && !o.archived);
+    if (ops.length === 0) return { label:'Ожидает', color:'#888', bg:'#f0ede8' };
+    const done = ops.filter(o => o.status === 'done').length;
+    if (done === ops.length) return { label:'Выполнен', color: GN2, bg: GN3 };
+    const inProgress = ops.some(o => o.status === 'in_progress');
+    if (inProgress) return { label:'В работе', color: AM2, bg: AM3 };
+    return { label:'Ожидает', color:'#888', bg:'#f0ede8' };
+  };
+
+  const getProgress = (order) => {
+    const ops = data.ops.filter(o => o.orderId === order.id && !o.archived);
+    if (!ops.length) return { done: 0, total: 0, pct: 0 };
+    const done = ops.filter(o => o.status === 'done').length;
+    return { done, total: ops.length, pct: done / ops.length };
+  };
+
+  const getDaysLeft = (deadline) => {
+    if (!deadline) return null;
+    return Math.ceil((new Date(deadline) - Date.now()) / 86400000);
+  };
+
+  // Итоги
+  const stats = useMemo(() => ({
+    total:    data.orders.filter(o => !o.archived).length,
+    shipped:  data.orders.filter(o => !o.archived && o.shipped).length,
+    inWork:   data.orders.filter(o => !o.archived && !o.shipped && data.ops.some(op => op.orderId === o.id && op.status === 'in_progress')).length,
+    overdue:  data.orders.filter(o => !o.archived && !o.shipped && o.deadline && new Date(o.deadline) < new Date()).length,
+  }), [data.orders, data.ops]);
+
+  return h('div', { style: { padding: '0 0 40px' } },
+
+    // KPI плитки
+    h('div', { style: { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10, marginBottom:16, padding:'0 0' } },
+      [
+        { label:'Всего заказов',  val: stats.total,   color:'var(--fg,#222)' },
+        { label:'В работе',       val: stats.inWork,   color: AM2 },
+        { label:'Отгружено',      val: stats.shipped,  color: GN2 },
+        { label:'Просрочено',     val: stats.overdue,  color: RD2 },
+      ].map(({ label, val, color }) =>
+        h('div', { key:label, style: { ...S.card, textAlign:'center', padding:'12px 8px' } },
+          h('div', { style: { fontSize:26, fontWeight:600, color } }, val),
+          h('div', { style: { fontSize:11, color:'var(--muted)', marginTop:2 } }, label)
+        )
+      )
+    ),
+
+    // Поиск + фильтры
+    h('div', { style: { ...S.card, marginBottom:12, padding:'10px 14px', display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' } },
+      h('input', { placeholder:'🔍 Поиск по номеру, изделию, заказчику...', value:search,
+        onChange: e => setSearch(e.target.value),
+        style: { ...S.inp, flex:1, minWidth:200, margin:0 } }),
+      h('select', { value:filterType, onChange:e=>setFilterType(e.target.value),
+        style: { ...S.inp, width:'auto', margin:0, cursor:'pointer' } },
+        h('option', { value:'all' }, 'Все типы'),
+        productTypes.map(t => h('option', { key:t, value:t }, t))
+      ),
+      h('div', { style: { display:'flex', borderRadius:8, overflow:'hidden', border:`0.5px solid var(--border)` } },
+        [['urgency','🔥 По сроку'],['deadline','📅 По дате']].map(([m,l]) =>
+          h('button', { key:m, style: sortMode===m ? abtn({fontSize:11,padding:'6px 12px',borderRadius:0,border:'none'}) : gbtn({fontSize:11,padding:'6px 12px',borderRadius:0,border:'none'}),
+            onClick:()=>setSortMode(m) }, l)
+        )
+      )
+    ),
+
+    // Таблица заказов
+    h('div', { style: S.card },
+      orders.length === 0
+        ? h(EmptyState, { icon:'📋', title:'Заказов не найдено', desc:'Попробуйте изменить фильтры' })
+        : h('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:13 } },
+            h('thead', null,
+              h('tr', null,
+                ['Номер','Изделие','Заказчик','Тип','Кол-во','Срок','Прогресс','Статус'].map(col =>
+                  h('th', { key:col, style:{ textAlign:'left', padding:'8px 10px', fontSize:10,
+                    fontWeight:600, letterSpacing:'0.06em', textTransform:'uppercase',
+                    color:'var(--muted)', borderBottom:`0.5px solid var(--border)` } }, col)
+                )
+              )
+            ),
+            h('tbody', null, orders.map(order => {
+              const status  = getOrderStatus(order);
+              const prog    = getProgress(order);
+              const days    = getDaysLeft(order.deadline);
+              const isLate  = days !== null && days < 0;
+              const isUrgent= days !== null && days <= 3 && days >= 0;
+
+              return h('tr', { key:order.id,
+                style:{ borderBottom:`0.5px solid var(--border-soft)`, cursor:'pointer',
+                  background: isLate ? RD3 : 'transparent' },
+                onClick: () => onOrderClick && onOrderClick(order.id),
+                onMouseEnter: e => e.currentTarget.style.background = isLate ? RD3 : 'var(--bg,#f9f9f7)',
+                onMouseLeave: e => e.currentTarget.style.background = isLate ? RD3 : 'transparent',
+              },
+                h('td', { style:{ padding:'10px 10px', fontWeight:500, color: AM2 } }, order.number),
+                h('td', { style:{ padding:'10px 10px', maxWidth:220 } },
+                  h('div', { style:{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, order.product||'—'),
+                  order.specs && h('div', { style:{ fontSize:11, color:'var(--muted)' } }, order.specs)
+                ),
+                h('td', { style:{ padding:'10px 10px', fontSize:12, color:'var(--muted)', maxWidth:160 } },
+                  h('div', { style:{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, order.customer||'—')
+                ),
+                h('td', { style:{ padding:'10px 10px', fontSize:12, color:'var(--muted)' } }, order.productType||'—'),
+                h('td', { style:{ padding:'10px 10px', textAlign:'center' } }, order.qty||1),
+                h('td', { style:{ padding:'10px 10px', whiteSpace:'nowrap' } },
+                  order.deadline
+                    ? h('div', null,
+                        h('div', { style:{ fontSize:12, fontWeight: isLate||isUrgent ? 600 : 400,
+                          color: isLate ? RD2 : isUrgent ? AM2 : 'var(--fg)' } }, order.deadline),
+                        h('div', { style:{ fontSize:11, color: isLate ? RD2 : isUrgent ? AM2 : 'var(--muted)' } },
+                          isLate ? `просрочен ${Math.abs(days)} дн.` : `осталось ${days} дн.`)
+                      )
+                    : h('span', { style:{ color:'var(--muted)', fontSize:12 } }, '—')
+                ),
+                h('td', { style:{ padding:'10px 10px', minWidth:120 } },
+                  prog.total > 0 && h('div', null,
+                    h('div', { style:{ height:5, background:'#eee', borderRadius:3, overflow:'hidden', marginBottom:3 } },
+                      h('div', { style:{ height:'100%', borderRadius:3, width:`${prog.pct*100}%`,
+                        background: prog.pct>=1 ? GN : prog.pct>=0.5 ? AM : '#378ADD' } })
+                    ),
+                    h('div', { style:{ fontSize:11, color:'var(--muted)' } }, `${prog.done}/${prog.total} оп.`)
+                  )
+                ),
+                h('td', { style:{ padding:'10px 10px' } },
+                  h('span', { style:{ fontSize:11, padding:'3px 10px', borderRadius:10,
+                    background: status.bg, color: status.color, fontWeight:500 } }, status.label)
+                )
+              );
+            }))
+          )
+    )
+  );
+});
+
+
 function App() {
   const [data, setData] = useState(EMPTY_DATA);
   const [loading, setLoading] = useState(true);
@@ -2289,6 +2468,7 @@ function App() {
       controller:  { brand: '#1D8A3A', brandInk: '#0a2a14', brandSoft: '#e1f5ee', brandPress: '#166e2e' }, // зелёный — качество
       warehouse:   { brand: '#0077B6', brandInk: '#001f3f', brandSoft: '#e6f4fb', brandPress: '#005f99' }, // морской — логистика
       hr:          { brand: '#C2185B', brandInk: '#3f0020', brandSoft: '#fce4ec', brandPress: '#a31545' }, // малиновый — люди
+      sales:       { brand: '#0077B6', brandInk: '#001f3f', brandSoft: '#e6f4fb', brandPress: '#005f99' }, // морской — продажи
       dashboard:   { brand: '#EF9F27', brandInk: '#412402', brandSoft: '#fdf3e0', brandPress: '#d88a17' },
     };
     const theme = ROLE_THEMES[effectiveRole] || ROLE_THEMES.worker;
@@ -2367,6 +2547,7 @@ function App() {
         effectiveRole === 'hr'          ? 'HR'             :
         effectiveRole === 'shop_master' ? 'Сменный мастер' :
         effectiveRole === 'admin'       ? 'Администратор'  :
+        effectiveRole === 'sales'       ? 'Менеджер'       :
         currentUser.name
       ),
       effectiveRole === 'worker' && h('div', null,
@@ -2444,6 +2625,7 @@ function App() {
           effectiveRole === 'controller'  && h(ControllerScreen, { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }),
           effectiveRole === 'worker' && workerId && h(WorkerScreen, { data, workerId, sectionId, onUpdate: save, initialOpId: null, addToast }),
           effectiveRole === 'warehouse' && h(WarehouseScreen, { data, onUpdate: save, addToast, currentUserId: workerId }),
+          effectiveRole === 'sales'      && h(SalesScreen,     { data, addToast, onOrderClick: setSelectedOrderId }),
           effectiveRole === 'dashboard' && h(Dashboard, { data, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId })
         ),
     selectedOrderId && h(OrderCardModal, { orderId: selectedOrderId, data, onUpdate: save, onClose: () => setSelectedOrderId(null), canEdit: true, userRole: effectiveRole, onEditMaterials: (id) => { setSelectedOrderId(null); } }),
