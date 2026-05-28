@@ -1371,6 +1371,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
   const [hrPin, setHrPin] = useState('');
   const [shopMasterPin, setShopMasterPin] = useState('');
   const [adminPin, setAdminPin] = useState('');
+  const [salesPin, setSalesPin] = useState('');
   const [masterKey, setMasterKey] = useState('');
   const [showMasterKey, setShowMasterKey] = useState(false);
   const [welcomeTitle, setWelcomeTitle] = useState(settings.welcomeTitle || 'teploros');
@@ -1392,6 +1393,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
       ['hrPin', hrPin, 'PIN HR'],
       ['shopMasterPin', shopMasterPin, 'PIN сменного мастера'],
       ['adminPin', adminPin, 'PIN администратора'],
+      ['salesPin', salesPin, 'PIN менеджера продаж'],
     ];
     for (const [key, val, label] of pinFields) {
       if (val.trim()) {
@@ -1492,6 +1494,11 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         h('div', { style: { flex:1, minWidth:150 } },
           h('label', { style: S.lbl }, 'PIN администратора'),
           h('input', { type:'text', inputMode:'numeric', style: { ...S.inp, width:'100%', fontFamily:'monospace', letterSpacing:'0.2em' }, placeholder: 'Новый PIN...', value: adminPin, maxLength: 8, onChange: e => setAdminPin(e.target.value) })
+        ),
+        h('div', { style: { flex:1, minWidth:150 } },
+          h('label', { style: S.lbl }, 'PIN менеджера продаж'),
+          h('div', { style: { fontSize:11, color:'var(--muted)', marginBottom:4 } }, 'Только просмотр заказов'),
+          h('input', { type:'text', inputMode:'numeric', style: { ...S.inp, width:'100%', fontFamily:'monospace', letterSpacing:'0.2em' }, placeholder: 'Новый PIN...', value: salesPin, maxLength: 8, onChange: e => setSalesPin(e.target.value) })
         ),
         h('div', { style: { flex:1, minWidth:150 } },
           h('label', { style: S.lbl }, 'Мастер-ключ (сброс любого PIN)'),
