@@ -1412,7 +1412,18 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
             h('div', { style: { fontSize: 9, color: AM4, textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 8, fontWeight: 700 } }, '▶ В работе сейчас'),
             h('div', { style: { fontSize: 18, fontWeight: 600, color: AM2, marginBottom: 2, lineHeight: 1.3 } }, active.name),
             active.qty && h('div', { style: { fontSize: 13, color: AM4, fontWeight: 500, marginBottom: 4 } }, `📦 Ваша доля: ${active.workerQty?.[workerId] || '—'} из ${active.qty} шт`),
-            h('div', { style: { fontSize: 12, color: AM4, marginBottom: 14, opacity: .8 } }, order?.number || ''),
+            h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom: 14 } },
+              h('div', { style: { fontSize: 12, color: AM4, opacity: .8, flex:1 } }, order?.number || ''),
+              (() => {
+                const drawUrl = active.drawingUrl || order?.drawingUrl;
+                return drawUrl && h('a', {
+                  href: drawUrl, target: '_blank', rel: 'noopener',
+                  style: { display:'inline-flex', alignItems:'center', gap:4, fontSize:11,
+                    color: AM2, textDecoration:'none', padding:'4px 10px',
+                    background: AM3, borderRadius:6, border:`0.5px solid ${AM4}`, flexShrink:0 }
+                }, '📐 Чертёж');
+              })()
+            ),
             h(ElapsedTimer, { startedAt: active.startedAt, style: { fontSize: 36, fontWeight: 600, color: AM2, marginBottom: 14, display: 'block', fontFamily: 'monospace', letterSpacing: '-0.02em' } }),
             idx === 0 && h('div', { style: { display: 'flex', gap: 6, marginBottom: 14 } },
               h('input', { style: { ...S.inp, flex: 1, fontSize: 14 }, placeholder: 'Комментарий к операции...', value: opComment, onChange: e => setOpComment(e.target.value), onKeyDown: e => e.key === 'Enter' && saveComment(active.id) }),
