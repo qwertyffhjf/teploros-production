@@ -546,6 +546,105 @@ const calcPieceworkEarnings = (data, workerId, orderId) => {
 };
 
 
+
+// ==================== useVirtualList — виртуализация длинных списков ====================
+// Рендерит только видимые строки + overscan. Без библиотек.
+// Использование:
+//   const { containerProps, totalHeight, virtualItems } = useVirtualList({
+//     items: filteredWorkers,   // весь массив
+//     itemHeight: 72,           // высота одной строки в px
+//     overscan: 5,              // сколько строк рендерить за пределами видимости
+//     containerRef,             // ref контейнера со скроллом
+//   });
+const useVirtualList = ({ items, itemHeight, overscan = 5, containerRef }) => {
+  const [scrollTop, setScrollTop] = React.useState(0);
+  const [containerHeight, setContainerHeight] = React.useState(600);
+
+  React.useEffect(() => {
+    const el = containerRef?.current;
+    if (!el) return;
+
+    // Начальный размер
+    setContainerHeight(el.clientHeight || 600);
+
+    const onScroll = () => setScrollTop(el.scrollTop);
+    const onResize = () => setContainerHeight(el.clientHeight || 600);
+
+    el.addEventListener('scroll', onScroll, { passive: true });
+    const ro = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(onResize)
+      : null;
+    if (ro) ro.observe(el);
+
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      if (ro) ro.disconnect();
+    };
+  }, [containerRef]);
+
+  const totalHeight = items.length * itemHeight;
+
+  const startIdx = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan);
+  const endIdx   = Math.min(
+    items.length - 1,
+    Math.ceil((scrollTop + containerHeight) / itemHeight) + overscan
+  );
+
+  const virtualItems = [];
+  for (let i = startIdx; i <= endIdx; i++) {
+    virtualItems.push({
+      index:  i,
+      item:   items[i],
+      offset: i * itemHeight,
+    });
+  }
+
+  return { totalHeight, virtualItems, startIdx, endIdx };
+};
+
+// VirtualList — компонент-обёртка для простых случаев
+// h(VirtualList, { items, itemHeight: 72, renderItem: (item, index) => h(...), emptyState: h(...) })
+const VirtualList = memo(({ items, itemHeight = 72, renderItem, emptyState = null, style = {} }) => {
+  const containerRef = React.useRef(null);
+  const { totalHeight, virtualItems } = useVirtualList({ items, itemHeight, containerRef });
+
+  if (items.length === 0) return emptyState;
+
+  // Порог: виртуализировать только если > 40 записей
+  // (меньше — нет смысла, только накладные расходы)
+  if (items.length <= 40) {
+    return h('div', { style },
+      items.map((item, i) => renderItem(item, i))
+    );
+  }
+
+  return h('div', {
+    ref: containerRef,
+    style: {
+      overflowY: 'auto',
+      maxHeight: Math.min(items.length * itemHeight, 600),
+      position: 'relative',
+      ...style,
+    }
+  },
+    // Spacer задаёт полную высоту для scrollbar
+    h('div', { style: { height: totalHeight, position: 'relative' } },
+      virtualItems.map(({ item, index, offset }) =>
+        h('div', {
+          key: item.id || index,
+          style: {
+            position: 'absolute',
+            top: offset,
+            left: 0,
+            right: 0,
+            height: itemHeight,
+          }
+        }, renderItem(item, index))
+      )
+    )
+  );
+});
+
 // ==================== OfflineQueue — очередь операций для IndexedDB ====================
 // Когда нет сети: сохраняем снапшот данных в IndexedDB
 // При восстановлении: отправляем в Firebase и чистим очередь

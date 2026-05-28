@@ -2004,3 +2004,4 @@ const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
         )
   );
 });
+

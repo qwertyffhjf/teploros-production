@@ -222,6 +222,9 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
   // Debounce для матрицы компетенций — быстрые клики не вызывают шквал запросов к Firebase
   const scheduleCompSave = useDebouncedSave(data, onUpdate, 600);
   const archivedCount = useMemo(() => data.workers.filter(w => w.archived).length, [data.workers]);
+  const [hrPage, setHrPage] = useState(1);
+  const HR_PAGE_SIZE = 15;
+  useEffect(() => setHrPage(1), [search, showArchivedWorkers]);
   // Покрытие навыков: Map<stageName, count> — мемоизируем чтобы не пересчитывать в render
   const competenceCoverage = useMemo(() => {
     const map = {};
@@ -535,7 +538,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
             action: search ? null : 'Добавить сотрудника',
             onAction: search ? null : () => setShowAddForm(true),
           }))
-        : filtered.map(w => {
+        : filtered.slice((hrPage-1)*HR_PAGE_SIZE, hrPage*HR_PAGE_SIZE).map(w => {
             const ws = WORKER_STATUS[w.status] || WORKER_STATUS.working;
             // Плашка статуса берёт данные из табеля текущего дня
             const today = new Date();
@@ -650,7 +653,13 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
                 )
               )
             );
-          })
+          }),
+      // Пагинатор HR
+      filtered.length > HR_PAGE_SIZE && h('div', { style: { display:'flex', gap:8, justifyContent:'center', alignItems:'center', padding:'12px 0', marginTop:4 } },
+        h('button', { style: gbtn({ fontSize:12, padding:'6px 14px', opacity: hrPage===1?0.4:1 }), disabled: hrPage===1, onClick:()=>setHrPage(p=>Math.max(1,p-1)) }, '← Пред'),
+        h('span', { style: { fontSize:12, color:'#888' } }, `${hrPage} / ${Math.ceil(filtered.length/HR_PAGE_SIZE)} · ${filtered.length} сотр.`),
+        h('button', { style: gbtn({ fontSize:12, padding:'6px 14px', opacity: hrPage>=Math.ceil(filtered.length/HR_PAGE_SIZE)?0.4:1 }), disabled: hrPage>=Math.ceil(filtered.length/HR_PAGE_SIZE), onClick:()=>setHrPage(p=>p+1) }, 'След →')
+      )
     ) : h('div', null,
       // Светофор — покрытие навыков
       h('div', { style: { ...S.card, marginBottom: 12, padding: 10 } },
@@ -851,7 +860,7 @@ const InstructionsTracker = memo(({ data, onUpdate, addToast }) => {
           h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'#f8f8f5', minWidth:160, textAlign:'left', padding:'6px 10px', boxShadow: '2px 0 4px rgba(0,0,0,0.06)' } }, 'Сотрудник'),
           INSTRUCTION_TYPES.map(t => h('th', { key:t.id, style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:90, fontSize:10 } }, t.label))
         )),
-        h('tbody', null, shown.map(({ worker: w, byType }) =>
+        h('tbody', null, shown.slice(0, 50).map(({ worker: w, byType }) =>
           h('tr', { key:w.id },
             h('td', { style:{ ...S.td, position:'sticky', left:0, background:'#fff', zIndex:1, padding:'6px 10px', fontWeight:500, boxShadow:'2px 0 4px rgba(0,0,0,0.04)' } }, w.name),
             INSTRUCTION_TYPES.map(t => {
