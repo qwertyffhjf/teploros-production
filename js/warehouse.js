@@ -2,7 +2,7 @@
 // Автоматически извлечено из монолита
 
 // ==================== DeliveryBoard ====================
-const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId }) => {
+const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId, readOnly = false }) => {
   const [filterStatus, setFilterStatus] = useState('pending'); // pending | all | confirmed
   const [expandedOrders, setExpandedOrders] = useState(new Set());
   const [showAnalytics, setShowAnalytics] = useState(false);
@@ -252,7 +252,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId }) => {
                     background: isDone ? GN3 : isPartial ? AM3 : '#f0ede8',
                     color: isDone ? GN2 : isPartial ? AM2 : '#888'
                   }}, isDone ? '✓ Поставлено' : isPartial ? '⚡ Частично' : '⏳ Ожидаем'),
-                  !isDone && h('button', { style: abtn({ fontSize: 12 }), onClick: () => { navigator.vibrate?.([30]); openConfirm(del); } }, '📥 Подтвердить'),
+                  !isDone && !readOnly && h('button', { style: abtn({ fontSize: 12 }), onClick: () => { navigator.vibrate?.([30]); openConfirm(del); } }, '📥 Подтвердить'),
                   h('button', { style: gbtn({ fontSize: 12 }), onClick: () => printQR(del) }, '🖨 QR-код')
                 )
               )
@@ -820,7 +820,7 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
 
 
 // ==================== WarehouseScreen (Склад) ====================
-const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
+const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnly = false }) => {
   const [tab, setTab] = useState('stock');
   const [receiveForm, setReceiveForm] = useState({ materialId: '', qty: '', batch: '' });
   // Новый экран приёмки — заявки по заказам из MaterialsDB
@@ -1018,7 +1018,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId }) => {
     ),
 
     // Остатки
-    tab === 'deliveries' && h(DeliveryBoard, { data, onUpdate, addToast, currentUserId }),
+    tab === 'deliveries' && h(DeliveryBoard, { data, onUpdate, addToast, currentUserId, readOnly }),
 
     tab === 'stock' && h('div', null,
       // Сводка
