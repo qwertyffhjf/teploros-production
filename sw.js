@@ -1,5 +1,5 @@
 // teploros Service Worker v3 — устойчивое кеширование
-const APP_CACHE = 'teploros-app-v20260521';
+const APP_CACHE = 'teploros-app-v20260528';
 const CDN_CACHE = 'teploros-cdn-v1';
 
 const ASSETS = [
