@@ -2034,7 +2034,7 @@ const DirectorScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 const HRScreen = memo(({ data, onUpdate, addToast }) => {
   const [tab, setTab] = useState('workers');
   const TABS = [
-    ['workers','Сотрудники'],['time','Табель'],
+    ['workers','Сотрудники'],['tools','🔧 Инструмент'],['time','Табель'],
     ['instructions','Инструктажи ОТ'],['vacations','Отпуска'],
     ['kpi','KPI / Премии'],['payroll','💰 Зарплата'],['reports','Отчёты']
   ];
@@ -2069,6 +2069,7 @@ const HRScreen = memo(({ data, onUpdate, addToast }) => {
     ),
     h(TabBar, { tabs: TABS, tab, setTab }),
     tab === 'workers'      && h(MasterWorkers,         { data, onUpdate, addToast }),
+    tab === 'tools'        && h(ToolIssueManager,      { data, onUpdate, addToast }),
     tab === 'time'         && h(MasterTimeTracking,    { data, onUpdate, addToast, onWorkerClick: (wid) => setTab('workers') }),
     tab === 'instructions' && h(InstructionsTracker,   { data, onUpdate, addToast }),
     tab === 'vacations'    && h(VacationPlanner,       { data, onUpdate, addToast }),
