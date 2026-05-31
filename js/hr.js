@@ -1337,7 +1337,8 @@ const ToolIssueManager = memo(({ data, onUpdate, addToast }) => {
       status:     'active',
     };
 
-    const d = { ...data, toolIssues: [...(data.toolIssues || []), entry] };
+    const existing = Array.isArray(data.toolIssues) ? data.toolIssues : [];
+    const d = { ...data, toolIssues: [...existing, entry] };
     await DB.save(d); onUpdate(d);
     addToast(`✓ Инструмент выдан: ${entry.toolName}`, 'success');
     setForm({ workerId:'', toolName:'', invNumber:'', cost:'', category:'', condition:'good', note:'' });
@@ -1348,7 +1349,7 @@ const ToolIssueManager = memo(({ data, onUpdate, addToast }) => {
   const returnTool = async (id) => {
     const d = {
       ...data,
-      toolIssues: (data.toolIssues || []).map(t =>
+      toolIssues: (Array.isArray(data.toolIssues) ? data.toolIssues : []).map(t =>
         t.id === id
           ? { ...t, status:'returned', returnedAt: Date.now(), returnedNote: returnNote, returnCondition }
           : t
