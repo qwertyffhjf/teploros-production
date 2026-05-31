@@ -2551,17 +2551,7 @@ function App() {
         effectiveRole === 'sales'       ? 'Менеджер'       :
         currentUser.name
       ),
-      effectiveRole === 'worker' && h('div', null,
-        showWarehouse && h('div', { style: { position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:100, overflowY:'auto' },
-          onClick: e => e.target === e.currentTarget && setShowWarehouse(false) },
-          h('div', { style: { maxWidth:960, margin:'20px auto', padding:'0 12px' } },
-            h(WarehouseScreen, { data, onUpdate: null, addToast, currentUserId: workerId, readOnly: true })
-          )
-        ),
-        h('button', { style: gbtn({ fontSize:11 }), onClick: () => setShowWarehouse(v => !v) },
-          showWarehouse ? '📦 Склад (скрыть)' : '📦 Склад'
-        )
-      ),
+
       effectiveRole !== 'dashboard' && (() => {
         const chatLastRead = Number(localStorage.getItem(`chat_lastRead_${currentUser.id || 'anon'}`)) || 0;
         const unread = (data.messages || []).filter(m => m.timestamp > chatLastRead && m.senderId !== (currentUser.id || 'system')).length;
