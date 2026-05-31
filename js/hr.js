@@ -1289,6 +1289,242 @@ const VacationTimeline = memo(({ data }) => {
 });
 
 
+
+// ==================== ToolIssueManager — управление инструментом (для мастера/HR) ====================
+const ToolIssueManager = memo(({ data, onUpdate, addToast }) => {
+  const [form, setForm] = useState({
+    workerId:'', toolName:'', invNumber:'', cost:'', category:'', condition:'good', note:''
+  });
+  const [showForm, setShowForm] = useState(false);
+  const [returnModal, setReturnModal] = useState(null); // id записи для возврата
+  const [returnNote, setReturnNote] = useState('');
+  const [returnCondition, setReturnCondition] = useState('good');
+  const [filterWorker, setFilterWorker] = useState('');
+  const [filterStatus, setFilterStatus] = useState('active');
+  const [confirmPin, setConfirmPin] = useState('');
+  const [pinError, setPinError] = useState('');
+
+  const CONDITION_LABEL = { new:'новое', good:'хорошее', worn:'изношенное' };
+  const CATEGORY_OPTIONS = ['Ручной инструмент','Электроинструмент','Измерительный','СИЗ','Оснастка','Прочее'];
+  const fmt = n => Number(n).toLocaleString('ru-RU');
+
+  const issues = useMemo(() => {
+    let list = data.toolIssues || [];
+    if (filterWorker) list = list.filter(t => t.workerId === filterWorker);
+    if (filterStatus !== 'all') list = list.filter(t => t.status === filterStatus);
+    return list.sort((a,b) => (b.issuedAt||0) - (a.issuedAt||0));
+  }, [data.toolIssues, filterWorker, filterStatus]);
+
+  const activeIssues = (data.toolIssues || []).filter(t => t.status === 'active');
+  const totalBalance = activeIssues.reduce((s,t) => s + (t.cost||0), 0);
+
+  // Выдать инструмент
+  const issueToolToWorker = async () => {
+    if (!form.workerId) { addToast('Выберите сотрудника', 'error'); return; }
+    if (!form.toolName.trim()) { addToast('Введите наименование', 'error'); return; }
+
+    const entry = {
+      id: uid(),
+      workerId:   form.workerId,
+      toolName:   form.toolName.trim(),
+      invNumber:  form.invNumber.trim(),
+      cost:       Math.max(0, Number(form.cost) || 0),
+      category:   form.category,
+      condition:  form.condition,
+      note:       form.note.trim(),
+      issuedAt:   Date.now(),
+      issuedBy:   null, // будет задан при необходимости
+      status:     'active',
+    };
+
+    const d = { ...data, toolIssues: [...(data.toolIssues || []), entry] };
+    await DB.save(d); onUpdate(d);
+    addToast(`✓ Инструмент выдан: ${entry.toolName}`, 'success');
+    setForm({ workerId:'', toolName:'', invNumber:'', cost:'', category:'', condition:'good', note:'' });
+    setShowForm(false);
+  };
+
+  // Принять возврат
+  const returnTool = async (id) => {
+    const d = {
+      ...data,
+      toolIssues: (data.toolIssues || []).map(t =>
+        t.id === id
+          ? { ...t, status:'returned', returnedAt: Date.now(), returnedNote: returnNote, returnCondition }
+          : t
+      )
+    };
+    await DB.save(d); onUpdate(d);
+    addToast('✓ Инструмент принят', 'success');
+    setReturnModal(null); setReturnNote(''); setReturnCondition('good');
+  };
+
+  const worker = returnModal ? data.workers.find(w => w.id === (data.toolIssues||[]).find(t=>t.id===returnModal)?.workerId) : null;
+  const returnEntry = returnModal ? (data.toolIssues||[]).find(t=>t.id===returnModal) : null;
+
+  return h('div', { style: { marginBottom: 16 } },
+
+    // Заголовок + метрики
+    h('div', { style: { ...S.card, marginBottom: 12 } },
+      h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom:12 } },
+        h('div', { style: { ...S.sec, marginBottom:0, flex:1 } }, '🔧 Учёт инструмента'),
+        h('button', { style: abtn({ fontSize:12 }), onClick: () => setShowForm(v=>!v) },
+          showForm ? '✕ Отмена' : '+ Выдать инструмент'
+        )
+      ),
+      h('div', { style: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8 } },
+        [
+          { label:'Выдано единиц', val: activeIssues.length, color: AM2 },
+          { label:'На балансах', val: fmt(totalBalance)+' ₽', color: AM2 },
+          { label:'Сотрудников', val: new Set(activeIssues.map(t=>t.workerId)).size, color: 'var(--fg)' },
+        ].map(({label,val,color}) =>
+          h('div', { key:label, style: { background:'var(--bg,#f9f9f7)', borderRadius:8, padding:'10px 12px', textAlign:'center' } },
+            h('div', { style: { fontSize:18, fontWeight:600, color } }, val),
+            h('div', { style: { fontSize:11, color:'var(--muted)', marginTop:2 } }, label)
+          )
+        )
+      )
+    ),
+
+    // Форма выдачи
+    showForm && h('div', { style: { ...S.card, marginBottom:12, border:`0.5px solid ${AM4}` } },
+      h('div', { style: { ...S.sec, marginBottom:12 } }, 'Выдать инструмент'),
+      h('div', { style: { display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 } },
+        h('div', null,
+          h('label', { style: S.lbl }, 'Сотрудник *'),
+          h('select', { style: { ...S.inp, width:'100%' }, value: form.workerId, onChange: e => setForm(p=>({...p,workerId:e.target.value})) },
+            h('option', { value:'' }, '— выберите —'),
+            data.workers.filter(w=>!w.archived).sort((a,b)=>a.name.localeCompare(b.name)).map(w =>
+              h('option', { key:w.id, value:w.id }, w.name)
+            )
+          )
+        ),
+        h('div', null,
+          h('label', { style: S.lbl }, 'Наименование *'),
+          h('input', { type:'text', style: { ...S.inp, width:'100%' }, placeholder:'УШМ Bosch GWS 750', value:form.toolName, onChange:e=>setForm(p=>({...p,toolName:e.target.value})) })
+        ),
+        h('div', null,
+          h('label', { style: S.lbl }, 'Инвентарный номер'),
+          h('input', { type:'text', style: { ...S.inp, width:'100%' }, placeholder:'00142', value:form.invNumber, onChange:e=>setForm(p=>({...p,invNumber:e.target.value})) })
+        ),
+        h('div', null,
+          h('label', { style: S.lbl }, 'Стоимость, ₽'),
+          h('input', { type:'number', style: { ...S.inp, width:'100%' }, placeholder:'4800', min:'0', value:form.cost, onChange:e=>setForm(p=>({...p,cost:e.target.value})) })
+        ),
+        h('div', null,
+          h('label', { style: S.lbl }, 'Категория'),
+          h('select', { style: { ...S.inp, width:'100%' }, value:form.category, onChange:e=>setForm(p=>({...p,category:e.target.value})) },
+            h('option', { value:'' }, '— выберите —'),
+            CATEGORY_OPTIONS.map(c => h('option', { key:c, value:c }, c))
+          )
+        ),
+        h('div', null,
+          h('label', { style: S.lbl }, 'Состояние при выдаче'),
+          h('select', { style: { ...S.inp, width:'100%' }, value:form.condition, onChange:e=>setForm(p=>({...p,condition:e.target.value})) },
+            Object.entries(CONDITION_LABEL).map(([v,l]) => h('option', { key:v, value:v }, l))
+          )
+        )
+      ),
+      h('div', { style: { marginBottom:10 } },
+        h('label', { style: S.lbl }, 'Примечание'),
+        h('input', { type:'text', style: { ...S.inp, width:'100%' }, placeholder:'Доп. информация...', value:form.note, onChange:e=>setForm(p=>({...p,note:e.target.value})) })
+      ),
+      h('button', { style: abtn({ fontSize:13 }), onClick: issueToolToWorker }, '✓ Выдать и записать')
+    ),
+
+    // Фильтры
+    h('div', { style: { display:'flex', gap:8, marginBottom:10, flexWrap:'wrap' } },
+      h('select', { style: { ...S.inp, flex:1, minWidth:160 }, value:filterWorker, onChange:e=>setFilterWorker(e.target.value) },
+        h('option', { value:'' }, 'Все сотрудники'),
+        data.workers.filter(w=>!w.archived).sort((a,b)=>a.name.localeCompare(b.name)).map(w =>
+          h('option', { key:w.id, value:w.id }, w.name)
+        )
+      ),
+      h('select', { style: { ...S.inp, flex:1 }, value:filterStatus, onChange:e=>setFilterStatus(e.target.value) },
+        h('option', { value:'active' }, '🔧 На руках'),
+        h('option', { value:'returned' }, '✓ Возвращено'),
+        h('option', { value:'all' }, 'Все записи')
+      )
+    ),
+
+    // Таблица
+    h('div', { style: S.card },
+      issues.length === 0
+        ? h(EmptyState, { icon:'🔧', title:'Записей нет', desc:'Выдайте инструмент через кнопку выше' })
+        : h('table', { style: { width:'100%', borderCollapse:'collapse', fontSize:13 } },
+            h('thead', null,
+              h('tr', null,
+                ['Сотрудник','Инструмент','Инв. №','Стоимость','Выдан','Состояние','Статус',''].map(col =>
+                  h('th', { key:col, style: { textAlign:'left', padding:'7px 10px', fontSize:10, fontWeight:600,
+                    letterSpacing:'0.06em', textTransform:'uppercase', color:'var(--muted)',
+                    borderBottom:`0.5px solid var(--border)` } }, col)
+                )
+              )
+            ),
+            h('tbody', null, issues.map(t => {
+              const w = data.workers.find(x=>x.id===t.workerId);
+              return h('tr', { key:t.id, style: { borderBottom:'0.5px solid var(--border-soft)' } },
+                h('td', { style:{ padding:'8px 10px', fontWeight:500 } }, w?.name || '—'),
+                h('td', { style:{ padding:'8px 10px' } },
+                  h('div', null, t.toolName),
+                  t.category && h('div', { style:{fontSize:11,color:'var(--muted)'} }, t.category)
+                ),
+                h('td', { style:{ padding:'8px 10px', color:'var(--muted)', fontSize:12 } }, t.invNumber||'—'),
+                h('td', { style:{ padding:'8px 10px', fontWeight:500, color: AM2 } }, t.cost ? `${fmt(t.cost)} ₽` : '—'),
+                h('td', { style:{ padding:'8px 10px', fontSize:12, color:'var(--muted)' } },
+                  new Date(t.issuedAt).toLocaleDateString('ru-RU', {day:'2-digit',month:'2-digit',year:'numeric'})
+                ),
+                h('td', { style:{ padding:'8px 10px', fontSize:12 } }, CONDITION_LABEL[t.condition]||t.condition||'—'),
+                h('td', { style:{ padding:'8px 10px' } },
+                  h('span', { style: { fontSize:11, padding:'3px 9px', borderRadius:10, fontWeight:500,
+                    background: t.status==='active' ? AM3 : t.status==='returned' ? GN3 : RD3,
+                    color: t.status==='active' ? AM2 : t.status==='returned' ? GN2 : RD2 } },
+                    t.status==='active' ? 'на руках' : t.status==='returned' ? 'возвращён' : 'списан'
+                  )
+                ),
+                h('td', { style:{ padding:'8px 10px' } },
+                  t.status === 'active' && h('button', { style: gbtn({ fontSize:11, padding:'4px 10px' }),
+                    onClick: () => { setReturnModal(t.id); setReturnNote(''); setReturnCondition('good'); }
+                  }, '↩ Принять')
+                )
+              );
+            }))
+          )
+    ),
+
+    // Модал возврата
+    returnModal && h('div', { style:{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:200,
+      display:'flex', alignItems:'center', justifyContent:'center', padding:16 } },
+      h('div', { style:{ background:'var(--card,#fff)', borderRadius:12, padding:20, width:'100%', maxWidth:400,
+        border:'0.5px solid var(--border)' } },
+        h('div', { style:{ fontWeight:600, fontSize:15, marginBottom:12 } }, 'Приём инструмента'),
+        returnEntry && h('div', { style:{ padding:'8px 12px', background: AM3, borderRadius:8, marginBottom:12, fontSize:13 } },
+          h('div', { style:{ fontWeight:500 } }, returnEntry.toolName),
+          h('div', { style:{ fontSize:11, color:'var(--muted)', marginTop:2 } },
+            `Сотрудник: ${worker?.name || '—'} · инв. №${returnEntry.invNumber||'—'}`
+          )
+        ),
+        h('div', { style:{ marginBottom:10 } },
+          h('label', { style: S.lbl }, 'Состояние при возврате'),
+          h('select', { style:{ ...S.inp, width:'100%' }, value:returnCondition, onChange:e=>setReturnCondition(e.target.value) },
+            Object.entries({ new:'новое', good:'хорошее', worn:'изношенное', damaged:'повреждено' }).map(([v,l]) =>
+              h('option', { key:v, value:v }, l)
+            )
+          )
+        ),
+        h('div', { style:{ marginBottom:16 } },
+          h('label', { style: S.lbl }, 'Примечание при возврате'),
+          h('input', { type:'text', style:{ ...S.inp, width:'100%' }, placeholder:'Состояние, комментарий...', value:returnNote, onChange:e=>setReturnNote(e.target.value) })
+        ),
+        h('div', { style:{ display:'flex', gap:8 } },
+          h('button', { style: abtn({ flex:1 }), onClick: () => returnTool(returnModal) }, '✓ Подтвердить приём'),
+          h('button', { style: gbtn({ flex:1 }), onClick: () => setReturnModal(null) }, 'Отмена')
+        )
+      )
+    )
+  );
+});
+
 // ==================== PayrollExport ====================
 const PayrollExport = memo(({ data }) => {
   const today = new Date();
