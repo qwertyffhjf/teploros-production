@@ -435,6 +435,9 @@ const EMPTY_DATA = {
   instructions: [],   // инструктажи ОТ: [{id, workerId, type, date, nextDate, conductedBy, note}]
   vacations: [],      // плановые отпуска: [{id, workerId, startDate, endDate, approved, note}]
   opNorms: {},        // нормы операций: {opName: {planned: N, samples: N, totalMs: N}}
+  toolIssues: [],     // выдача инструмента: [{id, toolName, invNumber, cost, category,
+                        //   workerId, issuedAt, issuedBy, issuedNote, condition:'new'|'good'|'worn',
+                        //   returnedAt, returnedBy, returnedNote, returnCondition, status:'active'|'returned'|'written_off'}]
   pieceworkRates: [], // сдельные расценки: [{id, type:'v2d'|'v3d', powerMin, powerMax, heatExchanger, coverFront, coverBack}]
   auxStats: {},       // агрегация вспомогательных работ: {"YYYY-MM": {total, totalMs, byCategory:{cat:{count,ms}}, byWorker:{wid:{count,ms}}}}
   messages: [], reclamations: [], duels: [], materialReservations: [], defects: [],
