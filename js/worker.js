@@ -374,6 +374,88 @@ const WorkerOutputChart = memo(({ workerId, data }) => {
   );
 });
 
+
+// ==================== WorkerToolsBlock — Мой инструмент ====================
+const WorkerToolsBlock = memo(({ workerId, data, onUpdate, addToast }) => {
+  const [expanded, setExpanded] = useState(true);
+
+  const myTools = useMemo(() =>
+    (data.toolIssues || []).filter(t => t.workerId === workerId),
+  [data.toolIssues, workerId]);
+
+  const active  = myTools.filter(t => t.status === 'active');
+  const history = myTools.filter(t => t.status !== 'active');
+  const totalCost = active.reduce((s, t) => s + (t.cost || 0), 0);
+  const fmt = n => n.toLocaleString('ru-RU');
+
+  const CONDITION_LABEL = { new:'новое', good:'хорошее', worn:'изношенное' };
+
+  if (myTools.length === 0) return null;
+
+  return h('div', { style: { ...S.card, marginBottom: 16 } },
+    h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom: expanded ? 12 : 0, cursor:'pointer' }, onClick: () => setExpanded(v=>!v) },
+      h('span', { style: { fontSize:18 } }, '🔧'),
+      h('div', { style: { flex:1 } },
+        h('div', { style: { fontWeight:600, fontSize:14 } }, 'Мой инструмент'),
+        h('div', { style: { fontSize:11, color:'var(--muted)' } },
+          active.length > 0
+            ? `${active.length} позиций · на балансе ${fmt(totalCost)} ₽`
+            : 'Нет активных выдач'
+        )
+      ),
+      h('span', { style: { fontSize:11, color:'var(--muted)' } }, expanded ? '▾' : '▸')
+    ),
+    expanded && h('div', null,
+      // Активный инструмент
+      active.length > 0 && h('div', { style: { display:'flex', flexDirection:'column', gap:6, marginBottom:8 } },
+        active.map(t => {
+          const issuer = data.workers.find(w => w.id === t.issuedBy);
+          return h('div', { key:t.id, style: { padding:'9px 12px', background: AM3, border:`0.5px solid ${AM4}`, borderRadius:8 } },
+            h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom:4 } },
+              h('div', { style: { flex:1, fontWeight:500, fontSize:13 } }, t.toolName),
+              h('span', { style: { fontSize:11, color: AM2, fontWeight:500 } }, `${fmt(t.cost || 0)} ₽`)
+            ),
+            h('div', { style: { display:'flex', gap:12, fontSize:11, color:'var(--muted)', flexWrap:'wrap' } },
+              t.invNumber && h('span', null, `инв. №${t.invNumber}`),
+              h('span', null, `выдан ${new Date(t.issuedAt).toLocaleDateString('ru-RU', {day:'2-digit',month:'2-digit',year:'numeric'})}`),
+              t.condition && h('span', null, `состояние: ${CONDITION_LABEL[t.condition] || t.condition}`),
+              issuer && h('span', null, `кем: ${issuer.name.split(' ').slice(0,2).join(' ')}`)
+            )
+          );
+        })
+      ),
+      // История
+      history.length > 0 && h('details', { style: { marginTop:4 } },
+        h('summary', { style: { fontSize:12, color:'var(--muted)', cursor:'pointer', userSelect:'none', padding:'4px 0' } },
+          `История (${history.length})`
+        ),
+        h('div', { style: { display:'flex', flexDirection:'column', gap:4, marginTop:6 } },
+          history.map(t =>
+            h('div', { key:t.id, style: { padding:'7px 10px', background:'var(--bg,#f9f9f7)', border:'0.5px solid var(--border)', borderRadius:6, opacity:.7 } },
+              h('div', { style: { display:'flex', alignItems:'center', gap:8 } },
+                h('div', { style: { flex:1, fontSize:12 } }, t.toolName),
+                h('span', { style: { fontSize:10, padding:'2px 7px', borderRadius:8,
+                  background: t.status==='returned' ? GN3 : RD3,
+                  color: t.status==='returned' ? GN2 : RD2 } },
+                  t.status==='returned' ? 'возвращён' : 'списан'
+                )
+              ),
+              t.returnedAt && h('div', { style: { fontSize:11, color:'var(--muted)', marginTop:2 } },
+                `возврат ${new Date(t.returnedAt).toLocaleDateString('ru-RU', {day:'2-digit',month:'2-digit',year:'numeric'})}`
+              )
+            )
+          )
+        )
+      ),
+      // Итог
+      active.length > 0 && h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'center', paddingTop:10, borderTop:`0.5px solid var(--border)`, marginTop:8 } },
+        h('span', { style: { fontSize:12, color:'var(--muted)' } }, 'Итого на балансе:'),
+        h('span', { style: { fontSize:15, fontWeight:600, color: AM2 } }, `${fmt(totalCost)} ₽`)
+      )
+    )
+  );
+});
+
 // ==================== WorkerOpsHistoryBlock ====================
 const WorkerOpsHistoryBlock = memo(({ workerId, data }) => {
   const today = new Date();
@@ -1819,6 +1901,9 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
 
       // Зарплата
       h(WorkerSalaryBlock, { workerId, data }),
+
+      // Мой инструмент
+      h(WorkerToolsBlock, { workerId, data }),
 
       // Часы — личный табель
       h(WorkerHoursBlock, { workerId, data }),
