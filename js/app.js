@@ -2034,7 +2034,7 @@ const DirectorScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 const HRScreen = memo(({ data, onUpdate, addToast }) => {
   const [tab, setTab] = useState('workers');
   const TABS = [
-    ['workers','Сотрудники'],['tools','🔧 Инструмент'],['time','Табель'],
+    ['workers','Сотрудники'],['time','Табель'],
     ['instructions','Инструктажи ОТ'],['vacations','Отпуска'],
     ['kpi','KPI / Премии'],['payroll','💰 Зарплата'],['reports','Отчёты']
   ];
@@ -2069,7 +2069,6 @@ const HRScreen = memo(({ data, onUpdate, addToast }) => {
     ),
     h(TabBar, { tabs: TABS, tab, setTab }),
     tab === 'workers'      && h(MasterWorkers,         { data, onUpdate, addToast }),
-    tab === 'tools'        && h(ToolIssueManager,      { data, onUpdate, addToast }),
     tab === 'time'         && h(MasterTimeTracking,    { data, onUpdate, addToast, onWorkerClick: (wid) => setTab('workers') }),
     tab === 'instructions' && h(InstructionsTracker,   { data, onUpdate, addToast }),
     tab === 'vacations'    && h(VacationPlanner,       { data, onUpdate, addToast }),
@@ -2083,7 +2082,7 @@ const HRScreen = memo(({ data, onUpdate, addToast }) => {
 const AdminScreen = memo(({ data, onUpdate, addToast }) => {
   const [tab, setTab] = useState('stages');
   const TABS = [
-    ['stages','Этапы'],['piecework','🔧 Расценки'],['defectReasons','Причины брака'],['downtimes','Простои'],
+    ['stages','Этапы'],['piecework','🔧 Расценки'],['tools','🛠 Инструмент'],['defectReasons','Причины брака'],['downtimes','Простои'],
     ['equipment','Оборудование'],['materials','Материалы'],['bom','Спецификации'],
     ['sections','Участки'],['workers','Сотрудники'],['time','Табель'],['admin','Настройки']
   ];
@@ -2102,6 +2101,7 @@ const AdminScreen = memo(({ data, onUpdate, addToast }) => {
         (() => { try { return h(PieceworkRatesEditor, { data, onUpdate, addToast }); } catch(e) { return h('div', { style: { color: 'red', fontSize: 12, marginTop: 8 } }, 'Ошибка: ' + e.message); } })()
       )
     ),
+    tab === 'tools'         && h(ToolIssueManager,      { data, onUpdate, addToast }),
     tab === 'defectReasons' && h(MasterDefectReasons,    { data, onUpdate, addToast }),
     tab === 'downtimes'     && h(MasterDowntimes,        { data, onUpdate, addToast }),
     tab === 'equipment'     && h(MasterEquipment,        { data, onUpdate, addToast }),
