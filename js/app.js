@@ -2036,7 +2036,7 @@ const HRScreen = memo(({ data, onUpdate, addToast }) => {
   const TABS = [
     ['workers','Сотрудники'],['time','Табель'],
     ['instructions','Инструктажи ОТ'],['vacations','Отпуска'],
-    ['kpi','KPI / Премии'],['payroll','💰 Зарплата'],['reports','Отчёты']
+    ['kpi','KPI / Премии'],['rates','🔧 Расценки'],['payroll','💰 Зарплата'],['reports','Отчёты']
   ];
 
   const active = useMemo(() => data.workers.filter(w => !w.archived), [data.workers]);
@@ -2073,6 +2073,7 @@ const HRScreen = memo(({ data, onUpdate, addToast }) => {
     tab === 'instructions' && h(InstructionsTracker,   { data, onUpdate, addToast }),
     tab === 'vacations'    && h(VacationPlanner,       { data, onUpdate, addToast }),
     tab === 'kpi'          && h(KPIReport,             { data }),
+    tab === 'rates'        && h(PieceworkRatesEditor,  { data, onUpdate, addToast }),
     tab === 'payroll'      && h(PayrollExport,          { data }),
     tab === 'reports'      && h(ReportsBuilder,        { data })
   );
@@ -2082,7 +2083,7 @@ const HRScreen = memo(({ data, onUpdate, addToast }) => {
 const AdminScreen = memo(({ data, onUpdate, addToast }) => {
   const [tab, setTab] = useState('stages');
   const TABS = [
-    ['stages','Этапы'],['piecework','🔧 Расценки'],['tools','🛠 Инструмент'],['defectReasons','Причины брака'],['downtimes','Простои'],
+    ['stages','Этапы'],['tools','🛠 Инструмент'],['defectReasons','Причины брака'],['downtimes','Простои'],
     ['equipment','Оборудование'],['materials','Материалы'],['bom','Спецификации'],
     ['sections','Участки'],['workers','Сотрудники'],['time','Табель'],['admin','Настройки']
   ];
@@ -2094,13 +2095,6 @@ const AdminScreen = memo(({ data, onUpdate, addToast }) => {
     ),
     h(TabBar, { tabs: TABS, tab, setTab }),
     tab === 'stages'        && h(MasterProductionStages, { data, onUpdate, addToast }),
-    tab === 'piecework'     && h('div', null,
-      h('div', { style: { ...S.card, background: AM3, border: `1px solid ${AM}`, padding: 20, marginBottom: 12 } },
-        h('div', { style: { fontSize: 16, fontWeight: 600, color: AM2, marginBottom: 8 } }, '🔧 Сдельные расценки'),
-        h('div', { style: { fontSize: 13, color: AM2 } }, 'Загрузка компонента...'),
-        (() => { try { return h(PieceworkRatesEditor, { data, onUpdate, addToast }); } catch(e) { return h('div', { style: { color: 'red', fontSize: 12, marginTop: 8 } }, 'Ошибка: ' + e.message); } })()
-      )
-    ),
     tab === 'tools'         && h(ToolIssueManager,      { data, onUpdate, addToast }),
     tab === 'defectReasons' && h(MasterDefectReasons,    { data, onUpdate, addToast }),
     tab === 'downtimes'     && h(MasterDowntimes,        { data, onUpdate, addToast }),
