@@ -2322,10 +2322,10 @@ function App() {
         return order;
       })};
       if (archiveCount > 0) { await DB.save(updated); console.log(`Автоархивация: ${archiveCount} заказов`); }
-      setData(archiveCount > 0 ? updated : d);
+      const _finalD = archiveCount > 0 ? updated : d; setData(_finalD); window.__MES = _finalD;
       setLoading(false); setSynced(true);
     });
-    const unsub = DB.onSnapshot(newData => { if (!savingRef.current && !DB._saving) setData(newData); });
+    const unsub = DB.onSnapshot(newData => { if (!savingRef.current && !DB._saving) { setData(newData); window.__MES = newData; } });
     const params = new URLSearchParams(window.location.search);
     const opId = params.get('opId');
     if (opId) setInitialOpId(opId);
