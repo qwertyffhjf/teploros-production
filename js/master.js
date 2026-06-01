@@ -982,10 +982,10 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       const updatedOps = data.ops.map(o => o.orderId === editingId && o.status === 'pending' && newDrawingUrl ? { ...o, drawingUrl: newDrawingUrl } : o);
       const d = { ...data, orders: updatedOrders, ops: updatedOps };
       onUpdate(d); DB.save(d).catch(() => onUpdate(data));
-      setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '' }); setFieldErrors({});
+      setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '', boilerType: '', powerKw: '' }); setFieldErrors({});
       addToast(`Заказ ${form.number} обновлён`, 'success');
     } else {
-      const newOrder = { id: uid(), ...form, qty: Number(form.qty), createdAt: now(), archived: false };
+      const newOrder = { id: uid(), ...form, qty: Number(form.qty), powerKw: Number(form.powerKw) || 0, boilerType: form.boilerType || 'v2d', createdAt: now(), archived: false };
       const newOps = createDefaultOps(newOrder.id, form.productType, Number(form.qty), form.drawingUrl.trim() || undefined);
       // BOM: предупреждение о дефиците (не блокирует создание)
       if (form.bomId) {
@@ -1006,7 +1006,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
             const newDeliveries = createMaterialDeliveries(newOrder.id, form.productType, Number(form.qty), form.bomId);
             const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps], materialReservations: [...(data.materialReservations || []), ...reservations], materialDeliveries: [...(data.materialDeliveries || []), ...newDeliveries] };
             onUpdate(d); DB.save(d).catch(() => onUpdate(data));
-            setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '' }); setFieldErrors({});
+            setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '', boilerType: '', powerKw: '' }); setFieldErrors({});
             addToast(`Заказ ${form.number} создан — зарезервированы материалы${newDeliveries.length > 0 ? `, ожидается ${newDeliveries.length} поставок` : ''}`, 'success');
             if (newOps.length > 0) setPrintOrderId(newOrder.id);
             return;
@@ -1016,7 +1016,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       const newDeliveries = createMaterialDeliveries(newOrder.id, form.productType, Number(form.qty), form.bomId);
       const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps], materialDeliveries: [...(data.materialDeliveries || []), ...newDeliveries] };
       onUpdate(d); DB.save(d).catch(() => onUpdate(data));
-      setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '' }); setFieldErrors({});
+      setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '', boilerType: '', powerKw: '' }); setFieldErrors({});
       addToast(newDeliveries.length > 0 ? `Заказ ${form.number} создан — ожидается ${newDeliveries.length} поставок` : `Заказ ${form.number} создан`, 'success');
       if (newOps.length > 0) setPrintOrderId(newOrder.id);
     }
@@ -1062,10 +1062,10 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     addToast('Заказ восстановлен', 'success');
   }, [data, onUpdate, addToast]);
 
-  const edit = useCallback(ord => { setForm({ number: ord.number, product: ord.product, qty: String(ord.qty), deadline: ord.deadline || '', priority: ord.priority || 'medium', bomId: '', productType: ord.productType || '', drawingUrl: ord.drawingUrl || '', serialNumber: ord.serialNumber || '' }); setEditingId(ord.id); }, []);
+  const edit = useCallback(ord => { setForm({ number: ord.number, product: ord.product, qty: String(ord.qty), deadline: ord.deadline || '', priority: ord.priority || 'medium', bomId: '', productType: ord.productType || '', drawingUrl: ord.drawingUrl || '', serialNumber: ord.serialNumber || '', boilerType: ord.boilerType || '', powerKw: ord.powerKw ? String(ord.powerKw) : '' }); setEditingId(ord.id); }, []);
 
   // Защита от потери данных формы заказа
-  const EMPTY_ORDER_FORM = { number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '' };
+  const EMPTY_ORDER_FORM = { number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '', boilerType: '', powerKw: '' };
   const isDirtyOrder = useIsDirty(form, EMPTY_ORDER_FORM) && (form.number !== '' || form.product !== '' || form.qty !== '');
   const resetOrderForm = () => { setEditingId(null); setForm(EMPTY_ORDER_FORM); setFieldErrors({}); };
   const guardedResetOrder = useDirtyGuard(isDirtyOrder, resetOrderForm, 'Заказ не сохранён. Закрыть форму?');
@@ -1309,6 +1309,8 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
         h('div', { style: { minWidth: 140 } }, h('input', { type: 'date', style: { ...S.inp, width: '100%' }, value: form.deadline, onChange: e => setForm(p => ({ ...p, deadline: e.target.value })) }), fieldErrors.deadline && h('div', { className: 'error-message' }, fieldErrors.deadline)),
         h('div', { style: { minWidth: 120 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.priority, onChange: e => setForm(p => ({ ...p, priority: e.target.value })) }, h('option', { value: 'low' }, 'Низкий'), h('option', { value: 'medium' }, 'Средний'), h('option', { value: 'high' }, 'Высокий'), h('option', { value: 'critical' }, 'Критический'))),
         h('div', { style: { minWidth: 100 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.productType, onChange: e => setForm(p => ({ ...p, productType: e.target.value })) }, h('option', { value: '' }, 'Тип'), productTypes.map(pt => h('option', { key: pt.id, value: pt.id }, pt.label)))),
+        h('div', { style: { minWidth: 90 } }, h('select', { style: { ...S.inp, width: '100%', color: form.boilerType ? 'var(--fg)' : 'var(--muted)' }, value: form.boilerType || '', onChange: e => setForm(p => ({ ...p, boilerType: e.target.value })), title: 'Тип котла (для сдельной оплаты)' }, h('option', { value: '' }, 'V2/V3'), h('option', { value: 'v2d' }, 'V2-D'), h('option', { value: 'v3d' }, 'V3-D'))),
+        h('div', { style: { minWidth: 80 } }, h('input', { type: 'number', style: { ...S.inp, width: '100%' }, placeholder: 'кВт', value: form.powerKw || '', onChange: e => setForm(p => ({ ...p, powerKw: e.target.value })), title: 'Мощность котла (для сдельной оплаты)' })),
         h('div', { style: { minWidth: 140 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.bomId, onChange: e => setForm(p => ({ ...p, bomId: e.target.value })) }, h('option', { value: '' }, '— без BOM —'), data.bomTemplates.filter(b => !form.productType || b.productType === form.productType || !b.productType).map(b => h('option', { key: b.id, value: b.id }, b.productName)))),
         h('div', { style: { minWidth: 180, flex: 1 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: '🔗 Ссылка (чертёж, ТЗ…)', value: form.drawingUrl, onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value })) })),
         h('div', { style: { minWidth: 130 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: '# Серийный №', value: form.serialNumber || '', title: 'Серийный номер изделия', onChange: e => setForm(p => ({ ...p, serialNumber: e.target.value })) })),
