@@ -1036,7 +1036,15 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const doFinish = useCallback(async (op, isDefect = false, isRework = false, source = 'current') => {
     if (op.status !== 'in_progress') return;
     const result = buildFinishUpdate(data, op, workerId, { isDefect, isRework, source, defNote, defectReasonId, weldParams });
-    const updated = { ...data, ops: result.ops, events: result.events, reclamations: result.reclamations, opNorms: result.opNorms || data.opNorms || {}, auxStats: result.auxStats || data.auxStats || {} };
+    // Сдельное начисление: считаем при завершении (не при браке)
+    let finishedOps = result.ops;
+    if (!isDefect) {
+      const earning = calcOpPieceworkEarning(data, op);
+      if (earning) {
+        finishedOps = finishedOps.map(o => o.id === op.id ? { ...o, earning } : o);
+      }
+    }
+    const updated = { ...data, ops: finishedOps, events: result.events, reclamations: result.reclamations, opNorms: result.opNorms || data.opNorms || {}, auxStats: result.auxStats || data.auxStats || {} };
     const status = result._status;
     // Проверяем достижения и сохраняем ОДИН раз
     // FIX: checkAchievements теперь возвращает { data, justEarned }
