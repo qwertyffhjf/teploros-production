@@ -1591,11 +1591,10 @@ const PayrollExport = memo(({ data }) => {
       }
 
       const hourlyEarned = Math.round(hours * hourlyRate);
+      // piecework = тоже считаем часы (когда нет сдельной загрузки — выводят почасово)
       const earned = payType === 'hourly'
         ? hourlyEarned
-        : payType === 'mixed'
-          ? hourlyEarned + pieceEarned
-          : pieceEarned;
+        : hourlyEarned + pieceEarned;
 
       return { w, payType, hourlyRate, pieceRate, hours, pieceCount, pieceEarned, hourlyEarned, earned };
     });
