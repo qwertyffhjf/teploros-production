@@ -438,7 +438,7 @@ const EMPTY_DATA = {
   toolIssues: [],     // выдача инструмента: [{id, toolName, invNumber, cost, category,
                         //   workerId, issuedAt, issuedBy, issuedNote, condition:'new'|'good'|'worn',
                         //   returnedAt, returnedBy, returnedNote, returnCondition, status:'active'|'returned'|'written_off'}]
-  pieceworkRates: [], // сдельные расценки: [{id, type:'v2d'|'v3d', powerMin, powerMax, heatExchanger, coverFront, coverBack}]
+  pieceworkRates: [], // сдельные расценки: [{id, type:'v2d'|'v3d', powerMin, powerMax, heatExchanger, coverFront, coverBack, rolling}]
   auxStats: {},       // агрегация вспомогательных работ: {"YYYY-MM": {total, totalMs, byCategory:{cat:{count,ms}}, byWorker:{wid:{count,ms}}}}
   messages: [], reclamations: [], duels: [], materialReservations: [], defects: [],
   pressureTests: [],   // протоколы гидравлических испытаний
@@ -500,7 +500,7 @@ const findPieceworkRate = (data, boilerType, powerKw) => {
 };
 
 // Рассчитать сдельный заработок рабочего за заказ
-// Возвращает { heatExchanger: N, coverFront: N, coverBack: N, total: N }
+// Возвращает { heatExchanger: N, coverFront: N, coverBack: N, rolling: N, total: N }
 const calcPieceworkEarnings = (data, workerId, orderId) => {
   const order = data.orders.find(o => o.id === orderId);
   if (!order) return null;
@@ -512,40 +512,83 @@ const calcPieceworkEarnings = (data, workerId, orderId) => {
   if (!rate) return null;
 
   const sections = data.sections || [];
-
-  // Найти sectionId по ключевому слову
-  const findSection = (keyword) =>
-    sections.find(s => s.name.toLowerCase().includes(keyword.toLowerCase()))?.id;
-
-  const heatSectionId   = findSection('теплообменник');
-  const coverSectionId  = findSection('крышк');
-
-  // Проверяем что участок сдельный или смешанный
-  const isSectionPiecework = (sectionId) => {
-    if (!sectionId) return false;
-    const sec = sections.find(s => s.id === sectionId);
-    return sec?.payType === 'piecework' || sec?.payType === 'mixed';
-  };
-
   const orderOps = data.ops.filter(o => o.orderId === orderId && !o.archived);
 
-  const calcShare = (sectionId, rateAmount) => {
-    if (!sectionId || !rateAmount) return 0;
-    if (!isSectionPiecework(sectionId)) return 0; // только сдельные/смешанные участки
-    const sectionOps = orderOps.filter(o => o.sectionId === sectionId);
-    // Уникальные рабочие участвовавшие в операциях этого участка
-    const workerSet = new Set();
-    sectionOps.forEach(op => (op.workerIds||[]).forEach(wid => workerSet.add(wid)));
-    if (!workerSet.has(workerId) || workerSet.size === 0) return 0;
-    return Math.round(rateAmount * qty / Math.max(workerSet.size, 1));
+  // Считаем по pieceworkField участка (новая логика)
+  const calcByField = (field) => {
+    if (!rate[field]) return 0;
+    // Находим все участки с этим pieceworkField
+    const fieldSections = sections.filter(s =>
+      s.pieceworkField === field && (s.payType === 'piecework' || s.payType === 'mixed')
+    );
+    if (!fieldSections.length) return 0;
+    let total = 0;
+    fieldSections.forEach(sec => {
+      const sectionOps = orderOps.filter(o => o.sectionId === sec.id);
+      const workerSet = new Set();
+      sectionOps.forEach(op => (op.workerIds||[]).forEach(wid => workerSet.add(wid)));
+      if (workerSet.has(workerId) && workerSet.size > 0) {
+        total += Math.round(rate[field] * qty / Math.max(workerSet.size, 1));
+      }
+    });
+    return total;
   };
 
-  const heatExchanger = calcShare(heatSectionId,  rate.heatExchanger);
-  const coverFront    = calcShare(coverSectionId,  rate.coverFront);
-  const coverBack     = calcShare(coverSectionId,  rate.coverBack);
-  const total         = heatExchanger + coverFront + coverBack;
+  // Обратная совместимость: если pieceworkField не настроен — fallback на ключевые слова
+  const hasFieldConfig = sections.some(s => s.pieceworkField);
+  let heatExchanger = 0, coverFront = 0, coverBack = 0, rolling = 0;
 
-  return { heatExchanger, coverFront, coverBack, total, rate, boilerType, powerKw };
+  if (hasFieldConfig) {
+    heatExchanger = calcByField('heatExchanger');
+    coverFront    = calcByField('coverFront');
+    coverBack     = calcByField('coverBack');
+    rolling       = calcByField('rolling');
+  } else {
+    // Fallback: старая логика по ключевым словам
+    const findSection = (keyword) =>
+      sections.find(s => s.name.toLowerCase().includes(keyword.toLowerCase()))?.id;
+    const heatSectionId  = findSection('теплообменник');
+    const coverSectionId = findSection('крышк');
+    const isSectionPW = (sid) => {
+      const sec = sections.find(s => s.id === sid);
+      return sec?.payType === 'piecework' || sec?.payType === 'mixed';
+    };
+    const calcShare = (sectionId, rateAmount) => {
+      if (!sectionId || !rateAmount || !isSectionPW(sectionId)) return 0;
+      const sectionOps = orderOps.filter(o => o.sectionId === sectionId);
+      const workerSet = new Set();
+      sectionOps.forEach(op => (op.workerIds||[]).forEach(wid => workerSet.add(wid)));
+      if (!workerSet.has(workerId) || workerSet.size === 0) return 0;
+      return Math.round(rateAmount * qty / Math.max(workerSet.size, 1));
+    };
+    heatExchanger = calcShare(heatSectionId, rate.heatExchanger);
+    coverFront    = calcShare(coverSectionId, rate.coverFront);
+    coverBack     = calcShare(coverSectionId, rate.coverBack);
+  }
+
+  const total = heatExchanger + coverFront + coverBack + rolling;
+  return { heatExchanger, coverFront, coverBack, rolling, total, rate, boilerType, powerKw };
+};
+
+// Рассчитать сдельный заработок для одной операции при её завершении
+// Возвращает { amount, field, rateId, boilerType, powerKw } или null
+const calcOpPieceworkEarning = (data, op) => {
+  if (!op.sectionId || !op.orderId) return null;
+  const section = (data.sections || []).find(s => s.id === op.sectionId);
+  if (!section?.pieceworkField) return null;
+  if (section.payType !== 'piecework' && section.payType !== 'mixed') return null;
+
+  const order = (data.orders || []).find(o => o.id === op.orderId);
+  if (!order) return null;
+
+  const rate = findPieceworkRate(data, order.boilerType, order.powerKw);
+  if (!rate || !rate[section.pieceworkField]) return null;
+
+  const qty = order.qty || 1;
+  const workerCount = Math.max((op.workerIds || []).length, 1);
+  const amount = Math.round(rate[section.pieceworkField] * qty / workerCount);
+
+  return { amount, field: section.pieceworkField, rateId: rate.id, boilerType: order.boilerType, powerKw: order.powerKw };
 };
 
 
@@ -1077,7 +1120,7 @@ const DB = {
         workerQty: '{}', plannedHours: null, archived: false, sectionId: null,
         equipmentId: null, plannedStartDate: null, drawingUrl: null,
         defectNote: null, defectReasonId: null, defectSource: null,
-        hiddenFromFeed: false, checklistDone: '[]', weldParams: null,
+        hiddenFromFeed: false, checklistDone: '[]', weldParams: null, earning: null,
         finishedAt: null, startedAt: null, dependsOn: '[]', photos: '[]'
       };
       if (toSave.ops?.length > 0) {
