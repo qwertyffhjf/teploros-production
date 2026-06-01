@@ -1552,34 +1552,52 @@ const PayrollExport = memo(({ data }) => {
       }
       hours = Math.round(hours * 10) / 10;
 
-      // Сдельные — через calcPieceworkEarnings по участкам
-      const shippedOrders = (data.orders||[]).filter(o => o.shipped && o.shippedAt >= monthStart && o.shippedAt <= monthEnd);
+      // Сдельные — читаем op.earning (начисляется при завершении операции)
+      // Период: операции завершённые в этом месяце (по finishedAt)
+      const workerOps = (data.ops||[]).filter(op =>
+        (op.workerIds||[]).includes(w.id) &&
+        op.status === 'done' &&
+        op.finishedAt >= monthStart &&
+        op.finishedAt <= monthEnd &&
+        !op.archived
+      );
 
       let pieceEarned = 0;
       let pieceCount  = 0;
       const pieceDetails = [];
-      shippedOrders.forEach(o => {
-        const earnings = calcPieceworkEarnings(data, w.id, o.id);
-        if (earnings && earnings.total > 0) {
-          pieceEarned += earnings.total;
+
+      // Суммируем op.earning если есть (новая логика)
+      workerOps.forEach(op => {
+        if (op.earning && op.earning.amount > 0) {
+          pieceEarned += op.earning.amount;
           pieceCount++;
-          pieceDetails.push({ order: o, earnings });
-        } else {
-          // Fallback: pieceRate × qty
-          const hasOp = (data.ops||[]).some(op => op.orderId === o.id && (op.workerIds||[]).includes(w.id));
-          if (hasOp && pieceRate) {
-            const earn = Math.round((o.qty||1) * pieceRate);
-            pieceEarned += earn;
-            pieceCount++;
-          }
+          pieceDetails.push(op);
         }
       });
 
-      const earned = payType === 'hourly'
-        ? Math.round(hours * hourlyRate)
-        : pieceEarned;
+      // Fallback для старых заказов без op.earning: calcPieceworkEarnings по отгруженным заказам
+      if (pieceEarned === 0 && (payType === 'piecework' || payType === 'mixed')) {
+        const shippedOrders = (data.orders||[]).filter(o => o.shipped && o.shippedAt >= monthStart && o.shippedAt <= monthEnd);
+        shippedOrders.forEach(o => {
+          const earnings = calcPieceworkEarnings(data, w.id, o.id);
+          if (earnings && earnings.total > 0) {
+            pieceEarned += earnings.total;
+            pieceCount++;
+          } else if (pieceRate) {
+            const hasOp = workerOps.some(op => op.orderId === o.id);
+            if (hasOp) { pieceEarned += Math.round((o.qty||1) * pieceRate); pieceCount++; }
+          }
+        });
+      }
 
-      return { w, payType, hourlyRate, pieceRate, hours, pieceCount, pieceEarned, earned };
+      const hourlyEarned = Math.round(hours * hourlyRate);
+      const earned = payType === 'hourly'
+        ? hourlyEarned
+        : payType === 'mixed'
+          ? hourlyEarned + pieceEarned
+          : pieceEarned;
+
+      return { w, payType, hourlyRate, pieceRate, hours, pieceCount, pieceEarned, hourlyEarned, earned };
     });
   }, [data.workers, data.ops, data.orders, viewMonth, viewYear]);
 
@@ -1592,9 +1610,9 @@ const PayrollExport = memo(({ data }) => {
       ['ФИО', 'Должность', 'Тип оплаты', 'Ставка', 'Часы / Изделий', 'Расчётная сумма'],
       ...rows.map(r => [
         r.w.name, r.w.position || '—',
-        r.payType === 'hourly' ? 'Почасовая' : 'Сдельная',
-        r.payType === 'hourly' ? `${fmt(r.hourlyRate)} руб/ч` : `${fmt(r.pieceRate)} руб/изд`,
-        r.payType === 'hourly' ? r.hours : r.pieceCount,
+        r.payType === 'hourly' ? 'Почасовая' : r.payType === 'mixed' ? 'Смешанная' : 'Сдельная',
+        r.payType === 'hourly' ? `${fmt(r.hourlyRate)} руб/ч` : r.payType === 'mixed' ? `${fmt(r.hourlyRate)} руб/ч + сдельные` : `сдельные`,
+        r.payType === 'hourly' ? `${r.hours}ч` : r.payType === 'mixed' ? `${r.hours}ч + ${r.pieceCount} опер.` : `${r.pieceCount} опер.`,
         r.earned
       ]),
       ['', '', '', '', 'ИТОГО:', total]
@@ -1633,15 +1651,17 @@ const PayrollExport = memo(({ data }) => {
               h('td', { style:{ padding:'8px 10px', fontWeight:500 } }, w.name),
               h('td', { style:{ padding:'8px 10px', color:'var(--muted)', fontSize:12 } }, w.position||'—'),
               h('td', { style:{ padding:'8px 10px' } },
-                h('span', { style:{ fontSize:10, padding:'2px 7px', borderRadius:8, background: payType==='hourly' ? AM3 : GN3, color: payType==='hourly' ? AM2 : GN2, border:`0.5px solid ${payType==='hourly' ? AM4 : GN}` } },
-                  payType==='hourly' ? '⏱ Часовая' : '🔧 Сдельная'
+                h('span', { style:{ fontSize:10, padding:'2px 7px', borderRadius:8, background: payType==='hourly' ? AM3 : payType==='mixed' ? '#e8f4ff' : GN3, color: payType==='hourly' ? AM2 : payType==='mixed' ? '#1a6fb5' : GN2, border:`0.5px solid ${payType==='hourly' ? AM4 : payType==='mixed' ? '#a8d0f0' : GN}` } },
+                  payType==='hourly' ? '⏱ Часовая' : payType==='mixed' ? '⚡ Смешанная' : '🔧 Сдельная'
                 )
               ),
               h('td', { style:{ padding:'8px 10px', fontSize:12, color:'var(--muted)' } },
-                payType==='hourly' ? `${fmt(hourlyRate)} р/ч` : `${fmt(pieceRate)} р/изд`
+                payType==='hourly' ? `${fmt(hourlyRate)} р/ч` : payType==='mixed' ? `${fmt(hourlyRate)} р/ч + сдельные` : 'сдельные'
               ),
               h('td', { style:{ padding:'8px 10px', fontWeight:500 } },
-                payType==='hourly' ? `${hours}ч` : `${pieceCount} заказов`
+                payType==='hourly' ? `${hours}ч` :
+                payType==='mixed' ? h('span', null, `${hours}ч`, pieceCount > 0 && h('span', { style:{ color: GN2, fontSize:11, marginLeft:4 } }, `+${pieceCount} сд.`)) :
+                `${pieceCount} опер.`
               ),
               h('td', { style:{ padding:'8px 10px', fontWeight:600, color: earned > 0 ? AM2 : 'var(--muted)' } },
                 earned > 0 ? `${fmt(earned)} ₽` : '—'
