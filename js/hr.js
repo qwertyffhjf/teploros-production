@@ -342,8 +342,8 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
             }, type === 'hourly' ? '⏱ Почасовая' : '🔧 Сдельная')
           )
         ),
-        form.payType === 'hourly' && h('div', { style: { marginBottom:12 } },
-          h('div', { style: { fontSize:11, color:'#888', marginBottom:4 } }, 'Ставка, руб/час'),
+        h('div', { style: { marginBottom:12 } },
+          h('div', { style: { fontSize:11, color:'#888', marginBottom:4 } }, form.payType === 'piecework' ? 'Ставка почасовая (при выводе на почасовую), руб/час' : 'Ставка, руб/час'),
           h('div', { style: { display:'flex', gap:8, alignItems:'center' } },
             h('input', { type:'number', min:0, style: { ...S.inp, width:150 }, placeholder:'например 300',
               value: form.hourlyRate || '', onChange: e => setForm(p => ({ ...p, hourlyRate: parseFloat(e.target.value) || '' })) }),
