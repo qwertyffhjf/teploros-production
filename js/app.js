@@ -2308,7 +2308,14 @@ function App() {
   const savingRef = useRef(false);
 
   useEffect(() => {
-    DB.load().then(async d => {
+    const loadTimeout = new Promise(resolve => setTimeout(() => resolve(null), 8000));
+    Promise.race([DB.load(), loadTimeout]).then(async d => {
+      if (!d) {
+        // Таймаут — грузим из локального кеша Firestore
+        console.warn('Firebase timeout — загружаем из кеша');
+        try { d = await DB.load().catch(() => EMPTY_DATA); } catch(e) { d = EMPTY_DATA; }
+        setData(d); window.__MES = d; setLoading(false); setSynced(false); return;
+      }
       // П.9: Автоархивация — заказы, все операции которых завершены более 30 дней назад
       const threshold = now() - 30 * 86400000;
       let archiveCount = 0;
@@ -2324,7 +2331,7 @@ function App() {
       if (archiveCount > 0) { await DB.save(updated); console.log(`Автоархивация: ${archiveCount} заказов`); }
       const _finalD = archiveCount > 0 ? updated : d; setData(_finalD); window.__MES = _finalD;
       setLoading(false); setSynced(true);
-    });
+    }).catch(e => { console.error('DB.load error:', e); setData(EMPTY_DATA); setLoading(false); setSynced(false); });
     const unsub = DB.onSnapshot(newData => { if (!savingRef.current && !DB._saving) { setData(newData); window.__MES = newData; } });
     const params = new URLSearchParams(window.location.search);
     const opId = params.get('opId');
@@ -2483,9 +2490,23 @@ function App() {
     return { id: 'system', name: 'Система', role: 'system' };
   }, [role, workerId, data.workers]);
 
+  const [loadingSec, setLoadingSec] = React.useState(0);
+  React.useEffect(() => {
+    if (!loading) { setLoadingSec(0); return; }
+    const t = setInterval(() => setLoadingSec(s => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [loading]);
+
   if (loading) return h('div', { style: { padding:48, textAlign:'center' } },
-    h('div', { style: { fontSize:16, marginBottom:8 } }, 'Загрузка...'),
-    h('div', { style: { fontSize:12, color:'#888' } }, 'Подключение к Firebase')
+    h('div', { style: { fontSize:28, marginBottom:12 } }, '⏳'),
+    h('div', { style: { fontSize:15, color:'#444', marginBottom:6 } }, 'Загрузка...'),
+    h('div', { style: { fontSize:12, color:'#aaa', marginBottom: loadingSec >= 5 ? 20 : 0 } },
+      loadingSec < 5 ? 'Подключение к Firebase...' : `Нет ответа от сервера (${loadingSec}с)`
+    ),
+    loadingSec >= 5 && h('button', {
+      style: { padding:'9px 22px', fontSize:13, borderRadius:8, background:'#f0f0f0', border:'1px solid #ddd', cursor:'pointer', color:'#555' },
+      onClick: () => { setData(window.__MES || EMPTY_DATA); setLoading(false); }
+    }, '📴 Войти офлайн')
   );
 
   // QR-режим
