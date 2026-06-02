@@ -2083,7 +2083,7 @@ const HRScreen = memo(({ data, onUpdate, addToast }) => {
 const AdminScreen = memo(({ data, onUpdate, addToast }) => {
   const [tab, setTab] = useState('stages');
   const TABS = [
-    ['stages','Этапы'],['tools','🛠 Инструмент'],['defectReasons','Причины брака'],['downtimes','Простои'],
+    ['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],
     ['equipment','Оборудование'],['materials','Материалы'],['bom','Спецификации'],
     ['sections','Участки'],['workers','Сотрудники'],['time','Табель'],['admin','Настройки']
   ];
@@ -2095,7 +2095,6 @@ const AdminScreen = memo(({ data, onUpdate, addToast }) => {
     ),
     h(TabBar, { tabs: TABS, tab, setTab }),
     tab === 'stages'        && h(MasterProductionStages, { data, onUpdate, addToast }),
-    tab === 'tools'         && h(ToolIssueManager,      { data, onUpdate, addToast }),
     tab === 'defectReasons' && h(MasterDefectReasons,    { data, onUpdate, addToast }),
     tab === 'downtimes'     && h(MasterDowntimes,        { data, onUpdate, addToast }),
     tab === 'equipment'     && h(MasterEquipment,        { data, onUpdate, addToast }),
