@@ -2308,14 +2308,17 @@ function App() {
   const savingRef = useRef(false);
 
   useEffect(() => {
-    const loadTimeout = new Promise(resolve => setTimeout(() => resolve(null), 8000));
-    Promise.race([DB.load(), loadTimeout]).then(async d => {
-      if (!d) {
-        // Таймаут — грузим из локального кеша Firestore
-        console.warn('Firebase timeout — загружаем из кеша');
-        try { d = await DB.load().catch(() => EMPTY_DATA); } catch(e) { d = EMPTY_DATA; }
-        setData(d); window.__MES = d; setLoading(false); setSynced(false); return;
-      }
+    // Таймаут 8с: если Firebase не ответил — DB.load() сам вернёт localStorage кеш
+    const loadWithTimeout = Promise.race([
+      DB.load(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+    ]).catch(async e => {
+      console.warn('Firebase timeout/error — загружаем из localStorage кеша');
+      return DB.load(); // DB.load() при офлайне вернёт localStorage кеш
+    });
+
+    loadWithTimeout.then(async d => {
+      if (!d) { setLoading(false); setSynced(false); return; }
       // П.9: Автоархивация — заказы, все операции которых завершены более 30 дней назад
       const threshold = now() - 30 * 86400000;
       let archiveCount = 0;
