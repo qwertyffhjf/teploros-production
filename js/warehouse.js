@@ -1010,7 +1010,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnl
     }),
     showImport && h(MaterialImportModal, { data, onClose: () => setShowImport(false), onUpdate, addToast, defaultMode: importMode }),
     // Вкладки
-    h(TabBar, { tabs: [['deliveries', `🚚 Поставки (${(data.materialDeliveries||[]).filter(d=>d.status==='pending'||d.status==='partial').length})`], ['stock', '📦 Остатки'], ['requests', `🔔 Заявки (${materialRequests.length})`], ['receive', '📥 Приёмка'], ['needs', '📝 Заявки на матер.'], ['history', '📋 Движение'], ['materials', '🗂 Справочник'], ['bom', '📋 Спецификации']], tab, setTab }),
+    h(TabBar, { tabs: [['deliveries', `🚚 Поставки (${(data.materialDeliveries||[]).filter(d=>d.status==='pending'||d.status==='partial').length})`], ['stock', '📦 Остатки'], ['requests', `🔔 Заявки (${materialRequests.length})`], ['receive', '📥 Приёмка'], ['needs', '📝 Заявки на матер.'], ['history', '📋 Движение'], ['materials', '🗂 Справочник'], ['bom', '📋 Спецификации'], ['tools', '🔧 Инструмент']], tab, setTab }),
 
     // Заявки (уведомления)
     materialRequests.length > 0 && tab !== 'requests' && h('div', { role: 'alert', style: { padding: '8px 12px', background: AM3, border: `0.5px solid ${AM}`, borderRadius: 8, marginBottom: 12, fontSize: 12, cursor: 'pointer' }, onClick: () => setTab('requests') },
@@ -1430,6 +1430,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnl
         )))
     ),
     tab === 'materials' && h(MasterMaterials, { data, onUpdate, addToast }),
-    tab === 'bom'       && h(MasterBOM,       { data, onUpdate, addToast })
+    tab === 'bom'       && h(MasterBOM,       { data, onUpdate, addToast }),
+    tab === 'tools'     && h(ToolIssueManager, { data, onUpdate, addToast })
   );
 });
