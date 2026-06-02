@@ -1645,7 +1645,7 @@ const PayrollExport = memo(({ data }) => {
           )
         ),
         h('tbody', null,
-          rows.map(({ w, payType, hourlyRate, pieceRate, hours, pieceCount, earned }) =>
+          rows.map(({ w, payType, hourlyRate, pieceRate, hours, pieceCount, pieceEarned, hourlyEarned, earned }) =>
             h('tr', { key:w.id, style:{ borderBottom:'0.5px solid var(--border-soft)' } },
               h('td', { style:{ padding:'8px 10px', fontWeight:500 } }, w.name),
               h('td', { style:{ padding:'8px 10px', color:'var(--muted)', fontSize:12 } }, w.position||'—'),
