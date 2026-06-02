@@ -1036,15 +1036,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const doFinish = useCallback(async (op, isDefect = false, isRework = false, source = 'current') => {
     if (op.status !== 'in_progress') return;
     const result = buildFinishUpdate(data, op, workerId, { isDefect, isRework, source, defNote, defectReasonId, weldParams });
-    // Сдельное начисление: считаем при завершении (не при браке)
-    let finishedOps = result.ops;
-    if (!isDefect) {
-      const earning = calcOpPieceworkEarning(data, op);
-      if (earning) {
-        finishedOps = finishedOps.map(o => o.id === op.id ? { ...o, earning } : o);
-      }
-    }
-    const updated = { ...data, ops: finishedOps, events: result.events, reclamations: result.reclamations, opNorms: result.opNorms || data.opNorms || {}, auxStats: result.auxStats || data.auxStats || {} };
+    const updated = { ...data, ops: result.ops, events: result.events, reclamations: result.reclamations, opNorms: result.opNorms || data.opNorms || {}, auxStats: result.auxStats || data.auxStats || {} };
     const status = result._status;
     // Проверяем достижения и сохраняем ОДИН раз
     // FIX: checkAchievements теперь возвращает { data, justEarned }
@@ -1612,8 +1604,17 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
             ),
             op.comment && h('div', { style: { fontSize: 12, color: '#666', background: '#f8f8f5', padding: '6px 10px', borderRadius: 6, marginBottom: 10 } }, `💬 ${op.comment}`),
             (() => {
-              const drawUrl = op.drawingUrl || order?.drawingUrl;
-              return drawUrl && h('a', { href: drawUrl, target: '_blank', rel: 'noopener', style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: BL, textDecoration: 'none', padding: '6px 10px', background: '#E3F2FD', borderRadius: 6, marginBottom: 10 } }, '📐 Чертёж / ТЗ');
+              const instrUrl = stage?.drawingUrl || stage?.instructionUrl;
+              const drawUrl  = op.drawingUrl || order?.drawingUrl;
+              if (!instrUrl && !drawUrl) return null;
+              return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 } },
+                instrUrl && h('a', { href: instrUrl, target: '_blank', rel: 'noopener',
+                  style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#0F6E56', textDecoration: 'none', padding: '6px 10px', background: '#E1F5EE', borderRadius: 6 } },
+                  '📄 Инструкция по операции'),
+                drawUrl && h('a', { href: drawUrl, target: '_blank', rel: 'noopener',
+                  style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: BL, textDecoration: 'none', padding: '6px 10px', background: '#E3F2FD', borderRadius: 6 } },
+                  '📐 Чертёж изделия')
+              );
             })(),
             // СТАРТ — крупная кнопка с отступом сверху
             op.status === 'pending' && depsComplete
