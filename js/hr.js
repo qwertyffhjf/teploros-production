@@ -1610,8 +1610,8 @@ const PayrollExport = memo(({ data }) => {
       ...rows.map(r => [
         r.w.name, r.w.position || '—',
         r.payType === 'hourly' ? 'Почасовая' : r.payType === 'mixed' ? 'Смешанная' : 'Сдельная',
-        r.payType === 'hourly' ? `${fmt(r.hourlyRate)} руб/ч` : r.payType === 'mixed' ? `${fmt(r.hourlyRate)} руб/ч + сдельные` : `сдельные`,
-        r.payType === 'hourly' ? `${r.hours}ч` : r.payType === 'mixed' ? `${r.hours}ч + ${r.pieceCount} опер.` : `${r.pieceCount} опер.`,
+        r.hourlyRate > 0 && r.pieceEarned > 0 ? `${fmt(r.hourlyRate)} руб/ч + сдельные` : r.hourlyRate > 0 ? `${fmt(r.hourlyRate)} руб/ч` : `сдельные`,
+        r.hours > 0 && r.pieceCount > 0 ? `${r.hours}ч + ${r.pieceCount} сд.` : r.hours > 0 ? `${r.hours}ч` : `${r.pieceCount} опер.`,
         r.earned
       ]),
       ['', '', '', '', 'ИТОГО:', total]
@@ -1655,12 +1655,10 @@ const PayrollExport = memo(({ data }) => {
                 )
               ),
               h('td', { style:{ padding:'8px 10px', fontSize:12, color:'var(--muted)' } },
-                payType==='hourly' ? `${fmt(hourlyRate)} р/ч` : payType==='mixed' ? `${fmt(hourlyRate)} р/ч + сдельные` : 'сдельные'
+                hourlyRate > 0 && pieceEarned > 0 ? `${fmt(hourlyRate)} р/ч + сдельные` : hourlyRate > 0 ? `${fmt(hourlyRate)} р/ч` : 'сдельные'
               ),
               h('td', { style:{ padding:'8px 10px', fontWeight:500 } },
-                payType==='hourly' ? `${hours}ч` :
-                payType==='mixed' ? h('span', null, `${hours}ч`, pieceCount > 0 && h('span', { style:{ color: GN2, fontSize:11, marginLeft:4 } }, `+${pieceCount} сд.`)) :
-                `${pieceCount} опер.`
+                h('span', null, hours > 0 ? `${hours}ч` : '0ч', pieceCount > 0 && h('span', { style:{ color: GN2, fontSize:11, marginLeft:4 } }, `+${pieceCount} сд.`))
               ),
               h('td', { style:{ padding:'8px 10px', fontWeight:600, color: earned > 0 ? AM2 : 'var(--muted)' } },
                 earned > 0 ? `${fmt(earned)} ₽` : '—'
