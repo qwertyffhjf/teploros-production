@@ -286,7 +286,69 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
     return null;
   };
 
-  const handleLogin = () => {
+  // ─── WebAuthn / Passkey ───────────────────────────────────────────────
+  const isPhone = () => window.innerWidth < 768 && navigator.maxTouchPoints > 1;
+  const PASSKEY_KEY = 'teploros_passkeys'; // localStorage: { credId, role, workerId, sectionId, name }[]
+
+  const getSavedPasskeys = () => {
+    try { return JSON.parse(localStorage.getItem(PASSKEY_KEY) || '[]'); } catch { return []; }
+  };
+  const savePasskey = (entry) => {
+    const list = getSavedPasskeys().filter(p => p.credId !== entry.credId);
+    localStorage.setItem(PASSKEY_KEY, JSON.stringify([...list, entry]));
+  };
+
+  // Регистрация биометрии после успешного PIN-входа
+  const registerPasskey = async (resolved) => {
+    if (!window.PublicKeyCredential) return;
+    try {
+      const challenge = crypto.getRandomValues(new Uint8Array(32));
+      const userId = new TextEncoder().encode(resolved.workerId || resolved.role);
+      const cred = await navigator.credentials.create({ publicKey: {
+        challenge,
+        rp: { name: 'Теплорос МЭС', id: location.hostname },
+        user: { id: userId, name: resolved.name, displayName: resolved.name },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required' },
+        timeout: 30000,
+      }});
+      if (cred) {
+        savePasskey({ credId: btoa(String.fromCharCode(...new Uint8Array(cred.rawId))), role: resolved.role, workerId: resolved.workerId, sectionId: resolved.sectionId, name: resolved.name });
+        return true;
+      }
+    } catch(e) { console.warn('Passkey register:', e.message); }
+    return false;
+  };
+
+  // Вход по биометрии
+  const loginWithPasskey = async () => {
+    if (!window.PublicKeyCredential) return;
+    const saved = getSavedPasskeys();
+    if (!saved.length) return;
+    try {
+      const challenge = crypto.getRandomValues(new Uint8Array(32));
+      const allowCreds = saved.map(p => ({
+        type: 'public-key',
+        id: Uint8Array.from(atob(p.credId), c => c.charCodeAt(0)),
+        transports: ['internal'],
+      }));
+      const assertion = await navigator.credentials.get({ publicKey: {
+        challenge, allowCredentials: allowCreds, userVerification: 'required', timeout: 30000,
+      }});
+      if (assertion) {
+        const credId = btoa(String.fromCharCode(...new Uint8Array(assertion.rawId)));
+        const match = saved.find(p => p.credId === credId);
+        if (match) { onLogin(match.role, match.workerId, match.sectionId); return true; }
+      }
+    } catch(e) { console.warn('Passkey auth:', e.message); }
+    return false;
+  };
+
+  // Есть ли сохранённые passkey для показа кнопки
+  const [hasPasskeys] = useState(() => getSavedPasskeys().length > 0);
+  const [offerPasskey, setOfferPasskey] = useState(false);
+
+  const handleLogin = async () => {
     setLoginError('');
     if (role === 'dashboard') { onLogin('dashboard', null, null); return; }
     if (!pin.trim()) { setLoginError('Введите PIN-код'); return; }
@@ -296,6 +358,11 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
       if (resolved.role === 'worker') { onLogin('chat', resolved.workerId, resolved.sectionId); return; }
       onLogin('chat_' + resolved.role, null, null);
       return;
+    }
+    // На телефоне — предложить зарегистрировать биометрию
+    if (isPhone() && window.PublicKeyCredential) {
+      const existing = getSavedPasskeys().find(p => p.role === resolved.role && p.workerId === resolved.workerId);
+      if (!existing) { setOfferPasskey(resolved); return; }
     }
     onLogin(resolved.role, resolved.workerId, resolved.sectionId);
   };
@@ -450,6 +517,33 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
       : h('div', { style: stylesL.pinHint }, 'Открытый просмотр без PIN'),
 
     loginError && h('div', { role: 'alert', style: stylesL.err }, loginError),
+
+    // Face ID / Passkey кнопка (только телефон + есть сохранённые)
+    hasPasskeys && isPhone() && h('button', {
+      style: { ...stylesL.primary, background: 'rgba(255,255,255,0.15)', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 },
+      onClick: async () => { const ok = await loginWithPasskey(); if (!ok) addToast?.('Биометрия не прошла', 'error'); }
+    }, '🔐 Войти по Face ID / отпечатку'),
+
+    // Модал: предложение зарегистрировать биометрию
+    offerPasskey && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 } },
+      h('div', { style: { background: '#1c1c1e', borderRadius: 18, padding: 28, maxWidth: 320, width: '100%', textAlign: 'center' } },
+        h('div', { style: { fontSize: 40, marginBottom: 12 } }, '🔐'),
+        h('div', { style: { fontSize: 17, fontWeight: 600, color: '#fff', marginBottom: 8 } }, 'Войти быстрее'),
+        h('div', { style: { fontSize: 14, color: 'rgba(255,255,255,0.65)', marginBottom: 24, lineHeight: 1.5 } }, 'Зарегистрировать Face ID или отпечаток для быстрого входа на этом телефоне?'),
+        h('button', {
+          style: { ...stylesL.primary, width: '100%', marginBottom: 10 },
+          onClick: async () => {
+            const ok = await registerPasskey(offerPasskey);
+            setOfferPasskey(false);
+            onLogin(offerPasskey.role, offerPasskey.workerId, offerPasskey.sectionId);
+          }
+        }, 'Настроить биометрию'),
+        h('button', {
+          style: { width: '100%', padding: '12px', background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.5)', fontSize: 14, cursor: 'pointer', borderRadius: 12 },
+          onClick: () => { setOfferPasskey(false); onLogin(offerPasskey.role, offerPasskey.workerId, offerPasskey.sectionId); }
+        }, 'Пропустить')
+      )
+    ),
 
     // Submit
     h('button', {
@@ -2305,6 +2399,19 @@ function App() {
   const [selectedOrderId, setSelectedOrderId] = useState(null);
   const [selectedWorkerId, setSelectedWorkerId] = useState(null);
   const savingRef = useRef(false);
+  const [showPalette, setShowPalette] = useState(false);
+
+  // Cmd+K / Ctrl+K открывает палитру
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setShowPalette(v => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   useEffect(() => {
     // Таймаут 8с: если Firebase не ответил — DB.load() сам вернёт localStorage кеш
@@ -2571,6 +2678,11 @@ function App() {
       h('span', { className: 'app-header-sep' }),
       h('span', { className: 'app-header-role' }, roleLabel),
       h('span', { className: 'app-header-spacer' }),
+      h('button', {
+        style: gbtn({ fontSize:11, minHeight:34, padding:'6px 12px', display:'flex', alignItems:'center', gap:5 }),
+        onClick: () => setShowPalette(true),
+        title: 'Поиск (Cmd+K)'
+      }, '🔍 ', h('kbd', { style: { fontSize:10, opacity:0.6, background:'var(--card-2)', border:'0.5px solid var(--border)', borderRadius:4, padding:'1px 4px' } }, '⌘K')),
       h('button', { style: gbtn({ fontSize:11, minHeight:34, padding:'6px 12px' }), onClick: goBack }, '← Выход'),
 
       effectiveRole !== 'dashboard' && (() => {
@@ -2652,6 +2764,14 @@ function App() {
       currentUserId: workerId,
       addToast,
       onClose: () => { setReceiveDeliveryId(null); window.history.replaceState({}, '', window.location.pathname); }
+    }),
+    showPalette && h(CommandPalette, {
+      data,
+      onClose: () => setShowPalette(false),
+      onNavigate: (result) => {
+        addToast(`${result.title} · ${result.sub}`, 'info');
+        setShowPalette(false);
+      }
     }),
     h('div', { 'aria-live': 'polite' }, toasts.map(t => h(Toast, { key: t.id, message: t.message, type: t.type, action: t.action, onClose: () => removeToast(t.id) }))),
     h(SaveStatusBar),
