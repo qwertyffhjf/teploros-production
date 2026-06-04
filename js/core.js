@@ -826,6 +826,17 @@ const canShipOrder = (order) => {
 };
 
 // Статус комплектующих заказа
+// ==================== getStage — единый резолвер этапа операции ====================
+// Сначала по stageId (надёжно), fallback по name (старые данные до миграции)
+const getStage = (data, op) => {
+  const stages = data.productionStages || [];
+  if (op.stageId) {
+    const byId = stages.find(s => s.id === op.stageId);
+    if (byId) return byId;
+  }
+  return stages.find(s => s.name === op.name) || null;
+};
+
 const getComponentsStatus = (order) => {
   let components = order?.components || [];
   if (typeof components === 'string') {
@@ -1127,7 +1138,7 @@ const DB = {
         equipmentId: null, plannedStartDate: null, drawingUrl: null,
         defectNote: null, defectReasonId: null, defectSource: null,
         hiddenFromFeed: false, checklistDone: '[]', weldParams: null, earning: null,
-        finishedAt: null, startedAt: null, dependsOn: '[]', photos: '[]'
+        finishedAt: null, startedAt: null, dependsOn: '[]', photos: '[]', stageId: null
       };
       if (toSave.ops?.length > 0) {
         toSave.ops = toSave.ops.map(op => {
@@ -1583,6 +1594,20 @@ const migrateData = (d) => {
       } catch(e) { return { ...o, components: [] }; }
     })};
     console.log('Миграция: нормализованы components из строки в массив');
+  }
+
+  // Миграция: проставить stageId операциям у которых его нет (связь по name → id)
+  if (d.ops?.some(op => !op.stageId) && d.productionStages?.length > 0) {
+    const stagesByName = {};
+    d.productionStages.forEach(s => { if (!stagesByName[s.name]) stagesByName[s.name] = s.id; });
+    let migrated = 0;
+    d = { ...d, ops: d.ops.map(op => {
+      if (op.stageId) return op;
+      const sid = stagesByName[op.name];
+      if (sid) { migrated++; return { ...op, stageId: sid }; }
+      return op;
+    })};
+    if (migrated > 0) console.log('Миграция: проставлен stageId для ' + migrated + ' операций');
   }
 
   // Удаляем операции с orderId: null (осиротевшие операции)
@@ -2992,7 +3017,7 @@ const buildStartUpdate = (data, op, workerId) => {
   const hasCheckinToday = data.events.some(e => e.workerId === workerId && e.type === 'checkin_auto' && e.ts >= todayStart);
   if (!hasCheckinToday) newEvents.push({ id: uid(), type: 'checkin_auto', workerId, ts: startedAt, shift });
   // Копировать чек-лист из шаблона этапа если ещё нет
-  const stage = (data.productionStages || []).find(s => s.name === op.name);
+  const stage = getStage(data, op);
   const needsChecklist = stage?.checklist?.length > 0 && !op.checklist;
   return {
     ops: data.ops.map(o => o.id === op.id ? { ...o, status: 'in_progress', startedAt, workerIds: o.workerIds?.includes(workerId) ? o.workerIds : [...(o.workerIds || []), workerId], ...(needsChecklist ? { checklist: stage.checklist.map(text => ({ text, checked: false })) } : {}) } : o),
