@@ -1564,7 +1564,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
             op.dependsOn.every(depId => { const d = data.ops.find(x => x.id === depId); return d && (d.status === 'done' || d.status === 'on_check' || d.status === 'approved'); });
 
           // Проверка: все материалы для этого этапа поставлены?
-          const stage = (data.productionStages || []).find(s => s.name === op.name);
+          const stage = getStage(data, op);
           const materialsReady = !stage?.requiredMaterialIds?.length ||
             stage.requiredMaterialIds.every(matId => {
               const del = (data.materialDeliveries || []).find(d => d.orderId === op.orderId && d.materialId === matId);
