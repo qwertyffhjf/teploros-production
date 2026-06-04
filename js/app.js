@@ -2086,33 +2086,76 @@ const DirectorScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const sevColor = { critical: RD2, high: AM4, medium: '#888' };
   const sevBg    = { critical: RD3,  high: AM3,  medium: '#f5f5f2' };
 
+  // Доп. метрики для bento
+  const inProgress  = useMemo(() => data.ops.filter(o => o.status === 'in_progress').length, [data.ops]);
+  const activeOrders = useMemo(() => data.orders.filter(o => !o.archived && !o.shipped).length, [data.orders]);
+  const workerCount  = useMemo(() => data.workers.filter(w => !w.archived).length, [data.workers]);
+
   return h('div', null,
     h(SectionAnalytics, { section: 'production', data }),
-    // KPI сводка
-    h('div', { className:'metrics-grid', style:{ display:'grid', gap:8, marginBottom:14 } },
-      h(MC, { v: `${quality}%`, l: 'Качество', c: quality>=95?GN:quality>=85?AM:RD }),
-      h(MC, { v: overdue, l: 'Просрочено', c: overdue>0?RD:GN }),
-      h(MC, { v: recCount, l: 'Рекламации', c: recCount>0?AM:GN }),
-      h(MC, { v: `${downtime}ч`, l: 'Простоев/мес' })
+
+    // ── Bento grid ──────────────────────────────────────────────────────
+    tab === 'overview' && h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gridTemplateRows:'auto auto', gap:10, marginBottom:16 } },
+
+      // Качество — большая карточка (2×2)
+      h('div', { style:{ gridColumn:'1/3', gridRow:'1/3', background:'var(--card)', border:`0.5px solid ${quality>=95?GN:quality>=85?AM:RD}`, borderRadius:16, padding:'20px 20px 16px', display:'flex', flexDirection:'column', justifyContent:'space-between', cursor:'pointer' }, onClick:()=>setTab('analytics') },
+        h('div', { style:{ fontSize:11, fontWeight:600, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'0.08em' } }, 'Качество продукции'),
+        h('div', { style:{ fontSize:52, fontWeight:600, letterSpacing:'-2px', color: quality>=95?GN:quality>=85?AM:RD, lineHeight:1 } }, `${quality}%`),
+        h('div', { style:{ fontSize:12, color:'var(--muted)' } }, `${doneOps} выполнено · ${defectOps} брака за 30 дней`)
+      ),
+
+      // Просрочено
+      h('div', { style:{ background:'var(--card)', border:`0.5px solid ${overdue>0?RD:'var(--border)'}`, borderRadius:16, padding:'14px 16px', cursor:'pointer', display:'flex', flexDirection:'column', gap:6 }, onClick:()=>setTab('orders') },
+        h('div', { style:{ fontSize:11, fontWeight:600, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'0.08em' } }, 'Просрочено'),
+        h('div', { style:{ fontSize:32, fontWeight:600, color: overdue>0?RD:GN, letterSpacing:'-1px', lineHeight:1 } }, overdue),
+        h('div', { style:{ fontSize:11, color:'var(--muted)' } }, 'заказов')
+      ),
+
+      // В работе
+      h('div', { style:{ background:'var(--card)', border:'0.5px solid var(--border)', borderRadius:16, padding:'14px 16px', display:'flex', flexDirection:'column', gap:6 } },
+        h('div', { style:{ fontSize:11, fontWeight:600, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'0.08em' } }, 'Операций'),
+        h('div', { style:{ fontSize:32, fontWeight:600, color: AM2, letterSpacing:'-1px', lineHeight:1 } }, inProgress),
+        h('div', { style:{ fontSize:11, color:'var(--muted)' } }, 'в работе сейчас')
+      ),
+
+      // Рекламации
+      h('div', { style:{ background: recCount>0?AM3:'var(--card)', border:`0.5px solid ${recCount>0?AM4:'var(--border)'}`, borderRadius:16, padding:'14px 16px', cursor: recCount>0?'pointer':'default', display:'flex', flexDirection:'column', gap:6 }, onClick:()=>recCount>0&&setTab('reclamations') },
+        h('div', { style:{ fontSize:11, fontWeight:600, color: recCount>0?AM2:'var(--muted)', textTransform:'uppercase', letterSpacing:'0.08em' } }, 'Рекламации'),
+        h('div', { style:{ fontSize:32, fontWeight:600, color: recCount>0?AM2:GN, letterSpacing:'-1px', lineHeight:1 } }, recCount),
+        h('div', { style:{ fontSize:11, color: recCount>0?AM2:'var(--muted)' } }, 'открытых')
+      ),
+
+      // Простои
+      h('div', { style:{ gridColumn:'3/5', background: downtime>8?RD3:'var(--card)', border:`0.5px solid ${downtime>8?RD:'var(--border)'}`, borderRadius:16, padding:'14px 16px', display:'flex', alignItems:'center', gap:16 } },
+        h('div', null,
+          h('div', { style:{ fontSize:11, fontWeight:600, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:4 } }, 'Простоев за месяц'),
+          h('div', { style:{ fontSize:28, fontWeight:600, color: downtime>8?RD2:'var(--fg)', letterSpacing:'-1px' } }, `${downtime}ч`)
+        ),
+        h('div', { style:{ flex:1 } }),
+        h('div', { style:{ textAlign:'right' } },
+          h('div', { style:{ fontSize:11, color:'var(--muted)', marginBottom:4 } }, 'Заказов / Сотрудников'),
+          h('div', { style:{ fontSize:16, fontWeight:500, color:'var(--fg)' } }, `${activeOrders} / ${workerCount}`)
+        )
+      )
     ),
+
+    // Топ проблем под bento (только overview)
+    tab === 'overview' && topIssues.length > 0 && h('div', { style:{ marginBottom:14 } },
+      h('div', { style:{ fontSize:12, fontWeight:600, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:8 } }, 'Требует внимания'),
+      topIssues.map((issue, i) => h('div', { key:i,
+          style:{ background: sevBg[issue.sev], border:`0.5px solid ${sevColor[issue.sev]}`, borderRadius:10, padding:'10px 14px', marginBottom:6, cursor: issue.tab?'pointer':'default', display:'flex', alignItems:'center', justifyContent:'space-between' },
+          onClick: () => issue.tab && setTab(issue.tab)
+        },
+        h('div', null,
+          h('div', { style:{ fontSize:13, fontWeight:500, color: sevColor[issue.sev] } }, issue.title),
+          h('div', { style:{ fontSize:11, color: sevColor[issue.sev], marginTop:2 } }, issue.sub)
+        ),
+        issue.tab && h('span', { style:{ fontSize:18, color: sevColor[issue.sev], opacity:0.6 } }, '›')
+      ))
+    ),
+
     // Вкладки
     h(TabBar, { tabs: TABS, tab, setTab }),
-    // Обзор — топ проблем
-    tab === 'overview' && h('div', null,
-      h('div', { style:{ fontSize:12, fontWeight:500, marginBottom:10 } }, 'Ключевые проблемы — 30 дней'),
-      topIssues.length === 0
-        ? h('div', { style:{ ...S.card, textAlign:'center', color:'#888', padding:24 } }, '✓ Критических проблем нет')
-        : topIssues.map((issue, i) => h('div', { key:i,
-            style:{ background: sevBg[issue.sev], border:`0.5px solid ${sevColor[issue.sev]}`, borderRadius:10, padding:'10px 14px', marginBottom:8, cursor: issue.tab ? 'pointer' : 'default', display:'flex', alignItems:'center', justifyContent:'space-between' },
-            onClick: () => issue.tab && setTab(issue.tab)
-          },
-            h('div', null,
-              h('div', { style:{ fontSize:13, fontWeight:500, color: sevColor[issue.sev] } }, issue.title),
-              h('div', { style:{ fontSize:11, color: sevColor[issue.sev], marginTop:2 } }, issue.sub)
-            ),
-            issue.tab && h('div', { style:{ fontSize:18, color: sevColor[issue.sev], opacity:0.6 } }, '›')
-          ))
-    ),
     tab === 'analytics'    && h(AnalyticsDashboard, { data }),
     tab === 'reports'      && h(ReportsBuilder,     { data }),
     tab === 'monthly'      && h(MonthlyReport,       { data }),
@@ -2682,7 +2725,7 @@ function App() {
         style: gbtn({ fontSize:11, minHeight:34, padding:'6px 12px', display:'flex', alignItems:'center', gap:5 }),
         onClick: () => setShowPalette(true),
         title: 'Поиск (Cmd+K)'
-      }, '🔍 ', h('kbd', { style: { fontSize:10, opacity:0.6, background:'var(--card-2)', border:'0.5px solid var(--border)', borderRadius:4, padding:'1px 4px' } }, '⌘K')),
+      }, '🔍 ', h('kbd', { className: 'search-kbd', style: { fontSize:10, opacity:0.6, background:'var(--card-2)', border:'0.5px solid var(--border)', borderRadius:4, padding:'1px 4px' } }, '⌘K')),
       h('button', { style: gbtn({ fontSize:11, minHeight:34, padding:'6px 12px' }), onClick: goBack }, '← Выход'),
 
       effectiveRole !== 'dashboard' && (() => {
