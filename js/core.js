@@ -22,9 +22,9 @@ const PRIORITY = {
 
 const STATUS = {
   pending: { label: 'Ожидает', bg: '#f0ede8', cl: '#666', br: '#ccc' },
-  in_progress: { label: 'В работе', bg: '#FAEEDA', cl: AM2, br: AM4 },
+  in_progress: { label: 'В работе', bg: '#FAEEDA', cl: AM2, br: AM4, cls: 'badge-in-progress' },
   on_check: { label: 'На контроле', bg: '#E1F5FE', cl: '#0277BD', br: '#4FC3F7' },
-  done: { label: 'Выполнено', bg: GN3, cl: GN2, br: GN },
+  done: { label: 'Выполнено', bg: GN3, cl: GN2, br: GN, cls: 'op-done' },
   defect: { label: 'Брак', bg: RD3, cl: RD2, br: RD },
   rework: { label: 'Переделка', bg: '#FAEEDA', cl: AM2, br: AM4 },
   shipped: { label: 'Отгружен', bg: '#E8F5E9', cl: '#1B5E20', br: '#4CAF50' },
@@ -2733,6 +2733,120 @@ const TabBar = memo(({ tabs, tab, setTab }) =>
     }, label))
   )
 );
+
+// ==================== CommandPalette (Cmd+K глобальный поиск) ====================
+const CommandPalette = memo(({ data, onClose, onNavigate }) => {
+  const [q, setQ] = useState('');
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const results = useMemo(() => {
+    if (!q.trim() || q.trim().length < 2) return [];
+    const term = q.toLowerCase().trim();
+    const out = [];
+
+    // Заказы
+    (data.orders || []).filter(o => !o.archived).forEach(o => {
+      const haystack = [o.number, o.product, o.productType, o.serialNumber, o.boilerType, o.drawingUrl].filter(Boolean).join(' ').toLowerCase();
+      if (haystack.includes(term)) out.push({ type: 'order', icon: '📦', title: `Заказ №${o.number}`, sub: o.product || '—', id: o.id, data: o });
+    });
+
+    // Сотрудники
+    (data.workers || []).filter(w => !w.archived).forEach(w => {
+      const haystack = [w.name, w.position, w.phone, w.email].filter(Boolean).join(' ').toLowerCase();
+      if (haystack.includes(term)) out.push({ type: 'worker', icon: '👤', title: w.name, sub: w.position || '—', id: w.id, data: w });
+    });
+
+    // Операции
+    (data.ops || []).filter(o => !o.archived && o.status !== 'done').forEach(o => {
+      const order = (data.orders || []).find(x => x.id === o.orderId);
+      const haystack = [o.name, order?.number, order?.product, o.sectionId].filter(Boolean).join(' ').toLowerCase();
+      if (haystack.includes(term)) out.push({ type: 'op', icon: '⚙️', title: o.name, sub: order ? `Заказ №${order.number}` : '— без заказа —', id: o.id, data: o });
+    });
+
+    // Материалы
+    (data.materials || []).forEach(m => {
+      const haystack = [m.name, m.unit, m.category, m.supplier].filter(Boolean).join(' ').toLowerCase();
+      if (haystack.includes(term)) out.push({ type: 'material', icon: '🗂', title: m.name, sub: m.supplier || m.category || '—', id: m.id, data: m });
+    });
+
+    // Участки
+    (data.sections || []).forEach(s => {
+      if (s.name.toLowerCase().includes(term)) out.push({ type: 'section', icon: '🏭', title: s.name, sub: s.payType === 'piecework' ? 'Сдельный' : 'Почасовой', id: s.id, data: s });
+    });
+
+    // Оборудование
+    (data.equipment || []).forEach(e => {
+      const haystack = [e.name, e.model, e.location].filter(Boolean).join(' ').toLowerCase();
+      if (haystack.includes(term)) out.push({ type: 'equipment', icon: '🔩', title: e.name, sub: e.location || e.model || '—', id: e.id, data: e });
+    });
+
+    return out.slice(0, 12);
+  }, [q, data]);
+
+  const TYPE_LABEL = { order: 'Заказ', worker: 'Сотрудник', op: 'Операция', material: 'Материал', section: 'Участок', equipment: 'Оборудование' };
+
+  return h('div', {
+    style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 500, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 80 },
+    onClick: (e) => { if (e.target === e.currentTarget) onClose(); }
+  },
+    h('div', { className: 'palette-box', style: { width: '100%', maxWidth: 580, background: 'var(--card)', borderRadius: 16, border: '0.5px solid var(--border)', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' } },
+      // Строка поиска
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: q && results.length ? '0.5px solid var(--border-soft)' : 'none' } },
+        h('span', { style: { fontSize: 18, opacity: 0.5 } }, '🔍'),
+        h('input', {
+          ref: inputRef,
+          type: 'text', placeholder: 'Поиск по заказам, сотрудникам, операциям…',
+          value: q, onChange: e => setQ(e.target.value),
+          style: { flex: 1, border: 'none', background: 'transparent', fontSize: 16, outline: 'none', color: 'var(--fg)' }
+        }),
+        q && h('button', { onClick: () => setQ(''), style: { border: 'none', background: 'none', cursor: 'pointer', fontSize: 18, color: 'var(--muted)', padding: '0 4px' } }, '✕'),
+        h('kbd', { style: { fontSize: 11, color: 'var(--muted)', background: 'var(--card-2)', border: '0.5px solid var(--border)', borderRadius: 5, padding: '2px 6px' } }, 'Esc')
+      ),
+
+      // Результаты
+      results.length > 0 && h('div', { style: { maxHeight: 380, overflowY: 'auto' } },
+        results.map((r, i) =>
+          h('div', {
+            key: r.id + i,
+            style: { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', cursor: 'pointer', borderBottom: '0.5px solid var(--border-soft)', transition: 'background 120ms' },
+            onMouseEnter: e => { e.currentTarget.style.background = 'var(--card-2)'; },
+            onMouseLeave: e => { e.currentTarget.style.background = ''; },
+            onClick: () => { onNavigate(r); onClose(); }
+          },
+            h('span', { style: { fontSize: 20, flexShrink: 0 } }, r.icon),
+            h('div', { style: { flex: 1, minWidth: 0 } },
+              h('div', { style: { fontSize: 14, fontWeight: 500, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, r.title),
+              h('div', { style: { fontSize: 12, color: 'var(--muted)', marginTop: 1 } }, r.sub)
+            ),
+            h('span', { style: { fontSize: 11, color: 'var(--muted)', background: 'var(--card-2)', border: '0.5px solid var(--border-soft)', borderRadius: 5, padding: '2px 7px', flexShrink: 0 } }, TYPE_LABEL[r.type] || r.type)
+          )
+        )
+      ),
+
+      // Пустое состояние
+      q.trim().length >= 2 && results.length === 0 && h('div', { style: { padding: '24px 16px', textAlign: 'center', color: 'var(--muted)', fontSize: 14 } },
+        'Ничего не найдено по «', h('b', null, q), '»'
+      ),
+
+      // Подсказка снизу
+      !q && h('div', { style: { padding: '10px 16px', display: 'flex', gap: 16, alignItems: 'center' } },
+        h('span', { style: { fontSize: 12, color: 'var(--muted)' } }, 'Начните вводить для поиска'),
+        h('span', { style: { flex: 1 } }),
+        h('span', { style: { fontSize: 11, color: 'var(--muted)' } }, '↑↓ навигация'),
+        h('span', { style: { fontSize: 11, color: 'var(--muted)' } }, '↵ открыть')
+      )
+    )
+  );
+});
 
 const vibrateOnAchievement = () => { try { if (navigator.vibrate) navigator.vibrate([100, 50, 200, 50, 100]); } catch(e) {} };
 const vibrateAction = (type = 'start') => {
