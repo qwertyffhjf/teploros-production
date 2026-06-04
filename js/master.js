@@ -54,7 +54,8 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
       onUpdate(d); resetForm(); addToast('Операция обновлена', 'success');
       DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
     } else {
-      const op = { id: uid(), orderId: form.orderId, name: form.name.trim(), workerIds: form.workerIds, status: 'pending', createdAt: now(), plannedHours: form.plannedHours ? Number(form.plannedHours) : undefined, archived: false, sectionId: form.sectionId || null, equipmentId: form.equipmentId || null, plannedStartDate: form.plannedStartDate ? new Date(form.plannedStartDate).getTime() : undefined, drawingUrl: form.drawingUrl.trim() || undefined, requiresQC: form.name.toLowerCase().includes('свар') || form.name.toLowerCase().includes('опресс'), requiresPressureTest: form.name.toLowerCase().includes('опресс') };
+      const _matchedStage = (data.productionStages || []).find(s => s.name === form.name.trim());
+      const op = { id: uid(), orderId: form.orderId, name: form.name.trim(), stageId: _matchedStage?.id || null, workerIds: form.workerIds, status: 'pending', createdAt: now(), plannedHours: form.plannedHours ? Number(form.plannedHours) : undefined, archived: false, sectionId: form.sectionId || null, equipmentId: form.equipmentId || null, plannedStartDate: form.plannedStartDate ? new Date(form.plannedStartDate).getTime() : undefined, drawingUrl: form.drawingUrl.trim() || undefined, requiresQC: form.name.toLowerCase().includes('свар') || form.name.toLowerCase().includes('опресс'), requiresPressureTest: form.name.toLowerCase().includes('опресс') };
       const d = { ...data, ops: [...data.ops, op] };
       onUpdate(d); resetForm(); addToast('Операция добавлена', 'success');
       DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
