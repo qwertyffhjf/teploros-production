@@ -2722,23 +2722,17 @@ const MC = memo(({ v, l, c, onClick, fs }) => {
 
 // TabBar — горизонтальные вкладки с анимированным индикатором активной вкладки.
 // Использование: h(TabBar, { tabs: [['id','Label']], tab, setTab })
-const TabBar = memo(({ tabs, tab, setTab }) => h('div', {
-  style: { display: 'flex', gap: 4, marginBottom: 14, overflowX: 'auto', borderBottom: '0.5px solid rgba(0,0,0,0.08)', paddingBottom: 8 }
-},
-  h('div', { className: 'tabs-scroll', style: { display: 'flex', gap: 4 } },
+const TabBar = memo(({ tabs, tab, setTab }) =>
+  h('div', { className: 'tab-pill-wrap', role: 'tablist' },
     tabs.map(([id, label]) => h('button', {
       key: id,
-      style: {
-        ...(tab === id ? abtn({ fontSize: 12 }) : gbtn({ fontSize: 12 })),
-        position: 'relative',
-        transition: 'background 0.18s, color 0.18s, transform 0.12s',
-      },
-      onClick: () => { navigator.vibrate?.([15]); setTab(id); },
-      onMouseEnter: (e) => { if (tab !== id) e.currentTarget.style.transform = 'translateY(-1px)'; },
-      onMouseLeave: (e) => { e.currentTarget.style.transform = ''; },
+      role: 'tab',
+      'aria-selected': tab === id,
+      className: 'tab-pill' + (tab === id ? ' active' : ''),
+      onClick: () => { navigator.vibrate?.([10]); setTab(id); },
     }, label))
   )
-));
+);
 
 const vibrateOnAchievement = () => { try { if (navigator.vibrate) navigator.vibrate([100, 50, 200, 50, 100]); } catch(e) {} };
 const vibrateAction = (type = 'start') => {
