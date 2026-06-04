@@ -35,7 +35,7 @@ const WorkerOnboarding = memo(({ worker, myOps, onDone }) => {
     ),
     myOps.length > 0
       ? myOps.slice(0, 3).map((op, i) => h('div', { key: op.id, style: { ...{ background: '#fff', border: '0.5px solid rgba(0,0,0,0.1)', borderRadius: 10, padding: '10px 14px', marginBottom: 8 } } },
-          h('div', { style: { fontSize: 14, fontWeight: 500 } }, op.name),
+          h('div', { className:'op-card-title', style: { fontWeight: 500 } }, op.name),
           op.qty && h('div', { style: { fontSize: 12, color: AM, marginTop: 2, fontWeight: 500 } }, 
             `${op.workerQty?.[currentUser.id] || '—'} из ${op.qty} шт`
           ),
@@ -60,7 +60,7 @@ const WorkerOnboarding = memo(({ worker, myOps, onDone }) => {
       h('span', { style: { fontSize: 16, flexShrink: 0 } }, icon),
       h('span', { style: { fontSize: 13, color: AM2, lineHeight: 1.5 } }, text)
     )),
-    h('button', { className: 'worker-btn worker-btn-start', style: { marginTop: 8 }, onClick: onDone }, 'Начать работу')
+    h('button', { className: 'worker-btn worker-btn-start op-card-btn', style: { marginTop: 8 }, onClick: onDone }, 'Начать работу')
   );
 
   return h('div', { style: { maxWidth: 440, margin: '0 auto', padding: '24px 16px' } },
@@ -585,12 +585,11 @@ const WorkerOpsHistoryBlock = memo(({ workerId, data }) => {
             const st = STATUS[op.status] || STATUS.pending;
             return h('div', { key:op.id, style:{ padding:'9px 10px', borderRadius:9, background:'var(--bg2,#f8f8f5)', border:'0.5px solid rgba(0,0,0,0.06)' } },
               // Строка 1: название операции + статус
-              h('div', { style:{ display:'flex', alignItems:'center', gap:6, marginBottom:4 } },
-                h('span', { style:{ flex:1, fontSize:13, fontWeight:500, color:'var(--fg,#222)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, op.name),
-                h('span', { style:{ fontSize:11, padding:'2px 7px', borderRadius:10, background:st.bg, color:st.cl, border:`0.5px solid ${st.br}`, flexShrink:0, whiteSpace:'nowrap' } }, st.label)
+              h('div', { style:{ display:'flex', alignItems:'center', gap:6, marginBottom:5 } },
+                h('span', { className:'op-card-title', style:{ flex:1, fontWeight:500, color:'var(--fg,#222)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, op.name),
+                h('span', { className:'status-badge', style:{ fontSize:11, padding:'3px 8px', borderRadius:10, background:st.bg, color:st.cl, border:`0.5px solid ${st.br}`, flexShrink:0, whiteSpace:'nowrap' } }, st.label)
               ),
-              // Строка 2: заказ + дата/время + длительность
-              h('div', { style:{ display:'flex', gap:10, fontSize:11, color:'#888', flexWrap:'wrap' } },
+              h('div', { className:'op-card-meta', style:{ display:'flex', gap:10, color:'var(--muted)', flexWrap:'wrap' } },
                 order
                   ? h('span', null, `Заказ №${order.number}${order.product ? ` · ${order.product}` : ''}`)
                   : h('span', null, '— без заказа —'),
