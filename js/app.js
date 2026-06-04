@@ -2552,22 +2552,26 @@ function App() {
     h('div', null, toasts.map(t => h(Toast, { key: t.id, message: t.message, type: t.type, action: t.action, onClose: () => removeToast(t.id) })))
   );
 
+  const roleLabel =
+    effectiveRole === 'master'      ? 'Начальник цеха' :
+    effectiveRole === 'controller'  ? 'Контролёр'      :
+    effectiveRole === 'warehouse'   ? 'Склад'           :
+    effectiveRole === 'dashboard'   ? 'Дашборд'         :
+    effectiveRole === 'pdo'         ? 'ПДО'             :
+    effectiveRole === 'director'    ? 'Руководитель'    :
+    effectiveRole === 'hr'          ? 'HR'              :
+    effectiveRole === 'shop_master' ? 'Сменный мастер'  :
+    effectiveRole === 'admin'       ? 'Администратор'   :
+    effectiveRole === 'sales'       ? 'Менеджер'        :
+    currentUser.name;
+
   return h('div', null,
-    h('div', { style: { display:'flex', gap:12, padding:'10px 0', borderBottom:'0.5px solid rgba(0,0,0,0.08)', alignItems:'center', flexWrap:'wrap' } },
-      h('button', { style: gbtn({ fontSize:11 }), onClick: goBack }, '← Выход'),
-      h('div', { style: { fontSize:12, color:'#888' } },
-        effectiveRole === 'master'      ? 'Начальник цеха' :
-        effectiveRole === 'controller'  ? 'Контролёр'     :
-        effectiveRole === 'warehouse'   ? 'Склад'          :
-        effectiveRole === 'dashboard'   ? 'Дашборд'        :
-        effectiveRole === 'pdo'         ? 'ПДО'            :
-        effectiveRole === 'director'    ? 'Руководитель'   :
-        effectiveRole === 'hr'          ? 'HR'             :
-        effectiveRole === 'shop_master' ? 'Сменный мастер' :
-        effectiveRole === 'admin'       ? 'Администратор'  :
-        effectiveRole === 'sales'       ? 'Менеджер'       :
-        currentUser.name
-      ),
+    h('div', { className: 'app-header' },
+      h('span', { className: 'app-header-logo' }, '⚡ Теплорос'),
+      h('span', { className: 'app-header-sep' }),
+      h('span', { className: 'app-header-role' }, roleLabel),
+      h('span', { className: 'app-header-spacer' }),
+      h('button', { style: gbtn({ fontSize:11, minHeight:34, padding:'6px 12px' }), onClick: goBack }, '← Выход'),
 
       effectiveRole !== 'dashboard' && (() => {
         const chatLastRead = Number(localStorage.getItem(`chat_lastRead_${currentUser.id || 'anon'}`)) || 0;
