@@ -583,11 +583,11 @@ const WorkerOpsHistoryBlock = memo(({ workerId, data }) => {
       : h('div', { style:{ display:'flex', flexDirection:'column', gap:4 } },
           filtered.map(({ op, order, durMin, ts }) => {
             const st = STATUS[op.status] || STATUS.pending;
-            return h('div', { key:op.id, style:{ padding:'9px 10px', borderRadius:9, background:'var(--bg2,#f8f8f5)', border:'0.5px solid rgba(0,0,0,0.06)' } },
+            return h('div', { key:op.id, className:'card-appear', style:{ padding:'9px 10px', borderRadius:9, background:'var(--bg2,#f8f8f5)', border:'0.5px solid rgba(0,0,0,0.06)' } },
               // Строка 1: название операции + статус
               h('div', { style:{ display:'flex', alignItems:'center', gap:6, marginBottom:5 } },
                 h('span', { className:'op-card-title', style:{ flex:1, fontWeight:500, color:'var(--fg,#222)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, op.name),
-                h('span', { className:'status-badge', style:{ fontSize:11, padding:'3px 8px', borderRadius:10, background:st.bg, color:st.cl, border:`0.5px solid ${st.br}`, flexShrink:0, whiteSpace:'nowrap' } }, st.label)
+                h('span', { className:'status-badge ' + (st.cls || ''), style:{ fontSize:11, padding:'3px 8px', borderRadius:10, background:st.bg, color:st.cl, border:`0.5px solid ${st.br}`, flexShrink:0, whiteSpace:'nowrap' } }, st.label)
               ),
               h('div', { className:'op-card-meta', style:{ display:'flex', gap:10, color:'var(--muted)', flexWrap:'wrap' } },
                 order
