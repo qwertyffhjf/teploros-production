@@ -8,10 +8,16 @@ window._pwaPrompt = null;
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); window._pwaPrompt = e; });
 
 // ==================== Константы ====================
-const AM = '#EF9F27', AM2 = '#412402', AM3 = '#FAEEDA', AM4 = '#BA7517';
-const GN = '#1D9E75', GN2 = '#04342C', GN3 = '#E1F5EE';
-const RD = '#E24B4A', RD2 = '#501313', RD3 = '#FCEBEB';
-const BL = '#378ADD';
+// Цветовые токены — читаем из CSS переменных для dark mode совместимости
+// Fallback значения оставляем для SSR/Node контекстов
+const _cv = (v, fb) => typeof getComputedStyle !== 'undefined'
+  ? (getComputedStyle(document.documentElement).getPropertyValue(v).trim() || fb)
+  : fb;
+const AM  = _cv('--c-am',  '#EF9F27'), AM2 = _cv('--c-am2', '#412402');
+const AM3 = _cv('--c-am3', '#FAEEDA'), AM4 = _cv('--c-am4', '#BA7517');
+const GN  = _cv('--c-gn',  '#1D9E75'), GN2 = _cv('--c-gn2', '#04342C'), GN3 = _cv('--c-gn3', '#E1F5EE');
+const RD  = _cv('--c-rd',  '#E24B4A'), RD2 = _cv('--c-rd2', '#501313'), RD3 = _cv('--c-rd3', '#FCEBEB');
+const BL  = _cv('--c-bl',  '#378ADD');
 
 const PRIORITY = {
   low: { label: 'Низкий', color: '#888' },
