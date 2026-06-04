@@ -1270,7 +1270,7 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
 
     // Если qty = 1 — операции создаём сразу (нет смысла делить)
     const newOps = parsed.productQty === 1 ? stages.map(stage => ({
-      id: uid(), orderId, name: stage.name, qty: 1,
+      id: uid(), orderId, name: stage.name, stageId: stage.id, qty: 1,
       workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
       archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null,
       plannedHours: stage.plannedHours || undefined, drawingUrl: stage.drawingUrl || undefined,
@@ -1501,7 +1501,7 @@ const SubOrderSplitStep = memo(({ data, onUpdate, addToast, onClose, parentOrder
 
         stages.forEach(stage => {
           newOps.push({
-            id: uid(), orderId: subId, name: stage.name, qty: 1,
+            id: uid(), orderId: subId, name: stage.name, stageId: stage.id, qty: 1,
             workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
             archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null,
             plannedHours: stage.plannedHours || undefined, drawingUrl: stage.drawingUrl || undefined,
