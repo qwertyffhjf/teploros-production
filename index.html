@@ -478,6 +478,40 @@
       50%     { transform: scale(1.04); box-shadow: 0 0 0 14px rgba(239,159,39,0); }
     }
 
+    /* ─── Micro-animations ─────────────────────────────────────────────── */
+    @keyframes fadeSlideIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes checkDraw {
+      from { stroke-dashoffset: 40; opacity: 0; }
+      to   { stroke-dashoffset: 0;  opacity: 1; }
+    }
+    @keyframes doneGlow {
+      0%   { box-shadow: 0 0 0 0 rgba(29,154,117,0.4); }
+      60%  { box-shadow: 0 0 0 8px rgba(29,154,117,0); }
+      100% { box-shadow: none; }
+    }
+    @keyframes inProgressPulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.65; }
+    }
+    .op-done    { animation: doneGlow 600ms ease-out both; }
+    .op-started { animation: fadeSlideIn 200ms var(--ease) both; }
+    .check-icon { stroke-dasharray: 40; animation: checkDraw 300ms ease-out 100ms both; }
+    .badge-in-progress { animation: inProgressPulse 2s ease-in-out infinite; }
+
+    /* Анимация появления карточки */
+    .card-appear { animation: fadeSlideIn 180ms var(--ease) both; }
+
+    /* ─── Command Palette ───────────────────────────────────────────────── */
+    @keyframes paletteIn {
+      from { opacity: 0; transform: translateY(-12px) scale(0.97); }
+      to   { opacity: 1; transform: none; }
+    }
+    /* Применяется к контейнеру палитры через JS */
+    .palette-box { animation: paletteIn 160ms var(--ease) both; }
+
     /* ─── Pill TabBar ───────────────────────────────────────────────────── */
     .tab-pill-wrap {
       display: flex; gap: 3px; padding: 3px;
@@ -565,31 +599,31 @@
 </script>
 
 <!-- Core: константы, DB, утилиты, общие компоненты -->
-<script src="js/core.js?v=20260611"></script>
+<script src="js/core.js?v=20260612"></script>
 <!-- Shared: QR, PDF, LoadForecast, WorkerCardModal, MasterOnboarding -->
-<script defer src="js/shared.js?v=20260611"></script>
-<script defer src="js/qms.js?v=20260611"></script>
+<script defer src="js/shared.js?v=20260612"></script>
+<script defer src="js/qms.js?v=20260612"></script>
 <!-- Аналитика: графики, SectionAnalytics, ReportsBuilder -->
-<script defer src="js/analytics.js?v=20260611"></script>
+<script defer src="js/analytics.js?v=20260612"></script>
 <!-- Табель: isWorkday, calcDayData, MasterTimeTracking -->
-<script defer src="js/timesheet.js?v=20260611"></script>
+<script defer src="js/timesheet.js?v=20260612"></script>
 <!-- Доп. работы: AuxOpsViewer -->
-<script defer src="js/auxops.js?v=20260611"></script>
+<script defer src="js/auxops.js?v=20260612"></script>
 <!-- Справочники: PasteImport, Sections, Equipment, Materials, BOM, Stages, Admin -->
-<script defer src="js/reference.js?v=20260611"></script>
+<script defer src="js/reference.js?v=20260612"></script>
 <!-- Качество: ControllerScreen, MasterReclamations -->
-<script defer src="js/quality.js?v=20260611"></script>
+<script defer src="js/quality.js?v=20260612"></script>
 <!-- Сотрудники: HR, Workers, Instructions, Vacations, MonthlyReport -->
-<script defer src="js/hr.js?v=20260611"></script>
+<script defer src="js/hr.js?v=20260612"></script>
 <!-- Чат -->
-<script defer src="js/chat.js?v=20260611"></script>
+<script defer src="js/chat.js?v=20260612"></script>
 <!-- Склад: MaterialImport, WarehouseScreen -->
-<script defer src="js/warehouse.js?v=20260611"></script>
+<script defer src="js/warehouse.js?v=20260612"></script>
 <!-- Производство: MasterOps, MasterOrders, Kanban, Gantt, MasterScreen -->
-<script defer src="js/master.js?v=20260611"></script>
+<script defer src="js/master.js?v=20260612"></script>
 <!-- Рабочий: WorkerScreen -->
-<script defer src="js/worker.js?v=20260611"></script>
+<script defer src="js/worker.js?v=20260612"></script>
 <!-- Приложение: App, Login, Dashboard, роутинг, PWA -->
-<script defer src="js/app.js?v=20260611"></script>
+<script defer src="js/app.js?v=20260612"></script>
 </body>
 </html>
