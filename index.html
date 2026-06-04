@@ -57,6 +57,12 @@
       /* — Radii (Apple ladder: 0 / 5 / 8 / 11 / 18 / pill) — */
       --r-sm: 8px; --r-md: 11px; --r-lg: 18px; --r-xl: 18px;
 
+      /* — Semantic color tokens (AM/GN/RD/BL → CSS vars) — */
+      --c-am:    #EF9F27;  --c-am2: #412402;  --c-am3: #FAEEDA;  --c-am4: #BA7517;
+      --c-gn:    #1D9E75;  --c-gn2: #04342C;  --c-gn3: #E1F5EE;
+      --c-rd:    #E24B4A;  --c-rd2: #501313;  --c-rd3: #FCEBEB;
+      --c-bl:    #378ADD;
+
       /* — Brand — */
       --brand:        #EF9F27;   /* Action Color (replaces Apple blue) */
       --brand-press:  #d88a17;
@@ -100,6 +106,11 @@
         --hairline:    rgba(255,255,255,0.10);
         --muted:       #98989d;
         --chrome-bg:   rgba(39,39,41,0.78);
+        /* dark mode цвета */
+        --c-am:    #EF9F27;  --c-am2: #FAC775;  --c-am3: #3D2800;  --c-am4: #EF9F27;
+        --c-gn:    #1D9E75;  --c-gn2: #9FE1CB;  --c-gn3: #0A2E22;
+        --c-rd:    #F09595;  --c-rd2: #F7C1C1;  --c-rd3: #2D1010;
+        --c-bl:    #85B7EB;
       }
     }
     /* — Forced themes — */
@@ -549,6 +560,15 @@
     .op-card-meta  { font-size: 14px !important; }
     .op-card-btn   { min-height: 50px !important; font-size: 15px !important; border-radius: 12px !important; }
 
+    /* ─── Мобильная адаптация шапки ───────────────────────────────────── */
+    @media (max-width: 480px) {
+      .app-header-logo { font-size: 12px; }
+      .app-header-role { font-size: 11px; padding: 2px 7px; }
+      .app-header { gap: 6px; padding: 8px 0 10px; flex-wrap: nowrap; }
+      /* скрываем текст ⌘K на мобильных — только иконка */
+      .search-kbd { display: none; }
+    }
+
     /* ─── Шапка приложения ──────────────────────────────────────────────── */
     .app-header { display: flex; align-items: center; gap: 10px; padding: 10px 0 12px; border-bottom: 0.5px solid var(--border-soft); }
     .app-header-logo { font-size: 13px; font-weight: 700; letter-spacing: -0.3px; color: var(--brand); }
@@ -599,31 +619,31 @@
 </script>
 
 <!-- Core: константы, DB, утилиты, общие компоненты -->
-<script src="js/core.js?v=20260612"></script>
+<script src="js/core.js?v=20260613"></script>
 <!-- Shared: QR, PDF, LoadForecast, WorkerCardModal, MasterOnboarding -->
-<script defer src="js/shared.js?v=20260612"></script>
-<script defer src="js/qms.js?v=20260612"></script>
+<script defer src="js/shared.js?v=20260613"></script>
+<script defer src="js/qms.js?v=20260613"></script>
 <!-- Аналитика: графики, SectionAnalytics, ReportsBuilder -->
-<script defer src="js/analytics.js?v=20260612"></script>
+<script defer src="js/analytics.js?v=20260613"></script>
 <!-- Табель: isWorkday, calcDayData, MasterTimeTracking -->
-<script defer src="js/timesheet.js?v=20260612"></script>
+<script defer src="js/timesheet.js?v=20260613"></script>
 <!-- Доп. работы: AuxOpsViewer -->
-<script defer src="js/auxops.js?v=20260612"></script>
+<script defer src="js/auxops.js?v=20260613"></script>
 <!-- Справочники: PasteImport, Sections, Equipment, Materials, BOM, Stages, Admin -->
-<script defer src="js/reference.js?v=20260612"></script>
+<script defer src="js/reference.js?v=20260613"></script>
 <!-- Качество: ControllerScreen, MasterReclamations -->
-<script defer src="js/quality.js?v=20260612"></script>
+<script defer src="js/quality.js?v=20260613"></script>
 <!-- Сотрудники: HR, Workers, Instructions, Vacations, MonthlyReport -->
-<script defer src="js/hr.js?v=20260612"></script>
+<script defer src="js/hr.js?v=20260613"></script>
 <!-- Чат -->
-<script defer src="js/chat.js?v=20260612"></script>
+<script defer src="js/chat.js?v=20260613"></script>
 <!-- Склад: MaterialImport, WarehouseScreen -->
-<script defer src="js/warehouse.js?v=20260612"></script>
+<script defer src="js/warehouse.js?v=20260613"></script>
 <!-- Производство: MasterOps, MasterOrders, Kanban, Gantt, MasterScreen -->
-<script defer src="js/master.js?v=20260612"></script>
+<script defer src="js/master.js?v=20260613"></script>
 <!-- Рабочий: WorkerScreen -->
-<script defer src="js/worker.js?v=20260612"></script>
+<script defer src="js/worker.js?v=20260613"></script>
 <!-- Приложение: App, Login, Dashboard, роутинг, PWA -->
-<script defer src="js/app.js?v=20260612"></script>
+<script defer src="js/app.js?v=20260613"></script>
 </body>
 </html>
