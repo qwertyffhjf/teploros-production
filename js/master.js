@@ -1104,6 +1104,8 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     return [...filtered_].sort((a,b) => {
       const ua = getUrgency(a), ub = getUrgency(b);
       if (ua !== ub) return ua - ub;
+      // Отгруженные — сортируем по дате отгрузки, новые первыми
+      if (ua === 5 && a.shipped && b.shipped) return (b.shippedAt||0) - (a.shippedAt||0);
       const da = a.deadline ? new Date(a.deadline).getTime() : Infinity;
       const db = b.deadline ? new Date(b.deadline).getTime() : Infinity;
       return da - db;
