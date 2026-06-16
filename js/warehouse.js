@@ -192,6 +192,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId, readOnly 
             deliveries.forEach(d => { if (!groups[d.orderId]) groups[d.orderId]=[]; groups[d.orderId].push(d); });
             return Object.entries(groups).map(([orderId, items]) => {
               const order = data.orders.find(o => o.id === orderId) || { number: orderId, product: '', customer: '' };
+              if (order.parentOrderId) return null; // скрыть подзаказы
               const isExpanded = expandedOrders.has(orderId);
               const doneCount = items.filter(d=>d.status==='confirmed').length;
               const allDone = doneCount===items.length;
@@ -1123,7 +1124,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnl
         const allItems = [];
         Object.entries(needsAll).forEach(([orderId, needs]) => {
           const order = data.orders.find(o => o.id === orderId);
-          if (!order || order.archived || order.shipped) return;
+          if (!order || order.archived || order.shipped || order.parentOrderId) return;
           (needs.groups || []).forEach(group => {
             (group.items || []).forEach(item => {
               allItems.push({ orderId, order, group, item });
