@@ -142,8 +142,9 @@ const KpiCard = memo(({ label, value, delta, deltaDir, color, spark }) => {
 
 // Полноэкранная аналитика (модалка)
 const FullAnalyticsModal = memo(({ section, data, onClose }) => {
-  const [period, setPeriod]       = useState(30);
-  const [chartType, setChartType] = useState('bar'); // bar | line
+  const [period, setPeriod]             = useState(30);
+  const [chartType, setChartType]       = useState('bar'); // bar | line
+  const [archiveLoading, setArchiveLoading] = useState(false);
   const periodStart = useMemo(() => now() - period * 86400000, [period]);
   const c1 = useChartRef(), c2 = useChartRef(), c3 = useChartRef(), c4 = useChartRef();
 
