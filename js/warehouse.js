@@ -1340,7 +1340,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnl
       !needsOrderId && h('div', null,
         (() => {
           const filtered = data.orders
-            .filter(o => !o.archived && !o.shipped)
+            .filter(o => !o.archived && !o.shipped && !o.parentOrderId)
             .filter(o => !needsSearch || o.number.toLowerCase().includes(needsSearch.toLowerCase()) || (o.product || '').toLowerCase().includes(needsSearch.toLowerCase()))
             .sort((a, b) => (a.deadline || '').localeCompare(b.deadline || ''));
 
