@@ -456,6 +456,80 @@ const WorkerToolsBlock = memo(({ workerId, data, onUpdate, addToast }) => {
   );
 });
 
+// ==================== WorkerSizesBlock — Мои размеры (спецодежда) ====================
+const WorkerSizesBlock = memo(({ workerId, data, onUpdate, addToast }) => {
+  const worker = data.workers.find(w => w.id === workerId);
+  const saved = worker?.sizes || {};
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({
+    height: saved.height || '', clothing: saved.clothing || '', shoes: saved.shoes || '',
+    hat: saved.hat || '', gloves: saved.gloves || '',
+  });
+  const [saving, setSaving] = useState(false);
+
+  const hasAny = ['height','clothing','shoes','hat','gloves'].some(k => saved[k]);
+
+  const handleSave = useCallback(async () => {
+    setSaving(true);
+    const sizes = { ...form, updatedAt: Date.now() };
+    const d = { ...data, workers: data.workers.map(w => w.id === workerId ? { ...w, sizes } : w) };
+    await DB.save(d); onUpdate(d);
+    setSaving(false); setEditing(false);
+    addToast('Размеры сохранены', 'success');
+  }, [data, form, workerId, onUpdate, addToast]);
+
+  const FIELDS = [
+    { key: 'height',   label: 'Рост, см',          placeholder: 'напр. 178' },
+    { key: 'clothing', label: 'Размер одежды',      placeholder: 'напр. 52' },
+    { key: 'shoes',    label: 'Размер обуви',       placeholder: 'напр. 42' },
+    { key: 'hat',      label: 'Размер головного убора', placeholder: 'напр. 58' },
+    { key: 'gloves',   label: 'Размер перчаток',    placeholder: 'S / M / L / XL' },
+  ];
+
+  return h('div', { style: { ...S.card, marginBottom: 16 } },
+    h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom: 12 } },
+      h('span', { style: { fontSize:18 } }, '👕'),
+      h('div', { style: { flex:1 } },
+        h('div', { style: { fontWeight:600, fontSize:14 } }, 'Мои размеры'),
+        h('div', { style: { fontSize:11, color:'var(--muted)' } }, 'Для подбора спецодежды и обуви — заполните, что знаете')
+      ),
+      !editing && h('button', { style: gbtn({ fontSize:11 }), onClick: () => setEditing(true) }, hasAny ? 'Изменить' : '+ Заполнить')
+    ),
+
+    !editing && hasAny && h('div', { style: { display:'flex', flexWrap:'wrap', gap:8 } },
+      FIELDS.filter(f => saved[f.key]).map(f =>
+        h('div', { key:f.key, style: { padding:'6px 12px', background: AM3, border:`0.5px solid ${AM4}`, borderRadius:8, fontSize:12 } },
+          h('span', { style: { color:'var(--muted)' } }, f.label + ': '),
+          h('span', { style: { fontWeight:600, color: AM2 } }, saved[f.key])
+        )
+      )
+    ),
+
+    !editing && !hasAny && h('div', { style: { fontSize:12, color:'var(--muted)' } }, 'Размеры пока не указаны'),
+
+    editing && h('div', null,
+      h('div', { style: { display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom: 12 } },
+        FIELDS.map(f => h('div', { key:f.key },
+          h('label', { style: { fontSize:11, color:'var(--muted)', display:'block', marginBottom:4 } }, f.label),
+          h('input', {
+            style: { ...S.inp, width:'100%', boxSizing:'border-box', margin:0 },
+            value: form[f.key], placeholder: f.placeholder,
+            onChange: e => setForm(s => ({ ...s, [f.key]: e.target.value }))
+          })
+        ))
+      ),
+      h('div', { style: { display:'flex', gap:8, justifyContent:'flex-end' } },
+        h('button', { style: gbtn({ fontSize:12 }), onClick: () => { setEditing(false); setForm({ height: saved.height||'', clothing: saved.clothing||'', shoes: saved.shoes||'', hat: saved.hat||'', gloves: saved.gloves||'' }); } }, 'Отмена'),
+        h('button', { style: abtn({ fontSize:12 }), onClick: handleSave, disabled: saving }, saving ? 'Сохранение...' : 'Сохранить')
+      )
+    ),
+
+    saved.updatedAt && !editing && h('div', { style: { fontSize:10, color:'#aaa', marginTop:8 } },
+      `Обновлено ${new Date(saved.updatedAt).toLocaleDateString('ru-RU')}`
+    )
+  );
+});
+
 // ==================== WorkerOpsHistoryBlock ====================
 const WorkerOpsHistoryBlock = memo(({ workerId, data }) => {
   const today = new Date();
@@ -1912,6 +1986,9 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
 
       // Мой инструмент
       h(WorkerToolsBlock, { workerId, data }),
+
+      // Мои размеры (спецодежда)
+      h(WorkerSizesBlock, { workerId, data, onUpdate, addToast }),
 
       // Часы — личный табель
       h(WorkerHoursBlock, { workerId, data }),
