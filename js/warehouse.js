@@ -821,7 +821,84 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
 
 
 // ==================== WarehouseScreen (Склад) ====================
+// ==================== WorkwearNeedsPanel — Спецодежда: сводная потребность по размерам ====================
+const WorkwearNeedsPanel = memo(({ data }) => {
+  const [expandedKey, setExpandedKey] = useState(null);
+
+  const FIELDS = [
+    { key: 'clothing', label: 'Спецовка',          icon: '👔' },
+    { key: 'shoes',    label: 'Обувь',              icon: '👞' },
+    { key: 'hat',      label: 'Головной убор',      icon: '🪖' },
+    { key: 'gloves',   label: 'Перчатки',           icon: '🧤' },
+  ];
+
+  const grouped = useMemo(() => {
+    const out = {};
+    FIELDS.forEach(f => { out[f.key] = {}; });
+    (data.workers || []).filter(w => !w.archived && w.sizes).forEach(w => {
+      FIELDS.forEach(f => {
+        const val = w.sizes[f.key];
+        if (!val) return;
+        if (!out[f.key][val]) out[f.key][val] = [];
+        out[f.key][val].push(w);
+      });
+    });
+    return out;
+  }, [data.workers]);
+
+  const totalFilled = (data.workers || []).filter(w => !w.archived && w.sizes && Object.values(w.sizes).some(Boolean)).length;
+  const totalWorkers = (data.workers || []).filter(w => !w.archived).length;
+
+  return h('div', null,
+    h('div', { style: { ...S.card, marginBottom: 12, padding: '10px 14px' } },
+      h('div', { style: { fontSize: 13, fontWeight: 500 } }, '👕 Потребность в спецодежде'),
+      h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 2 } },
+        `Размеры указали ${totalFilled} из ${totalWorkers} сотрудников`
+      )
+    ),
+
+    FIELDS.map(f => {
+      const sizes = grouped[f.key];
+      const entries = Object.entries(sizes).sort((a, b) => b[1].length - a[1].length);
+      if (entries.length === 0) return null;
+      return h('div', { key: f.key, style: { ...S.card, marginBottom: 10, padding: 0, overflow: 'hidden' } },
+        h('div', { style: { padding: '10px 14px', borderBottom: '0.5px solid var(--border-soft)', fontSize: 12, fontWeight: 600 } },
+          `${f.icon} ${f.label}`
+        ),
+        entries.map(([size, workers]) => {
+          const rowKey = f.key + ':' + size;
+          const isOpen = expandedKey === rowKey;
+          return h('div', { key: size },
+            h('div', {
+              style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 14px', cursor: 'pointer', borderBottom: '0.5px solid var(--border-soft)' },
+              onClick: () => setExpandedKey(isOpen ? null : rowKey)
+            },
+              h('div', { style: { fontSize: 13 } }, `Размер ${size}`),
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                h('span', { style: { fontSize: 12, fontWeight: 600, color: AM2 } }, `× ${workers.length}`),
+                h('span', { style: { fontSize: 11, color: 'var(--muted)' } }, isOpen ? '▾' : '▸')
+              )
+            ),
+            isOpen && h('div', { style: { padding: '6px 14px 10px', background: 'var(--bg,#f9f9f7)' } },
+              workers.map(w => h('div', { key: w.id, style: { fontSize: 12, color: 'var(--fg)', padding: '4px 0' } },
+                w.name, w.position && h('span', { style: { color: 'var(--muted)' } }, ` · ${w.position}`)
+              ))
+            )
+          );
+        })
+      );
+    }),
+
+    Object.values(grouped).every(g => Object.keys(g).length === 0) &&
+      h('div', { style: { ...S.card, padding: 32, textAlign: 'center', color: 'var(--muted)', fontSize: 13 } },
+        'Пока ни один сотрудник не указал размеры'
+      )
+  );
+});
+
 const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnly = false }) => {
+
+
   const [tab, setTab] = useState('stock');
   const [receiveForm, setReceiveForm] = useState({ materialId: '', qty: '', batch: '' });
   // Новый экран приёмки — заявки по заказам из MaterialsDB
@@ -1011,7 +1088,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnl
     }),
     showImport && h(MaterialImportModal, { data, onClose: () => setShowImport(false), onUpdate, addToast, defaultMode: importMode }),
     // Вкладки
-    h(TabBar, { tabs: [['deliveries', `🚚 Поставки (${(data.materialDeliveries||[]).filter(d=>d.status==='pending'||d.status==='partial').length})`], ['stock', '📦 Остатки'], ['requests', `🔔 Заявки (${materialRequests.length})`], ['receive', '📥 Приёмка'], ['needs', '📝 Заявки на матер.'], ['history', '📋 Движение'], ['materials', '🗂 Справочник'], ['bom', '📋 Спецификации'], ['tools', '🔧 Инструмент']], tab, setTab }),
+    h(TabBar, { tabs: [['deliveries', `🚚 Поставки (${(data.materialDeliveries||[]).filter(d=>d.status==='pending'||d.status==='partial').length})`], ['stock', '📦 Остатки'], ['requests', `🔔 Заявки (${materialRequests.length})`], ['receive', '📥 Приёмка'], ['needs', '📝 Заявки на матер.'], ['workwear', '👕 Спецодежда'], ['history', '📋 Движение'], ['materials', '🗂 Справочник'], ['bom', '📋 Спецификации'], ['tools', '🔧 Инструмент']], tab, setTab }),
 
     // Заявки (уведомления)
     materialRequests.length > 0 && tab !== 'requests' && h('div', { role: 'alert', style: { padding: '8px 12px', background: AM3, border: `0.5px solid ${AM}`, borderRadius: 8, marginBottom: 12, fontSize: 12, cursor: 'pointer' }, onClick: () => setTab('requests') },
@@ -1416,6 +1493,8 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnl
         });
       })()
     ),
+
+    tab === 'workwear' && h(WorkwearNeedsPanel, { data }),
 
     tab === 'history' && h('div', null,
       movements.length === 0 ? h('div', { style: S.card }, h(EmptyState, { icon: '📊', title: 'Нет движений', desc: 'История приходов и расходов пуста', compact: true })) :
