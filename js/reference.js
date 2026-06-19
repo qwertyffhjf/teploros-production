@@ -1273,7 +1273,73 @@ const ArchiveViewer = memo(({ data }) => {
   );
 });
 
-// ==================== Storage Monitor ====================
+// ==================== Backup Restore Panel ====================
+const BackupRestorePanel = memo(({ onUpdate, addToast }) => {
+  const [open, setOpen]         = useState(false);
+  const [loading, setLoading]   = useState(false);
+  const [backups, setBackups]   = useState([]);
+  const [restoring, setRestoring] = useState(null);
+
+  const loadBackups = useCallback(async () => {
+    setLoading(true);
+    const list = await DB.listBackups();
+    setBackups(list);
+    setLoading(false);
+  }, []);
+
+  const handleRestore = useCallback(async (backup) => {
+    if (!window.confirm(`Восстановить данные на момент ${backup.date}?\n\nТекущее состояние будет сохранено отдельным снимком — его можно будет вернуть обратно тем же способом.`)) return;
+    setRestoring(backup.id);
+    const res = await DB.restoreFromBackup(backup.id);
+    setRestoring(null);
+    if (res.error) {
+      addToast(`Ошибка восстановления: ${res.error}`, 'error');
+    } else {
+      addToast(res.message || 'Данные восстановлены', 'success');
+      loadBackups();
+      // Подтягиваем восстановленные данные в интерфейс
+      const fresh = await DB.load();
+      if (fresh) onUpdate(fresh);
+    }
+  }, [onUpdate, addToast, loadBackups]);
+
+  if (!open) return h('div', { style: { ...S.card, marginBottom: 12, cursor: 'pointer' }, onClick: () => { setOpen(true); loadBackups(); } },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+      h('div', null,
+        h('div', { style: S.sec }, '💾 Восстановление данных'),
+        h('div', { style: { fontSize: 11, color: '#888' } }, 'Снимки всех данных каждые ~10 минут, глубина — последние часы')
+      ),
+      h('span', { style: { fontSize: 12, color: AM4 } }, 'Открыть →')
+    )
+  );
+
+  return h('div', { style: { ...S.card, marginBottom: 12 } },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } },
+      h('div', { style: S.sec }, '💾 Восстановление данных'),
+      h('button', { style: gbtn({ fontSize: 11 }), onClick: () => setOpen(false) }, '× Закрыть')
+    ),
+    h('div', { style: { background: '#fffbe6', border: '0.5px solid #f5c518', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 11, color: '#7a5900' } },
+      '⚠ Восстановление перезапишет текущие данные. Перед этим автоматически создаётся снимок текущего состояния — можно откатиться обратно.'
+    ),
+    loading && h('div', { style: { fontSize: 12, color: '#888', textAlign: 'center', padding: 12 } }, 'Загрузка снимков...'),
+    !loading && backups.length === 0 && h('div', { style: { fontSize: 12, color: '#888', textAlign: 'center', padding: 12 } }, 'Снимков пока нет — появятся после следующих сохранений'),
+    !loading && backups.length > 0 && h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+      backups.map(b => h('div', {
+        key: b.id,
+        style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', border: '0.5px solid #e5e5e0', borderRadius: 8 }
+      },
+        h('div', { style: { fontSize: 12, color: '#333' } }, b.date),
+        h('button', {
+          style: gbtn({ fontSize: 11 }),
+          disabled: restoring === b.id,
+          onClick: () => handleRestore(b)
+        }, restoring === b.id ? 'Восстанавливаем...' : '↩ Восстановить')
+      ))
+    )
+  );
+});
+
+
 const StorageMonitor = memo(({ data, addToast }) => {
   const [showAnalysis, setShowAnalysis] = useState(false);
   
@@ -1473,6 +1539,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
 
   return h('div', null,
     h(ArchiveViewer, { data }),
+    h(BackupRestorePanel, { onUpdate, addToast }),
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'PIN-коды доступа'),
       h('div', { style: { background: '#fffbe6', border: '0.5px solid #f5c518', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 11, color: '#7a5900' } },
@@ -2030,4 +2097,3 @@ const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
         )
   );
 });
-
