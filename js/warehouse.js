@@ -849,12 +849,35 @@ const WorkwearNeedsPanel = memo(({ data }) => {
   const totalFilled = (data.workers || []).filter(w => !w.archived && w.sizes && Object.values(w.sizes).some(Boolean)).length;
   const totalWorkers = (data.workers || []).filter(w => !w.archived).length;
 
+  const handleExport = useCallback(() => {
+    // Лист 1 — сводная по размерам (для заказа у поставщика)
+    const summaryRows = [];
+    FIELDS.forEach(f => {
+      Object.entries(grouped[f.key]).sort((a, b) => b[1].length - a[1].length).forEach(([size, workers]) => {
+        summaryRows.push({ 'Позиция': f.label, 'Размер': size, 'Количество': workers.length });
+      });
+    });
+    // Лист 2 — детально по сотрудникам (для накладной/раздачи)
+    const detailRows = (data.workers || []).filter(w => !w.archived && w.sizes && Object.values(w.sizes).some(Boolean)).map(w => ({
+      'ФИО': w.name, 'Должность': w.position || '',
+      'Рост': w.sizes.height || '', 'Спецовка': w.sizes.clothing || '',
+      'Обувь': w.sizes.shoes || '', 'Головной убор': w.sizes.hat || '', 'Перчатки': w.sizes.gloves || '',
+    }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryRows), 'Сводная по размерам');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detailRows), 'По сотрудникам');
+    XLSX.writeFile(wb, `spec_odezhda_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }, [grouped, data.workers]);
+
   return h('div', null,
-    h('div', { style: { ...S.card, marginBottom: 12, padding: '10px 14px' } },
-      h('div', { style: { fontSize: 13, fontWeight: 500 } }, '👕 Потребность в спецодежде'),
-      h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 2 } },
-        `Размеры указали ${totalFilled} из ${totalWorkers} сотрудников`
-      )
+    h('div', { style: { ...S.card, marginBottom: 12, padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
+      h('div', null,
+        h('div', { style: { fontSize: 13, fontWeight: 500 } }, '👕 Потребность в спецодежде'),
+        h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 2 } },
+          `Размеры указали ${totalFilled} из ${totalWorkers} сотрудников`
+        )
+      ),
+      totalFilled > 0 && h('button', { style: gbtn({ fontSize: 12 }), onClick: handleExport }, '📥 Скачать XLSX')
     ),
 
     FIELDS.map(f => {
