@@ -405,6 +405,7 @@ const firestore = typeof firebase !== 'undefined' ? firebase.firestore() : null;
 const DOC_REF    = firestore ? firestore.collection('app').doc('production_v14') : null;
 const WH_DOC_REF = firestore ? firestore.collection('app').doc('warehouse_v1') : null;   // Склад — отдельный документ
 const PRESENCE_REF = firestore ? firestore.collection('presence') : null;
+const BACKUP_REF = firestore ? firestore.collection('app_backups') : null; // Реальные снапшоты для восстановления (не метаданные)
 
 // Поля которые живут в warehouse_v1 (не в production_v14)
 const WH_FIELDS = ['materials','bomTemplates','materialConsumptions','materialReservations','materialDeliveries','equipment'];
@@ -1041,6 +1042,7 @@ const DB = {
   _online:      true,    // текущий статус сети
   _version:     null,    // версия последних загруженных данных (для optimistic locking)
   _saveHistory: [],      // 📜 История сохранений: [{ts, version, userId, summary}] — последние 10
+  _lastBackupAt: null,   // ⏱ когда последний раз писали реальный снапшот в app_backups
 
   // ── Загрузка ──────────────────────────────────────────────────────────────
   async load() {
@@ -1338,6 +1340,15 @@ const DB = {
                 try {
                   let remoteData;
                   try { remoteData = typeof snap.data().payload === 'string' ? JSON.parse(snap.data().payload) : snap.data(); } catch(e) { remoteData = {}; }
+                  // Складские поля (materials, materialConsumptions и т.д.) живут в ОТДЕЛЬНОМ документе warehouse_v1,
+                  // не в production_v14 — нужно забрать его отдельно, иначе сравнение идёт с пустотой.
+                  let remoteWh = {};
+                  try {
+                    const whSnap = await WH_DOC_REF.get().catch(() => null);
+                    if (whSnap && whSnap.exists) {
+                      remoteWh = typeof whSnap.data().payload === 'string' ? JSON.parse(whSnap.data().payload) : whSnap.data();
+                    }
+                  } catch(e) { remoteWh = {}; }
                   // Мержим массивы: наши новые записи добавляем к удалённым
                   const mergeArrayById = (remote, local, key) => {
                     const remoteMap = new Map((remote || []).map(item => [item[key], item]));
@@ -1347,7 +1358,29 @@ const DB = {
                   toSave.orders = mergeArrayById(remoteData.orders, toSave.orders, 'id');
                   toSave.ops = mergeArrayById(remoteData.ops, toSave.ops, 'id');
                   toSave.workers = mergeArrayById(remoteData.workers, toSave.workers, 'id');
-                  toSave.materials = mergeArrayById(remoteData.materials, toSave.materials, 'id');
+                  // ⚠ Складские поля — сравниваем с remoteWh (warehouse_v1), а не с remoteData (production_v14)
+                  toSave.materials             = mergeArrayById(remoteWh.materials,             toSave.materials,             'id');
+                  toSave.materialConsumptions  = mergeArrayById(remoteWh.materialConsumptions,  toSave.materialConsumptions,  'id');
+                  toSave.materialReservations  = mergeArrayById(remoteWh.materialReservations,  toSave.materialReservations,  'id');
+                  toSave.materialDeliveries    = mergeArrayById(remoteWh.materialDeliveries,    toSave.materialDeliveries,    'id');
+                  toSave.equipment             = mergeArrayById(remoteWh.equipment,             toSave.equipment,             'id');
+                  // ⚠ Раньше эти поля НЕ мержились и просто перезатирались при конфликте — отсюда пропажи табеля/рекламаций.
+                  toSave.reclamations = mergeArrayById(remoteData.reclamations, toSave.reclamations, 'id');
+                  toSave.duels        = mergeArrayById(remoteData.duels,        toSave.duels,        'id');
+                  // Табель — вложенная структура timesheet[месяц][workerId][день]: глубокий мердж по дням, без потери чужих записей
+                  const mergeTimesheet = (remote, local) => {
+                    const out = { ...(remote || {}) };
+                    Object.keys(local || {}).forEach(month => {
+                      out[month] = { ...(out[month] || {}) };
+                      Object.keys(local[month] || {}).forEach(workerId => {
+                        out[month][workerId] = { ...(out[month][workerId] || {}), ...(local[month][workerId] || {}) };
+                      });
+                    });
+                    return out;
+                  };
+                  toSave.timesheet = mergeTimesheet(remoteData.timesheet, toSave.timesheet);
+                  // Настройки (PIN-коды и т.д.) — поле за полем: меняли здесь → наше значение, не меняли → берём удалённое
+                  toSave.settings = { ...(remoteData.settings || {}), ...(toSave.settings || {}) };
                   // Events, messages — конкатенируем и дедуплицируем
                   const mergeEvents = (remote, local) => {
                     const ids = new Set((local || []).map(e => e.id));
@@ -1401,6 +1434,20 @@ const DB = {
             const workerCount = toSave.workers?.length || 0;
             DB._saveHistory.unshift({ ts: newVersion, version: newVersion, summary: `${orderCount}заказ ${opCount}опер ${workerCount}раб` });
             if (DB._saveHistory.length > 10) DB._saveHistory.pop();
+            // 💾 Реальный снапшот для восстановления — не чаще раза в 10 минут, не блокирует сохранение
+            if (BACKUP_REF && (!DB._lastBackupAt || newVersion - DB._lastBackupAt > 10 * 60 * 1000)) {
+              DB._lastBackupAt = newVersion;
+              BACKUP_REF.doc(String(newVersion)).set({
+                payload: JSON.stringify(toSave),
+                ts: newVersion,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+              }).then(() => {
+                // Чистим старые снапшоты, оставляем последние 30 (≈5 часов истории при шаге 10 мин)
+                BACKUP_REF.orderBy('ts', 'desc').get().then(qs => {
+                  qs.docs.slice(30).forEach(d => d.ref.delete().catch(() => {}));
+                }).catch(() => {});
+              }).catch(e => console.warn('Backup write failed:', e));
+            }
           } catch(e) {
             console.error('Firebase save error:', e);
             DB._lastError = e.message;
@@ -1446,37 +1493,58 @@ const DB = {
     }
   },
 
-  // 📜 История: получить список последних 10 сохранений
+  // 📜 История: получить список последних 10 сохранений (метаданные — для UI-журнала действий)
   getSaveHistory() {
     return DB._saveHistory.map(h => ({ ...h, date: new Date(h.ts).toLocaleString() }));
   },
 
-  // ↩️ Откат: вернуть предыдущее сохранённое состояние (индекс 0 = последнее, 1 = пред-последнее и т.д.)
-  async rollback(historyIndex) {
-    if (!DB._saveHistory[historyIndex]) return { error: 'История не найдена' };
+  // 💾 Список реальных снапшотов для восстановления (app_backups) — это то, что РЕАЛЬНО можно откатить
+  async listBackups() {
+    if (!BACKUP_REF) return [];
     try {
-      const snap = await DOC_REF.get();
-      if (!snap.exists) return { error: 'Нет данных для отката' };
-      
-      let currentData = typeof snap.data().payload === 'string'
-        ? JSON.parse(snap.data().payload)
-        : snap.data();
-      
-      // Берём версию из истории и используем её как маркер
-      const targetVersion = DB._saveHistory[historyIndex].version;
-      
-      // Кэшируем текущее состояние в истории перед откатом
-      currentData._rolledBackAt = now();
-      currentData._rolledBackFrom = DB._version;
-      
-      await DOC_REF.set({
-        payload: JSON.stringify(currentData),
-        _version: now(),
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      });
-      
-      DB._version = now();
-      return { success: true, message: `Откачено на версию из ${new Date(targetVersion).toLocaleString()}` };
+      const qs = await BACKUP_REF.orderBy('ts', 'desc').limit(30).get();
+      return qs.docs.map(d => ({ id: d.id, ts: d.data().ts, date: new Date(d.data().ts).toLocaleString() }));
+    } catch(e) { console.warn('listBackups failed:', e); return []; }
+  },
+
+  // ↩️ Восстановление из реального снапшота (старый rollback() ничего не восстанавливал — только переписывал текущие данные с пометкой)
+  async restoreFromBackup(backupId) {
+    if (!BACKUP_REF) return { error: 'Бэкапы не настроены' };
+    try {
+      const snap = await BACKUP_REF.doc(backupId).get();
+      if (!snap.exists) return { error: 'Снапшот не найден' };
+      const restored = typeof snap.data().payload === 'string' ? JSON.parse(snap.data().payload) : snap.data();
+
+      // Перед восстановлением — бэкапим ТЕКУЩЕЕ состояние, чтобы можно было вернуться обратно
+      const cur = await DOC_REF.get().catch(() => null);
+      if (cur && cur.exists) {
+        const curWh = await WH_DOC_REF.get().catch(() => null);
+        const curMain = typeof cur.data().payload === 'string' ? JSON.parse(cur.data().payload) : cur.data();
+        const curWhData = curWh && curWh.exists ? (typeof curWh.data().payload === 'string' ? JSON.parse(curWh.data().payload) : curWh.data()) : {};
+        const preRestoreTs = Date.now();
+        await BACKUP_REF.doc(String(preRestoreTs)).set({
+          payload: JSON.stringify({ ...curMain, ...curWhData }),
+          ts: preRestoreTs,
+          note: 'авто-снимок перед восстановлением',
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        }).catch(() => {});
+      }
+
+      // Разделяем восстанавливаемые данные на production_v14 / warehouse_v1 как при обычном save
+      const whData = {};
+      const mainData = { ...restored };
+      WH_FIELDS.forEach(f => { if (mainData[f] !== undefined) { whData[f] = mainData[f]; delete mainData[f]; } });
+
+      const newVersion = Date.now();
+      await Promise.all([
+        DOC_REF.set({ payload: JSON.stringify(mainData), _version: newVersion, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }),
+        Object.keys(whData).length > 0
+          ? WH_DOC_REF.set({ payload: JSON.stringify(whData), updatedAt: firebase.firestore.FieldValue.serverTimestamp() })
+          : Promise.resolve()
+      ]);
+      DB._version = newVersion;
+      localStorage.setItem(VERSION_KEY, String(newVersion));
+      return { success: true, message: `Восстановлено состояние на ${new Date(snap.data().ts).toLocaleString()}` };
     } catch(e) {
       return { error: e.message };
     }
@@ -2956,20 +3024,27 @@ const RestoreButton = memo(({ onRestore, style }) => {
 // ==================== OfflineIndicator (баннер связи) ====================
 const OfflineIndicator = memo(() => {
   const [offline, setOffline] = useState(false);
+  const [dbIssue, setDbIssue] = useState(null); // отдельно от browser-online: реальный статус записи в Firestore
   useEffect(() => {
-    // Показываем баннер только если реально нет сети браузера
+    // Показываем баннер если реально нет сети браузера
     const update = () => setOffline(!navigator.onLine);
     update();
     window.addEventListener('online', update);
     window.addEventListener('offline', update);
-    return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update); };
+    // Поллим реальный статус Firestore-записи каждые 3 сек — раньше сбой записи (DB._online=false)
+    // никак не показывался пользователю, если у браузера при этом был интернет (напр. ERR_NETWORK_IO_SUSPENDED)
+    const poll = setInterval(() => {
+      if (!DB._online && DB._lastError) setDbIssue(DB._lastError);
+      else setDbIssue(null);
+    }, 3000);
+    return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update); clearInterval(poll); };
   }, []);
-  if (!offline) return null;
+  if (!offline && !dbIssue) return null;
   return h('div', {
     style: { position: 'fixed', top: 0, left: 0, right: 0, zIndex: 999,
       background: RD, color: '#fff', textAlign: 'center',
       padding: '6px 12px', fontSize: 12, fontWeight: 500 }
-  }, '⚡ Нет связи — изменения сохранятся при восстановлении');
+  }, offline ? '⚡ Нет связи — изменения сохранятся при восстановлении' : `⚠ Не удалось сохранить в облако: ${dbIssue} — изменения в локальном кэше, повторим автоматически`);
 });
 
 // ==================== VoiceButton (голосовой ввод) ====================
