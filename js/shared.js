@@ -1006,7 +1006,11 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
           if (!ord.isParentOrder) return null;
           const subOrders = (data.orders || []).filter(o => o.parentOrderId === ord.id && !o.archived);
           if (subOrders.length === 0) return h('div', { style: { padding: '10px 14px', background: AM3, borderRadius: 8, fontSize: 12, color: AM2, marginBottom: 14 } },
-            '⚠ Подзаказы ещё не созданы — разделите заказ на подзаказы через импорт из 1С'
+            h('div', { style: { marginBottom: 8 } }, '⚠ Подзаказы не созданы — заказ завис без операций и без подзаказов (разделение было прервано)'),
+            h('button', {
+              style: { background: AM, color: '#fff', border: 'none', borderRadius: 6, padding: '6px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' },
+              onClick: () => { if (typeof onClose === 'function') onClose(); setTimeout(() => window._tpOpenSubOrderSplit && window._tpOpenSubOrderSplit(ord.id), 100); }
+            }, '🔧 Разделить на подзаказы')
           );
           return h('div', { style: { marginBottom: 14 } },
             h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 8 } },
