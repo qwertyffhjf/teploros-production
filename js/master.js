@@ -915,6 +915,15 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [printOrderId, setPrintOrderId] = useState(null);
   const [filterType, setFilterType] = useState('');
   const [showImport1C, setShowImport1C] = useState(false);
+  const [splitOrderId, setSplitOrderId] = useState(null);
+
+  // Глобальный хук, чтобы карточка заказа (shared.js, доступна на других экранах)
+  // могла открыть восстановление разделения для зависшего родительского заказа,
+  // не завязываясь на состояние конкретного React-компонента напрямую.
+  useEffect(() => {
+    window._tpOpenSubOrderSplit = (orderId) => setSplitOrderId(orderId);
+    return () => { if (window._tpOpenSubOrderSplit) delete window._tpOpenSubOrderSplit; };
+  }, []);
   const productTypes = data.settings?.productTypes || [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }];
 
   const validate = () => {
@@ -1300,6 +1309,29 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       return h(QRModal, { ops: pOps, order: pOrder, worker: null, onClose: () => setPrintOrderId(null) });
     })(),
     showImport1C && h(Import1CModal, { data, onUpdate, addToast, onClose: () => setShowImport1C(false) }),
+
+    // Восстановление зависшего разделения на подзаказы (заказ с qty>1 без операций
+    // и без подзаказов — например, если модалку импорта закрыли до завершения шага).
+    // Открывается из карточки заказа (shared.js) через window._tpOpenSubOrderSplit.
+    splitOrderId && h('div', {
+      style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 400, padding: 16 }
+    },
+      h('div', { style: { background: 'var(--card,#fff)', borderRadius: 14, padding: 24, width: 'min(600px, 100%)', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 8px 40px rgba(0,0,0,.22)' } },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 } },
+          h('div', null,
+            h('div', { style: { fontSize: 18, fontWeight: 600 } }, '🔧 Разделение на подзаказы'),
+            h('div', { style: { fontSize: 12, color: '#888', marginTop: 2 } }, 'Завершение незавершённого разделения')
+          ),
+          h('button', { onClick: () => setSplitOrderId(null), style: { background: 'none', border: 'none', fontSize: 22, color: '#aaa', cursor: 'pointer' } }, '×')
+        ),
+        h(SubOrderSplitStep, {
+          data, onUpdate, addToast,
+          onClose: () => setSplitOrderId(null),
+          parentOrderId: splitOrderId,
+          parsed: null,
+        })
+      )
+    ),
 
     // ==================== Мини-дашборд заказов ====================
     h(OrdersDashboard, { data }),
