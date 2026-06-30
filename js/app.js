@@ -1528,9 +1528,37 @@ const SubOrderSplitStep = memo(({ data, onUpdate, addToast, onClose, parentOrder
     }
   };
 
-  const handleSkip = () => {
-    addToast(`Заказ ${baseNumber} создан без разделения`, 'info');
-    onClose();
+  // Пропуск разделения: раньше заказ оставался "родителем" без единой операции
+  // и без подзаказов (зависал намертво — ни мастер, ни рабочие его не видели).
+  // Теперь при пропуске создаём операции прямо на самом заказе (как для qty=1),
+  // снимаем флаг isParentOrder, чтобы UI не ждал подзаказов, которых не будет.
+  const handleSkip = async () => {
+    setSaving(true);
+    try {
+      const newOps = stages.map(stage => ({
+        id: uid(), orderId: parentOrderId, name: stage.name, stageId: stage.id, qty,
+        workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
+        archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null,
+        plannedHours: stage.plannedHours || undefined, drawingUrl: stage.drawingUrl || undefined,
+        requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.toLowerCase().includes('опресс'),
+        requiresPressureTest: stage.name.toLowerCase().includes('опресс'),
+      }));
+
+      const d = {
+        ...data,
+        orders: data.orders.map(o => o.id === parentOrderId ? { ...o, isParentOrder: false } : o),
+        ops: [...data.ops, ...newOps],
+      };
+
+      await DB.save(d);
+      onUpdate(d);
+      addToast(`Заказ ${baseNumber} создан без разделения · ${newOps.length} операций`, 'info');
+      onClose();
+    } catch (e) {
+      addToast('Ошибка: ' + e.message, 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return h('div', null,
@@ -1580,7 +1608,7 @@ const SubOrderSplitStep = memo(({ data, onUpdate, addToast, onClose, parentOrder
         style: gbtn({ flex: 1 }),
         onClick: handleSkip,
         disabled: saving,
-      }, 'Пропустить')
+      }, saving ? '...' : 'Пропустить')
     )
   );
 });
