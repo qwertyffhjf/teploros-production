@@ -45,6 +45,7 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
     h(TabBar, { tabs: [
       ['qc', `🔍 Контроль (${pendingQC.length})`],
       ['pressure', `💧 Протоколы ГИ (${pendingPT.length})`],
+      ['orders', '📋 Заказы'],
     ], tab, setTab: setControllerTab }),
     // Панель уведомлений ОТК
     h('div', { style: { ...S.card, marginBottom: 8, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: pendingQC.length > 0 ? 'rgba(2,119,189,0.07)' : '#f8f8f5', border: pendingQC.length > 0 ? '1px solid #90CAF9' : '0.5px solid #eee' } },
@@ -194,7 +195,11 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
               );
             }))
           ))
-    )
+    ),
+
+    // Вкладка «Заказы» — тот же MasterOrders, что у начальника цеха (read-only режим не нужен,
+    // контролёр видит полный список заказов для контекста при проверке операций).
+    tab === 'orders' && h(MasterOrders, { data, onUpdate, addToast, onOrderClick })
   );
 });
 
