@@ -335,7 +335,7 @@ const MasterEquipment = memo(({ data, onUpdate, addToast }) => {
 
 // ==================== MasterMaterials ====================
 const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
-  const [form, setForm] = useState({ name: '', unit: '', quantity: '', batch: '', unitCost: '', minStock: '' });
+  const [form, setForm] = useState({ name: '', unit: '', quantity: '', batch: '', unitCost: '', minStock: '', isCutting: false });
   const [editingId, setEditingId] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
   const [search, setSearch] = useState('');
@@ -374,10 +374,10 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
     setFieldErrors(errors);
     return Object.keys(errors).length === 0;
   };
-  const resetForm = () => { setForm({ name: '', unit: '', quantity: '', batch: '', unitCost: '', minStock: '' }); setFieldErrors({}); setEditingId(null); };
+  const resetForm = () => { setForm({ name: '', unit: '', quantity: '', batch: '', unitCost: '', minStock: '', isCutting: false }); setFieldErrors({}); setEditingId(null); };
   const addOrUpdate = useCallback(async () => {
     if (!validate()) return;
-    const mat = { name: form.name.trim(), unit: form.unit.trim(), quantity: Number(form.quantity), batch: form.batch.trim(), unitCost: form.unitCost ? Number(form.unitCost) : 0, minStock: form.minStock ? Number(form.minStock) : 0 };
+    const mat = { name: form.name.trim(), unit: form.unit.trim(), quantity: Number(form.quantity), batch: form.batch.trim(), unitCost: form.unitCost ? Number(form.unitCost) : 0, minStock: form.minStock ? Number(form.minStock) : 0, isCutting: !!form.isCutting };
     if (editingId) {
       const d = { ...data, materials: data.materials.map(m => m.id === editingId ? { ...m, ...mat } : m) };
       await DB.save(d); onUpdate(d); resetForm(); addToast('Материал обновлён', 'success');
@@ -404,7 +404,7 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
   const toggleAll = (items) => setSelectedIds(prev =>
     prev.size === items.length ? new Set() : new Set(items.map(m => m.id))
   );
-  const edit = useCallback((m) => { setForm({ name: m.name, unit: m.unit, quantity: String(m.quantity), batch: m.batch || '', unitCost: m.unitCost ? String(m.unitCost) : '', minStock: m.minStock ? String(m.minStock) : '' }); setEditingId(m.id); }, []);
+  const edit = useCallback((m) => { setForm({ name: m.name, unit: m.unit, quantity: String(m.quantity), batch: m.batch || '', unitCost: m.unitCost ? String(m.unitCost) : '', minStock: m.minStock ? String(m.minStock) : '', isCutting: !!m.isCutting }); setEditingId(m.id); }, []);
 
   // Импорт из Excel
   const importExcel = useCallback((event) => {
@@ -533,6 +533,12 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
         h('div', { style: { flex: 1, minWidth: 70 } }, h('input', { type: 'number', style: { ...S.inp }, placeholder: 'Цена₽', value: form.unitCost, onChange: e => setForm(p => ({ ...p, unitCost: e.target.value })) })),
         h('div', { style: { flex: 1, minWidth: 70 } }, h('input', { type: 'number', style: { ...S.inp }, placeholder: 'Мин.ост.', value: form.minStock, onChange: e => setForm(p => ({ ...p, minStock: e.target.value })) })),
         h('div', { style: { flex: 1, minWidth: 80 } }, h('input', { style: { ...S.inp }, placeholder: 'Партия', value: form.batch, onChange: e => setForm(p => ({ ...p, batch: e.target.value })) })),
+        // Флаг «Раскрой» — помечает материал как раскрой листового металла.
+        // Используется warehouse.js для автоматической простановки cuttingArrivedAt на заказе.
+        h('label', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: form.isCutting ? GN2 : 'var(--text-secondary)', background: form.isCutting ? GN3 : 'transparent', border: `0.5px solid ${form.isCutting ? GN : 'var(--border)'}`, borderRadius: 6, padding: '6px 10px', cursor: 'pointer', whiteSpace: 'nowrap' } },
+          h('input', { type: 'checkbox', checked: !!form.isCutting, onChange: e => setForm(p => ({ ...p, isCutting: e.target.checked })), style: { width: 14, height: 14, accentColor: GN, cursor: 'pointer' } }),
+          '✂ Раскрой'
+        ),
         h('button', { style: abtn(), onClick: addOrUpdate }, editingId ? '✓' : '+'),
         editingId && h('button', { style: gbtn(), onClick: resetForm }, '✕')
       ),
@@ -564,7 +570,12 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
               h('input', { type: 'checkbox', checked: isSel, onChange: () => toggleSelect(m.id),
                 style: { width: 14, height: 14, cursor: 'pointer', accentColor: RD } })
             ),
-            h('td', { style: S.td }, m.name),
+            h('td', { style: S.td },
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+                m.name,
+                m.isCutting && h('span', { style: { fontSize: 10, padding: '1px 5px', borderRadius: 4, background: GN3, color: GN2, fontWeight: 500 } }, '✂ раскрой')
+              )
+            ),
             h('td', { style: S.td }, m.unit),
             h('td', { style: { ...S.td, fontWeight: 500, color: isLow ? RD : 'inherit' } }, m.quantity),
             h('td', { style: { ...S.td, color: '#888' } }, m.minStock || '—'),
