@@ -1042,7 +1042,17 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     const alreadyActive = activeOps.find(ao => ao.id === op.id);
     if (alreadyActive) { addToast('«' + op.name + '» уже запущена', 'error'); vibrateAction('error'); return; }
     const result = buildStartUpdate(data, op, workerId);
-    const updated = { ...data, ops: result.ops, events: result.events };
+    // ── factStartedAt: ставим на заказ при первом старте любой его операции ──
+    let ordersWithStart = data.orders;
+    if (op.orderId) {
+      const ord = data.orders.find(o => o.id === op.orderId);
+      if (ord && !ord.factStartedAt) {
+        ordersWithStart = data.orders.map(o =>
+          o.id === op.orderId ? { ...o, factStartedAt: result._startedAt || now() } : o
+        );
+      }
+    }
+    const updated = { ...data, ops: result.ops, events: result.events, orders: ordersWithStart };
     const optimisticOp = { ...op, status: 'in_progress', startedAt: result._startedAt, workerIds: [...(op.workerIds || []), workerId] };
     setActiveOps(prev => [...prev, optimisticOp]);
     onUpdate(updated);  // UI обновляется немедленно
@@ -1111,11 +1121,27 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     const result = buildFinishUpdate(data, op, workerId, { isDefect, isRework, source, defNote, defectReasonId, weldParams });
     const updated = { ...data, ops: result.ops, events: result.events, reclamations: result.reclamations, opNorms: result.opNorms || data.opNorms || {}, auxStats: result.auxStats || data.auxStats || {} };
     const status = result._status;
+
+    // ── factFinishedAt: ставим на заказ когда ВСЕ его операции завершены ──
+    let updatedWithFinish = updated;
+    if (op.orderId && (status === 'done' || status === 'on_check')) {
+      const allOrderOps = updatedWithFinish.ops.filter(o => o.orderId === op.orderId && !o.archived);
+      const allDone = allOrderOps.length > 0 && allOrderOps.every(o => o.status === 'done' || o.status === 'on_check' || o.status === 'defect');
+      if (allDone) {
+        const ord = updatedWithFinish.orders.find(o => o.id === op.orderId);
+        if (ord && !ord.factFinishedAt) {
+          updatedWithFinish = { ...updatedWithFinish, orders: updatedWithFinish.orders.map(o =>
+            o.id === op.orderId ? { ...o, factFinishedAt: now() } : o
+          )};
+        }
+      }
+    }
+
     // Проверяем достижения и сохраняем ОДИН раз
     // FIX: checkAchievements теперь возвращает { data, justEarned }
     // justEarned — точный список ID только что заработанных, без slice/filter хаков
-    const { data: achData, justEarned } = checkAchievements(workerId, updated);
-    const final = justEarned.length > 0 ? achData : updated;
+    const { data: achData, justEarned } = checkAchievements(workerId, updatedWithFinish);
+    const final = justEarned.length > 0 ? achData : updatedWithFinish;
 
     if (justEarned.length > 0) {
       const achInfos = justEarned.map(id => ACHIEVEMENTS[id]).filter(Boolean);
@@ -1637,18 +1663,26 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
           const depsComplete = !op.dependsOn || op.dependsOn.length === 0 ||
             op.dependsOn.every(depId => { const d = data.ops.find(x => x.id === depId); return d && (d.status === 'done' || d.status === 'on_check' || d.status === 'approved'); });
 
-          // Проверка: все материалы для этого этапа поставлены?
+          // Проверка: все материалы для этого этапа поставлены полностью?
+          // Только status === 'confirmed' разблокирует операцию (partial недостаточно).
           const stage = getStage(data, op);
-          const materialsReady = !stage?.requiredMaterialIds?.length ||
-            stage.requiredMaterialIds.every(matId => {
-              const del = (data.materialDeliveries || []).find(d => d.orderId === op.orderId && d.materialId === matId);
-              return del?.status === 'confirmed' || del?.status === 'partial';
-            });
+          const missingMaterials = (stage?.requiredMaterialIds || []).reduce((acc, matId) => {
+            const del = (data.materialDeliveries || []).find(d => d.orderId === op.orderId && d.materialId === matId);
+            if (del?.status !== 'confirmed') {
+              const mat = (data.materials || []).find(m => m.id === matId);
+              acc.push({ name: mat?.name || matId, status: del?.status || 'pending' });
+            }
+            return acc;
+          }, []);
+          const materialsReady = missingMaterials.length === 0;
           const canStart = depsComplete && materialsReady;
-          // Текст подсказки почему заблокировано
-          const blockReason = !depsComplete ? 'Ожидает завершения предыдущих операций'
-            : !materialsReady ? '📦 Ожидает поставки материалов'
-            : null;
+
+          // Детальная причина блокировки с именами материалов
+          const blockReason = !depsComplete
+            ? 'Ожидает завершения предыдущих операций'
+            : !materialsReady
+              ? missingMaterials.map(m => `📦 ${m.name} — ${m.status === 'partial' ? 'частичная поставка' : 'ожидается поставка'}`).join('\n')
+              : null;
 
           return h('div', { key: op.id, className: 'op-card-anim', style: {
             ...S.card, marginBottom: 14, opacity: canStart ? 1 : 0.6,
@@ -1660,7 +1694,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
                 h('div', { style: { flex: 1 } },
                   h('div', { style: { fontSize: 15, fontWeight: 500, marginBottom: 2 } }, op.name),
                   h('div', { style: { fontSize: 11, color: AM4, cursor: order ? 'pointer' : 'default', textDecoration: order ? 'underline' : 'none', textDecorationStyle: 'dotted' }, onClick: () => order && setViewOrderId(order.id) }, order?.number || '—'),
-                  blockReason && h('div', { style: { fontSize: 11, color: AM2, background: AM3, padding: '2px 8px', borderRadius: 4, marginTop: 4, display: 'inline-block' } }, blockReason)
+                  blockReason && h('div', { style: { fontSize: 11, color: AM2, background: AM3, padding: '4px 8px', borderRadius: 4, marginTop: 4, display: 'inline-block', whiteSpace: 'pre-line', lineHeight: 1.6 } }, blockReason)
                 ),
                 op.isAuxiliary && op.addedByWorker === workerId && (op.status === 'pending' || op.status === 'in_progress') &&
                   h('button', { style: { background: 'none', border: 'none', fontSize: 16, color: '#bbb', cursor: 'pointer', padding: '2px 6px', minHeight: 'auto', lineHeight: 1 },
@@ -1690,13 +1724,15 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
               );
             })(),
             // СТАРТ — крупная кнопка с отступом сверху
-            op.status === 'pending' && depsComplete
+            op.status === 'pending' && canStart
               ? h('button', { className: 'worker-btn worker-btn-start', onClick: () => {
                   (async () => { if (await askConfirm({ message: 'Принять изделие в работу?', detail: 'Подтвердите что визуальный осмотр проведён', danger: false })) { navigator.vibrate?.([30]); doStart(op); } })();
                 }}, '▶ Принять и начать')
               : op.status === 'pending' && !depsComplete
                 ? h('div', { style: { textAlign: 'center', padding: '12px 0', color: '#888', fontSize: 12 } }, 'Ожидание предыдущих этапов')
-                : null
+                : op.status === 'pending' && !materialsReady
+                  ? h('div', { style: { textAlign: 'center', padding: '10px 0', color: AM2, fontSize: 12, fontWeight: 500 } }, '🔒 Нет материалов — операция недоступна')
+                  : null
           );
         })
       ),
