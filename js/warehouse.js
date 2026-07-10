@@ -82,6 +82,44 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId, readOnly 
       });
     }
 
+    // ── Автоматический штамп cuttingArrivedAt (только cutting-материалы) ──
+    if (status === 'confirmed' && confirmModal.orderId) {
+      const thisMat = data.materials.find(m => m.id === confirmModal.materialId);
+      if (thisMat?.isCutting) {
+        const orderDeliveries = updDeliveries.filter(d => d.orderId === confirmModal.orderId);
+        const cuttingDeliveries = orderDeliveries.filter(d => {
+          const m = data.materials.find(m => m.id === d.materialId);
+          return m?.isCutting;
+        });
+        const allCuttingConfirmed = cuttingDeliveries.length > 0 &&
+          cuttingDeliveries.every(d => d.status === 'confirmed' || d.id === confirmModal.id);
+        if (allCuttingConfirmed) {
+          const orderAlreadyHasCutting = data.orders.find(o => o.id === confirmModal.orderId)?.cuttingArrivedAt;
+          if (!orderAlreadyHasCutting) {
+            updOrders = updOrders.map(o =>
+              o.id === confirmModal.orderId ? { ...o, cuttingArrivedAt: now() } : o
+            );
+          }
+        }
+      }
+    }
+
+    // ── Автоматический штамп materialsReadyAt: когда ВСЕ поставки заказа confirmed ──
+    // Это «зелёный свет» — все операции заказа теперь могут быть разблокированы.
+    if (status === 'confirmed' && confirmModal.orderId) {
+      const allOrderDeliveries = updDeliveries.filter(d => d.orderId === confirmModal.orderId);
+      const allConfirmed = allOrderDeliveries.length > 0 &&
+        allOrderDeliveries.every(d => d.status === 'confirmed' || d.id === confirmModal.id);
+      if (allConfirmed) {
+        const ord = data.orders.find(o => o.id === confirmModal.orderId);
+        if (ord && !ord.materialsReadyAt) {
+          updOrders = updOrders.map(o =>
+            o.id === confirmModal.orderId ? { ...o, materialsReadyAt: now() } : o
+          );
+        }
+      }
+    }
+
     const d = { ...data, materialDeliveries: updDeliveries, materials: updMaterials, events: [...data.events, event], orders: updOrders };
     onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения — проверьте соединение', 'error'); });
 
