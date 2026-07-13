@@ -529,7 +529,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
                 const linkedW = rec.opId ? (data.ops.find(o => o.id === rec.opId)?.workerIds || []) : [];
                 const initD8 = { team: linkedW.length ? ['master', ...linkedW] : [], containment: '', whys: ['', '', '', '', ''], rootCause: '', corrective: '', correctiveOwner: '', correctiveDeadline: '', validation: '', validationDate: '', preventive: '', preventiveDocs: '', closedNote: '', currentStep: 0 };
                 const d = { ...data, reclamations: data.reclamations.map(r => r.id === rec.id ? { ...r, d8: initD8 } : r) };
-                DB.save(d).then(() => onUpdate(d));
+                onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
               }
             } },
               h('div', { style: { flex: 1 } },
