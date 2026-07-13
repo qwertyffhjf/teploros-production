@@ -473,7 +473,7 @@ const WorkerSizesBlock = memo(({ workerId, data, onUpdate, addToast }) => {
     setSaving(true);
     const sizes = { ...form, updatedAt: Date.now() };
     const d = { ...data, workers: data.workers.map(w => w.id === workerId ? { ...w, sizes } : w) };
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
     setSaving(false); setEditing(false);
     addToast('Размеры сохранены', 'success');
   }, [data, form, workerId, onUpdate, addToast]);
@@ -998,7 +998,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const saveComment = useCallback(async (opId) => {
     if (!opComment.trim()) return;
     const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, comment: (o.comment ? o.comment + '\n' : '') + `[${worker?.name || 'Рабочий'}]: ${opComment.trim()}` } : o) };
-    await DB.save(d); onUpdate(d); setOpComment(''); addToast('Комментарий добавлен', 'success');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); setOpComment(''); addToast('Комментарий добавлен', 'success');
   }, [data, opComment, worker, onUpdate, addToast]);
 
   // Чек-лист: переключение пункта
@@ -1008,7 +1008,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       const cl = o.checklist.map((item, i) => i === idx ? { ...item, checked: !item.checked, checkedAt: !item.checked ? now() : undefined } : item);
       return { ...o, checklist: cl };
     })};
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
   }, [data, onUpdate]);
 
   // Таймер пока есть хотя бы одна активная операция
@@ -1028,7 +1028,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
         }
         const updatedOps = data.ops.map(o => o.id === op.id ? { ...o, workerIds: [...(o.workerIds || []), workerId] } : o);
         const newData = { ...data, ops: updatedOps };
-        DB.save(newData).then(() => onUpdate(newData));
+        onUpdate(newData); DB.save(newData).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
       }
     }
   }, [initialOpId]);
@@ -1224,7 +1224,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       // Записать факт пропуска как событие для аудита
       const skipEvent = { id: uid(), type: 'material_skip', opId: pendingFinishOp?.id, workerId, ts: now() };
       const d = { ...data, events: [...data.events, skipEvent] };
-      await DB.save(d); onUpdate(d);
+      onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
       setShowMaterialModal(false); setPendingFinishOp(null); return;
     }
     const updatedMaterials = data.materials.map(m => {
@@ -1232,7 +1232,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       return used > 0 ? { ...m, quantity: Math.max(0, m.quantity - used) } : m;
     });
     const d = { ...data, materials: updatedMaterials, materialConsumptions: [...(data.materialConsumptions || []), ...consumptions] };
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
     setShowMaterialModal(false); setPendingFinishOp(null);
     addToast('Расход материалов записан', 'success');
   }, [data, workerId, pendingFinishOp, onUpdate, addToast]);
@@ -1259,7 +1259,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     if (op.status !== 'pending' && op.status !== 'in_progress') return;
     const updated = { ...data, ops: data.ops.filter(o => o.id !== op.id) };
     const withLog = logAction(updated, 'worker_cancel_aux_op', { opId: op.id, opName: op.name, workerId });
-    await DB.save(withLog); onUpdate(withLog);
+    onUpdate(withLog); DB.save(withLog).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
     setActiveOps(prev => prev.filter(ao => ao.id !== op.id));
     addToast(`«${op.name}» отменена`, 'info');
   }, [data, workerId, activeOps, onUpdate, addToast]);
@@ -1526,7 +1526,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     };
     let d = { ...data, ops: [...data.ops, newOp] };
     d = logAction(d, 'worker_add_aux_op', { opId: newOp.id, opName: newOp.name, category: newOp.auxCategory, workerId });
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
     setAddOpForm({ category: '', name: '', orderId: '', comment: '' }); setShowAddOp(false);
     addToast(`Работа «${newOp.name}» добавлена`, 'success');
   }, [data, addOpForm, workerId, sectionId, worker, onUpdate, addToast]);
