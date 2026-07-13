@@ -235,7 +235,7 @@ const MasterSections = memo(({ data, onUpdate, addToast }) => {
       : h('div', { style: { ...S.card } },
           h(SimpleDraggableList, {
             items: data.sections,
-            onReorder: async (next) => { const d = { ...data, sections: next }; await DB.save(d); onUpdate(d); },
+            onReorder: (next) => { const d = { ...data, sections: next }; onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); },
             renderItem: (s) => h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flex: 1, gap: 8 } },
               h('span', { style: { fontSize: 13, flex: 1 } }, s.name),
               h('select', {
@@ -1049,8 +1049,9 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
   const handleReorderStages = React.useCallback((newTypeStages) => {
     const other = allStages.filter(s => s.productType !== stageType);
     const d = { ...data, productionStages: [...other, ...newTypeStages] };
-    DB.save(d).then(() => onUpdate(d));
-  }, [data, allStages, stageType, onUpdate]);
+    onUpdate(d); // сразу — UI мгновенно отражает новый порядок
+    DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения порядка этапов', 'error'); });
+  }, [data, allStages, stageType, onUpdate, addToast]);
 
   const stagesDrag = useDraggableList(typeStages, handleReorderStages);
   const saveStageDefaults = async (stageId, defaults) => {
@@ -1154,7 +1155,8 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
                   items: stage.checklist || [],
                   onReorder: (newList) => {
                     const d = { ...data, productionStages: allStages.map(s => s.id === stage.id ? { ...s, checklist: newList } : s) };
-                    DB.save(d).then(() => onUpdate(d));
+                    onUpdate(d); // мгновенно
+                    DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
                   },
                   onRemove: (idx) => removeCheckItem(stage.id, idx),
                 }),
@@ -1312,7 +1314,7 @@ const MasterDefectReasons = memo(({ data, onUpdate, addToast }) => {
       : h('div', { style: { ...S.card } },
           h(SimpleDraggableList, {
             items: data.defectReasons || [],
-            onReorder: async (next) => { const d = { ...data, defectReasons: next }; await DB.save(d); onUpdate(d); },
+            onReorder: (next) => { const d = { ...data, defectReasons: next }; onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); },
             renderItem: (r) => h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flex: 1 } },
               h('span', { style: { fontSize: 13 } }, r.name),
               h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': `Удалить причину ${r.name}`, onClick: () => del(r.id) }, 'Удалить')
@@ -1365,7 +1367,7 @@ const MasterDowntimes = memo(({ data, onUpdate, addToast }) => {
       : h('div', { style: { ...S.card } },
           h(SimpleDraggableList, {
             items: data.downtimeTypes,
-            onReorder: async (next) => { const d = { ...data, downtimeTypes: next }; await DB.save(d); onUpdate(d); },
+            onReorder: (next) => { const d = { ...data, downtimeTypes: next }; onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); },
             renderItem: (dt) => h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flex: 1 } },
               h('span', { style: { fontSize:13 } }, dt.name),
               h('button', { style: rbtn({ fontSize:11, padding:'4px 8px' }), 'aria-label': `Удалить ${dt.name}`, onClick: () => del(dt.id) }, 'Удалить')
