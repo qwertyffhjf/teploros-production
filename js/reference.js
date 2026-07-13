@@ -204,19 +204,19 @@ const MasterSections = memo(({ data, onUpdate, addToast }) => {
     if (!newName.trim()) return;
     const newSection = { id: uid(), name: newName.trim(), payType: 'hourly' };
     const d = { ...data, sections: [...data.sections, newSection] };
-    await DB.save(d); onUpdate(d); setNewName(''); addToast('Участок добавлен', 'success');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); setNewName(''); addToast('Участок добавлен', 'success');
   }, [data, newName, onUpdate, addToast]);
   const del = useCallback(async (id) => {
     if (!(await askConfirm({ message: 'Удалить участок?' }))) return;
     const d = { ...data, sections: data.sections.filter(s => s.id !== id), workers: data.workers.map(w => w.sectionId === id ? { ...w, sectionId: null } : w), ops: data.ops.map(o => o.sectionId === id ? { ...o, sectionId: null } : o) };
-    await DB.save(d); onUpdate(d); addToast('Участок удалён', 'info');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast('Участок удалён', 'info');
   }, [data, askConfirm, onUpdate, addToast]);
   const importSections = useCallback(async (rows) => {
     const existing = new Set(data.sections.map(s => s.name.toLowerCase()));
     const items = rows.filter(r => r.name && !existing.has(r.name.toLowerCase())).map(r => ({ id: uid(), name: r.name }));
     if (!items.length) { addToast('Все участки уже существуют', 'info'); return; }
     const d = { ...data, sections: [...data.sections, ...items] };
-    await DB.save(d); onUpdate(d); addToast(`Добавлено: ${items.length}`, 'success');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast(`Добавлено: ${items.length}`, 'success');
   }, [data, onUpdate, addToast]);
   return h('div', null,
     confirmEl,
@@ -244,7 +244,7 @@ const MasterSections = memo(({ data, onUpdate, addToast }) => {
                   const newPayType = e.target.value;
                   const newField = newPayType === 'hourly' ? null : (s.pieceworkField || null);
                   const d = { ...data, sections: data.sections.map(x => x.id === s.id ? { ...x, payType: newPayType, pieceworkField: newField } : x) };
-                  await DB.save(d); onUpdate(d);
+                  onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
                 },
                 style: { fontSize: 11, padding: '3px 7px', borderRadius: 6, border: '0.5px solid rgba(0,0,0,0.15)', background: 'transparent', cursor: 'pointer',
                   color: s.payType === 'piecework' ? AM2 : s.payType === 'mixed' ? GN2 : 'var(--muted)' }
@@ -257,7 +257,7 @@ const MasterSections = memo(({ data, onUpdate, addToast }) => {
                 value: s.pieceworkField || '',
                 onChange: async e => {
                   const d = { ...data, sections: data.sections.map(x => x.id === s.id ? { ...x, pieceworkField: e.target.value || null } : x) };
-                  await DB.save(d); onUpdate(d);
+                  onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
                 },
                 style: { fontSize: 11, padding: '3px 7px', borderRadius: 6, border: '0.5px solid rgba(0,0,0,0.15)', background: 'transparent', cursor: 'pointer', color: AM2 }
               },
@@ -285,14 +285,14 @@ const MasterEquipment = memo(({ data, onUpdate, addToast }) => {
     const eq = { id: uid(), name: form.name.trim(), type: form.type.trim() || 'станок', inventoryNo: form.inventoryNo.trim(), status: form.status, totalHours: 0 };
     if (editingId) {
       const d = { ...data, equipment: data.equipment.map(e => e.id === editingId ? { ...e, name: form.name.trim(), type: form.type.trim(), inventoryNo: form.inventoryNo.trim(), status: form.status } : e) };
-      await DB.save(d); onUpdate(d); setEditingId(null); addToast('Оборудование обновлено', 'success');
+      onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); setEditingId(null); addToast('Оборудование обновлено', 'success');
     } else {
       const d = { ...data, equipment: [...data.equipment, eq] };
-      await DB.save(d); onUpdate(d); addToast('Оборудование добавлено', 'success');
+      onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast('Оборудование добавлено', 'success');
     }
     setForm({ name: '', type: '', inventoryNo: '', status: 'active' });
   }, [data, form, editingId, onUpdate, addToast]);
-  const del = useCallback(async (id) => { if (!(await askConfirm({ message: 'Удалить?' }))) return; const d = { ...data, equipment: data.equipment.filter(e => e.id !== id) }; await DB.save(d); onUpdate(d); addToast('Удалено', 'info'); }, [data, onUpdate, addToast]);
+  const del = useCallback(async (id) => { if (!(await askConfirm({ message: 'Удалить?' }))) return; const d = { ...data, equipment: data.equipment.filter(e => e.id !== id) }; onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast('Удалено', 'info'); }, [data, onUpdate, addToast]);
   const edit = useCallback((eq) => { setForm({ name: eq.name, type: eq.type || '', inventoryNo: eq.inventoryNo || '', status: eq.status || 'active' }); setEditingId(eq.id); }, []);
 
   // Подсчёт наработки
@@ -318,7 +318,7 @@ const MasterEquipment = memo(({ data, onUpdate, addToast }) => {
           .map(r => ({ id: uid(), name: r.name, type: r.type || 'станок', inventoryNo: r.inventoryNo || '', status: 'active', totalHours: 0 }));
         if (!items.length) { addToast('Всё оборудование уже существует', 'info'); return; }
         const d = { ...data, equipment: [...data.equipment, ...items] };
-        await DB.save(d); onUpdate(d); addToast(`Добавлено: ${items.length}`, 'success');
+        onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast(`Добавлено: ${items.length}`, 'success');
       }}),
     h('div', { style: S.card },
       h('div', { style: S.sec }, editingId ? 'Редактировать' : 'Добавить оборудование'),
@@ -383,7 +383,7 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
       ? { ...m, quantity: newQty, adjustHistory: [...(m.adjustHistory || []), historyEntry] }
       : m
     )};
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
     setAdjustModal(null); setAdjustForm({ qty: '', comment: '' });
     addToast(`Остаток скорректирован: ${diff >= 0 ? '+' : ''}${Math.round(diff * 10) / 10} ${adjustModal.unit}`, 'success');
   }, [data, adjustModal, adjustForm, onUpdate, addToast]);
@@ -403,20 +403,20 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
     const mat = { name: form.name.trim(), unit: form.unit.trim(), quantity: Number(form.quantity), batch: form.batch.trim(), unitCost: form.unitCost ? Number(form.unitCost) : 0, minStock: form.minStock ? Number(form.minStock) : 0, isCutting: !!form.isCutting };
     if (editingId) {
       const d = { ...data, materials: data.materials.map(m => m.id === editingId ? { ...m, ...mat } : m) };
-      await DB.save(d); onUpdate(d); resetForm(); addToast('Материал обновлён', 'success');
+      onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); resetForm(); addToast('Материал обновлён', 'success');
     } else {
       const d = { ...data, materials: [...data.materials, { id: uid(), ...mat }] };
-      await DB.save(d); onUpdate(d); resetForm(); addToast('Материал добавлен', 'success');
+      onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); resetForm(); addToast('Материал добавлен', 'success');
     }
   }, [form, editingId, data, onUpdate, addToast]);
-  const del = useCallback(async (id) => { if (!(await askConfirm({ message: 'Удалить материал?' }))) return; const d = { ...data, materials: data.materials.filter(m => m.id !== id) }; await DB.save(d); onUpdate(d); addToast('Удалён', 'info'); }, [data, onUpdate, addToast]);
+  const del = useCallback(async (id) => { if (!(await askConfirm({ message: 'Удалить материал?' }))) return; const d = { ...data, materials: data.materials.filter(m => m.id !== id) }; onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast('Удалён', 'info'); }, [data, onUpdate, addToast]);
 
   const delSelected = useCallback(async () => {
     if (selectedIds.size === 0) return;
     const ok = await askConfirm({ message: `Удалить ${selectedIds.size} позиц.?`, detail: 'Действие необратимо', danger: true });
     if (!ok) return;
     const d = { ...data, materials: data.materials.filter(m => !selectedIds.has(m.id)) };
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
     setSelectedIds(new Set());
     addToast(`Удалено ${selectedIds.size} позиций`, 'info');
   }, [data, selectedIds, onUpdate, addToast, askConfirm]);
@@ -526,7 +526,7 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
             minStock: Number(r.minStock) || 0, batch: '' }));
         if (!items.length) { addToast('Все материалы уже существуют', 'info'); return; }
         const d = { ...data, materials: [...data.materials, ...items] };
-        await DB.save(d); onUpdate(d); addToast(`Добавлено: ${items.length}`, 'success');
+        onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast(`Добавлено: ${items.length}`, 'success');
       }}),
     // Предупреждение о критических остатках
     lowStock.length > 0 && h('div', { role: 'alert', style: { ...S.card, background: RD3, border: `0.5px solid ${RD}`, marginBottom: 12 } },
@@ -628,25 +628,25 @@ const MasterBOM = memo(({ data, onUpdate, addToast }) => {
     if (!form.productName.trim()) { addToast('Введите название изделия', 'error'); return; }
     const bom = { id: uid(), productName: form.productName.trim(), materials: [], productType: form.productType || undefined };
     const d = { ...data, bomTemplates: [...data.bomTemplates, bom] };
-    await DB.save(d); onUpdate(d); setForm({ productName: '', productType: '' }); addToast('Спецификация создана', 'success');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); setForm({ productName: '', productType: '' }); addToast('Спецификация создана', 'success');
   }, [data, form, onUpdate, addToast]);
 
   const del = useCallback(async (id) => {
     if (!(await askConfirm({ message: 'Удалить спецификацию?' }))) return;
     const d = { ...data, bomTemplates: data.bomTemplates.filter(b => b.id !== id) };
-    await DB.save(d); onUpdate(d); addToast('Удалена', 'info');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast('Удалена', 'info');
   }, [data, onUpdate, addToast]);
 
   const addMaterial = useCallback(async (bomId) => {
     const bid = bomId || matForm.bomId;
     if (!bid || !matForm.materialId || !matForm.qty || Number(matForm.qty) <= 0) { addToast('Заполните все поля', 'error'); return; }
     const d = { ...data, bomTemplates: data.bomTemplates.map(b => b.id === bid ? { ...b, materials: [...(b.materials || []), { materialId: matForm.materialId, qty: Number(matForm.qty) }] } : b) };
-    await DB.save(d); onUpdate(d); setMatForm(p => ({ ...p, materialId: '', qty: '' })); addToast('Материал добавлен в спецификацию', 'success');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); setMatForm(p => ({ ...p, materialId: '', qty: '' })); addToast('Материал добавлен в спецификацию', 'success');
   }, [data, matForm, onUpdate, addToast]);
 
   const removeMaterial = useCallback(async (bomId, idx) => {
     const d = { ...data, bomTemplates: data.bomTemplates.map(b => b.id === bomId ? { ...b, materials: b.materials.filter((_, i) => i !== idx) } : b) };
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
   }, [data, onUpdate]);
 
   // Импорт BOM из Excel
@@ -727,7 +727,7 @@ const MasterBOM = memo(({ data, onUpdate, addToast }) => {
             }
           });
           const d = { ...data, bomTemplates: updated };
-          await DB.save(d); onUpdate(d);
+          onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
           addToast(`Спецификации: +${addedBom} изделий, +${addedMat} позиций материалов`, 'success');
         }}),
       h('div', { style: { display: 'flex', gap: 8 } },
@@ -1015,7 +1015,7 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
     const current = stage.requiredMaterialIds || [];
     const updated = current.includes(matId) ? current.filter(id => id !== matId) : [...current, matId];
     const d = { ...data, productionStages: data.productionStages.map(s => s.id === stageId ? { ...s, requiredMaterialIds: updated } : s) };
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
   };
   const productTypes = data.settings?.productTypes || [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }];
   const allStages = data.productionStages || [];
@@ -1025,24 +1025,24 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
     if (!newName.trim()) return;
     const newStage = { id: uid(), name: newName.trim(), checklist: [], productType: stageType };
     const d = { ...data, productionStages: [...allStages, newStage] };
-    await DB.save(d); onUpdate(d); setNewName(''); addToast('Этап добавлен', 'success');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); setNewName(''); addToast('Этап добавлен', 'success');
   };
   const deleteStage = async (id) => {
     if (!(await askConfirm({ message: 'Удалить этап?' }))) return;
     const d = { ...data, productionStages: allStages.filter(s => s.id !== id) };
-    await DB.save(d); onUpdate(d); addToast('Этап удалён', 'info');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast('Этап удалён', 'info');
   };
   const moveUp = (index) => {
     if (index === 0) return;
     const n = [...typeStages]; [n[index-1], n[index]] = [n[index], n[index-1]];
     const other = allStages.filter(s => s.productType !== stageType);
-    const d = { ...data, productionStages: [...other, ...n] }; DB.save(d).then(() => onUpdate(d));
+    const d = { ...data, productionStages: [...other, ...n] }; onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
   };
   const moveDown = (index) => {
     if (index === typeStages.length-1) return;
     const n = [...typeStages]; [n[index], n[index+1]] = [n[index+1], n[index]];
     const other = allStages.filter(s => s.productType !== stageType);
-    const d = { ...data, productionStages: [...other, ...n] }; DB.save(d).then(() => onUpdate(d));
+    const d = { ...data, productionStages: [...other, ...n] }; onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
   };
 
   // Drag & drop для этапов
@@ -1056,17 +1056,17 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
   const stagesDrag = useDraggableList(typeStages, handleReorderStages);
   const saveStageDefaults = async (stageId, defaults) => {
     const d = { ...data, productionStages: allStages.map(s => s.id === stageId ? { ...s, ...defaults } : s) };
-    await DB.save(d); onUpdate(d); addToast('Настройки этапа сохранены', 'success');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast('Настройки этапа сохранены', 'success');
   };
 
   const addCheckItem = async (stageId) => {
     if (!newCheckItem.trim()) return;
     const d = { ...data, productionStages: allStages.map(s => s.id === stageId ? { ...s, checklist: [...(s.checklist || []), newCheckItem.trim()] } : s) };
-    await DB.save(d); onUpdate(d); setNewCheckItem('');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); setNewCheckItem('');
   };
   const removeCheckItem = async (stageId, idx) => {
     const d = { ...data, productionStages: allStages.map(s => s.id === stageId ? { ...s, checklist: (s.checklist || []).filter((_, i) => i !== idx) } : s) };
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
   };
   return h('div', null,
     confirmEl,
@@ -1081,7 +1081,7 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
         const items = rows.filter(r=>r.name&&!existing.has(r.name.toLowerCase())).map(r=>({id:uid(),name:r.name,checklist:[],productType:stageType}));
         if(!items.length){addToast('Все этапы уже существуют','info');return;}
         const d={...data,productionStages:[...allStages,...items]};
-        await DB.save(d);onUpdate(d);addToast(`Добавлено: ${items.length}`,'success');
+        onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast(`Добавлено: ${items.length}`,'success');
       }}),
     h('div', { style: S.card },
       h('div', { style: S.sec }, `Добавить этап · ${productTypes.find(p => p.id === stageType)?.label || stageType}`),
@@ -1283,13 +1283,13 @@ const MasterDefectReasons = memo(({ data, onUpdate, addToast }) => {
     if (data.defectReasons.some(r => r.name.toLowerCase() === newName.trim().toLowerCase())) { addToast('Такая причина уже существует', 'error'); return; }
     const newReason = { id: uid(), name: newName.trim() };
     const d = { ...data, defectReasons: [...(data.defectReasons || []), newReason] };
-    await DB.save(d); onUpdate(d); setNewName(''); addToast('Причина брака добавлена', 'success');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); setNewName(''); addToast('Причина брака добавлена', 'success');
   }, [data, newName, onUpdate, addToast]);
   const del = useCallback(async (id) => {
     if (!(await askConfirm({ message: 'Удалить причину брака?' }))) return;
     if (data.ops.some(op => op.defectReasonId === id)) { addToast('Нельзя удалить причину, уже использованную', 'error'); return; }
     const d = { ...data, defectReasons: (data.defectReasons || []).filter(r => r.id !== id) };
-    await DB.save(d); onUpdate(d); addToast('Причина удалена', 'info');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast('Причина удалена', 'info');
   }, [data, onUpdate, addToast]);
   return h('div', null,
     confirmEl,
@@ -1302,7 +1302,7 @@ const MasterDefectReasons = memo(({ data, onUpdate, addToast }) => {
           const items = rows.filter(r=>r.name&&!existing.has(r.name.toLowerCase())).map(r=>({id:uid(),name:r.name}));
           if(!items.length){addToast('Все причины уже существуют','info');return;}
           const d={...data,defectReasons:[...(data.defectReasons||[]),...items]};
-          await DB.save(d);onUpdate(d);addToast(`Добавлено: ${items.length}`,'success');
+          onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast(`Добавлено: ${items.length}`,'success');
         }}),
       h('div', { style: { display: 'flex', gap: 8 } },
         h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Нарушение технологии, дефект материала...', value: newName, onChange: e => setNewName(e.target.value), onKeyDown: e => e.key === 'Enter' && add() }),
@@ -1336,13 +1336,13 @@ const MasterDowntimes = memo(({ data, onUpdate, addToast }) => {
     if (data.downtimeTypes.some(d => d.name.toLowerCase() === newName.trim().toLowerCase())) { addToast('Такая причина уже существует', 'error'); return; }
     const newType = { id: uid(), name: newName.trim() };
     const d = { ...data, downtimeTypes: [...data.downtimeTypes, newType] };
-    await DB.save(d); onUpdate(d); setNewName(''); addToast('Причина простоя добавлена', 'success');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); setNewName(''); addToast('Причина простоя добавлена', 'success');
   }, [data, newName, onUpdate, addToast]);
   const del = useCallback(async (id) => {
     if (!(await askConfirm({ message: 'Удалить причину простоя?' }))) return;
     if (data.events.some(e => e.downtimeTypeId === id)) { addToast('Нельзя удалить причину, уже использованную', 'error'); return; }
     const d = { ...data, downtimeTypes: data.downtimeTypes.filter(dt => dt.id !== id) };
-    await DB.save(d); onUpdate(d); addToast('Причина удалена', 'info');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast('Причина удалена', 'info');
   }, [data, onUpdate, addToast]);
   return h('div', null,
     confirmEl,
@@ -1355,7 +1355,7 @@ const MasterDowntimes = memo(({ data, onUpdate, addToast }) => {
           const items = rows.filter(r=>r.name&&!existing.has(r.name.toLowerCase())).map(r=>({id:uid(),name:r.name}));
           if(!items.length){addToast('Все причины уже существуют','info');return;}
           const d={...data,downtimeTypes:[...data.downtimeTypes,...items]};
-          await DB.save(d);onUpdate(d);addToast(`Добавлено: ${items.length}`,'success');
+          onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast(`Добавлено: ${items.length}`,'success');
         }}),
       h('div', { style: { display:'flex', gap:8 } },
         h('input', { style: { ...S.inp, flex:1 }, placeholder: 'Нет материала, поломка...', value: newName, onChange: e => setNewName(e.target.value), onKeyDown: e => e.key === 'Enter' && add() }),
@@ -1673,7 +1673,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
     }
     if (Object.keys(updates).length === 0) { addToast('Введите новые значения для обновления', 'info'); return; }
     const d = { ...data, settings: { ...settings, ...updates } };
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
     // Очищаем поля
     setMasterPin(''); setControllerPin(''); setWarehousePin('');
     setPdoPin(''); setDirectorPin(''); setHrPin('');
@@ -1683,7 +1683,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
 
   const saveWelcome = useCallback(async () => {
     const d = { ...data, settings: { ...settings, welcomeTitle: welcomeTitle.trim(), welcomeSubtitle: welcomeSubtitle.trim(), welcomeLabel: welcomeLabel.trim(), labelWidth: parseInt(labelWidth) || 50, labelHeight: parseInt(labelHeight) || 35 } };
-    await DB.save(d); onUpdate(d); addToast('Текст главной страницы обновлён', 'success');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast('Текст главной страницы обновлён', 'success');
   }, [data, settings, welcomeTitle, welcomeSubtitle, welcomeLabel, onUpdate, addToast]);
 
   const genRandomPin = useCallback(async (workerId) => {
@@ -1696,7 +1696,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
       pinMatch(pin, settings.masterKey) || data.workers.some(w => w.id !== workerId && pinMatch(pin, w.pin))
     );
     const d = { ...data, workers: data.workers.map(w => w.id === workerId ? { ...w, pin: hashPin(pin) } : w) };
-    await DB.save(d); onUpdate(d); addToast(`Новый PIN: ${pin}`, 'success');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast(`Новый PIN: ${pin}`, 'success');
   }, [data, settings, onUpdate, addToast]);
 
   const saveWorkerPin = useCallback(async (workerId, newPin) => {
@@ -1708,7 +1708,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
     const conflict = data.workers.find(w => w.id !== workerId && pinMatch(newPin.trim(), w.pin));
     if (conflict) { addToast(`PIN уже занят (${conflict.name})`, 'error'); return; }
     const d = { ...data, workers: data.workers.map(w => w.id === workerId ? { ...w, pin: hashPin(newPin.trim()) } : w) };
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
     setEditPins(prev => ({ ...prev, [workerId]: '' }));
     addToast('PIN изменён', 'success');
   }, [data, settings, onUpdate, addToast]);
@@ -1859,7 +1859,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
           const counts = `${parsed.orders?.length || 0} заказов · ${parsed.ops?.length || 0} операций · ${parsed.workers?.length || 0} сотрудников`;
           if (!(await askConfirm({ message: `Восстановить данные из "${fileName}"?`, detail: counts + '. Текущие данные будут заменены. Отменить нельзя.', danger: true }))) return;
           const withLog = logAction(parsed, 'data_restore', { fileName, counts });
-          await DB.save(withLog); onUpdate(withLog);
+          onUpdate(withLog); DB.save(withLog).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
           addToast('Данные восстановлены из резервной копии', 'success');
         }})
       ),
@@ -1916,7 +1916,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         if (!window.confirm(`Удалить ${removed} событий старше ${days} дней? Нельзя отменить.`)) return;
         let d = { ...data, events: kept };
         d = logAction(d, 'cleanup_events', { counts: `${removed} событий`, days });
-        await DB.save(d); onUpdate(d);
+        onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
         addToast(`Удалено ${removed} событий`, 'success');
       };
       const cleanOldMessages = async () => {
@@ -1928,7 +1928,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         if (!window.confirm(`Удалить ${removed} сообщений старше ${days} дней?`)) return;
         let d = { ...data, messages: kept };
         d = logAction(d, 'cleanup_messages', { counts: `${removed} сообщений`, days });
-        await DB.save(d); onUpdate(d);
+        onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
         addToast(`Удалено ${removed} сообщений`, 'success');
       };
       const cleanArchived = async () => {
@@ -1941,7 +1941,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
           ops: (data.ops || []).filter(o => !archivedIds.has(o.orderId))
         };
         d = logAction(d, 'cleanup_archived', { counts: `${archived.length} заказов` });
-        await DB.save(d); onUpdate(d);
+        onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
         addToast(`Удалено ${archived.length} заказов`, 'success');
       };
       const periodOpts = [7, 30, 60, 90, 180];
@@ -1991,7 +1991,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
             const hidden = (data.ops || []).filter(o => o.hiddenFromFeed);
             if (hidden.length === 0) { addToast('Нет скрытых операций', 'info'); return; }
             const d = { ...data, ops: data.ops.map(o => o.hiddenFromFeed ? { ...o, hiddenFromFeed: false } : o) };
-            await DB.save(d); onUpdate(d);
+            onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
             addToast(`Восстановлено ${hidden.length} скрытых операций`, 'success');
           }}, `👁 Показать скрытые операции (${(data.ops || []).filter(o => o.hiddenFromFeed).length})`),
           h('button', { style: gbtn({ fontSize: 12 }), onClick: async () => {
@@ -2000,7 +2000,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
             if (!window.confirm(`Архивировать ${hidden.length} скрытых завершённых операций?`)) return;
             const ids = new Set(hidden.map(o => o.id));
             const d = { ...data, ops: data.ops.map(o => ids.has(o.id) ? { ...o, archived: true } : o) };
-            await DB.save(d); onUpdate(d);
+            onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
             addToast(`Архивировано ${hidden.length} операций`, 'info');
           }}, `📁 Архивировать скрытые`)
         )
@@ -2014,7 +2014,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
           style: { width: 20, height: 20, accentColor: AM, flexShrink: 0 },
           onChange: async (e) => {
             const d = { ...data, settings: { ...(data.settings || {}), materialTrackingEnabled: e.target.checked } };
-            await DB.save(d); onUpdate(d);
+            onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
             addToast(e.target.checked ? 'Списание материалов включено' : 'Списание материалов отключено', 'success');
           }
         }),
@@ -2083,12 +2083,12 @@ const ShiftSettings = memo(({ data, onUpdate, addToast }) => {
     if (!form.name.trim() || form.start === '' || form.end === '') { addToast('Заполните все поля смены', 'error'); return; }
     const newShift = { id: Date.now(), name: form.name.trim(), start: Number(form.start), end: Number(form.end) };
     const d = { ...data, settings: { ...data.settings, shifts: [...shifts, newShift] } };
-    await DB.save(d); onUpdate(d); setForm({ name: '', start: '', end: '' }); addToast('Смена добавлена', 'success');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); setForm({ name: '', start: '', end: '' }); addToast('Смена добавлена', 'success');
   }, [data, shifts, form, onUpdate, addToast]);
 
   const removeShift = useCallback(async (id) => {
     const d = { ...data, settings: { ...data.settings, shifts: shifts.filter(s => s.id !== id) } };
-    await DB.save(d); onUpdate(d); addToast('Смена удалена', 'info');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast('Смена удалена', 'info');
   }, [data, shifts, onUpdate, addToast]);
 
   const saveSchedule = useCallback(async () => {
@@ -2097,7 +2097,7 @@ const ShiftSettings = memo(({ data, onUpdate, addToast }) => {
       : [];
     const ws = { type: schedForm.type, startDate: schedForm.startDate, customPattern: pattern };
     const d = { ...data, settings: { ...data.settings, workSchedule: ws } };
-    await DB.save(d); onUpdate(d); addToast('График работы сохранён', 'success');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast('График работы сохранён', 'success');
   }, [data, schedForm, onUpdate, addToast]);
 
   const SCHEDULE_TYPES = [
@@ -2193,7 +2193,7 @@ const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
       ? rates.map(r => r.id === editId ? entry : r)
       : [...rates, entry];
     const d = { ...data, pieceworkRates: updated.sort((a,b) => a.type.localeCompare(b.type) || a.powerMin - b.powerMin) };
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
     setForm({ type:'v2d', powerMin:'', powerMax:'', heatExchanger:'', coverFront:'', coverBack:'', rolling:'' });
     setEditId(null);
     addToast(editId ? 'Расценка обновлена' : 'Расценка добавлена', 'success');
@@ -2201,7 +2201,7 @@ const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
 
   const del = async (id) => {
     const d = { ...data, pieceworkRates: rates.filter(r => r.id !== id) };
-    await DB.save(d); onUpdate(d); addToast('Расценка удалена', 'info');
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast('Расценка удалена', 'info');
   };
 
   const edit = (r) => {
