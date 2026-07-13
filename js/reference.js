@@ -175,6 +175,25 @@ const PasteImportWidget = memo(({ columns, onImport, addToast, hint }) => {
 });
 
 
+// ==================== SimpleDraggableList ====================
+// Обёртка над useDraggableList для простых списков с ручкой ⠿.
+// Props: items[], onReorder(newItems), renderItem(item, index) → ReactNode
+const SimpleDraggableList = memo(({ items, onReorder, renderItem }) => {
+  const { dragHandleProps, touchHandleProps, containerProps } = useDraggableList(items, onReorder);
+  return h('div', { 'data-draggable-list': true },
+    items.map((item, index) =>
+      h('div', { key: item.id, ...containerProps(index), style: { ...containerProps(index).style, display: 'flex', alignItems: 'center', padding: '7px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', gap: 6 } },
+        h('span', {
+          ...dragHandleProps(index),
+          ...touchHandleProps(index),
+          title: 'Перетащить для изменения порядка',
+        }, '⠿'),
+        renderItem(item, index)
+      )
+    )
+  );
+});
+
 // ==================== MasterSections ====================
 
 
@@ -213,41 +232,45 @@ const MasterSections = memo(({ data, onUpdate, addToast }) => {
     ),
     data.sections.length === 0
       ? h('div', { style: { ...S.card, textAlign: 'center' } }, 'Нет участков')
-      : h('div', { style: { ...S.card } }, data.sections.map(s =>
-          h('div', { key: s.id, style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', gap: 8 } },
-            h('span', { style: { fontSize: 13, flex: 1 } }, s.name),
-            h('select', {
-              value: s.payType || 'hourly',
-              onChange: async e => {
-                const newPayType = e.target.value;
-                const newField = newPayType === 'hourly' ? null : (s.pieceworkField || null);
-                const d = { ...data, sections: data.sections.map(x => x.id === s.id ? { ...x, payType: newPayType, pieceworkField: newField } : x) };
-                await DB.save(d); onUpdate(d);
+      : h('div', { style: { ...S.card } },
+          h(SimpleDraggableList, {
+            items: data.sections,
+            onReorder: async (next) => { const d = { ...data, sections: next }; await DB.save(d); onUpdate(d); },
+            renderItem: (s) => h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flex: 1, gap: 8 } },
+              h('span', { style: { fontSize: 13, flex: 1 } }, s.name),
+              h('select', {
+                value: s.payType || 'hourly',
+                onChange: async e => {
+                  const newPayType = e.target.value;
+                  const newField = newPayType === 'hourly' ? null : (s.pieceworkField || null);
+                  const d = { ...data, sections: data.sections.map(x => x.id === s.id ? { ...x, payType: newPayType, pieceworkField: newField } : x) };
+                  await DB.save(d); onUpdate(d);
+                },
+                style: { fontSize: 11, padding: '3px 7px', borderRadius: 6, border: '0.5px solid rgba(0,0,0,0.15)', background: 'transparent', cursor: 'pointer',
+                  color: s.payType === 'piecework' ? AM2 : s.payType === 'mixed' ? GN2 : 'var(--muted)' }
               },
-              style: { fontSize: 11, padding: '3px 7px', borderRadius: 6, border: '0.5px solid rgba(0,0,0,0.15)', background: 'transparent', cursor: 'pointer',
-                color: s.payType === 'piecework' ? AM2 : s.payType === 'mixed' ? GN2 : 'var(--muted)' }
-            },
-              h('option', { value: 'hourly' }, '⏱ Часовая'),
-              h('option', { value: 'piecework' }, '🔧 Сдельная'),
-              h('option', { value: 'mixed' }, '⚡ Смешанная')
-            ),
-            (s.payType === 'piecework' || s.payType === 'mixed') && h('select', {
-              value: s.pieceworkField || '',
-              onChange: async e => {
-                const d = { ...data, sections: data.sections.map(x => x.id === s.id ? { ...x, pieceworkField: e.target.value || null } : x) };
-                await DB.save(d); onUpdate(d);
+                h('option', { value: 'hourly' }, '⏱ Часовая'),
+                h('option', { value: 'piecework' }, '🔧 Сдельная'),
+                h('option', { value: 'mixed' }, '⚡ Смешанная')
+              ),
+              (s.payType === 'piecework' || s.payType === 'mixed') && h('select', {
+                value: s.pieceworkField || '',
+                onChange: async e => {
+                  const d = { ...data, sections: data.sections.map(x => x.id === s.id ? { ...x, pieceworkField: e.target.value || null } : x) };
+                  await DB.save(d); onUpdate(d);
+                },
+                style: { fontSize: 11, padding: '3px 7px', borderRadius: 6, border: '0.5px solid rgba(0,0,0,0.15)', background: 'transparent', cursor: 'pointer', color: AM2 }
               },
-              style: { fontSize: 11, padding: '3px 7px', borderRadius: 6, border: '0.5px solid rgba(0,0,0,0.15)', background: 'transparent', cursor: 'pointer', color: AM2 }
-            },
-              h('option', { value: '' }, '— расценка —'),
-              h('option', { value: 'heatExchanger' }, '🔩 Теплообменник'),
-              h('option', { value: 'coverFront' }, '🔲 Крышка передн.'),
-              h('option', { value: 'coverBack' }, '🔲 Крышка задн.'),
-              h('option', { value: 'rolling' }, '⚙ Вальцовка обечайки')
+                h('option', { value: '' }, '— расценка —'),
+                h('option', { value: 'heatExchanger' }, '🔩 Теплообменник'),
+                h('option', { value: 'coverFront' }, '🔲 Крышка передн.'),
+                h('option', { value: 'coverBack' }, '🔲 Крышка задн.'),
+                h('option', { value: 'rolling' }, '⚙ Вальцовка обечайки')
+              ),
+              h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': `Удалить участок ${s.name}`, onClick: () => del(s.id) }, 'Удалить')
             ),
-            h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': `Удалить участок ${s.name}`, onClick: () => del(s.id) }, 'Удалить')
-          )
-        ))
+          })
+        )
   );
 });
 
@@ -880,6 +903,102 @@ const MasterNotifications = memo(({ data }) => {
   );
 });
 
+// ==================== useDraggableList ====================
+// Универсальный хук drag & drop для любого упорядочиваемого списка.
+// Работает и на desktop (mouse events) и на мобильном (touch events).
+//
+// Использование:
+//   const { dragHandleProps, draggingIndex, dropTargetIndex, containerProps } =
+//     useDraggableList(items, (newItems) => saveReorderedItems(newItems));
+//
+//   В JSX на каждый элемент:
+//     h('div', { ...containerProps(index), key: item.id }, ...)
+//     h('span', { ...dragHandleProps(index), style: DRAG_HANDLE_STYLE }, '⠿')
+//
+const useDraggableList = (items, onReorder) => {
+  const [draggingIndex, setDraggingIndex] = React.useState(null);
+  const [dropTargetIndex, setDropTargetIndex] = React.useState(null);
+  const dragNodeRef = React.useRef(null);
+  const touchStartY = React.useRef(null);
+  const touchStartIndex = React.useRef(null);
+
+  const doReorder = React.useCallback((fromIdx, toIdx) => {
+    if (fromIdx === toIdx || fromIdx === null || toIdx === null) return;
+    const next = [...items];
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, moved);
+    onReorder(next);
+  }, [items, onReorder]);
+
+  // ── Mouse / Desktop ──
+  const dragHandleProps = React.useCallback((index) => ({
+    draggable: true,
+    onDragStart: (e) => {
+      e.stopPropagation();
+      setDraggingIndex(index);
+      dragNodeRef.current = e.currentTarget.closest('[data-drag-index]');
+      e.dataTransfer.effectAllowed = 'move';
+    },
+    onDragEnd: () => { setDraggingIndex(null); setDropTargetIndex(null); },
+    style: {
+      cursor: 'grab', fontSize: 16, color: 'var(--muted, #bbb)',
+      padding: '0 6px', userSelect: 'none', touchAction: 'none',
+      flexShrink: 0,
+    },
+  }), []);
+
+  const containerProps = React.useCallback((index) => ({
+    'data-drag-index': index,
+    onDragOver: (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropTargetIndex(index); },
+    onDragLeave: () => setDropTargetIndex(null),
+    onDrop: (e) => { e.preventDefault(); doReorder(draggingIndex, index); setDraggingIndex(null); setDropTargetIndex(null); },
+    style: {
+      opacity: draggingIndex === index ? 0.4 : 1,
+      outline: dropTargetIndex === index && draggingIndex !== index ? '2px dashed #2a78d6' : 'none',
+      outlineOffset: -1,
+      borderRadius: 4,
+      transition: 'opacity 0.15s',
+    },
+  }), [draggingIndex, dropTargetIndex, doReorder]);
+
+  // ── Touch / Mobile ──
+  const touchHandleProps = React.useCallback((index) => ({
+    onTouchStart: (e) => {
+      touchStartY.current = e.touches[0].clientY;
+      touchStartIndex.current = index;
+      setDraggingIndex(index);
+    },
+    onTouchMove: (e) => {
+      if (touchStartIndex.current === null) return;
+      const y = e.touches[0].clientY;
+      const container = e.currentTarget.closest('[data-draggable-list]');
+      if (!container) return;
+      const rows = [...container.querySelectorAll('[data-drag-index]')];
+      let closest = touchStartIndex.current;
+      let minDist = Infinity;
+      rows.forEach((row, i) => {
+        const rect = row.getBoundingClientRect();
+        const mid = rect.top + rect.height / 2;
+        const dist = Math.abs(y - mid);
+        if (dist < minDist) { minDist = dist; closest = i; }
+      });
+      setDropTargetIndex(closest);
+    },
+    onTouchEnd: () => {
+      doReorder(touchStartIndex.current, dropTargetIndex ?? touchStartIndex.current);
+      setDraggingIndex(null); setDropTargetIndex(null);
+      touchStartIndex.current = null;
+    },
+    style: {
+      cursor: 'grab', fontSize: 16, color: 'var(--muted, #bbb)',
+      padding: '0 6px', userSelect: 'none', touchAction: 'none',
+      flexShrink: 0,
+    },
+  }), [dropTargetIndex, doReorder]);
+
+  return { dragHandleProps, touchHandleProps, containerProps, draggingIndex, dropTargetIndex };
+};
+
 // ==================== MasterProductionStages ====================
 const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
   const [newName, setNewName] = useState('');
@@ -925,6 +1044,15 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
     const other = allStages.filter(s => s.productType !== stageType);
     const d = { ...data, productionStages: [...other, ...n] }; DB.save(d).then(() => onUpdate(d));
   };
+
+  // Drag & drop для этапов
+  const handleReorderStages = React.useCallback((newTypeStages) => {
+    const other = allStages.filter(s => s.productType !== stageType);
+    const d = { ...data, productionStages: [...other, ...newTypeStages] };
+    DB.save(d).then(() => onUpdate(d));
+  }, [data, allStages, stageType, onUpdate]);
+
+  const stagesDrag = useDraggableList(typeStages, handleReorderStages);
   const saveStageDefaults = async (stageId, defaults) => {
     const d = { ...data, productionStages: allStages.map(s => s.id === stageId ? { ...s, ...defaults } : s) };
     await DB.save(d); onUpdate(d); addToast('Настройки этапа сохранены', 'success');
@@ -965,23 +1093,30 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
       h('div', { style: S.sec }, `Этапы · ${productTypes.find(p => p.id === stageType)?.label || stageType} (${typeStages.length})`),
       typeStages.length === 0
         ? h('div', { style: { padding: 16, textAlign: 'center', color: '#888' } }, 'Нет этапов для этого типа продукции. Добавьте выше.')
-        : typeStages.map((stage, index) =>
-            h('div', { key: stage.id, style: { padding: '8px 0', borderBottom: '0.5px solid #eee' } },
-              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-                  h('span', { style: { fontSize: 13, fontWeight: 500 } }, stage.name),
-                  (stage.checklist?.length > 0) && h('span', { style: { fontSize: 10, color: AM, background: AM3, padding: '1px 6px', borderRadius: 6 } }, `${stage.checklist.length} пунктов`),
-                  (stage.requiredMaterialIds?.length > 0) && h('span', { style: { fontSize: 10, color: GN2, background: GN3, padding: '1px 6px', borderRadius: 6 } }, `📦 ${stage.requiredMaterialIds.length} материала`)
+        : h('div', { 'data-draggable-list': true },
+            typeStages.map((stage, index) =>
+              h('div', { key: stage.id, ...stagesDrag.containerProps(index), style: { ...stagesDrag.containerProps(index).style, padding: '8px 0', borderBottom: '0.5px solid #eee', display: 'flex', flexDirection: 'column' } },
+                h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
+                  h('div', { style: { display: 'flex', alignItems: 'center', gap: 4 } },
+                    // Ручка перетаскивания (desktop + touch)
+                    h('span', {
+                      ...stagesDrag.dragHandleProps(index),
+                      ...stagesDrag.touchHandleProps(index),
+                      title: 'Перетащить для изменения порядка',
+                    }, '⠿'),
+                    h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                      h('span', { style: { fontSize: 13, fontWeight: 500 } }, stage.name),
+                      (stage.checklist?.length > 0) && h('span', { style: { fontSize: 10, color: AM, background: AM3, padding: '1px 6px', borderRadius: 6 } }, `${stage.checklist.length} пунктов`),
+                      (stage.requiredMaterialIds?.length > 0) && h('span', { style: { fontSize: 10, color: GN2, background: GN3, padding: '1px 6px', borderRadius: 6 } }, `📦 ${stage.requiredMaterialIds.length} материала`)
+                    )
+                  ),
+                  h('div', { style: { display: 'flex', gap: 4 } },
+                    h('button', { style: gbtn({ fontSize: 10, padding: '4px 6px' }), onClick: () => setEditingChecklist(editingChecklist === stage.id ? null : stage.id) }, editingChecklist === stage.id ? '▾ Чек-лист' : '▸ Чек-лист'),
+                    h('button', { style: { ...gbtn({ fontSize: 10, padding: '4px 6px' }), ...(stage.requiredMaterialIds?.length > 0 ? { color: GN2, borderColor: GN } : {}) }, onClick: () => setEditingMaterials(editingMaterials === stage.id ? null : stage.id) }, editingMaterials === stage.id ? '▾ Материалы' : `▸ Материалы${stage.requiredMaterialIds?.length ? ` (${stage.requiredMaterialIds.length})` : ''}`),
+                    h('button', { style: { ...gbtn({ fontSize: 10, padding: '4px 6px' }), ...(stage.sectionId || stage.equipmentId || stage.plannedHours || stage.drawingUrl ? { color: AM2, borderColor: AM } : {}) }, onClick: () => setEditingDefaults(editingDefaults === stage.id ? null : stage.id) }, editingDefaults === stage.id ? '▾ Настройки' : `▸ Настройки${stage.sectionId || stage.equipmentId || stage.plannedHours || stage.drawingUrl ? ' ●' : ''}`),
+                    h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => deleteStage(stage.id) }, '✕')
+                  )
                 ),
-                h('div', { style: { display: 'flex', gap: 4 } },
-                  h('button', { style: gbtn({ fontSize: 10, padding: '4px 6px' }), onClick: () => setEditingChecklist(editingChecklist === stage.id ? null : stage.id) }, editingChecklist === stage.id ? '▾ Чек-лист' : '▸ Чек-лист'),
-                  h('button', { style: { ...gbtn({ fontSize: 10, padding: '4px 6px' }), ...(stage.requiredMaterialIds?.length > 0 ? { color: GN2, borderColor: GN } : {}) }, onClick: () => setEditingMaterials(editingMaterials === stage.id ? null : stage.id) }, editingMaterials === stage.id ? '▾ Материалы' : `▸ Материалы${stage.requiredMaterialIds?.length ? ` (${stage.requiredMaterialIds.length})` : ''}`),
-                  h('button', { style: { ...gbtn({ fontSize: 10, padding: '4px 6px' }), ...(stage.sectionId || stage.equipmentId || stage.plannedHours || stage.drawingUrl ? { color: AM2, borderColor: AM } : {}) }, onClick: () => setEditingDefaults(editingDefaults === stage.id ? null : stage.id) }, editingDefaults === stage.id ? '▾ Настройки' : `▸ Настройки${stage.sectionId || stage.equipmentId || stage.plannedHours || stage.drawingUrl ? ' ●' : ''}`),
-                  h('button', { style: gbtn({ fontSize: 11, padding: '4px 6px' }), onClick: () => moveUp(index), disabled: index === 0 }, '↑'),
-                  h('button', { style: gbtn({ fontSize: 11, padding: '4px 6px' }), onClick: () => moveDown(index), disabled: index === (data.productionStages || []).length-1 }, '↓'),
-                  h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => deleteStage(stage.id) }, '✕')
-                )
-              ),
               // Редактор материалов
               editingMaterials === stage.id && h('div', { style: { marginTop: 8, padding: '10px 12px', background: '#f0f8f0', borderRadius: 8, border: `1px solid ${GN}` } },
                 h('div', { style: { fontSize: 10, color: GN2, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8, fontWeight: 500 } }, '📦 Материалы необходимые для начала этого этапа'),
@@ -1011,24 +1146,44 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
                 onClose: () => setEditingDefaults(null),
               }),
 
-              // Редактор чек-листа
+              // Редактор чек-листа с drag & drop
               editingChecklist === stage.id && h('div', { style: { marginTop: 8, padding: '10px 12px', background: '#f8f8f5', borderRadius: 8 } },
                 h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 } }, 'Чек-лист (при запуске операции копируется рабочему)'),
-                (stage.checklist || []).map((item, idx) =>
-                  h('div', { key: idx, style: { display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: 12 } },
-                    h('span', { style: { color: '#888', fontSize: 10, width: 16 } }, `${idx + 1}.`),
-                    h('span', { style: { flex: 1 } }, item),
-                    h('span', { style: { cursor: 'pointer', color: RD, fontSize: 14 }, onClick: () => removeCheckItem(stage.id, idx) }, '×')
-                  )
-                ),
+                h(ChecklistDraggable, {
+                  key: stage.id,
+                  items: stage.checklist || [],
+                  onReorder: (newList) => {
+                    const d = { ...data, productionStages: allStages.map(s => s.id === stage.id ? { ...s, checklist: newList } : s) };
+                    DB.save(d).then(() => onUpdate(d));
+                  },
+                  onRemove: (idx) => removeCheckItem(stage.id, idx),
+                }),
                 h('div', { style: { display: 'flex', gap: 6, marginTop: 6 } },
                   h('input', { style: { ...S.inp, flex: 1, fontSize: 12 }, placeholder: 'Новый пункт проверки...', value: newCheckItem, onChange: e => setNewCheckItem(e.target.value), onKeyDown: e => e.key === 'Enter' && addCheckItem(stage.id) }),
                   h('button', { style: abtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => addCheckItem(stage.id) }, '+')
                 ),
                 (stage.checklist || []).length === 0 && h('div', { style: { fontSize: 11, color: '#888', padding: 4 } }, 'Нет пунктов. Добавьте пункты проверки для этого этапа.')
               )
-            )
-          )
+            )  // конец h('div', containerProps) — один этап
+          )    // конец typeStages.map
+        )      // конец h('div', data-draggable-list)
+    )
+  );
+});
+
+// ==================== ChecklistDraggable ====================
+// Drag & drop список для пунктов чек-листа этапа.
+const ChecklistDraggable = memo(({ items, onReorder, onRemove }) => {
+  const { dragHandleProps, touchHandleProps, containerProps } = useDraggableList(items, onReorder);
+  if (!items.length) return null;
+  return h('div', { 'data-draggable-list': true },
+    items.map((item, idx) =>
+      h('div', { key: idx, ...containerProps(idx), style: { ...containerProps(idx).style, display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: 12, borderBottom: '0.5px solid #eee' } },
+        h('span', { ...dragHandleProps(idx), ...touchHandleProps(idx), style: { ...dragHandleProps(idx).style, fontSize: 14 } }, '⠿'),
+        h('span', { style: { color: '#888', fontSize: 10, width: 16, flexShrink: 0 } }, `${idx + 1}.`),
+        h('span', { style: { flex: 1 } }, item),
+        h('span', { style: { cursor: 'pointer', color: RD, fontSize: 14, padding: '0 4px' }, onClick: () => onRemove(idx) }, '×')
+      )
     )
   );
 });
@@ -1154,12 +1309,16 @@ const MasterDefectReasons = memo(({ data, onUpdate, addToast }) => {
     ),
     (data.defectReasons || []).length === 0
       ? h('div', { style: { ...S.card, textAlign: 'center' } }, 'Нет причин брака')
-      : h('div', { style: { ...S.card } }, (data.defectReasons || []).map(r =>
-          h('div', { key: r.id, style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)' } },
-            h('span', { style: { fontSize: 13 } }, r.name),
-            h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': `Удалить причину ${r.name}`, onClick: () => del(r.id) }, 'Удалить')
-          )
-        ))
+      : h('div', { style: { ...S.card } },
+          h(SimpleDraggableList, {
+            items: data.defectReasons || [],
+            onReorder: async (next) => { const d = { ...data, defectReasons: next }; await DB.save(d); onUpdate(d); },
+            renderItem: (r) => h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flex: 1 } },
+              h('span', { style: { fontSize: 13 } }, r.name),
+              h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': `Удалить причину ${r.name}`, onClick: () => del(r.id) }, 'Удалить')
+            ),
+          })
+        )
   );
 });
 
@@ -1203,12 +1362,16 @@ const MasterDowntimes = memo(({ data, onUpdate, addToast }) => {
     ),
     data.downtimeTypes.length === 0
       ? h('div', { style: { ...S.card, textAlign:'center', padding:32 } }, 'Нет причин простоев')
-      : h('div', { style: { ...S.card } }, data.downtimeTypes.map(dt =>
-          h('div', { key: dt.id, style: { display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 0', borderBottom:'0.5px solid rgba(0,0,0,0.05)' } },
-            h('span', { style: { fontSize:13 } }, dt.name),
-            h('button', { style: rbtn({ fontSize:11, padding:'4px 8px' }), 'aria-label': `Удалить ${dt.name}`, onClick: () => del(dt.id) }, 'Удалить')
-          )
-        ))
+      : h('div', { style: { ...S.card } },
+          h(SimpleDraggableList, {
+            items: data.downtimeTypes,
+            onReorder: async (next) => { const d = { ...data, downtimeTypes: next }; await DB.save(d); onUpdate(d); },
+            renderItem: (dt) => h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flex: 1 } },
+              h('span', { style: { fontSize:13 } }, dt.name),
+              h('button', { style: rbtn({ fontSize:11, padding:'4px 8px' }), 'aria-label': `Удалить ${dt.name}`, onClick: () => del(dt.id) }, 'Удалить')
+            ),
+          })
+        )
   );
 });
 
