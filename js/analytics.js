@@ -559,7 +559,7 @@ const AssignmentRecommendations = memo(({ data, onUpdate, addToast }) => {
     if (!op) return;
     const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, workerIds: [...new Set([...(o.workerIds || []), workerId])] } : o) };
     const worker = data.workers.find(w => w.id === workerId);
-    await DB.save(d); onUpdate(d);
+    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
     addToast(`${worker?.name} назначен на "${op.name}"`, 'success');
   }, [data, onUpdate, addToast]);
 
@@ -575,7 +575,7 @@ const AssignmentRecommendations = memo(({ data, onUpdate, addToast }) => {
       }
     });
     if (count > 0) {
-      await DB.save(updated); onUpdate(updated);
+      onUpdate(updated); DB.save(updated).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
       addToast(`Назначено: ${count} операций`, 'success');
     }
   }, [data, recommendations, onUpdate, addToast]);
@@ -1557,5 +1557,270 @@ const ReportsBuilder = memo(({ data }) => {
             onEdit: (id) => setEditingId(prev => prev === id ? null : id)
           }))
         )
+  );
+});
+
+
+// ==================== OrderLifecycle ====================
+// Вкладка «Этапы заказов» у начальника цеха.
+// Показывает: KPI-метрики, таймлайны по каждому заказу, воронку этапов.
+// Поддерживает выгрузку в Excel.
+const OrderLifecycle = memo(({ data, onUpdate, addToast }) => {
+  const [filterStatus, setFilterStatus] = React.useState('active');
+  const [sortBy, setSortBy] = React.useState('contractDate');
+
+  const DAY = 86400000;
+
+  // Вычисляем метрики по заказу
+  const enrichOrder = React.useCallback((ord) => {
+    const ops = (data.ops || []).filter(o => o.orderId === ord.id && !o.archived);
+    const c  = ord.contractDate   || ord.createdAt || null;
+    const cu = ord.cuttingArrivedAt || null;
+    const s  = ord.factStartedAt  || null;
+    const f  = ord.factFinishedAt || null;
+    const sh = ord.shippedAt      || null;
+
+    const waitCuttingDays  = (c  && cu) ? Math.round((cu - c)  / DAY) : (c && !cu ? Math.round((Date.now() - c) / DAY) : null);
+    const waitStartDays    = (cu && s)  ? Math.round((s  - cu) / DAY) : null;
+    const productionDays   = (s  && f)  ? Math.round((f  - s)  / DAY) : (s ? Math.round((Date.now() - s) / DAY) : null);
+    const totalDays        = (c  && (f || sh)) ? Math.round(((f || sh) - c) / DAY) : (c ? Math.round((Date.now() - c) / DAY) : null);
+
+    const stage = !c ? 'unknown'
+      : !cu ? 'waiting_cutting'
+      : !s  ? 'ready_to_start'
+      : !f  ? 'in_production'
+      : !sh ? 'finished'
+      : 'shipped';
+
+    const warnCutting = stage === 'waiting_cutting' && waitCuttingDays !== null && waitCuttingDays > 5;
+
+    return { ...ord, _ops: ops, _c: c, _cu: cu, _s: s, _f: f, _sh: sh,
+      waitCuttingDays, waitStartDays, productionDays, totalDays, stage, warnCutting };
+  }, [data.ops]);
+
+  const orders = React.useMemo(() => {
+    const base = (data.orders || []).filter(o => !o.archived && !o.parentOrderId);
+    const enriched = base.map(enrichOrder);
+    const filtered = filterStatus === 'all' ? enriched
+      : filterStatus === 'active' ? enriched.filter(o => o.stage !== 'shipped')
+      : enriched.filter(o => o.stage === filterStatus);
+    return [...filtered].sort((a, b) => {
+      if (sortBy === 'contractDate') return (b._c || 0) - (a._c || 0);
+      if (sortBy === 'waitCutting')  return (b.waitCuttingDays || 0) - (a.waitCuttingDays || 0);
+      if (sortBy === 'stage') {
+        const order = ['waiting_cutting','ready_to_start','in_production','finished','shipped','unknown'];
+        return order.indexOf(a.stage) - order.indexOf(b.stage);
+      }
+      return 0;
+    });
+  }, [data.orders, data.ops, filterStatus, sortBy, enrichOrder]);
+
+  // KPI
+  const kpi = React.useMemo(() => {
+    const all = (data.orders || []).filter(o => !o.archived && !o.parentOrderId).map(enrichOrder);
+    const avgWait = (arr, field) => {
+      const vals = arr.map(o => o[field]).filter(v => v !== null && v >= 0);
+      return vals.length ? Math.round(vals.reduce((s,v) => s+v, 0) / vals.length * 10) / 10 : null;
+    };
+    return {
+      waitCutting:   avgWait(all, 'waitCuttingDays'),
+      waitStart:     avgWait(all, 'waitStartDays'),
+      production:    avgWait(all, 'productionDays'),
+      warnCount:     all.filter(o => o.warnCutting).length,
+      byStage: {
+        waiting_cutting: all.filter(o => o.stage === 'waiting_cutting').length,
+        ready_to_start:  all.filter(o => o.stage === 'ready_to_start').length,
+        in_production:   all.filter(o => o.stage === 'in_production').length,
+        finished:        all.filter(o => o.stage === 'finished').length,
+        shipped:         all.filter(o => o.stage === 'shipped').length,
+      }
+    };
+  }, [data.orders, data.ops, enrichOrder]);
+
+  const fmt = ts => ts ? new Date(ts).toLocaleDateString('ru-RU', { day:'2-digit', month:'2-digit' }) : '—';
+  const fmtFull = ts => ts ? new Date(ts).toLocaleDateString('ru-RU') : '—';
+
+  // Выгрузка в Excel
+  const exportXLSX = React.useCallback(() => {
+    const allEnriched = (data.orders || []).filter(o => !o.archived && !o.parentOrderId).map(enrichOrder);
+    const rows = allEnriched.map(o => ({
+      'Номер заказа':        o.number || '',
+      'Изделие':             o.product || '',
+      'Кол-во':              o.qty || 1,
+      'Приоритет':           o.priority || '',
+      'Дата договора':       fmtFull(o._c),
+      'Раскрой получен':     fmtFull(o._cu),
+      'Факт. старт':         fmtFull(o._s),
+      'Факт. завершение':    fmtFull(o._f),
+      'Отгружен':            fmtFull(o._sh),
+      'Ожидание раскроя (дн.)':   o.waitCuttingDays !== null ? o.waitCuttingDays : '',
+      'Лаг до старта (дн.)':      o.waitStartDays   !== null ? o.waitStartDays   : '',
+      'Производство (дн.)':        o.productionDays  !== null ? o.productionDays  : '',
+      'Итого (дн.)':               o.totalDays       !== null ? o.totalDays       : '',
+      'Этап':               ({
+        waiting_cutting: 'Ожидание раскроя',
+        ready_to_start:  'Готов к старту',
+        in_production:   'В производстве',
+        finished:        'Завершён',
+        shipped:         'Отгружен',
+        unknown:         'Не определён',
+      }[o.stage] || o.stage),
+      '⚠ Задержка раскроя': o.warnCutting ? 'Да' : '',
+    }));
+
+    const kpiRows = [
+      { 'Показатель': 'Ср. ожидание раскроя (дн.)', 'Значение': kpi.waitCutting ?? '' },
+      { 'Показатель': 'Ср. лаг до старта (дн.)',    'Значение': kpi.waitStart   ?? '' },
+      { 'Показатель': 'Ср. время производства (дн.)','Значение': kpi.production  ?? '' },
+      { 'Показатель': 'Заказов с задержкой раскроя', 'Значение': kpi.warnCount         },
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows),    'Этапы заказов');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(kpiRows), 'KPI');
+    XLSX.writeFile(wb, `lifecycle_${new Date().toISOString().slice(0,10)}.xlsx`);
+    addToast('Файл Excel скачан', 'success');
+  }, [data.orders, data.ops, kpi, enrichOrder]);
+
+  const STAGE_LABELS = {
+    waiting_cutting: '⏳ Ожидание раскроя',
+    ready_to_start:  '✅ Готов к старту',
+    in_production:   '⚙ В производстве',
+    finished:        '✓ Завершён',
+    shipped:         '🚚 Отгружен',
+    unknown:         '○ Новый',
+  };
+  const STAGE_COLORS = {
+    waiting_cutting: '#eda100',
+    ready_to_start:  '#2a78d6',
+    in_production:   '#4a3aa7',
+    finished:        '#1baf7a',
+    shipped:         '#52514e',
+    unknown:         '#b4b2a9',
+  };
+  const DOT_COLORS = ['#2a78d6','#4a3aa7','#eda100','#1baf7a'];
+
+  const cardStyle = { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 12, padding: '14px 16px', marginBottom: 10 };
+
+  return h('div', null,
+
+    // Toolbar
+    h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 16 } },
+      h('select', { value: filterStatus, onChange: e => setFilterStatus(e.target.value), style: { fontSize: 12, padding: '6px 10px', borderRadius: 7, border: '0.5px solid var(--border)', background: 'var(--card)', color: 'var(--text)', cursor: 'pointer' } },
+        h('option', { value: 'active' },           'Активные'),
+        h('option', { value: 'all' },              'Все заказы'),
+        h('option', { value: 'waiting_cutting' },  '⏳ Ожидают раскрой'),
+        h('option', { value: 'ready_to_start' },   '✅ Готовы к старту'),
+        h('option', { value: 'in_production' },    '⚙ В производстве'),
+        h('option', { value: 'finished' },         '✓ Завершённые'),
+        h('option', { value: 'shipped' },          '🚚 Отгруженные'),
+      ),
+      h('select', { value: sortBy, onChange: e => setSortBy(e.target.value), style: { fontSize: 12, padding: '6px 10px', borderRadius: 7, border: '0.5px solid var(--border)', background: 'var(--card)', color: 'var(--text)', cursor: 'pointer' } },
+        h('option', { value: 'contractDate' }, 'По дате договора'),
+        h('option', { value: 'waitCutting' },  'По ожиданию раскроя'),
+        h('option', { value: 'stage' },        'По этапу'),
+      ),
+      h('button', { style: { ...gbtn({ marginLeft: 'auto' }), display: 'flex', alignItems: 'center', gap: 6 }, onClick: exportXLSX },
+        '📥 Скачать Excel'
+      )
+    ),
+
+    // KPI-строка
+    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 16 } },
+      [
+        { label: 'Ср. ожидание раскроя', value: kpi.waitCutting !== null ? `${kpi.waitCutting} дн` : '—', warn: kpi.waitCutting > 7 },
+        { label: 'Ср. лаг до старта',    value: kpi.waitStart   !== null ? `${kpi.waitStart} дн`   : '—', warn: false },
+        { label: 'Ср. производство',      value: kpi.production  !== null ? `${kpi.production} дн`  : '—', warn: false },
+        { label: 'Задержка раскроя',      value: kpi.warnCount,                                             warn: kpi.warnCount > 0 },
+      ].map((k, i) => h('div', { key: i, style: { background: 'var(--card)', border: `0.5px solid var(--border)`, borderRadius: 8, padding: '10px 12px' } },
+        h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 4 } }, k.label),
+        h('div', { style: { fontSize: 20, fontWeight: 500, color: k.warn ? '#e34948' : 'var(--text)' } }, k.value)
+      ))
+    ),
+
+    // Воронка
+    h('div', { style: { ...cardStyle, marginBottom: 16 } },
+      h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 12 } }, 'Воронка этапов'),
+      ['waiting_cutting','ready_to_start','in_production','finished','shipped'].map(stage => {
+        const count = kpi.byStage[stage];
+        const max   = Math.max(...Object.values(kpi.byStage), 1);
+        return h('div', { key: stage, style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 7 } },
+          h('div', { style: { fontSize: 11, color: 'var(--text-secondary)', width: 160, flexShrink: 0 } }, STAGE_LABELS[stage]),
+          h('div', { style: { flex: 1, height: 18, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' } },
+            h('div', { style: { height: '100%', width: `${Math.round(count / max * 100)}%`, background: STAGE_COLORS[stage], borderRadius: 3, transition: 'width .3s' } })
+          ),
+          h('div', { style: { fontSize: 13, fontWeight: 500, color: 'var(--text)', width: 20, textAlign: 'right' } }, count)
+        );
+      })
+    ),
+
+    // Таймлайны заказов
+    orders.length === 0
+      ? h('div', { style: cardStyle }, h('div', { style: { fontSize: 13, color: 'var(--muted)', textAlign: 'center', padding: 24 } }, 'Нет заказов для выбранного фильтра'))
+      : orders.map(ord => {
+          const milestones = [
+            { label: 'Договор', ts: ord._c  },
+            { label: 'Раскрой', ts: ord._cu },
+            { label: 'Старт',   ts: ord._s  },
+            { label: 'Готов',   ts: ord._f || (ord.shipped ? ord._sh : null) },
+          ];
+          const doneCount = milestones.filter(m => m.ts).length;
+          const stageColor = STAGE_COLORS[ord.stage] || '#b4b2a9';
+
+          return h('div', { key: ord.id, style: cardStyle },
+            // Шапка
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 } },
+              h('div', null,
+                h('div', { style: { fontSize: 14, fontWeight: 500 } }, `№ ${ord.number} — ${ord.product || ''}`),
+                h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 2 } },
+                  [ord.qty > 1 && `${ord.qty} шт`, ord.deadline && `срок ${ord.deadline}`].filter(Boolean).join(' · ')
+                )
+              ),
+              h('span', { style: { fontSize: 11, padding: '3px 8px', borderRadius: 4, background: stageColor + '22', color: stageColor, fontWeight: 500, flexShrink: 0 } },
+                STAGE_LABELS[ord.stage] || ord.stage
+              )
+            ),
+
+            // Шкала
+            h('div', { style: { position: 'relative', height: 46 } },
+              h('div', { style: { position: 'absolute', top: 10, left: '12.5%', right: '12.5%', height: 2, background: 'var(--border)', borderRadius: 1 } }),
+              doneCount > 1 && h('div', { style: {
+                position: 'absolute', top: 10, left: '12.5%',
+                width: `${Math.min(((doneCount-1)/3) * 75, 75)}%`, height: 2,
+                background: stageColor, borderRadius: 1
+              } }),
+              milestones.map((m, i) => h('div', { key: i, style: {
+                position: 'absolute', left: `${12.5 + i * 25}%`, top: 0,
+                transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1
+              } },
+                h('div', { style: {
+                  width: 20, height: 20, borderRadius: '50%',
+                  background: m.ts ? DOT_COLORS[i] : 'var(--border-strong)',
+                  border: '2px solid var(--card)',
+                  boxShadow: (!m.ts && milestones[i-1]?.ts) ? `0 0 0 3px ${DOT_COLORS[i]}33` : 'none',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 9, color: '#fff', fontWeight: 700,
+                } }, m.ts ? '✓' : (milestones[i-1]?.ts ? '·' : '')),
+                h('div', { style: { fontSize: 9, color: 'var(--muted)', marginTop: 2, whiteSpace: 'nowrap' } }, m.label),
+                h('div', { style: { fontSize: 9, color: m.ts ? 'var(--text-secondary)' : 'var(--muted)', fontWeight: m.ts ? 500 : 400 } }, fmt(m.ts))
+              ))
+            ),
+
+            // Метрики под шкалой
+            h('div', { style: { display: 'flex', gap: 6, marginTop: 4 } },
+              ord.waitCuttingDays !== null && h('div', { style: { flex: 1, fontSize: 10, color: ord.warnCutting ? '#e34948' : 'var(--muted)' } },
+                `${ord.waitCuttingDays} дн${ord.warnCutting ? ' ⚠' : ''} — раскрой`),
+              ord.waitStartDays !== null && h('div', { style: { flex: 1, fontSize: 10, color: 'var(--muted)' } },
+                `${ord.waitStartDays} дн — до старта`),
+              ord.productionDays !== null && h('div', { style: { flex: 1, fontSize: 10, color: 'var(--muted)' } },
+                `${ord.productionDays} дн — произв.`),
+            ),
+
+            // Предупреждение
+            ord.warnCutting && h('div', { style: { marginTop: 8, padding: '5px 10px', background: 'var(--bg-danger)', borderRadius: 6, fontSize: 11, color: 'var(--text-danger)' } },
+              `⚠ Раскрой ожидается ${ord.waitCuttingDays} дней — операции не могут начаться`
+            )
+          );
+        })
   );
 });
