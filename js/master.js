@@ -279,7 +279,21 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
         style: filt === 'done' ? { ...abtn({ fontSize: 12 }), background: GN, borderColor: GN } : gbtn({ fontSize: 12 }),
         onClick: () => { setFilt(filt === 'done' ? 'all' : 'done'); if (filt !== 'done') setShowDone(true); }
       }, `✓ Завершённые (${data.ops.filter(o => o.status === 'done' && !o.archived).length})`),
-      data.orders.filter(o => !o.archived).map(o => h('button', { key: o.id, style: filt === o.id ? abtn({ fontSize: 10 }) : gbtn({ fontSize: 10 }), onClick: () => setFilt(o.id) }, o.number)),
+      // Пилюли с номерами заказов — раньше показывали ВСЕ незаархивированные заказы,
+      // из-за чего список бесконечно рос отгруженными/полностью завершёнными.
+      // Теперь скрываем заказ, если он отгружен ИЛИ все его (неархивные) операции done —
+      // если только пользователь явно не включил "Показать завершённые", или заказ не выбран как текущий фильтр.
+      (() => {
+        const isOrderDone = (o) => {
+          if (o.shipped) return true;
+          const ops_ = data.ops.filter(x => x.orderId === o.id && !x.archived);
+          return ops_.length > 0 && ops_.every(x => x.status === 'done');
+        };
+        return data.orders
+          .filter(o => !o.archived)
+          .filter(o => showDone || filt === o.id || !isOrderDone(o))
+          .map(o => h('button', { key: o.id, style: filt === o.id ? abtn({ fontSize: 10 }) : gbtn({ fontSize: 10 }), onClick: () => setFilt(o.id) }, o.number));
+      })(),
       h('div', { style: { marginLeft: 'auto', display: 'flex', gap: 12, alignItems: 'center' } },
         h('label', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer' } },
           h('input', { type: 'checkbox', checked: showDone, onChange: e => setShowDone(e.target.checked) }), 'Показать завершённые'
