@@ -2397,7 +2397,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
     master:      ALL_GROUPS, // полный доступ
     pdo: {
       production: { label: '⚙ Производство', tabs: [['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['orders','Заказы'],['plan','План']] },
-      analytics:  { label: '📊 Аналитика',   tabs: [['reports','Отчёты'],['qms','Качество'],['auxops','Доп. работы'],['journal','Журнал'],['notifications','Уведомления']] },
+      analytics:  { label: '📊 Аналитика',   tabs: [['analytics','Аналитика'],['reports','Отчёты'],['qms','Качество'],['auxops','Доп. работы'],['journal','Журнал'],['notifications','Уведомления']] },
     },
     director: {
       analytics:  { label: '📊 Аналитика',   tabs: [['analytics','Аналитика'],['qms','Качество'],['kpi','KPI / Премии'],['reports','Отчёты'],['reclamations','Рекламации'],['auxops','Доп. работы']] },
@@ -2405,7 +2405,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
     },
     hr: {
       reference:  { label: '👥 Сотрудники',  tabs: [['workers','Сотрудники']] },
-      analytics:  { label: '📊 Аналитика',   tabs: [['kpi','KPI / Премии'],['reports','Отчёты']] },
+      analytics:  { label: '📊 Аналитика',   tabs: [['analytics','Аналитика'],['kpi','KPI / Премии'],['reports','Отчёты']] },
       system:     { label: '🕐 Учёт',         tabs: [['time','Учёт времени']] },
     },
     shop_master: {
