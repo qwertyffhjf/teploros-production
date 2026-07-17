@@ -1073,6 +1073,12 @@ const isProductRow = (name) => {
   return PRODUCT_KEYWORDS.some(kw => lower.includes(kw));
 };
 
+// Код позиции в 1С: две кириллические буквы + дефис + цифры.
+// У готовых изделий (котлы) префикс обычно "БП-", у комплектующих — "НФ-".
+// Раньше матчилось только "НФ-", из-за чего код котла не распознавался
+// и количество съезжало (см. фикс ниже).
+const ITEM_CODE_RE = /^[А-Яа-яЁё]{2}-\d+$/;
+
 // Парсим дату вида "04.05.26" или "04.05.2026"
 const parseDate1C = (str) => {
   if (!str) return '';
@@ -1095,10 +1101,12 @@ const parseOrderHeader = (text) => {
 
 const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
   const [step, setStep] = useState('upload'); // upload | preview | split | done
-  const [parsed, setParsed] = useState(null);  // { orderNumber, customer, deadline, product, productCode, qty, specs, components[] }
+  const [parsed, setParsed] = useState(null);  // { orderNumber, customer, deadline, products: [{ product, productCode, productQty, productSpecs, components[] }] }
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState('');
-  const [createdParentId, setCreatedParentId] = useState(null); // id родительского заказа после создания
+  const [splitQueue, setSplitQueue] = useState([]);   // id заказов с qty>1, которые надо разделить на подзаказы
+  const [splitIndex, setSplitIndex] = useState(0);
+  const [createdCount, setCreatedCount] = useState(0);
   const fileInputRef = React.useRef(null);
 
   const parseExcel = (arrayBuffer) => {
@@ -1107,9 +1115,12 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
-      let orderNumber = '', customer = '', deadline = '', orderDateStr = '';
-      let product = null, productCode = '', productQty = 1, productSpecs = '';
-      const components = [];
+      let orderNumber = '', customer = '', deadline = '';
+      // Один файл 1С может содержать НЕСКОЛЬКО изделий (напр. 2 разных котла),
+      // каждое — со своим набором комплектующих. Строка-изделие открывает новую
+      // группу, все следующие строки-аксессуары до следующего изделия относятся к ней.
+      const products = [];
+      let currentGroup = null;
 
       rows.forEach(row => {
         const cells = row.map(c => String(c === null || c === undefined ? '' : c).trim());
@@ -1136,17 +1147,18 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
           const name = cells.reduce((best, c) => c.length > best.length ? c : best, '');
           if (!name || name.length < 5) return;
 
-          // Код НФ-XXXXXXX
-          const code   = cells.find(c => /^НФ-\d+$/i.test(c)) || '';
-          const codeIdx = cells.findIndex(c => /^НФ-\d+$/i.test(c));
+          // Код позиции (БП-XXXXXXX у изделий, НФ-XXXXXXX у комплектующих)
+          const code    = cells.find(c => ITEM_CODE_RE.test(c)) || '';
+          const codeIdx = cells.findIndex(c => ITEM_CODE_RE.test(c));
 
-          // Кол-во — числовое значение после кода
+          // Кол-во — первое число после кода; если код не распознан, сканируем
+          // от порядкового номера позиции (numIdx), а НЕ от начала строки —
+          // иначе можно случайно подхватить сам порядковый номер как количество.
           let qty = 1;
-          if (codeIdx >= 0) {
-            for (let i = codeIdx + 1; i < cells.length; i++) {
-              const n = Number(cells[i]);
-              if (!isNaN(n) && n > 0 && n < 10000 && cells[i] !== '') { qty = n; break; }
-            }
+          const scanFrom = (codeIdx >= 0 ? codeIdx : numIdx) + 1;
+          for (let i = scanFrom; i < cells.length; i++) {
+            const n = Number(cells[i]);
+            if (!isNaN(n) && n > 0 && n < 10000 && cells[i] !== '') { qty = n; break; }
           }
 
           // Единица измерения — ищем 'шт', 'кг', 'м', 'л' и т.д.
@@ -1156,7 +1168,7 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
           const prices = cells.map(c => Number(c)).filter(n => n > 1000 && !isNaN(n)).sort((a, b) => a - b);
           const price = prices[0] || 0;
 
-          // Дата срока
+          // Дата срока (общая для всего документа — берём первую найденную)
           const dateCell = cells.find(c => /^\d{2}\.\d{2}\.\d{2,4}$/.test(c));
           if (dateCell && !deadline) deadline = parseDate1C(dateCell);
 
@@ -1165,23 +1177,28 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
           const specs = specsMatch ? specsMatch[1] : '';
           const cleanName = name.replace(/\s*\([^)]*\)\s*/g, ' ').trim();
 
-          if (isProductRow(name) && !product) {
-            product = cleanName;
-            productCode = code;
-            productQty = Math.round(qty);
-            productSpecs = specs;
+          if (isProductRow(name)) {
+            // Новое изделие — открываем новую группу вместо перезаписи/слияния с предыдущей
+            currentGroup = { product: cleanName, productCode: code, productQty: Math.round(qty), productSpecs: specs, components: [] };
+            products.push(currentGroup);
           } else if (cleanName.length > 3) {
-            components.push({ id: uid(), name: cleanName, code, qty: Math.round(qty), unit, price, status: 'pending' });
+            if (!currentGroup) {
+              // Комплектующая встретилась раньше первого изделия — редкий случай,
+              // создаём безымянную группу-заглушку, чтобы не потерять позицию
+              currentGroup = { product: '', productCode: '', productQty: 1, productSpecs: '', components: [] };
+              products.push(currentGroup);
+            }
+            currentGroup.components.push({ id: uid(), name: cleanName, code, qty: Math.round(qty), unit, price, status: 'pending' });
           }
         }
       });
 
-      if (!product) {
+      if (products.length === 0) {
         setError('Не найдено основное изделие в файле. Убедитесь что файл содержит котёл или изделие Teplofor.');
         return;
       }
 
-      setParsed({ orderNumber, customer, deadline, product, productCode, productQty, productSpecs, components });
+      setParsed({ orderNumber, customer, deadline, products });
       setStep('preview');
       setError('');
     } catch (e) {
@@ -1206,44 +1223,43 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
     handleFile(e.dataTransfer.files[0]);
   };
 
-  const handleCreate = async () => {
-    if (!parsed) return;
-    const orderId = uid();
+  // Определяем тип изделия по названию из 1С (общий хелпер для всех изделий документа)
+  const _productTypes = data.settings?.productTypes || [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }];
+  const _detectProductType = (name) => {
+    const lower = (name || '').toLowerCase();
+    // Ищем совпадение по label (нечувствительно к регистру)
+    for (const pt of _productTypes) {
+      const ptLabel = (pt.label || '').toLowerCase();
+      const keywords = ptLabel.split(/[\s,/]+/).filter(w => w.length > 2);
+      if (keywords.some(kw => lower.includes(kw))) return pt.id;
+    }
+    // Запасные ключевые слова для котлов
+    if (lower.includes('котел') || lower.includes('котёл') || lower.includes('boiler') ||
+        lower.includes('duplex') || lower.includes('teplofor') || lower.includes('lex')) {
+      const boilerId = _productTypes.find(p => p.id === 'boiler' || p.label?.toLowerCase().includes('котел'))?.id;
+      if (boilerId) return boilerId;
+    }
+    // Запасные ключевые слова для БМК
+    if (lower.includes('бмк') || lower.includes('bmk') || lower.includes('блочно')) {
+      const bmkId = _productTypes.find(p => p.id === 'bmk' || p.label?.toLowerCase().includes('бмк'))?.id;
+      if (bmkId) return bmkId;
+    }
+    return _productTypes[0]?.id || 'boiler';
+  };
 
-    // Определяем тип изделия по названию из 1С
-    const _productName = (parsed.product || '').toLowerCase();
-    const _productTypes = data.settings?.productTypes || [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }];
-    const _detectProductType = (name) => {
-      // Ищем совпадение по label (нечувствительно к регистру)
-      for (const pt of _productTypes) {
-        const ptLabel = (pt.label || '').toLowerCase();
-        const keywords = ptLabel.split(/[\s,/]+/).filter(w => w.length > 2);
-        if (keywords.some(kw => name.includes(kw))) return pt.id;
-      }
-      // Запасные ключевые слова для котлов
-      if (name.includes('котел') || name.includes('котёл') || name.includes('boiler') ||
-          name.includes('duplex') || name.includes('teplofor') || name.includes('lex')) {
-        const boilerId = _productTypes.find(p => p.id === 'boiler' || p.label?.toLowerCase().includes('котел'))?.id;
-        if (boilerId) return boilerId;
-      }
-      // Запасные ключевые слова для БМК
-      if (name.includes('бмк') || name.includes('bmk') || name.includes('блочно')) {
-        const bmkId = _productTypes.find(p => p.id === 'bmk' || p.label?.toLowerCase().includes('бмк'))?.id;
-        if (bmkId) return bmkId;
-      }
-      return _productTypes[0]?.id || 'boiler';
-    };
-    const productType = _detectProductType(_productName);
+  // Собирает order/ops/deliveries для одного изделия из parsed.products[i]
+  const buildOrderFromProduct = (p, number) => {
+    const orderId = uid();
+    const productType = _detectProductType(p.product);
     const stages = (data.productionStages || []).filter(s => !s.productType || s.productType === productType);
 
-    // Родительский заказ — всегда без операций если qty > 1
     const newOrder = {
       id: orderId,
-      number: parsed.orderNumber || `1С-${Date.now()}`,
-      product: parsed.product,
-      productCode: parsed.productCode,
-      specs: parsed.productSpecs,
-      qty: parsed.productQty,
+      number,
+      product: p.product,
+      productCode: p.productCode,
+      specs: p.productSpecs,
+      qty: p.productQty,
       customer: parsed.customer,
       deadline: parsed.deadline,
       priority: 'medium',
@@ -1254,22 +1270,22 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
       source: '1c_import',
       productType,
       boilerType: (() => {
-        const n = (parsed.product || '').toLowerCase();
+        const n = (p.product || '').toLowerCase();
         if (n.includes('v3') || n.includes('трёхходов') || n.includes('трехходов')) return 'v3d';
         return 'v2d';
       })(),
       powerKw: (() => {
         // Парсим мощность из specs: '300 кВт, 6 бар' → 300
-        const s = parsed.specs || '';
+        const s = p.productSpecs || '';
         const m = s.match(/([0-9]+[.,]?[0-9]*)\s*кВт/i);
         return m ? Number(m[1].replace(',','.')) : 0;
       })(),
-      components: parsed.components,
-      isParentOrder: parsed.productQty > 1,
+      components: p.components,
+      isParentOrder: p.productQty > 1,
     };
 
     // Если qty = 1 — операции создаём сразу (нет смысла делить)
-    const newOps = parsed.productQty === 1 ? stages.map(stage => ({
+    const newOps = p.productQty === 1 ? stages.map(stage => ({
       id: uid(), orderId, name: stage.name, stageId: stage.id, qty: 1,
       workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
       archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null,
@@ -1286,7 +1302,7 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
         if (!mat) return;
         newDeliveries.push({
           id: uid(), orderId, materialId: matId, stageName: stage.name,
-          stageId: stage.id, requiredQty: parsed.productQty,
+          stageId: stage.id, requiredQty: p.productQty,
           deliveredQty: 0, unit: mat.unit || 'шт',
           status: 'pending', createdAt: now(),
           confirmedAt: null, confirmedBy: null, note: ''
@@ -1294,29 +1310,56 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
       });
     });
 
+    return { order: newOrder, ops: newOps, deliveries: newDeliveries };
+  };
+
+  const handleCreate = async () => {
+    if (!parsed || !parsed.products?.length) return;
+    const baseNumber = parsed.orderNumber || `1С-${Date.now()}`;
+    const multi = parsed.products.length > 1;
+
+    const built = parsed.products.map((p, i) =>
+      buildOrderFromProduct(p, multi ? `${baseNumber}-${i + 1}` : baseNumber)
+    );
+
     const d = {
       ...data,
-      orders: [...data.orders, newOrder],
-      ops: [...data.ops, ...newOps],
-      materialDeliveries: [...(data.materialDeliveries || []), ...newDeliveries]
+      orders: [...data.orders, ...built.map(b => b.order)],
+      ops: [...data.ops, ...built.flatMap(b => b.ops)],
+      materialDeliveries: [...(data.materialDeliveries || []), ...built.flatMap(b => b.deliveries)]
     };
 
     await DB.save(d);
     onUpdate(d);
+    setCreatedCount(built.length);
 
-    if (parsed.productQty > 1) {
-      setCreatedParentId(orderId);
+    const queue = built.filter(b => b.order.qty > 1).map(b => b.order.id);
+    if (queue.length > 0) {
+      setSplitQueue(queue);
+      setSplitIndex(0);
       setStep('split');
     } else {
-      const msg = [
-        `Заказ ${newOrder.number} создан`,
-        `${newOps.length} операций`,
-        parsed.components.length > 0 ? `${parsed.components.length} комплектующих` : null,
-        newDeliveries.length > 0 ? `${newDeliveries.length} поставок материалов` : null
-      ].filter(Boolean).join(' · ');
+      const totalOps = built.reduce((s, b) => s + b.ops.length, 0);
+      const totalComp = built.reduce((s, b) => s + (b.order.components?.length || 0), 0);
+      const totalDel = built.reduce((s, b) => s + b.deliveries.length, 0);
+      const msg = multi
+        ? [`${built.length} заказа создано`, `${totalOps} операций`, totalComp > 0 ? `${totalComp} комплектующих` : null, totalDel > 0 ? `${totalDel} поставок материалов` : null].filter(Boolean).join(' · ')
+        : [`Заказ ${built[0].order.number} создан`, `${totalOps} операций`, totalComp > 0 ? `${totalComp} комплектующих` : null, totalDel > 0 ? `${totalDel} поставок материалов` : null].filter(Boolean).join(' · ');
       addToast(`✓ ${msg}`, 'success');
       setStep('done');
       setTimeout(onClose, 1500);
+    }
+  };
+
+  // Вызывается когда SubOrderSplitStep завершил разделение текущего заказа
+  // в очереди — переходим к следующему изделию с qty>1 или закрываем модалку
+  const handleSplitStepDone = () => {
+    if (splitIndex + 1 < splitQueue.length) {
+      setSplitIndex(i => i + 1);
+    } else {
+      addToast('✓ Импорт из 1С завершён', 'success');
+      setStep('done');
+      setTimeout(onClose, 1200);
     }
   };
 
@@ -1366,81 +1409,105 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
       // ШАГ 2: Предпросмотр
       step === 'preview' && parsed && h('div', null,
 
-        // Основные данные заказа
+        // Общие данные документа
         h('div', { style: { background: 'var(--bg,#f5f1eb)', borderRadius: 10, padding: '14px 16px', marginBottom: 16 } },
-          h('div', { style: { fontSize: 11, color: '#888', textTransform: 'uppercase', marginBottom: 10 } }, '📋 Основной заказ (изделие)'),
+          h('div', { style: { fontSize: 11, color: '#888', textTransform: 'uppercase', marginBottom: 10 } },
+            parsed.products.length > 1 ? `📋 Заказ покупателя · ${parsed.products.length} изделия` : '📋 Заказ покупателя'
+          ),
           h('div', { style: S2.row },
-            h('span', { style: S2.lbl }, 'Номер заказа'),
+            h('span', { style: S2.lbl }, 'Номер документа 1С'),
             h('span', { style: { fontWeight: 600, color: AM2 } }, parsed.orderNumber || '—')
-          ),
-          h('div', { style: S2.row },
-            h('span', { style: S2.lbl }, 'Изделие'),
-            h('span', { style: { fontWeight: 500 } }, parsed.product)
-          ),
-          parsed.productSpecs && h('div', { style: S2.row },
-            h('span', { style: S2.lbl }, 'Характеристики'),
-            h('span', { style: { color: '#666', fontSize: 12 } }, parsed.productSpecs)
           ),
           h('div', { style: S2.row },
             h('span', { style: S2.lbl }, 'Заказчик'),
             h('span', null, parsed.customer || '—')
           ),
-          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, paddingTop: 8 } },
-            h('div', null, h('div', { style: S2.lbl }, 'Количество'), h('div', { style: { fontWeight: 500 } }, `${parsed.productQty} шт`)),
-            h('div', null, h('div', { style: S2.lbl }, 'Срок'), h('div', { style: { fontWeight: 500, color: parsed.deadline ? RD2 : '#888' } }, parsed.deadline || '—'))
+          h('div', { style: S2.row },
+            h('span', { style: S2.lbl }, 'Срок'),
+            h('span', { style: { fontWeight: 500, color: parsed.deadline ? RD2 : '#888' } }, parsed.deadline || '—')
+          ),
+          parsed.products.length > 1 && h('div', { style: { marginTop: 8, fontSize: 11, color: AM2 } },
+            `⚠ В документе обнаружено несколько изделий — будет создано ${parsed.products.length} отдельных заказа (${parsed.orderNumber || '—'}-1, -2, …)`
           )
         ),
 
-        // Комплектующие
-        parsed.components.length > 0 && h('div', { style: { marginBottom: 16 } },
-          h('div', { style: { fontSize: 11, color: '#888', textTransform: 'uppercase', marginBottom: 8 } },
-            `📦 Комплектующие (${parsed.components.length} поз.) — статус: ожидаются`
+        // Блок по каждому изделию
+        parsed.products.map((p, pi) => h('div', { key: pi, style: { border: `0.5px solid ${AM4}`, borderRadius: 10, padding: '14px 16px', marginBottom: 14 } },
+          h('div', { style: { fontSize: 11, color: AM2, textTransform: 'uppercase', marginBottom: 8, fontWeight: 600 } },
+            parsed.products.length > 1 ? `📦 Изделие ${pi + 1} из ${parsed.products.length}` : '📦 Изделие'
           ),
-          h('div', { style: { border: '0.5px solid var(--border,#ddd)', borderRadius: 8, overflow: 'hidden' } },
-            h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 } },
-              h('thead', null, h('tr', { style: { background: 'var(--bg,#f5f5f2)' } },
-                ['Наименование', 'Код', 'Кол-во', 'Ед.'].map((t, i) =>
-                  h('th', { key: i, style: { ...S.th, fontSize: 11 } }, t)
-                )
-              )),
-              h('tbody', null, parsed.components.map((c, i) =>
-                h('tr', { key: i },
-                  h('td', { style: S.td }, c.name),
-                  h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 10, color: '#888' } }, c.code || '—'),
-                  h('td', { style: { ...S.td, textAlign: 'center' } }, c.qty),
-                  h('td', { style: { ...S.td, color: '#888' } }, c.unit)
-                )
-              ))
+          h('div', { style: S2.row },
+            h('span', { style: S2.lbl }, 'Изделие'),
+            h('span', { style: { fontWeight: 500 } }, p.product || '— не распознано —')
+          ),
+          p.productSpecs && h('div', { style: S2.row },
+            h('span', { style: S2.lbl }, 'Характеристики'),
+            h('span', { style: { color: '#666', fontSize: 12 } }, p.productSpecs)
+          ),
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, paddingTop: 8, paddingBottom: p.components.length > 0 ? 12 : 0 } },
+            h('div', null, h('div', { style: S2.lbl }, 'Количество'), h('div', { style: { fontWeight: 500 } }, `${p.productQty} шт`)),
+            h('div', null, h('div', { style: S2.lbl }, 'Код изделия'), h('div', { style: { fontWeight: 500, fontFamily: 'monospace', fontSize: 12 } }, p.productCode || '—'))
+          ),
+
+          // Комплектующие этого изделия
+          p.components.length > 0 && h('div', null,
+            h('div', { style: { fontSize: 11, color: '#888', textTransform: 'uppercase', marginBottom: 8 } },
+              `📦 Комплектующие (${p.components.length} поз.) — статус: ожидаются`
+            ),
+            h('div', { style: { border: '0.5px solid var(--border,#ddd)', borderRadius: 8, overflow: 'hidden' } },
+              h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 } },
+                h('thead', null, h('tr', { style: { background: 'var(--bg,#f5f5f2)' } },
+                  ['Наименование', 'Код', 'Кол-во', 'Ед.'].map((t, i) =>
+                    h('th', { key: i, style: { ...S.th, fontSize: 11 } }, t)
+                  )
+                )),
+                h('tbody', null, p.components.map((c, i) =>
+                  h('tr', { key: i },
+                    h('td', { style: S.td }, c.name),
+                    h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 10, color: '#888' } }, c.code || '—'),
+                    h('td', { style: { ...S.td, textAlign: 'center' } }, c.qty),
+                    h('td', { style: { ...S.td, color: '#888' } }, c.unit)
+                  )
+                ))
+              )
             )
           )
-        ),
+        )),
 
         // Что будет создано
         h('div', { style: { padding: '10px 14px', background: GN3, borderRadius: 8, fontSize: 12, color: GN2, marginBottom: 16 } },
           h('div', { style: { fontWeight: 500, marginBottom: 4 } }, '✓ Будет создано автоматически:'),
-          h('div', null, `· Заказ ${parsed.orderNumber}`),
-          h('div', null, `· ${(data.productionStages || []).length} производственных операций`),
-          parsed.components.length > 0 && h('div', null, `· ${parsed.components.length} комплектующих (статус: ожидаются)`),
+          h('div', null, parsed.products.length > 1 ? `· ${parsed.products.length} заказа` : `· Заказ ${parsed.orderNumber}`),
+          h('div', null, `· операции по каждому заказу (${(data.productionStages || []).length} этапов на изделие)`),
+          parsed.products.some(p => p.components.length > 0) && h('div', null,
+            `· ${parsed.products.reduce((s, p) => s + p.components.length, 0)} комплектующих всего (статус: ожидаются)`),
           h('div', { style: { marginTop: 4, color: AM2 } }, '⚠ Отгрузка будет заблокирована до получения всех комплектующих')
         ),
 
         // Кнопки
         h('div', { style: { display: 'flex', gap: 8 } },
-          h('button', { style: { ...abtn({ flex: 1 }), fontSize: 14 }, onClick: handleCreate }, '✓ Создать заказ'),
+          h('button', { style: { ...abtn({ flex: 1 }), fontSize: 14 }, onClick: handleCreate },
+            parsed.products.length > 1 ? `✓ Создать ${parsed.products.length} заказа` : '✓ Создать заказ'),
           h('button', { style: gbtn({ flex: 0 }), onClick: () => { setStep('upload'); setParsed(null); } }, '← Назад')
         )
       ),
 
-      // ШАГ 3: Готово
-      step === 'split' && createdParentId && h(SubOrderSplitStep, {
-        data, onUpdate, addToast, onClose,
-        parentOrderId: createdParentId,
-        parsed,
-      }),
+      // ШАГ 3: Разделение на подзаказы (по одному заказу из очереди с qty>1)
+      step === 'split' && splitQueue[splitIndex] && h('div', null,
+        splitQueue.length > 1 && h('div', { style: { fontSize: 12, color: '#888', marginBottom: 10 } },
+          `Разделение заказа ${splitIndex + 1} из ${splitQueue.length}`
+        ),
+        h(SubOrderSplitStep, {
+          data, onUpdate, addToast,
+          onClose: handleSplitStepDone,
+          parentOrderId: splitQueue[splitIndex],
+          parsed: null,
+        })
+      ),
 
       step === 'done' && h('div', { style: { textAlign: 'center', padding: 32 } },
         h('div', { style: { fontSize: 48, marginBottom: 12 } }, '✅'),
-        h('div', { style: { fontSize: 16, fontWeight: 500 } }, 'Заказ создан!')
+        h('div', { style: { fontSize: 16, fontWeight: 500 } }, createdCount > 1 ? `Заказы созданы (${createdCount})!` : 'Заказ создан!')
       )
     )
   );
