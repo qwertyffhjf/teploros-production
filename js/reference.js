@@ -1774,9 +1774,9 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
       h('div', { style: S.sec }, '🤖 AI-аналитик'),
       h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 12, lineHeight: 1.6 } },
         'Для работы AI-аналитика нужен API ключ. ',
-        h('b', null, 'Groq — бесплатно, без гео-ограничений'),
+        h('b', null, 'OpenRouter — бесплатно, работает из браузера'),
         ': получить на ',
-        h('a', { href: 'https://console.groq.com/keys', target: '_blank', style: { color: AM } }, 'console.groq.com'),
+        h('a', { href: 'https://openrouter.ai/keys', target: '_blank', style: { color: AM } }, 'openrouter.ai/keys'),
         '. ',
         h('b', null, 'Gemini Flash — бесплатно'),
         ' (может быть заблокирован по региону): получить на ',
@@ -1786,20 +1786,20 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
       ),
       h('div', { style: { display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 } },
         h('div', { style: { flex: 1, minWidth: 200 } },
-          h('label', { style: S.lbl }, 'Groq API Key (бесплатный, приоритетный)'),
+          h('label', { style: S.lbl }, 'OpenRouter API Key (бесплатный, приоритетный)'),
           h('div', { style: { display: 'flex', gap: 6 } },
             h('input', {
               type: 'password',
               style: { ...S.inp, flex: 1, fontFamily: 'monospace' },
-              placeholder: 'gsk_...',
-              value: data.settings?.groqApiKey || '',
+              placeholder: 'sk-or-v1-...',
+              value: data.settings?.openrouterApiKey || '',
               onChange: e => {
-                const d = { ...data, settings: { ...data.settings, groqApiKey: e.target.value.trim() } };
+                const d = { ...data, settings: { ...data.settings, openrouterApiKey: e.target.value.trim() } };
                 onUpdate(d); DB.save(d).catch(() => {});
               }
             })
           ),
-          h('div', { style: { fontSize: 10, color: 'var(--muted)', marginTop: 4 } }, '~30 запросов/мин · Llama 3.3 70B · без карты')
+          h('div', { style: { fontSize: 10, color: 'var(--muted)', marginTop: 4 } }, '~50 запросов/день · автовыбор бесплатной модели · без карты')
         ),
         h('div', { style: { flex: 1, minWidth: 200 } },
           h('label', { style: S.lbl }, 'Gemini API Key (бесплатный)'),
@@ -1834,9 +1834,9 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
           h('div', { style: { fontSize: 10, color: 'var(--muted)', marginTop: 4 } }, '~$0.001 за запрос · данные не хранятся')
         )
       ),
-      (data.settings?.groqApiKey || data.settings?.geminiApiKey || data.settings?.aiApiKey)
+      (data.settings?.openrouterApiKey || data.settings?.geminiApiKey || data.settings?.aiApiKey)
         ? h('div', { style: { fontSize: 12, color: GN2, padding: '6px 10px', background: GN3, borderRadius: 6 } },
-            `✓ API ключ сохранён (${data.settings?.groqApiKey ? 'Groq' : data.settings?.geminiApiKey ? 'Gemini' : 'Claude'}) — AI-аналитик доступен в разделе Аналитика`)
+            `✓ API ключ сохранён (${data.settings?.openrouterApiKey ? 'OpenRouter' : data.settings?.geminiApiKey ? 'Gemini' : 'Claude'}) — AI-аналитик доступен в разделе Аналитика`)
         : h('div', { style: { fontSize: 12, color: AM2, padding: '6px 10px', background: AM3, borderRadius: 6 } }, '⚠ Ключ не задан — AI-аналитик недоступен')
     ),
 
