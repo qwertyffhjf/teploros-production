@@ -1004,57 +1004,67 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
         // ── Мини-таймлайн жизненного цикла заказа ──
         (() => {
           const deliveries = (data.materialDeliveries || []).filter(d => d.orderId === ord.id);
-          // Уникальные материалы с поставками — каждый отдельной точкой
           const matPoints = deliveries.reduce((acc, d) => {
             if (!acc.find(a => a.materialId === d.materialId)) {
               const mat = (data.materials || []).find(m => m.id === d.materialId);
-              acc.push({ materialId: d.materialId, name: mat?.name || '?', isCutting: mat?.isCutting, confirmedAt: d.status === 'confirmed' ? d.confirmedAt : null, status: d.status });
+              acc.push({ materialId: d.materialId, name: mat?.name || '?', isCutting: mat?.isCutting, confirmedAt: d.status === 'confirmed' ? (d.confirmedAt || Date.now()) : null, status: d.status });
             }
             return acc;
           }, []);
 
+          const showMaterialsReady = matPoints.length > 0;
           const milestones = [
-            { key: 'contract',       label: 'Договор',   ts: ord.contractDate || ord.createdAt, color: '#2a78d6' },
-            ...matPoints.map(mp => ({ key: `mat_${mp.materialId}`, label: mp.isCutting ? `✂ ${mp.name}` : mp.name, ts: mp.confirmedAt, color: mp.confirmedAt ? '#4a3aa7' : null, partial: mp.status === 'partial' })),
-            { key: 'materials',      label: 'Все матер.', ts: ord.materialsReadyAt, color: '#059669' },
-            { key: 'factStartedAt',  label: 'Старт',     ts: ord.factStartedAt,   color: '#eda100' },
-            { key: 'factFinishedAt', label: 'Готов',     ts: ord.factFinishedAt || (ord.shipped ? ord.shippedAt : null), color: '#1baf7a' },
+            { key: 'contract',  label: 'Запуск',     ts: ord.contractDate || ord.createdAt, color: '#2a78d6' },
+            ...matPoints.map(mp => ({ key: `mat_${mp.materialId}`, label: mp.isCutting ? `✂ ${mp.name}` : mp.name, ts: mp.confirmedAt, color: '#4a3aa7', partial: mp.status === 'partial' })),
+            ...(showMaterialsReady ? [{ key: 'materials', label: 'Материалы', ts: ord.materialsReadyAt, color: '#059669' }] : []),
+            { key: 'factStart', label: 'Старт',      ts: ord.factStartedAt, color: '#eda100' },
+            { key: 'factFinish',label: 'Готов',      ts: ord.factFinishedAt || (ord.shipped ? ord.shippedAt : null), color: '#1baf7a' },
           ];
 
           const hasAny = milestones.some(m => m.ts);
           if (!hasAny) return null;
 
           const fmt = ts => ts ? new Date(ts).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }) : '—';
-          const total = milestones.length;
-          const waitDays = (!ord.materialsReadyAt && (ord.contractDate || ord.createdAt))
+          const waitDays = (!ord.materialsReadyAt && showMaterialsReady && (ord.contractDate || ord.createdAt))
             ? Math.floor((Date.now() - (ord.contractDate || ord.createdAt)) / 86400000) : null;
           const warnMaterials = waitDays !== null && waitDays > 5;
 
           return h('div', { style: { marginBottom: 14 } },
-            h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 10 } }, '📦 Этапы производства'),
-            h('div', { style: { position: 'relative', height: 50, marginBottom: 4, overflowX: 'auto' } },
-              h('div', { style: { position: 'absolute', top: 10, left: `${100 / total / 2}%`, right: `${100 / total / 2}%`, height: 2, background: 'var(--border-soft)', borderRadius: 1, minWidth: 200 } }),
+            h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: '#999', textTransform: 'uppercase', marginBottom: 10 } }, '📦 Этапы производства'),
+
+            // Flexbox-шкала: точки занимают равные доли, линия между ними встроена
+            h('div', { style: { display: 'flex', alignItems: 'flex-start' } },
               milestones.map((m, i) => {
-                const pct = (i / (total - 1)) * 100;
-                const dotColor = m.ts ? (m.color || '#2a78d6') : m.partial ? '#eda100' : 'var(--border-strong)';
-                return h('div', { key: m.key, style: {
-                  position: 'absolute', left: `${pct}%`, top: 0,
-                  transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1
-                } },
-                  h('div', { style: {
-                    width: 20, height: 20, borderRadius: '50%',
-                    background: dotColor,
-                    border: '2px solid var(--card)',
-                    boxShadow: (!m.ts && milestones[i - 1]?.ts) ? `0 0 0 3px ${m.color || '#2a78d6'}33` : 'none',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 9, color: '#fff', fontWeight: 700,
-                  } }, m.ts ? '✓' : m.partial ? '½' : ''),
-                  h('div', { style: { fontSize: 9, color: 'var(--muted)', marginTop: 2, whiteSpace: 'nowrap', maxWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'center' } }, m.label),
-                  h('div', { style: { fontSize: 9, color: m.ts ? 'var(--text-secondary)' : 'var(--muted)', fontWeight: m.ts ? 500 : 400 } }, fmt(m.ts))
+                const isDone = !!m.ts;
+                const isNext = !isDone && i > 0 && !!milestones[i - 1]?.ts;
+                const isLast = i === milestones.length - 1;
+                const bg = isDone ? m.color : '#d8d8d4';
+                const nextDone = !isLast && !!milestones[i + 1]?.ts;
+
+                return h('div', { key: m.key, style: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 0 } },
+                  // Линия + точка
+                  h('div', { style: { display: 'flex', alignItems: 'center', width: '100%', marginBottom: 5 } },
+                    i > 0 && h('div', { style: { flex: 1, height: 2, background: isDone ? m.color : '#e0e0dc' } }),
+                    h('div', { style: {
+                      width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
+                      background: bg,
+                      border: `2px solid ${isDone ? m.color : '#ccc'}`,
+                      boxShadow: isNext ? `0 0 0 3px ${m.color}40` : 'none',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 8, color: '#fff', fontWeight: 700,
+                    } }, isDone ? '✓' : m.partial ? '½' : ''),
+                    !isLast && h('div', { style: { flex: 1, height: 2, background: nextDone ? milestones[i + 1].color : '#e0e0dc' } })
+                  ),
+                  // Лейбл + дата
+                  h('div', { style: { fontSize: 9, textAlign: 'center', lineHeight: 1.3, width: '100%', padding: '0 1px' } },
+                    h('div', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isDone ? '#555' : '#bbb' } }, m.label),
+                    h('div', { style: { fontWeight: isDone ? 600 : 400, color: isDone ? '#333' : '#ccc', marginTop: 1, whiteSpace: 'nowrap' } }, fmt(m.ts))
+                  )
                 );
               })
             ),
-            warnMaterials && h('div', { style: { marginTop: 8, padding: '6px 10px', background: 'var(--bg-danger)', borderRadius: 6, fontSize: 11, color: 'var(--text-danger)' } },
+
+            warnMaterials && h('div', { style: { marginTop: 8, padding: '6px 10px', background: '#fff1f0', borderRadius: 6, fontSize: 11, color: '#c0392b' } },
               `⚠ Материалы ожидаются ${waitDays} дн. — операции заблокированы`
             )
           );
