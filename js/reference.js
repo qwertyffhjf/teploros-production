@@ -1774,13 +1774,33 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
       h('div', { style: S.sec }, '🤖 AI-аналитик'),
       h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 12, lineHeight: 1.6 } },
         'Для работы AI-аналитика нужен API ключ. ',
-        h('b', null, 'Gemini Flash — бесплатно'),
+        h('b', null, 'Groq — бесплатно, без гео-ограничений'),
         ': получить на ',
+        h('a', { href: 'https://console.groq.com/keys', target: '_blank', style: { color: AM } }, 'console.groq.com'),
+        '. ',
+        h('b', null, 'Gemini Flash — бесплатно'),
+        ' (может быть заблокирован по региону): получить на ',
         h('a', { href: 'https://aistudio.google.com/apikey', target: '_blank', style: { color: AM } }, 'aistudio.google.com'),
         '. Claude API: ',
         h('a', { href: 'https://console.anthropic.com/', target: '_blank', style: { color: AM } }, 'console.anthropic.com')
       ),
       h('div', { style: { display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 } },
+        h('div', { style: { flex: 1, minWidth: 200 } },
+          h('label', { style: S.lbl }, 'Groq API Key (бесплатный, приоритетный)'),
+          h('div', { style: { display: 'flex', gap: 6 } },
+            h('input', {
+              type: 'password',
+              style: { ...S.inp, flex: 1, fontFamily: 'monospace' },
+              placeholder: 'gsk_...',
+              value: data.settings?.groqApiKey || '',
+              onChange: e => {
+                const d = { ...data, settings: { ...data.settings, groqApiKey: e.target.value.trim() } };
+                onUpdate(d); DB.save(d).catch(() => {});
+              }
+            })
+          ),
+          h('div', { style: { fontSize: 10, color: 'var(--muted)', marginTop: 4 } }, '~30 запросов/мин · Llama 3.3 70B · без карты')
+        ),
         h('div', { style: { flex: 1, minWidth: 200 } },
           h('label', { style: S.lbl }, 'Gemini API Key (бесплатный)'),
           h('div', { style: { display: 'flex', gap: 6 } },
@@ -1795,7 +1815,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
               }
             })
           ),
-          h('div', { style: { fontSize: 10, color: 'var(--muted)', marginTop: 4 } }, '1500 запросов/день · данные могут использоваться Google')
+          h('div', { style: { fontSize: 10, color: 'var(--muted)', marginTop: 4 } }, '1500 запросов/день · данные могут использоваться Google · возможна гео-блокировка')
         ),
         h('div', { style: { flex: 1, minWidth: 200 } },
           h('label', { style: S.lbl }, 'Claude API Key (платный, лучше качество)'),
@@ -1814,8 +1834,9 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
           h('div', { style: { fontSize: 10, color: 'var(--muted)', marginTop: 4 } }, '~$0.001 за запрос · данные не хранятся')
         )
       ),
-      (data.settings?.geminiApiKey || data.settings?.aiApiKey)
-        ? h('div', { style: { fontSize: 12, color: GN2, padding: '6px 10px', background: GN3, borderRadius: 6 } }, '✓ API ключ сохранён — AI-аналитик доступен в разделе Аналитика')
+      (data.settings?.groqApiKey || data.settings?.geminiApiKey || data.settings?.aiApiKey)
+        ? h('div', { style: { fontSize: 12, color: GN2, padding: '6px 10px', background: GN3, borderRadius: 6 } },
+            `✓ API ключ сохранён (${data.settings?.groqApiKey ? 'Groq' : data.settings?.geminiApiKey ? 'Gemini' : 'Claude'}) — AI-аналитик доступен в разделе Аналитика`)
         : h('div', { style: { fontSize: 12, color: AM2, padding: '6px 10px', background: AM3, borderRadius: 6 } }, '⚠ Ключ не задан — AI-аналитик недоступен')
     ),
 
