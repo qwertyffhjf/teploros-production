@@ -957,6 +957,153 @@ const WorkwearNeedsPanel = memo(({ data }) => {
   );
 });
 
+// ==================== WarehouseAiAssistant — узкий AI-виджет для склада ====================
+// В отличие от AiAnalyst (analytics.js) — не тащит общую сводку по заказам/рабочим/браку,
+// только то, что реально нужно снабженцу: риск срыва сроков из-за поставок и критические остатки.
+// Самодостаточный компонент (без зависимости от analytics.js) — использует те же ключи
+// из data.settings (openrouterApiKey / geminiApiKey / aiApiKey), настроенные один раз в Системе.
+const WarehouseAiAssistant = memo(({ data, criticalMaterials }) => {
+  const [loading, setLoading]   = useState(false);
+  const [result, setResult]     = useState(null);
+  const [error, setError]       = useState(null);
+  const [expanded, setExpanded] = useState(false);
+  const [question, setQuestion] = useState('');
+
+  const hasKey = !!(data.settings?.openrouterApiKey || data.settings?.geminiApiKey || data.settings?.aiApiKey);
+
+  const buildContext = () => {
+    const pending = (data.materialDeliveries || []).filter(d => d.status === 'pending' || d.status === 'partial');
+    const pendingLines = pending.slice(0, 20).map(d => {
+      const order = data.orders.find(o => o.id === d.orderId);
+      const mat   = data.materials.find(m => m.id === d.materialId);
+      const days  = Math.floor((now() - (d.createdAt || now())) / 86400000);
+      return `- Заказ ${order?.number || '?'} (срок ${order?.deadline || '—'}): ${mat?.name || d.stageName || '?'}${d.status === 'partial' ? ' (частично получено)' : ''}, ожидание ${days} дн.`;
+    }).join('\n') || '— нет ожидающих поставок';
+
+    const criticalLines = criticalMaterials.slice(0, 15).map(m =>
+      `- ${m.name}: остаток ${m.quantity} ${m.unit} (мин. ${m.minStock})`
+    ).join('\n') || '— критических остатков нет';
+
+    const today = new Date();
+    const atRisk = data.orders.filter(o => !o.archived && !o.shipped && o.deadline && !o.materialsReadyAt)
+      .map(o => ({ o, daysLeft: Math.ceil((new Date(o.deadline) - today) / 86400000) }))
+      .filter(x => x.daysLeft <= 14)
+      .sort((a, b) => a.daysLeft - b.daysLeft)
+      .slice(0, 10);
+    const riskLines = atRisk.map(({ o, daysLeft }) =>
+      `- ${o.number} (${o.product || '?'}): срок через ${daysLeft} дн., материалы ещё НЕ готовы`
+    ).join('\n') || '— заказов в зоне риска по срокам нет';
+
+    return `СИТУАЦИЯ НА СКЛАДЕ:
+
+ОЖИДАЮТ ПОСТАВКИ (${pending.length} поз.):
+${pendingLines}
+
+КРИТИЧЕСКИЕ ОСТАТКИ (${criticalMaterials.length} поз.):
+${criticalLines}
+
+ЗАКАЗЫ В ЗОНЕ РИСКА (срок ≤14 дн., материалы не готовы):
+${riskLines}`;
+  };
+
+  const analyze = async (customQuestion) => {
+    const apiKey = data.settings?.openrouterApiKey || data.settings?.geminiApiKey || data.settings?.aiApiKey;
+    if (!apiKey) { setError('API ключ не задан. Добавьте OpenRouter / Gemini / Claude API Key в Система → Настройки.'); return; }
+
+    setLoading(true); setResult(null); setError(null);
+
+    const context = buildContext();
+    const userPrompt = customQuestion || `Проанализируй ситуацию со снабжением. Дай:
+1. Какие заказы под наибольшим риском срыва срока из-за поставок (2-3 пункта)
+2. Что нужно заказать/ускорить в первую очередь (2-3 пункта)
+Пиши кратко и по делу, как опытный снабженец.`;
+
+    try {
+      const openrouterKey = data.settings?.openrouterApiKey;
+      if (openrouterKey) {
+        const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openrouterKey}`, 'HTTP-Referer': window.location.origin, 'X-Title': 'Teploros MES' },
+          body: JSON.stringify({ model: 'openrouter/free', max_tokens: 700, temperature: 0.3,
+            messages: [
+              { role: 'system', content: 'Ты снабженец производственного склада. Отвечай кратко и по делу на русском.' },
+              { role: 'user', content: context + '\n\n' + userPrompt }
+            ] })
+        });
+        const d = await r.json();
+        if (d.choices?.[0]?.message?.content) { setResult(d.choices[0].message.content); setLoading(false); return; }
+        if (d.error) throw new Error(d.error.message || JSON.stringify(d.error));
+      }
+
+      const geminiKey = data.settings?.geminiApiKey;
+      if (geminiKey) {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: context + '\n\n' + userPrompt }] }], generationConfig: { maxOutputTokens: 700, temperature: 0.3 } })
+        });
+        const d = await r.json();
+        if (d.candidates?.[0]?.content?.parts?.[0]?.text) { setResult(d.candidates[0].content.parts[0].text); setLoading(false); return; }
+        if (d.error) throw new Error(d.error.message);
+      }
+
+      const claudeKey = data.settings?.aiApiKey;
+      if (claudeKey) {
+        const r = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': claudeKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+          body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 700,
+            system: 'Ты снабженец производственного склада. Отвечай кратко и по делу на русском.',
+            messages: [{ role: 'user', content: context + '\n\n' + userPrompt }] })
+        });
+        const d = await r.json();
+        if (d.content?.[0]?.text) { setResult(d.content[0].text); setLoading(false); return; }
+        if (d.error) throw new Error(d.error.message || JSON.stringify(d.error));
+      }
+
+      throw new Error('Нет доступного API ключа');
+    } catch(e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const QUICK = ['Какие заказы под угрозой срыва из-за поставок?', 'Что заказать в первую очередь?'];
+
+  return h('div', { style: { ...S.card, marginBottom: 12, border: `0.5px solid ${AM}` } },
+    h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }, onClick: () => setExpanded(e => !e) },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+        h('span', { style: { fontSize: 20 } }, '🤖'),
+        h('div', null,
+          h('div', { style: { fontSize: 14, fontWeight: 600 } }, 'AI-помощник склада'),
+          h('div', { style: { fontSize: 11, color: 'var(--muted)' } },
+            !hasKey ? '⚠ API ключ не задан'
+            : data.settings?.openrouterApiKey ? 'OpenRouter (free) · готов к работе'
+            : data.settings?.geminiApiKey ? 'Gemini Flash · готов к работе'
+            : 'Claude API · готов к работе'
+          )
+        )
+      ),
+      h('span', { style: { fontSize: 12, color: '#888' } }, expanded ? '▲' : '▼')
+    ),
+
+    expanded && h('div', { style: { marginTop: 12 } },
+      h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 } },
+        QUICK.map((q, i) => h('button', { key: i, style: gbtn({ fontSize: 11 }), onClick: () => analyze(q) }, q))
+      ),
+      h('div', { style: { display: 'flex', gap: 6 } },
+        h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Или задай свой вопрос…', value: question, onChange: e => setQuestion(e.target.value), onKeyDown: e => e.key === 'Enter' && question.trim() && analyze(question) }),
+        h('button', { style: abtn({}), disabled: loading, onClick: () => analyze(question.trim() || undefined) }, loading ? '⏳' : '✦ Анализировать')
+      ),
+      error && h('div', { role: 'alert', style: { marginTop: 10, padding: '8px 12px', background: RD3, borderRadius: 8, fontSize: 12, color: RD2 } },
+        `⚠ ${error}`,
+        error.includes('API ключ') && h('span', null, ' → Система → Настройки → OpenRouter / Gemini / Claude API Key')
+      ),
+      result && h('div', { style: { marginTop: 10, padding: '10px 14px', background: 'var(--bg)', borderRadius: 8, fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap' } }, result)
+    )
+  );
+});
+
 const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnly = false }) => {
 
 
@@ -1157,7 +1304,10 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnl
     ),
 
     // Остатки
-    tab === 'deliveries' && h(DeliveryBoard, { data, onUpdate, addToast, currentUserId, readOnly }),
+    tab === 'deliveries' && h('div', null,
+      h(WarehouseAiAssistant, { data, criticalMaterials }),
+      h(DeliveryBoard, { data, onUpdate, addToast, currentUserId, readOnly })
+    ),
 
     tab === 'stock' && h('div', null,
       // Сводка
