@@ -751,7 +751,7 @@ ${normAlerts.length > 0 ? normAlerts.map(n=>`- ${n.name}: план ${n.planned}�
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${openrouterKey}`,
             'HTTP-Referer': window.location.origin,
-            'X-Title': 'Teploros AI-аналитик'
+            'X-Title': 'Teploros MES'
           },
           body: JSON.stringify({
             model: 'openrouter/free',
