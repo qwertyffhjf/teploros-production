@@ -930,6 +930,8 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [filterType, setFilterType] = useState('');
   const [showImport1C, setShowImport1C] = useState(false);
   const [splitOrderId, setSplitOrderId] = useState(null);
+  const [dupSelected, setDupSelected] = useState(new Set()); // выбранные для удаления дубли заказов
+  const [dupPanelCollapsed, setDupPanelCollapsed] = useState(false);
 
   // Глобальный хук, чтобы карточка заказа (shared.js, доступна на других экранах)
   // могла открыть восстановление разделения для зависшего родительского заказа,
@@ -1086,6 +1088,112 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     addToast('Заказ восстановлен', 'success');
   }, [data, onUpdate, addToast]);
 
+  // ── Безвозвратное удаление заказа(ов) вместе со всеми этапами ──────────
+  // В отличие от del()/архивации, здесь заказ и все связанные записи
+  // (операции, протоколы ГИ, резервы и поставки материалов, рекламации)
+  // удаляются насовсем. Используется как для одиночного заказа, так и
+  // для пакетной чистки дублей ниже.
+  const hardDeleteOrders = useCallback(async (idsInput) => {
+    if (!idsInput || idsInput.length === 0) return;
+    // Раскрываем до подзаказов удаляемых родителей (и их подзаказов, если вдруг вложено глубже)
+    const ids = new Set(idsInput);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      data.orders.forEach(o => {
+        if (o.parentOrderId && ids.has(o.parentOrderId) && !ids.has(o.id)) { ids.add(o.id); grew = true; }
+      });
+    }
+    const removedOrders = data.orders.filter(o => ids.has(o.id));
+    if (removedOrders.length === 0) return;
+    const removedOpsCount = data.ops.filter(op => ids.has(op.orderId)).length;
+
+    let d = {
+      ...data,
+      orders: data.orders.filter(o => !ids.has(o.id)),
+      ops: data.ops.filter(op => !ids.has(op.orderId)),
+      materialReservations: (data.materialReservations || []).filter(r => !ids.has(r.orderId)),
+      materialDeliveries: (data.materialDeliveries || []).filter(md => !ids.has(md.orderId)),
+      pressureTests: (data.pressureTests || []).filter(pt => !ids.has(pt.orderId)),
+      reclamations: (data.reclamations || []).filter(r => !ids.has(r.orderId)),
+      defects: (data.defects || []).filter(df => !ids.has(df.orderId)),
+    };
+    d = logAction(d, 'orders_hard_delete', { orderIds: [...ids], orderNumbers: removedOrders.map(o => o.number), opsRemoved: removedOpsCount });
+
+    const prevData = data;
+    onUpdate(d);
+    setDupSelected(prev => { const n = new Set(prev); ids.forEach(id => n.delete(id)); return n; });
+    DB.save(d).catch(() => onUpdate(prevData));
+    // Отдельная коллекция заявок на материалы — чистим по возможности, не блокируя основное сохранение
+    if (typeof MaterialsDB !== 'undefined' && MaterialsDB) {
+      [...ids].forEach(id => { MaterialsDB.remove(id).catch(() => {}); });
+    }
+    addToast(`Удалено заказов: ${removedOrders.length}, операций: ${removedOpsCount}`, 'success');
+  }, [data, onUpdate, addToast]);
+
+  const confirmHardDelete = useCallback(async id => {
+    const order = data.orders.find(o => o.id === id);
+    if (!order) return;
+    const opsCount = data.ops.filter(op => op.orderId === id).length;
+    const hasSubOrders = data.orders.some(o => o.parentOrderId === id);
+    const ok = await askConfirm({
+      message: `Удалить заказ ${order.number} безвозвратно?`,
+      detail: `Будет удалён сам заказ${hasSubOrders ? ' и все его подзаказы' : ''}, ${opsCount} операц${opsCount === 1 ? 'ия' : opsCount >= 2 && opsCount <= 4 ? 'ии' : 'ий'}, а также связанные протоколы ГИ, резервы/поставки материалов и рекламации. Действие необратимо — если нужна возможность отмены, используйте «В архив».`,
+      danger: true,
+    });
+    if (!ok) return;
+    hardDeleteOrders([id]);
+  }, [data, askConfirm, hardDeleteOrders]);
+
+  // Группы заказов с одинаковым номером (без учёта регистра/пробелов) — кандидаты на дубли.
+  // Смотрим по всем заказам, включая архивные — дубль мог быть заархивирован раньше.
+  const duplicateGroups = useMemo(() => {
+    const map = new Map();
+    data.orders.forEach(o => {
+      if (!o.number) return;
+      const key = o.number.trim().toLowerCase();
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(o);
+    });
+    return [...map.values()]
+      .filter(g => g.length > 1)
+      .map(g => [...g].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)));
+  }, [data.orders]);
+
+  const toggleDupSelected = id => setDupSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  // Рекомендуем оставить копию с наибольшим прогрессом (по ней уже реально идёт работа),
+  // при равенстве — самую раннюю по дате создания (вероятно, оригинал).
+  const selectRecommendedDuplicates = () => {
+    const rec = new Set();
+    duplicateGroups.forEach(group => {
+      const scored = group.map(o => {
+        const ops_ = data.ops.filter(op => op.orderId === o.id);
+        return { o, doneCount: ops_.filter(op => op.status === 'done').length, startedCount: ops_.filter(op => op.status !== 'pending').length, createdAt: o.createdAt || 0 };
+      });
+      const keep = scored.reduce((best, cur) => {
+        if (cur.doneCount !== best.doneCount) return cur.doneCount > best.doneCount ? cur : best;
+        if (cur.startedCount !== best.startedCount) return cur.startedCount > best.startedCount ? cur : best;
+        return cur.createdAt < best.createdAt ? cur : best;
+      });
+      group.forEach(o => { if (o.id !== keep.o.id) rec.add(o.id); });
+    });
+    setDupSelected(rec);
+  };
+
+  const deleteDuplicatesSelected = useCallback(async () => {
+    if (dupSelected.size === 0) return;
+    const ids = [...dupSelected];
+    const opsCount = data.ops.filter(op => ids.includes(op.orderId)).length;
+    const ok = await askConfirm({
+      message: `Удалить ${ids.length} выбранных дубл. заказ(ов) безвозвратно?`,
+      detail: `Будет удалено ${ids.length} заказ(ов) и ${opsCount} связанных операций, а также протоколы ГИ, заявки на материалы и рекламации по ним. Действие нельзя отменить.`,
+      danger: true,
+    });
+    if (!ok) return;
+    hardDeleteOrders(ids);
+  }, [dupSelected, data.ops, askConfirm, hardDeleteOrders]);
+
   const edit = useCallback(ord => { setForm({ number: ord.number, product: ord.product, qty: String(ord.qty), deadline: ord.deadline || '', priority: ord.priority || 'medium', bomId: '', productType: ord.productType || '', drawingUrl: ord.drawingUrl || '', serialNumber: ord.serialNumber || '', boilerType: ord.boilerType || '', powerKw: ord.powerKw ? String(ord.powerKw) : '' }); setEditingId(ord.id); }, []);
 
   // Защита от потери данных формы заказа
@@ -1142,6 +1250,39 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 
   return h('div', null,
     confirmEl,
+    duplicateGroups.length > 0 && h('div', { style: { ...S.card, background: '#FFF8F0', border: `1px solid ${AM}`, marginBottom: 16 } },
+      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: dupPanelCollapsed ? 0 : 10 } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }, onClick: () => setDupPanelCollapsed(v => !v) },
+          h('span', { style: { fontSize: 14, fontWeight: 600, color: AM2 } }, `⚠ Похоже, есть дубли заказов: ${duplicateGroups.length} номер${duplicateGroups.length === 1 ? '' : duplicateGroups.length < 5 ? 'а' : 'ов'}`),
+          h('span', { style: { fontSize: 11, color: '#888' } }, dupPanelCollapsed ? '▶' : '▼')
+        ),
+        !dupPanelCollapsed && h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+          h('button', { style: gbtn({ fontSize: 12, padding: '6px 12px' }), onClick: selectRecommendedDuplicates }, '☑ Отметить лишние'),
+          dupSelected.size > 0 && h('button', { style: { ...gbtn({ fontSize: 12, padding: '6px 12px' }), color: RD2, borderColor: RD }, onClick: deleteDuplicatesSelected }, `🗑 Удалить выбранные (${dupSelected.size})`),
+          dupSelected.size > 0 && h('button', { style: gbtn({ fontSize: 12, padding: '6px 12px' }), onClick: () => setDupSelected(new Set()) }, '✕ Сбросить')
+        )
+      ),
+      !dupPanelCollapsed && h('div', { style: { fontSize: 11, color: '#888', marginBottom: 10 } }, 'Заказы сгруппированы по совпадающему номеру. «Отметить лишние» оставляет копию с наибольшим прогрессом (или самую раннюю), остальные помечает на удаление — проверьте перед подтверждением.'),
+      !dupPanelCollapsed && duplicateGroups.map((group, gi) => h('div', { key: group[0].number + gi, style: { marginBottom: 10, paddingBottom: 10, borderBottom: gi < duplicateGroups.length - 1 ? '1px solid rgba(0,0,0,0.08)' : 'none' } },
+        h('div', { style: { fontSize: 13, fontWeight: 600, marginBottom: 6, color: '#333' } }, `№ ${group[0].number} — ${group.length} копии`),
+        group.map(o => {
+          const ops_ = data.ops.filter(op => op.orderId === o.id);
+          const doneCount = ops_.filter(op => op.status === 'done').length;
+          const startedAny = ops_.some(op => op.status !== 'pending');
+          return h('div', { key: o.id, style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '4px 0', flexWrap: 'wrap' } },
+            h('input', { type: 'checkbox', style: { cursor: 'pointer' }, checked: dupSelected.has(o.id), onChange: () => toggleDupSelected(o.id) }),
+            h('span', { style: { fontWeight: 500, cursor: 'pointer' }, onClick: () => toggleDupSelected(o.id) }, o.product || '—'),
+            h('span', { style: { color: '#888' } }, `· кол-во ${o.qty ?? '—'}`),
+            h('span', { style: { color: '#888' } }, `· создан ${o.createdAt ? new Date(o.createdAt).toLocaleDateString('ru') : '—'}`),
+            h('span', { style: { color: '#888' } }, `· операций ${ops_.length} (готово ${doneCount})`),
+            o.archived && h('span', { style: { color: '#888', fontStyle: 'italic' } }, '· в архиве'),
+            o.shipped && h('span', { style: { color: GN2 } }, '· отгружен'),
+            startedAny && h('span', { style: { color: RD2, fontWeight: 500 } }, '⚠ есть работа по операциям'),
+            h('span', { style: { color: AM, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => setViewOrderId(o.id) }, 'открыть карточку')
+          );
+        })
+      ))
+    ),
     h(PasteImportWidget, { addToast, hint: 'Вставить заказы из Excel',
       columns: [
         { key: 'number',     label: 'Номер заказа', required: true },
@@ -1550,13 +1691,17 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
                 !ord.archived ? [
                   h('button', { key: 'edit', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Редактировать', title: 'Редактировать заказ', onClick: () => edit(ord) }, '✎'),
                   h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'В архив', title: 'Переместить в архив', onClick: () => del(ord.id) }, '✕'),
+                  h('button', { key: 'harddel', style: { ...gbtn({ fontSize: 11, padding: '4px 8px' }), color: RD2, borderColor: RD }, 'aria-label': 'Удалить навсегда', title: 'Удалить заказ навсегда вместе со всеми операциями (для дублей и ошибочных заказов)', onClick: () => confirmHardDelete(ord.id) }, '🗑'),
                   !ord.isParentOrder && h('button', { key: 'passport', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Паспорт PDF', title: 'Сформировать паспорт изделия (PDF)', onClick: () => generateFullPassport(ord, data) }, '📄'),
                   h('button', { key: 'materials', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Заявка на материалы', title: 'Заявка на материалы', onClick: () => setMaterialOrderId(ord.id) }, '🔩'),
                   !ord.isParentOrder && h('button', { key: 'route', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Маршрутный лист PDF', title: 'Распечатать маршрутный лист (PDF)', onClick: () => generateRouteSheet(ord, data) }, '📋'),
                   !ord.isParentOrder && h('button', { key: 'deps', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Зависимости операций', title: 'Настроить зависимости операций', onClick: () => setDepEditorOrderId(ord.id) }, '🔗'),
                   !ord.shipped && !ord.isParentOrder && h('button', { key: 'ship', style: { ...gbtn({ fontSize: 11, padding: '4px 8px' }), color: GN2, borderColor: GN }, 'aria-label': 'Отгрузить заказ', title: 'Отметить заказ как отгруженный', onClick: () => shipOrder(ord.id) }, '🚚'),
                   ord.shipped && h('span', { key: 'shipped', style: { fontSize: 10, padding: '3px 6px', background: GN3, color: GN2, borderRadius: 4, fontWeight: 500 } }, `✓ Отгружен${ord.shippedAt ? ' ' + new Date(ord.shippedAt).toLocaleDateString('ru') : ''}`)
-                ] : h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Восстановить', title: 'Восстановить из архива', onClick: () => restore(ord.id) }, '↩ Восстановить')
+                ] : [
+                  h('button', { key: 'restore', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Восстановить', title: 'Восстановить из архива', onClick: () => restore(ord.id) }, '↩ Восстановить'),
+                  h('button', { key: 'harddel', style: { ...gbtn({ fontSize: 11, padding: '4px 8px' }), color: RD2, borderColor: RD }, 'aria-label': 'Удалить навсегда', title: 'Удалить заказ навсегда вместе со всеми операциями', onClick: () => confirmHardDelete(ord.id) }, '🗑 Удалить навсегда')
+                ]
               ))
             );
 
@@ -1603,6 +1748,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
                 h('td', { style: S.td }, h(Badge, { st: sub.shipped ? 'shipped' : subSt })),
                 h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
                   h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), title: 'Редактировать подзаказ', onClick: () => edit(sub) }, '✎'),
+                  h('button', { style: { ...gbtn({ fontSize: 11, padding: '4px 8px' }), color: RD2, borderColor: RD }, title: 'Удалить подзаказ навсегда вместе со всеми операциями', onClick: () => confirmHardDelete(sub.id) }, '🗑'),
                   h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), title: 'Паспорт PDF', onClick: () => generateFullPassport(sub, data) }, '📄'),
                   h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), title: 'Маршрутный лист', onClick: () => generateRouteSheet(sub, data) }, '📋'),
                   !sub.shipped && h('button', { style: { ...gbtn({ fontSize: 11, padding: '4px 8px' }), color: GN2, borderColor: GN }, title: 'Отгрузить', onClick: () => shipOrder(sub.id) }, '🚚'),
