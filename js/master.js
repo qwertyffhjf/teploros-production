@@ -1320,7 +1320,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 
       return h('div', {
         role: 'dialog', 'aria-modal': 'true',
-        style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 100, padding: '24px 16px', overflowY: 'auto' },
+        style: { position: 'fixed', inset: 0, background: 'rgba(20,18,15,0.78)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 100, padding: '24px 16px', overflowY: 'auto' },
         onKeyDown: e => e.key === 'Escape' && setViewOrderId(null),
       },
         h('div', { className: 'modal-animated', style: { background: 'var(--card)', borderRadius: 14, padding: 0, width: 'min(680px, calc(100vw - 32px))', overflow: 'hidden', position: 'relative' } },
