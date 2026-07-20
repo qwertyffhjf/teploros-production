@@ -983,7 +983,7 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
 
   return h('div', {
     role: 'dialog', 'aria-modal': 'true',
-    style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 200, padding: '24px 16px', overflowY: 'auto' },
+    style: { position: 'fixed', inset: 0, background: 'rgba(20,18,15,0.78)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 200, padding: '24px 16px', overflowY: 'auto' },
     onKeyDown: e => e.key === 'Escape' && onClose(),
     onClick: e => e.target === e.currentTarget && onClose(),
   },
