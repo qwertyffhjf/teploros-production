@@ -264,6 +264,28 @@ const MaterialsDB = (() => {
         return payload.orders || {};
       } catch(e) { return {}; }
     },
+
+    // Удалить потребности по заказу (используется при безвозвратном удалении заказа —
+    // например при чистке дублей). Ищем в текущем и прошлом году, как и load().
+    async remove(orderId) {
+      const yr = currentYear();
+      for (const y of [yr, yr - 1]) {
+        try {
+          const ref = docRef(y);
+          const snap = await ref.get();
+          if (!snap.exists) continue;
+          const d = snap.data();
+          let payload = {};
+          try { payload = d.payload ? JSON.parse(d.payload) : d; } catch(e) { payload = d; }
+          if (payload.orders && payload.orders[orderId]) {
+            delete payload.orders[orderId];
+            await ref.set({ payload: JSON.stringify(payload), updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+            return true;
+          }
+        } catch(e) { /* ignore */ }
+      }
+      return false;
+    },
   };
 })();
 
