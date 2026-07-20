@@ -369,24 +369,6 @@
       min-height: 44px;
     }
 
-    /* ─── Update banner (frosted, no emoji) ─────────────────────────────── */
-    #update-banner {
-      display: none;
-      position: fixed; bottom: 0; left: 0; right: 0;
-      background: var(--chrome-bg);
-      backdrop-filter: var(--chrome-blur);
-      -webkit-backdrop-filter: var(--chrome-blur);
-      border-top: 1px solid var(--border-soft);
-      color: var(--fg);
-      padding: 14px 22px;
-      z-index: 9999;
-      align-items: center; gap: 14px;
-      font-size: 15px; letter-spacing: -0.224px;
-      box-shadow: 0 -1px 0 rgba(0,0,0,0.04);
-    }
-    #update-banner span.label { flex: 1; font-weight: 500; }
-    #update-banner button { min-height: 36px; padding: 8px 16px; font-size: 14px; }
-
     /* ─── Cards in JS-rendered code (.dark-card already used) ───────────── */
     .dark-card {
       background: var(--card) !important;
@@ -585,18 +567,6 @@
   <div class="boot-mark">НТ</div>
 </div>
 
-<!-- Update banner — frosted, no emoji -->
-<div id="update-banner" role="status" aria-live="polite">
-  <span class="label">Доступна новая версия приложения.</span>
-  <button class="btn-primary-pill"
-          onclick="navigator.serviceWorker.getRegistration().then(r=>{if(r?.waiting){r.waiting.postMessage({type:'SKIP_WAITING'})}else{window.location.reload()}})">
-    Обновить
-  </button>
-  <button onclick="document.getElementById('update-banner').style.display='none'">
-    Позже
-  </button>
-</div>
-
 <div id="root"></div>
 
 <script>
@@ -619,31 +589,31 @@
 </script>
 
 <!-- Core: константы, DB, утилиты, общие компоненты -->
-<script src="js/core.js?v=20260720"></script>
+<script src="js/core.js?v=20260720c"></script>
 <!-- Shared: QR, PDF, LoadForecast, WorkerCardModal, MasterOnboarding -->
-<script defer src="js/shared.js?v=20260720"></script>
-<script defer src="js/qms.js?v=20260720"></script>
+<script defer src="js/shared.js?v=20260720c"></script>
+<script defer src="js/qms.js?v=20260720c"></script>
 <!-- Аналитика: графики, SectionAnalytics, ReportsBuilder -->
-<script defer src="js/analytics.js?v=20260720"></script>
+<script defer src="js/analytics.js?v=20260720c"></script>
 <!-- Табель: isWorkday, calcDayData, MasterTimeTracking -->
-<script defer src="js/timesheet.js?v=20260720"></script>
+<script defer src="js/timesheet.js?v=20260720c"></script>
 <!-- Доп. работы: AuxOpsViewer -->
-<script defer src="js/auxops.js?v=20260720"></script>
+<script defer src="js/auxops.js?v=20260720c"></script>
 <!-- Справочники: PasteImport, Sections, Equipment, Materials, BOM, Stages, Admin -->
-<script defer src="js/reference.js?v=20260720"></script>
+<script defer src="js/reference.js?v=20260720c"></script>
 <!-- Качество: ControllerScreen, MasterReclamations -->
-<script defer src="js/quality.js?v=20260720"></script>
+<script defer src="js/quality.js?v=20260720c"></script>
 <!-- Сотрудники: HR, Workers, Instructions, Vacations, MonthlyReport -->
-<script defer src="js/hr.js?v=20260720"></script>
+<script defer src="js/hr.js?v=20260720c"></script>
 <!-- Чат -->
-<script defer src="js/chat.js?v=20260720"></script>
+<script defer src="js/chat.js?v=20260720c"></script>
 <!-- Склад: MaterialImport, WarehouseScreen -->
-<script defer src="js/warehouse.js?v=20260720"></script>
+<script defer src="js/warehouse.js?v=20260720c"></script>
 <!-- Производство: MasterOps, MasterOrders, Kanban, Gantt, MasterScreen -->
-<script defer src="js/master.js?v=20260720"></script>
+<script defer src="js/master.js?v=20260720c"></script>
 <!-- Рабочий: WorkerScreen -->
-<script defer src="js/worker.js?v=20260720"></script>
+<script defer src="js/worker.js?v=20260720c"></script>
 <!-- Приложение: App, Login, Dashboard, роутинг, PWA -->
-<script defer src="js/app.js?v=20260720"></script>
+<script defer src="js/app.js?v=20260720c"></script>
 </body>
 </html>
