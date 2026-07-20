@@ -1941,133 +1941,6 @@ function generateRouteSheet(order, data) {
   pdfMake.createPdf(docDefinition).download(`route_${order.number}.pdf`);
 }
 
-// ==================== InstallPromptBanner ====================
-const InstallPromptBanner = memo(() => {
-  const [show, setShow] = useState(false);
-  const [isIOS, setIsIOS] = useState(false);
-  const [hasPrompt, setHasPrompt] = useState(false);
-  const [minimized, setMinimized] = useState(false);
-  const promptRef = useRef(null);
-
-  useEffect(() => {
-    // Уже установлено как PWA
-    if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) return;
-    // Свёрнуто в этой сессии
-    if (sessionStorage.getItem('pwa_minimized')) { setMinimized(true); setShow(true); return; }
-
-    const ua = navigator.userAgent;
-    const ios = /iphone|ipad|ipod/i.test(ua) && !window.MSStream;
-    if (ios) { setIsIOS(true); setShow(true); return; }
-
-    // Проверяем глобально пойманный prompt (из core.js)
-    if (window._pwaPrompt) {
-      promptRef.current = window._pwaPrompt;
-      setHasPrompt(true);
-      setShow(true);
-      return;
-    }
-
-    // Слушаем если ещё не пойман
-    const handler = (e) => { e.preventDefault(); promptRef.current = e; window._pwaPrompt = e; setHasPrompt(true); setShow(true); };
-    window.addEventListener('beforeinstallprompt', handler);
-    window.addEventListener('appinstalled', () => { setShow(false); window._pwaPrompt = null; });
-    // Fallback — показываем инструкцию через 2 сек
-    const fallback = setTimeout(() => { if (!promptRef.current) setShow(true); }, 2000);
-    return () => { window.removeEventListener('beforeinstallprompt', handler); clearTimeout(fallback); };
-  }, []);
-
-  const handleInstall = async () => {
-    const prompt = promptRef.current || window._pwaPrompt;
-    if (!prompt) return;
-    try {
-      prompt.prompt();
-      const { outcome } = await prompt.userChoice;
-      if (outcome === 'accepted') setShow(false);
-    } catch(e) { /* prompt уже использован */ }
-    promptRef.current = null;
-    window._pwaPrompt = null;
-    setHasPrompt(false);
-  };
-
-  const handleMinimize = () => {
-    setMinimized(true);
-    sessionStorage.setItem('pwa_minimized', '1');
-  };
-
-  if (!show) return null;
-
-  // Мини-кнопка (после сворачивания)
-  if (minimized) return h('button', {
-    'aria-label': 'Установить приложение',
-    style: {
-      position: 'fixed', bottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
-      right: 16, zIndex: 490,
-      background: AM, color: AM2, border: 'none',
-      borderRadius: '50%', width: 48, height: 48,
-      boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
-      cursor: 'pointer', fontSize: 22, display: 'flex',
-      alignItems: 'center', justifyContent: 'center',
-      minHeight: 48
-    },
-    onClick: () => { setMinimized(false); sessionStorage.removeItem('pwa_minimized'); }
-  }, '📲');
-
-  // Инструкция для Android без beforeinstallprompt
-  const androidInstructions = h('div', { style: { fontSize: 12, color: '#bbb', lineHeight: 1.5 } },
-    'Нажмите ',
-    h('span', { style: { color: AM, fontWeight: 500 } }, '⋮ (меню браузера)'),
-    ' → ',
-    h('span', { style: { color: AM, fontWeight: 500 } }, '«Установить приложение»'),
-    ' или ',
-    h('span', { style: { color: AM, fontWeight: 500 } }, '«Добавить на главный экран»')
-  );
-
-  return h('div', {
-    role: 'banner',
-    style: {
-      position: 'fixed',
-      bottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
-      left: 16, right: 16, zIndex: 490,
-      background: '#1a1a18', color: '#fff',
-      borderRadius: 14, padding: '14px 16px',
-      boxShadow: '0 4px 24px rgba(0,0,0,0.35)',
-      display: 'flex', alignItems: 'flex-start', gap: 12,
-      maxWidth: 480, margin: '0 auto'
-    }
-  },
-    h('div', { style: { fontSize: 28, lineHeight: 1, flexShrink: 0 } }, '📲'),
-    h('div', { style: { flex: 1 } },
-      h('div', { style: { fontWeight: 600, fontSize: 14, marginBottom: 4 } }, 'Установить teploros'),
-      isIOS
-        ? h('div', { style: { fontSize: 12, color: '#bbb', lineHeight: 1.5 } },
-            'Нажмите ',
-            h('span', { style: { color: AM, fontWeight: 500 } }, '«Поделиться»'),
-            ' → ',
-            h('span', { style: { color: AM, fontWeight: 500 } }, '«На экран «Домой»»'),
-            ' — и приложение всегда под рукой'
-          )
-        : hasPrompt
-          ? h('div', null,
-              h('div', { style: { fontSize: 12, color: '#bbb', marginBottom: 10, lineHeight: 1.5 } },
-                'Работает офлайн, открывается без браузера, занимает < 1 МБ'
-              ),
-              h('button', {
-                style: { ...abtn({ fontSize: 13, padding: '8px 20px' }) },
-                onClick: handleInstall
-              }, 'Установить')
-            )
-          : androidInstructions
-    ),
-    h('button', {
-      onClick: handleMinimize,
-      'aria-label': 'Свернуть',
-      style: { background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: 22, padding: '0 0 0 4px', lineHeight: 1, flexShrink: 0, minHeight: 'auto' }
-    }, '×')
-  );
-});
-
-
-
 // ==================== ShopMasterScreen (Сменный мастер) ====================
 const ShopMasterScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [tab, setTab] = useState('ops');
@@ -2912,8 +2785,7 @@ function App() {
       }
     }),
     h('div', { 'aria-live': 'polite' }, toasts.map(t => h(Toast, { key: t.id, message: t.message, type: t.type, action: t.action, onClose: () => removeToast(t.id) }))),
-    h(SaveStatusBar),
-    h(InstallPromptBanner)
+    h(SaveStatusBar)
   );
 }
 
@@ -2928,18 +2800,11 @@ if ('serviceWorker' in navigator) {
       console.log('SW registered:', reg.scope);
       // Проверка обновлений каждые 30 минут
       setInterval(() => reg.update(), 30 * 60 * 1000);
-      // Уведомление о новой версии
-      reg.addEventListener('updatefound', () => {
-        const newWorker = reg.installing;
-        if (!newWorker) return;
-        newWorker.addEventListener('statechange', () => {
-          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            // Новая версия готова — показываем баннер
-            const banner = document.getElementById('update-banner');
-            if (banner) banner.style.display = 'flex';
-          }
-        });
-      });
+      // Примечание: баннер "Доступна новая версия" убран по просьбе пользователя.
+      // На фактическое поведение это не влияет — sw.js уже вызывает self.skipWaiting()
+      // и clients.claim() безусловно, так что новый SW и так забирает все открытые
+      // вкладки и вызывает controllerchange → reload ниже; баннер лишь дублировал
+      // это уведомлением, которое не успевало ни на что повлиять.
     }).catch(err => console.log('SW registration failed:', err));
   });
   // Перезагрузка после активации нового SW
