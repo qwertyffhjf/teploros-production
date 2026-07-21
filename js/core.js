@@ -628,10 +628,28 @@ const calcOpPieceworkEarning = (data, op) => {
   const rate = findPieceworkRate(data, order.boilerType, order.powerKw);
   if (!rate || !rate[section.pieceworkField]) return null;
 
-  const qty = order.qty || 1;
-  const amount = Math.round(rate[section.pieceworkField] * qty / workerCount);
+  // Определяем долю этапа в сумме расценки.
+  // - null/undefined на этапе → обратная совместимость: 100% (для крышек и др.
+  //   участков где 1 этап на всю сумму, чтобы старая настройка не сломалась)
+  // - 0 → этап явно не оплачивается (мастер убрал долю)
+  // - >0 → доля в процентах от базовой цены
+  // Если долевая настройка используется у одного этапа участка, у остальных
+  // рекомендуется явно ставить 0, чтобы не сработала обратная совместимость
+  // и они бы не начисляли по 100%.
+  let paymentShare = 100;
+  if (op.stageId) {
+    const stage = (data.productionStages || []).find(s => s.id === op.stageId);
+    if (stage && stage.paymentShare != null && stage.paymentShare !== '') {
+      paymentShare = Number(stage.paymentShare);
+    }
+  }
+  if (!isFinite(paymentShare) || paymentShare <= 0) return null;
 
-  return { amount, field: section.pieceworkField, rateId: rate.id, boilerType: order.boilerType, powerKw: order.powerKw };
+  const qty = order.qty || 1;
+  const amount = Math.round(rate[section.pieceworkField] * qty * paymentShare / 100 / workerCount);
+  if (amount <= 0) return null;
+
+  return { amount, field: section.pieceworkField, rateId: rate.id, boilerType: order.boilerType, powerKw: order.powerKw, paymentShare };
 };
 
 
