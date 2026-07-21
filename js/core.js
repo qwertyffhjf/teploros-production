@@ -446,6 +446,9 @@ const EMPTY_DATA = {
                         //   workerId, issuedAt, issuedBy, issuedNote, condition:'new'|'good'|'worn',
                         //   returnedAt, returnedBy, returnedNote, returnCondition, status:'active'|'returned'|'written_off'}]
   pieceworkRates: [], // сдельные расценки: [{id, type:'v2d'|'v3d', powerMin, powerMax, heatExchanger, coverFront, coverBack, rolling}]
+  extraWorks: [],     // каталог допрасценок (от прайса или вручную):
+                       // [{id, key:'tube_sheet_joint'|'furnace_joint'|'duplex_piping'|..., name, paramLabel, paramUnit,
+                       //   tiers:[{min,max,price}], source:'price'|'manual'}]
   auxStats: {},       // агрегация вспомогательных работ: {"YYYY-MM": {total, totalMs, byCategory:{cat:{count,ms}}, byWorker:{wid:{count,ms}}}}
   messages: [], reclamations: [], duels: [], materialReservations: [], defects: [],
   pressureTests: [],   // протоколы гидравлических испытаний
@@ -579,8 +582,42 @@ const calcPieceworkEarnings = (data, workerId, orderId) => {
 
 // Рассчитать сдельный заработок для одной операции при её завершении
 // Возвращает { amount, field, rateId, boilerType, powerKw } или null
+// Ищет цену допработы в каталоге по ключу категории и значению параметра.
+// Возвращает { price, tier } или null.
+const findExtraWorkPrice = (data, key, paramValue) => {
+  const cat = (data.extraWorks || []).find(c => c.key === key);
+  if (!cat) return null;
+  const p = Number(paramValue);
+  if (!isFinite(p)) return null;
+  const tier = (cat.tiers || []).find(t => p >= (t.min || 0) && p <= (t.max || Infinity));
+  return tier ? { price: tier.price, tier, category: cat } : null;
+};
+
+// Считает op.earning для операции. Работает для 2 сценариев:
+//   1) обычная сдельная op — по section.pieceworkField и pieceworkRates
+//   2) op-допработа (isExtraWork) — по замороженной цене op.extraAmount (не пересчитывается,
+//      даже если каталог поменяли — цена фиксируется в момент создания записи)
+// Возвращает { amount, field, ... } или null если оплата не сдельная.
 const calcOpPieceworkEarning = (data, op) => {
-  if (!op.sectionId || !op.orderId) return null;
+  if (!op.orderId) return null;
+  const workerCount = Math.max((op.workerIds || []).length, 1);
+
+  // Ветка 1: допработа с замороженной ценой (см. worker.js AddExtraWorkModal)
+  if (op.isExtraWork && op.extraAmount) {
+    const amount = Math.round(op.extraAmount / workerCount);
+    return {
+      amount,
+      field: 'extra',
+      source: 'extra_work',
+      extraKey: op.extraKey || null,
+      extraParam: op.extraParam != null ? op.extraParam : null,
+      extraQty: op.extraQty || 1,
+      extraTotalAmount: op.extraAmount,   // общая сумма до деления — для аудита
+    };
+  }
+
+  // Ветка 2: обычная сдельная операция через участок
+  if (!op.sectionId) return null;
   const section = (data.sections || []).find(s => s.id === op.sectionId);
   if (!section?.pieceworkField) return null;
   if (section.payType !== 'piecework' && section.payType !== 'mixed') return null;
@@ -592,7 +629,6 @@ const calcOpPieceworkEarning = (data, op) => {
   if (!rate || !rate[section.pieceworkField]) return null;
 
   const qty = order.qty || 1;
-  const workerCount = Math.max((op.workerIds || []).length, 1);
   const amount = Math.round(rate[section.pieceworkField] * qty / workerCount);
 
   return { amount, field: section.pieceworkField, rateId: rate.id, boilerType: order.boilerType, powerKw: order.powerKw };
@@ -3118,6 +3154,17 @@ const buildFinishUpdate = (data, op, workerId, params = {}) => {
     if (weldParams.result === 'fail') { status = 'defect'; updatedOp.defectNote = 'Сварка забракована'; }
   }
   updatedOp.status = status;
+
+  // Начисление сдельной оплаты — считается один раз при переходе в 'done' или 'on_check'
+  // и замораживается в op.earning. Если по логике участка/расценки платить нечего — earning остаётся null.
+  // При status === 'defect' / 'rework' — начисления НЕТ (за брак не платят, см. прайс).
+  if ((status === 'done' || status === 'on_check') && !updatedOp.earning) {
+    const earning = calcOpPieceworkEarning(data, updatedOp);
+    if (earning && earning.amount > 0) {
+      updatedOp.earning = earning;
+    }
+  }
+
   const eventEntry = { id: uid(), type: status, opId: op.id, workerId, workerIds: op.workerIds || [workerId], ts: finishedAt, note: defNote || undefined, shift, defectSource: (isDefect || isRework) ? source : undefined, defectReasonId: isDefect ? defectReasonId : undefined };
   // Если брак — создать запись рекламации
   let reclamations = data.reclamations || [];
