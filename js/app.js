@@ -2178,7 +2178,10 @@ const HRScreen = memo(({ data, onUpdate, addToast }) => {
     tab === 'instructions' && h(InstructionsTracker,   { data, onUpdate, addToast }),
     tab === 'vacations'    && h(VacationPlanner,       { data, onUpdate, addToast }),
     tab === 'kpi'          && h(KPIReport,             { data }),
-    tab === 'rates'        && h(PieceworkRatesEditor,  { data, onUpdate, addToast }),
+    tab === 'rates'        && h(React.Fragment, null,
+      h(PieceworkRatesEditor, { data, onUpdate, addToast }),
+      h(ExtraWorksEditor,     { data, onUpdate, addToast })
+    ),
     tab === 'payroll'      && h(PayrollExport,          { data }),
     tab === 'reports'      && h(ReportsBuilder,        { data })
   );
