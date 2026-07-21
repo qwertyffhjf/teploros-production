@@ -39,7 +39,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
   // Отслеживаем несохранённые изменения в форме операции
   const EMPTY_OP_FORM = { orderId: '', name: '', workerIds: [], plannedHours: '', sectionId: '', equipmentId: '', plannedStartDate: '', drawingUrl: '' };
   const isDirtyOp = useIsDirty(form, editingId ? null : EMPTY_OP_FORM) && (form.name !== '' || form.orderId !== '' || form.plannedHours !== '');
-  const guardedResetOp = useDirtyGuard(isDirtyOp, resetForm, 'Операция не сохранена. Закрыть форму?');
+  const guardedResetOp = useDirtyGuard(isDirtyOp, resetForm, 'Операция не сохранена. Закрыть форму?', askConfirm);
 
   const addOrUpdate = useCallback(async () => {
     if (!validate()) return;
@@ -704,9 +704,21 @@ const parseComps = (raw) => {
 };
 
 // ==================== OrdersDashboard ====================
-const OrdersDashboard = memo(({ data }) => {
+const OrdersDashboard = memo(({ data, duplicateGroups, dupSelected, onToggleDup, onSelectRecommendedDup, onDeleteDup }) => {
   const today = new Date(); today.setHours(0,0,0,0);
   const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).getTime();
+
+  // Свёрнуто по умолчанию — плитки видны всегда, остальное (некомплект/дубли/разбивки)
+  // прячем за тоггл, состояние запоминаем на устройстве
+  const [expanded, setExpanded] = useState(() => {
+    try { return localStorage.getItem('tp_orders_dashboard_expanded') === '1'; } catch(e) { return false; }
+  });
+  const toggleExpanded = () => setExpanded(v => {
+    const nv = !v;
+    try { localStorage.setItem('tp_orders_dashboard_expanded', nv ? '1' : '0'); } catch(e) {}
+    return nv;
+  });
+  const [attentionTab, setAttentionTab] = useState('noComp'); // 'noComp' | 'dup'
 
   const stats = useMemo(() => {
     const active    = data.orders.filter(o => !o.archived && !o.shipped && !o.parentOrderId);
@@ -723,31 +735,6 @@ const OrdersDashboard = memo(({ data }) => {
       const comps = parseComps(o.components);
       return comps.length > 0 && comps.some(c => c.status !== 'confirmed');
     });
-
-    // Горящие с прогрессом + некомплект
-    const burningRows = burning.map(o => {
-      const ops = data.ops.filter(op => op.orderId === o.id && !op.archived);
-      const done = ops.filter(op => op.status === 'done' || op.status === 'defect').length;
-      const pct  = ops.length > 0 ? Math.round(done / ops.length * 100) : 0;
-      const daysLeft = Math.ceil((new Date(o.deadline) - Date.now()) / 86400000);
-      const comps = o.components || [];
-      const confirmedComps = comps.filter(c => c.status === 'confirmed').length;
-      const blocked = comps.length > 0 && confirmedComps === 0;
-      const partial = comps.length > 0 && confirmedComps > 0 && confirmedComps < comps.length;
-      const fullComps = comps.length > 0 && confirmedComps === comps.length;
-      return { o, pct, daysLeft, comps, confirmedComps, blocked, partial, fullComps };
-    }).sort((a, b) => a.daysLeft - b.daysLeft);
-
-    // Просроченные с некомплектом
-    const overdueRows = overdue.map(o => {
-      const daysOver = Math.ceil((Date.now() - new Date(o.deadline)) / 86400000);
-      const comps = o.components || [];
-      const confirmedComps = comps.filter(c => c.status === 'confirmed').length;
-      const blocked = comps.length > 0 && confirmedComps === 0;
-      const partial = comps.length > 0 && confirmedComps > 0 && confirmedComps < comps.length;
-      const fullComps = comps.length > 0 && confirmedComps === comps.length;
-      return { o, daysOver, comps, confirmedComps, blocked, partial, fullComps };
-    }).sort((a, b) => b.daysOver - a.daysOver);
 
     // Некомплект — все активные с неполной комплектацией, сортируем: сначала 0/N, потом частичные
     const noCompRows = noComponents.map(o => {
@@ -778,19 +765,12 @@ const OrdersDashboard = memo(({ data }) => {
 
     return { active: active.length, overdue: overdue.length, burning: burning.length,
              noComp: noComponents.length, shippedMonth: shippedMonth.length,
-             burningRows, overdueRows, noCompRows, typeRows, byPriority };
+             noCompRows, typeRows, byPriority };
   }, [data.orders, data.ops, data.settings]);
 
-  if (stats.active === 0) return null;
+  const dupCount = duplicateGroups?.length || 0;
 
-  const pctColor = (p) => p >= 75 ? GN : p >= 40 ? AM : RD;
-
-  const CompBadge = ({ confirmed, total, blocked, fullComps }) => {
-    if (!total) return null;
-    if (fullComps) return h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 8, background: GN3, color: GN2, border: `0.5px solid ${GN}`, whiteSpace: 'nowrap' } }, '✓ компл.');
-    if (blocked)  return h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 8, background: RD3, color: RD2, border: `0.5px solid ${RD}`, whiteSpace: 'nowrap' } }, `📦 0/${total} 🔒`);
-    return h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 8, background: AM3, color: AM2, border: `0.5px solid ${AM4}`, whiteSpace: 'nowrap' } }, `📦 ${confirmed}/${total}`);
-  };
+  if (stats.active === 0 && dupCount === 0) return null;
 
   const maxType = Math.max(...stats.typeRows.map(r => r.cnt), 1);
   const maxPri  = Math.max(stats.byPriority.critical, stats.byPriority.high, stats.byPriority.medium, 1);
@@ -800,15 +780,20 @@ const OrdersDashboard = memo(({ data }) => {
     { key: 'medium',   label: 'Средний',     color: '#888780' },
   ];
 
+  const hasNoComp = stats.noCompRows.length > 0;
+  const hasDup = dupCount > 0;
+  const activeTab = (attentionTab === 'dup' && !hasDup) ? 'noComp' : (attentionTab === 'noComp' && !hasNoComp && hasDup) ? 'dup' : attentionTab;
+
   return h('div', { style: { marginBottom: 12 } },
 
-    // ── Плитки ──
-    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 8, marginBottom: 8 } },
+    // ── Плитки (className metrics-grid — те же адаптивные брейкпоинты, что и на вкладке «Операции»: 2/3/5 колонок) ──
+    h('div', { className: 'metrics-grid', style: { display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 8, marginBottom: 8 } },
       [
         { v: stats.active,       l: 'Активных',    sub: 'в работе',        c: 'var(--fg)',  bc: 'var(--border)' },
         { v: stats.overdue,      l: 'Просрочено',  sub: 'дедлайн прошёл',  c: RD2,          bc: RD,             show: stats.overdue > 0 },
         { v: stats.burning,      l: 'Срок ≤ 3 дня',sub: 'горят',           c: AM2,          bc: AM4,            show: stats.burning > 0 },
         { v: stats.noComp,       l: 'Некомплект',  sub: 'ждут поставку',   c: AM2,          bc: AM4,            show: stats.noComp > 0, bg: AM3 + '44' },
+        { v: dupCount,           l: 'Дубли',       sub: 'номеров заказа',  c: RD2,          bc: RD,             show: dupCount > 0, bg: RD3 + '44' },
         { v: stats.shippedMonth, l: 'Отгружено',   sub: 'за этот месяц',   c: GN2,          bc: GN },
       ].map(({ v, l, sub, c, bc, show = true, bg }) =>
         h('div', { key: l, style: { background: show && bg ? bg : 'var(--card)', border: `0.5px solid ${show ? bc : 'var(--border)'}`, borderRadius: 8, padding: '11px 8px', textAlign: 'center' } },
@@ -819,93 +804,104 @@ const OrdersDashboard = memo(({ data }) => {
       )
     ),
 
-    // ── Горящие + Просроченные ──
-    (stats.burningRows.length > 0 || stats.overdueRows.length > 0) && h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 } },
+    // Подробный разбор «Горящих»/«Просроченных» — на вкладке «Операции» (там же «Что делать сейчас»),
+    // здесь дублировать не будем — только счётчики в плитках выше.
 
-      // Горящие
-      stats.burningRows.length > 0 && h('div', { style: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: 12 } },
-        h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--muted)', marginBottom: 8 } },
-          h('span', { style: { color: RD } }, '● '), 'Горящие заказы (≤3 дня)'),
-        stats.burningRows.map(({ o, pct, daysLeft, comps, confirmedComps, blocked, partial, fullComps }) =>
-          h('div', { key: o.id, style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7 } },
-            h('span', { style: { fontSize: 11, color: 'var(--muted)', width: 52, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, o.number),
-            h('div', { style: { flex: 1, height: 7, background: 'var(--bg)', borderRadius: 4, overflow: 'hidden' } },
-              h('div', { style: { height: '100%', width: `${pct}%`, background: pctColor(pct), borderRadius: 4, transition: 'width 0.3s' } })
-            ),
-            h('span', { style: { fontSize: 11, color: pctColor(pct), width: 28, textAlign: 'right', flexShrink: 0 } }, `${pct}%`),
-            h(CompBadge, { confirmed: confirmedComps, total: comps.length, blocked, fullComps })
-          )
-        )
-      ),
+    (hasNoComp || hasDup || stats.typeRows.length > 0) && h('button', {
+      onClick: toggleExpanded,
+      'aria-expanded': expanded,
+      style: { background: 'none', border: 'none', padding: '4px 0', marginBottom: expanded ? 8 : 0, cursor: 'pointer', fontSize: 12, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 4 }
+    }, expanded ? '▾ Скрыть подробности' : '▸ Подробнее (некомплект, дубли, разбивки)'),
 
-      // Просроченные
-      stats.overdueRows.length > 0 && h('div', { style: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: 12 } },
-        h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--muted)', marginBottom: 8 } },
-          h('span', { style: { color: RD } }, '● '), 'Просроченные'),
-        stats.overdueRows.slice(0, 6).map(({ o, daysOver, comps, confirmedComps, blocked, partial, fullComps }) =>
-          h('div', { key: o.id, style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 0', borderBottom: '0.5px solid var(--border-soft)', gap: 6 } },
-            h('span', { style: { fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fg)' } }, `${o.number} · ${o.product}`),
-            h('div', { style: { display: 'flex', gap: 4, flexShrink: 0, alignItems: 'center' } },
-              h(CompBadge, { confirmed: confirmedComps, total: comps.length, blocked, fullComps }),
-              h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 8, background: RD3, color: RD2, border: `0.5px solid ${RD}`, whiteSpace: 'nowrap' } }, `−${daysOver} дн`)
+    expanded && h('div', null,
+
+      // ── Внимание: некомплект / дубли — пилюли вместо отдельных блоков ──
+      (hasNoComp || hasDup) && h('div', { style: { background: 'var(--card)', border: `0.5px solid ${hasDup && activeTab === 'dup' ? RD : AM4}`, borderRadius: 8, padding: 12, marginBottom: 8 } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, flexWrap: 'wrap' } },
+          hasNoComp && h('button', {
+            onClick: () => setAttentionTab('noComp'),
+            style: { fontSize: 11, fontWeight: 500, padding: '4px 10px', borderRadius: 999, cursor: 'pointer', border: `0.5px solid ${AM4}`, background: activeTab === 'noComp' ? AM3 : 'transparent', color: AM2 }
+          }, `📦 Некомплект (${stats.noCompRows.length})`),
+          hasDup && h('button', {
+            onClick: () => setAttentionTab('dup'),
+            style: { fontSize: 11, fontWeight: 500, padding: '4px 10px', borderRadius: 999, cursor: 'pointer', border: `0.5px solid ${RD}`, background: activeTab === 'dup' ? RD3 : 'transparent', color: RD2 }
+          }, `⚠ Дубли (${dupCount})`)
+        ),
+
+        activeTab === 'noComp' && hasNoComp && h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+          stats.noCompRows.map(({ o, confirmed, total, blocked }) =>
+            h('div', { key: o.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '7px 8px', borderRadius: 8, background: AM3 + '33', border: `0.5px solid ${AM3}` } },
+              h('span', { style: { fontSize: 12, fontWeight: 500, color: 'var(--fg)', width: 56, flexShrink: 0 } }, o.number),
+              h('span', { style: { fontSize: 12, color: 'var(--muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, o.product),
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 } },
+                h('div', { style: { width: 56, height: 5, background: AM3, borderRadius: 3, overflow: 'hidden', border: `0.5px solid ${AM4}44` } },
+                  h('div', { style: { height: '100%', width: `${Math.round(confirmed / total * 100)}%`, background: AM, borderRadius: 3 } })
+                ),
+                h('span', { style: { fontSize: 11, color: AM2, fontWeight: 500, width: 32, textAlign: 'right' } }, `${confirmed}/${total}`)
+              ),
+              blocked
+                ? h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 8, background: RD3, color: RD2, border: `0.5px solid ${RD}`, flexShrink: 0 } }, '🔒 блок.')
+                : h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 8, background: 'var(--bg)', color: 'var(--muted)', border: '0.5px solid var(--border)', flexShrink: 0 } }, 'частично')
             )
           )
-        )
-      )
-    ),
+        ),
 
-    // ── Некомплект ──
-    stats.noCompRows.length > 0 && h('div', { style: { background: 'var(--card)', border: `0.5px solid ${AM4}`, borderRadius: 8, padding: 12, marginBottom: 8 } },
-      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 } },
-        h('div', { style: { fontSize: 11, fontWeight: 500, color: AM2 } }, '📦 Заказы с неполной комплектацией'),
-        h('span', { style: { fontSize: 11, padding: '2px 8px', borderRadius: 10, background: AM3, color: AM2, border: `0.5px solid ${AM4}`, fontWeight: 500 } }, `${stats.noCompRows.length} заказов`)
+        activeTab === 'dup' && hasDup && h('div', null,
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 } },
+            h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, 'Заказы сгруппированы по совпадающему номеру. Проверьте перед удалением.'),
+            h('div', { style: { display: 'flex', gap: 8 } },
+              h('button', { style: gbtn({ fontSize: 11, padding: '4px 10px' }), onClick: onSelectRecommendedDup }, '☑ Отметить лишние'),
+              dupSelected.size > 0 && h('button', { style: { ...gbtn({ fontSize: 11, padding: '4px 10px' }), color: RD2, borderColor: RD }, onClick: onDeleteDup }, `🗑 Удалить (${dupSelected.size})`)
+            )
+          ),
+          duplicateGroups.map((group, gi) => h('div', { key: group[0].number + gi, style: { marginBottom: 8, paddingBottom: 8, borderBottom: gi < duplicateGroups.length - 1 ? '0.5px solid var(--border-soft)' : 'none' } },
+            h('div', { style: { fontSize: 12, fontWeight: 600, marginBottom: 4 } }, `№ ${group[0].number} — ${group.length} копии`),
+            group.map(o => {
+              const ops_ = data.ops.filter(op => op.orderId === o.id);
+              const doneCount = ops_.filter(op => op.status === 'done').length;
+              const startedAny = ops_.some(op => op.status !== 'pending');
+              return h('div', { key: o.id, style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '3px 0', flexWrap: 'wrap' } },
+                h('input', { type: 'checkbox', style: { cursor: 'pointer' }, checked: dupSelected.has(o.id), onChange: () => onToggleDup(o.id) }),
+                h('span', { style: { fontWeight: 500, cursor: 'pointer' }, onClick: () => onToggleDup(o.id) }, o.product || '—'),
+                h('span', { style: { color: 'var(--muted)' } }, `· кол-во ${o.qty ?? '—'}`),
+                h('span', { style: { color: 'var(--muted)' } }, `· создан ${o.createdAt ? new Date(o.createdAt).toLocaleDateString('ru') : '—'}`),
+                h('span', { style: { color: 'var(--muted)' } }, `· операций ${ops_.length} (готово ${doneCount})`),
+                o.archived && h('span', { style: { color: 'var(--muted)', fontStyle: 'italic' } }, '· в архиве'),
+                startedAny && h('span', { style: { color: RD2, fontWeight: 500 } }, '⚠ есть работа')
+              );
+            })
+          ))
+        )
       ),
-      h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
-        stats.noCompRows.map(({ o, confirmed, total, blocked }) =>
-          h('div', { key: o.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '7px 8px', borderRadius: 8, background: AM3 + '33', border: `0.5px solid ${AM3}` } },
-            h('span', { style: { fontSize: 12, fontWeight: 500, color: 'var(--fg)', width: 56, flexShrink: 0 } }, o.number),
-            h('span', { style: { fontSize: 12, color: 'var(--muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, o.product),
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 } },
-              h('div', { style: { width: 56, height: 5, background: AM3, borderRadius: 3, overflow: 'hidden', border: `0.5px solid ${AM4}44` } },
-                h('div', { style: { height: '100%', width: `${Math.round(confirmed / total * 100)}%`, background: AM, borderRadius: 3 } })
+
+      // ── Нижний ряд: по типам + по приоритету ──
+      h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 } },
+
+        // По типам
+        stats.typeRows.length > 0 && h('div', { style: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: 12 } },
+          h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--muted)', marginBottom: 8 } }, 'По типам изделий'),
+          stats.typeRows.map(({ label, cnt }) =>
+            h('div', { key: label, style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 } },
+              h('span', { style: { fontSize: 11, color: 'var(--muted)', width: 68, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, label),
+              h('div', { style: { flex: 1, height: 6, background: 'var(--bg)', borderRadius: 3, overflow: 'hidden' } },
+                h('div', { style: { height: '100%', width: `${Math.round(cnt / maxType * 100)}%`, background: GN, borderRadius: 3 } })
               ),
-              h('span', { style: { fontSize: 11, color: AM2, fontWeight: 500, width: 32, textAlign: 'right' } }, `${confirmed}/${total}`)
-            ),
-            blocked
-              ? h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 8, background: RD3, color: RD2, border: `0.5px solid ${RD}`, flexShrink: 0 } }, '🔒 блок.')
-              : h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 8, background: 'var(--bg)', color: 'var(--muted)', border: '0.5px solid var(--border)', flexShrink: 0 } }, 'частично')
+              h('span', { style: { fontSize: 11, color: 'var(--muted)', width: 18, textAlign: 'right', flexShrink: 0 } }, cnt)
+            )
           )
-        )
-      )
-    ),
+        ),
 
-    // ── Нижний ряд: по типам + по приоритету ──
-    h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 } },
-
-      // По типам
-      stats.typeRows.length > 0 && h('div', { style: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: 12 } },
-        h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--muted)', marginBottom: 8 } }, 'По типам изделий'),
-        stats.typeRows.map(({ label, cnt }) =>
-          h('div', { key: label, style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 } },
-            h('span', { style: { fontSize: 11, color: 'var(--muted)', width: 68, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, label),
-            h('div', { style: { flex: 1, height: 6, background: 'var(--bg)', borderRadius: 3, overflow: 'hidden' } },
-              h('div', { style: { height: '100%', width: `${Math.round(cnt / maxType * 100)}%`, background: GN, borderRadius: 3 } })
-            ),
-            h('span', { style: { fontSize: 11, color: 'var(--muted)', width: 18, textAlign: 'right', flexShrink: 0 } }, cnt)
-          )
-        )
-      ),
-
-      // По приоритету
-      h('div', { style: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: 12 } },
-        h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--muted)', marginBottom: 8 } }, 'По приоритету'),
-        PRIO.filter(p => stats.byPriority[p.key] > 0).map(p =>
-          h('div', { key: p.key, style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 } },
-            h('span', { style: { fontSize: 11, color: 'var(--muted)', width: 80, flexShrink: 0 } }, p.label),
-            h('div', { style: { flex: 1, height: 6, background: 'var(--bg)', borderRadius: 3, overflow: 'hidden' } },
-              h('div', { style: { height: '100%', width: `${Math.round(stats.byPriority[p.key] / maxPri * 100)}%`, background: p.color, borderRadius: 3 } })
-            ),
-            h('span', { style: { fontSize: 11, color: 'var(--muted)', width: 18, textAlign: 'right', flexShrink: 0 } }, stats.byPriority[p.key])
+        // По приоритету
+        h('div', { style: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: 12 } },
+          h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--muted)', marginBottom: 8 } }, 'По приоритету'),
+          PRIO.filter(p => stats.byPriority[p.key] > 0).map(p =>
+            h('div', { key: p.key, style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 } },
+              h('span', { style: { fontSize: 11, color: 'var(--muted)', width: 80, flexShrink: 0 } }, p.label),
+              h('div', { style: { flex: 1, height: 6, background: 'var(--bg)', borderRadius: 3, overflow: 'hidden' } },
+                h('div', { style: { height: '100%', width: `${Math.round(stats.byPriority[p.key] / maxPri * 100)}%`, background: p.color, borderRadius: 3 } })
+              ),
+              h('span', { style: { fontSize: 11, color: 'var(--muted)', width: 18, textAlign: 'right', flexShrink: 0 } }, stats.byPriority[p.key])
+            )
           )
         )
       )
@@ -931,7 +927,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [showImport1C, setShowImport1C] = useState(false);
   const [splitOrderId, setSplitOrderId] = useState(null);
   const [dupSelected, setDupSelected] = useState(new Set()); // выбранные для удаления дубли заказов
-  const [dupPanelCollapsed, setDupPanelCollapsed] = useState(false);
+  const [showForm, setShowForm] = useState(false); // форма создания/редактирования заказа теперь в модалке
 
   // Глобальный хук, чтобы карточка заказа (shared.js, доступна на других экранах)
   // могла открыть восстановление разделения для зависшего родительского заказа,
@@ -1008,7 +1004,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       const updatedOps = data.ops.map(o => o.orderId === editingId && o.status === 'pending' && newDrawingUrl ? { ...o, drawingUrl: newDrawingUrl } : o);
       const d = { ...data, orders: updatedOrders, ops: updatedOps };
       onUpdate(d); DB.save(d).catch(() => onUpdate(data));
-      setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '', boilerType: '', powerKw: '' }); setFieldErrors({});
+      setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '', boilerType: '', powerKw: '' }); setFieldErrors({}); setShowForm(false);
       addToast(`Заказ ${form.number} обновлён`, 'success');
     } else {
       const newOrder = { id: uid(), ...form, qty: Number(form.qty), powerKw: Number(form.powerKw) || 0, boilerType: form.boilerType || 'v2d', createdAt: now(), archived: false };
@@ -1032,7 +1028,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
             const newDeliveries = createMaterialDeliveries(newOrder.id, form.productType, Number(form.qty), form.bomId);
             const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps], materialReservations: [...(data.materialReservations || []), ...reservations], materialDeliveries: [...(data.materialDeliveries || []), ...newDeliveries] };
             onUpdate(d); DB.save(d).catch(() => onUpdate(data));
-            setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '', boilerType: '', powerKw: '' }); setFieldErrors({});
+            setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '', boilerType: '', powerKw: '' }); setFieldErrors({}); setShowForm(false);
             addToast(`Заказ ${form.number} создан — зарезервированы материалы${newDeliveries.length > 0 ? `, ожидается ${newDeliveries.length} поставок` : ''}`, 'success');
             if (newOps.length > 0) setPrintOrderId(newOrder.id);
             return;
@@ -1042,7 +1038,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       const newDeliveries = createMaterialDeliveries(newOrder.id, form.productType, Number(form.qty), form.bomId);
       const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps], materialDeliveries: [...(data.materialDeliveries || []), ...newDeliveries] };
       onUpdate(d); DB.save(d).catch(() => onUpdate(data));
-      setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '', boilerType: '', powerKw: '' }); setFieldErrors({});
+      setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '', boilerType: '', powerKw: '' }); setFieldErrors({}); setShowForm(false);
       addToast(newDeliveries.length > 0 ? `Заказ ${form.number} создан — ожидается ${newDeliveries.length} поставок` : `Заказ ${form.number} создан`, 'success');
       if (newOps.length > 0) setPrintOrderId(newOrder.id);
     }
@@ -1194,13 +1190,17 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     hardDeleteOrders(ids);
   }, [dupSelected, data.ops, askConfirm, hardDeleteOrders]);
 
-  const edit = useCallback(ord => { setForm({ number: ord.number, product: ord.product, qty: String(ord.qty), deadline: ord.deadline || '', priority: ord.priority || 'medium', bomId: '', productType: ord.productType || '', drawingUrl: ord.drawingUrl || '', serialNumber: ord.serialNumber || '', boilerType: ord.boilerType || '', powerKw: ord.powerKw ? String(ord.powerKw) : '' }); setEditingId(ord.id); }, []);
+  const edit = useCallback(ord => { setForm({ number: ord.number, product: ord.product, qty: String(ord.qty), deadline: ord.deadline || '', priority: ord.priority || 'medium', bomId: '', productType: ord.productType || '', drawingUrl: ord.drawingUrl || '', serialNumber: ord.serialNumber || '', boilerType: ord.boilerType || '', powerKw: ord.powerKw ? String(ord.powerKw) : '' }); setEditingId(ord.id); setShowForm(true); }, []);
+
+  const openNewOrderForm = useCallback(() => {
+    setEditingId(null); setForm(EMPTY_ORDER_FORM); setFieldErrors({}); setShowForm(true);
+  }, []);
 
   // Защита от потери данных формы заказа
   const EMPTY_ORDER_FORM = { number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '', boilerType: '', powerKw: '' };
   const isDirtyOrder = useIsDirty(form, EMPTY_ORDER_FORM) && (form.number !== '' || form.product !== '' || form.qty !== '');
-  const resetOrderForm = () => { setEditingId(null); setForm(EMPTY_ORDER_FORM); setFieldErrors({}); };
-  const guardedResetOrder = useDirtyGuard(isDirtyOrder, resetOrderForm, 'Заказ не сохранён. Закрыть форму?');
+  const resetOrderForm = () => { setEditingId(null); setForm(EMPTY_ORDER_FORM); setFieldErrors({}); setShowForm(false); };
+  const guardedResetOrder = useDirtyGuard(isDirtyOrder, resetOrderForm, 'Заказ не сохранён. Закрыть форму?', askConfirm);
 
   const [sortMode, setSortMode] = useState('urgency'); // 'urgency' | 'deadline' | 'created'
   const ordersToShow = useMemo(() => {
@@ -1250,39 +1250,6 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 
   return h('div', null,
     confirmEl,
-    duplicateGroups.length > 0 && h('div', { style: { ...S.card, background: '#FFF8F0', border: `1px solid ${AM}`, marginBottom: 16 } },
-      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: dupPanelCollapsed ? 0 : 10 } },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }, onClick: () => setDupPanelCollapsed(v => !v) },
-          h('span', { style: { fontSize: 14, fontWeight: 600, color: AM2 } }, `⚠ Похоже, есть дубли заказов: ${duplicateGroups.length} номер${duplicateGroups.length === 1 ? '' : duplicateGroups.length < 5 ? 'а' : 'ов'}`),
-          h('span', { style: { fontSize: 11, color: '#888' } }, dupPanelCollapsed ? '▶' : '▼')
-        ),
-        !dupPanelCollapsed && h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
-          h('button', { style: gbtn({ fontSize: 12, padding: '6px 12px' }), onClick: selectRecommendedDuplicates }, '☑ Отметить лишние'),
-          dupSelected.size > 0 && h('button', { style: { ...gbtn({ fontSize: 12, padding: '6px 12px' }), color: RD2, borderColor: RD }, onClick: deleteDuplicatesSelected }, `🗑 Удалить выбранные (${dupSelected.size})`),
-          dupSelected.size > 0 && h('button', { style: gbtn({ fontSize: 12, padding: '6px 12px' }), onClick: () => setDupSelected(new Set()) }, '✕ Сбросить')
-        )
-      ),
-      !dupPanelCollapsed && h('div', { style: { fontSize: 11, color: '#888', marginBottom: 10 } }, 'Заказы сгруппированы по совпадающему номеру. «Отметить лишние» оставляет копию с наибольшим прогрессом (или самую раннюю), остальные помечает на удаление — проверьте перед подтверждением.'),
-      !dupPanelCollapsed && duplicateGroups.map((group, gi) => h('div', { key: group[0].number + gi, style: { marginBottom: 10, paddingBottom: 10, borderBottom: gi < duplicateGroups.length - 1 ? '1px solid rgba(0,0,0,0.08)' : 'none' } },
-        h('div', { style: { fontSize: 13, fontWeight: 600, marginBottom: 6, color: '#333' } }, `№ ${group[0].number} — ${group.length} копии`),
-        group.map(o => {
-          const ops_ = data.ops.filter(op => op.orderId === o.id);
-          const doneCount = ops_.filter(op => op.status === 'done').length;
-          const startedAny = ops_.some(op => op.status !== 'pending');
-          return h('div', { key: o.id, style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '4px 0', flexWrap: 'wrap' } },
-            h('input', { type: 'checkbox', style: { cursor: 'pointer' }, checked: dupSelected.has(o.id), onChange: () => toggleDupSelected(o.id) }),
-            h('span', { style: { fontWeight: 500, cursor: 'pointer' }, onClick: () => toggleDupSelected(o.id) }, o.product || '—'),
-            h('span', { style: { color: '#888' } }, `· кол-во ${o.qty ?? '—'}`),
-            h('span', { style: { color: '#888' } }, `· создан ${o.createdAt ? new Date(o.createdAt).toLocaleDateString('ru') : '—'}`),
-            h('span', { style: { color: '#888' } }, `· операций ${ops_.length} (готово ${doneCount})`),
-            o.archived && h('span', { style: { color: '#888', fontStyle: 'italic' } }, '· в архиве'),
-            o.shipped && h('span', { style: { color: GN2 } }, '· отгружен'),
-            startedAny && h('span', { style: { color: RD2, fontWeight: 500 } }, '⚠ есть работа по операциям'),
-            h('span', { style: { color: AM, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => setViewOrderId(o.id) }, 'открыть карточку')
-          );
-        })
-      ))
-    ),
     h(PasteImportWidget, { addToast, hint: 'Вставить заказы из Excel',
       columns: [
         { key: 'number',     label: 'Номер заказа', required: true },
@@ -1489,42 +1456,59 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     ),
 
     // ==================== Мини-дашборд заказов ====================
-    h(OrdersDashboard, { data }),
+    h(OrdersDashboard, { data, duplicateGroups, dupSelected, onToggleDup: toggleDupSelected, onSelectRecommendedDup: selectRecommendedDuplicates, onDeleteDup: deleteDuplicatesSelected }),
 
-    h('div', { style: S.card },
-      h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
-        h('div', { style: { minWidth: 120 } }, h('input', { style: S.inp, placeholder: 'Номер', value: form.number, onChange: e => setForm(p => ({ ...p, number: e.target.value })) }), fieldErrors.number && h('div', { className: 'error-message' }, fieldErrors.number)),
-        h('div', { style: { flex: 1, minWidth: 160 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Изделие', value: form.product, onChange: e => setForm(p => ({ ...p, product: e.target.value })) }), fieldErrors.product && h('div', { className: 'error-message' }, fieldErrors.product)),
-        h('div', { style: { minWidth: 70 } }, h('input', { type: 'number', style: { ...S.inp, width: '100%' }, placeholder: 'Кол-во', value: form.qty, onChange: e => setForm(p => ({ ...p, qty: e.target.value })) }), fieldErrors.qty && h('div', { className: 'error-message' }, fieldErrors.qty)),
-        h('div', { style: { minWidth: 140 } }, h('input', { type: 'date', style: { ...S.inp, width: '100%' }, value: form.deadline, onChange: e => setForm(p => ({ ...p, deadline: e.target.value })) }), fieldErrors.deadline && h('div', { className: 'error-message' }, fieldErrors.deadline)),
-        h('div', { style: { minWidth: 120 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.priority, onChange: e => setForm(p => ({ ...p, priority: e.target.value })) }, h('option', { value: 'low' }, 'Низкий'), h('option', { value: 'medium' }, 'Средний'), h('option', { value: 'high' }, 'Высокий'), h('option', { value: 'critical' }, 'Критический'))),
-        h('div', { style: { minWidth: 100 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.productType, onChange: e => setForm(p => ({ ...p, productType: e.target.value })) }, h('option', { value: '' }, 'Тип'), productTypes.map(pt => h('option', { key: pt.id, value: pt.id }, pt.label)))),
-        h('div', { style: { minWidth: 90 } }, h('select', { style: { ...S.inp, width: '100%', color: form.boilerType ? 'var(--fg)' : 'var(--muted)' }, value: form.boilerType || '', onChange: e => setForm(p => ({ ...p, boilerType: e.target.value })), title: 'Тип котла (для сдельной оплаты)' }, h('option', { value: '' }, 'V2/V3'), h('option', { value: 'v2d' }, 'V2-D'), h('option', { value: 'v3d' }, 'V3-D'))),
-        h('div', { style: { minWidth: 80 } }, h('input', { type: 'number', style: { ...S.inp, width: '100%' }, placeholder: 'кВт', value: form.powerKw || '', onChange: e => setForm(p => ({ ...p, powerKw: e.target.value })), title: 'Мощность котла (для сдельной оплаты)' })),
-        h('div', { style: { minWidth: 140 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.bomId, onChange: e => setForm(p => ({ ...p, bomId: e.target.value })) }, h('option', { value: '' }, '— без BOM —'), data.bomTemplates.filter(b => !form.productType || b.productType === form.productType || !b.productType).map(b => h('option', { key: b.id, value: b.id }, b.productName)))),
-        h('div', { style: { minWidth: 180, flex: 1 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: '🔗 Ссылка (чертёж, ТЗ…)', value: form.drawingUrl, onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value })) })),
-        h('div', { style: { minWidth: 130 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: '# Серийный №', value: form.serialNumber || '', title: 'Серийный номер изделия', onChange: e => setForm(p => ({ ...p, serialNumber: e.target.value })) })),
-        h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, editingId ? '✓' : '+'),
-        editingId && h('button', { type: 'button', style: gbtn(), onClick: () => guardedResetOrder() }, 'Отмена'),
-        !editingId && h('button', { type: 'button', style: { ...gbtn(), borderColor: AM, color: AM2 }, onClick: () => setShowImport1C(true), title: 'Импортировать заказ из файла 1С (Excel)' }, '📥 Импорт из 1С')
-      ),
-      // Проверка остатков при выборе BOM
-      form.bomId && form.qty && (() => {
-        const bom = data.bomTemplates.find(b => b.id === form.bomId);
-        if (!bom || !bom.materials?.length) return null;
-        const qty = Number(form.qty) || 1;
-        const checks = bom.materials.map(m => {
-          const mat = data.materials.find(dm => dm.id === m.materialId);
-          const need = m.qty * qty;
-          const have = mat?.quantity || 0;
-          return { name: mat?.name || '?', need, have, unit: mat?.unit || '', ok: have >= need };
-        });
-        const allOk = checks.every(c => c.ok);
-        return h('div', { style: { marginTop: 10, padding: '8px 12px', borderRadius: 8, background: allOk ? GN3 : RD3, border: `0.5px solid ${allOk ? GN : RD}` } },
-          h('div', { style: { fontSize: 11, fontWeight: 500, color: allOk ? GN2 : RD2, marginBottom: allOk ? 0 : 4 } }, allOk ? `✓ Все материалы в наличии (BOM: ${bom.productName})` : `⚠ Дефицит материалов (BOM: ${bom.productName}):`),
-          !allOk && checks.filter(c => !c.ok).map((c, i) => h('div', { key: i, style: { fontSize: 11, color: RD2 } }, `${c.name}: нужно ${c.need} ${c.unit}, есть ${c.have} ${c.unit}`))
-        );
-      })()
+    h('div', { style: { display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' } },
+      h('button', { type: 'button', style: abtn(), onClick: openNewOrderForm }, '+ Новый заказ'),
+      h('button', { type: 'button', style: { ...gbtn(), borderColor: AM, color: AM2 }, onClick: () => setShowImport1C(true), title: 'Импортировать заказ из файла 1С (Excel)' }, '📥 Импорт из 1С')
+    ),
+
+    showForm && h('div', {
+      role: 'dialog', 'aria-modal': 'true',
+      style: { position: 'fixed', inset: 0, background: 'rgba(20,18,15,0.78)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 150, padding: '24px 16px', overflowY: 'auto' },
+      onKeyDown: e => e.key === 'Escape' && guardedResetOrder(),
+      onClick: e => e.target === e.currentTarget && guardedResetOrder(),
+    },
+      h('div', { className: 'modal-animated', style: { background: 'var(--card)', borderRadius: 14, padding: 20, width: 'min(920px, calc(100vw - 32px))', position: 'relative' } },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 } },
+          h('div', { style: { fontSize: 15, fontWeight: 600 } }, editingId ? `Редактировать заказ ${form.number}` : 'Новый заказ'),
+          h('button', { type: 'button', onClick: () => guardedResetOrder(), 'aria-label': 'Закрыть', style: { background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: 'var(--muted)', lineHeight: 1, padding: 4 } }, '×')
+        ),
+        h('div', { className: 'form-row', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' } },
+          h('div', { style: { minWidth: 120 } }, h('input', { style: S.inp, placeholder: 'Номер', value: form.number, onChange: e => setForm(p => ({ ...p, number: e.target.value })) }), fieldErrors.number && h('div', { className: 'error-message' }, fieldErrors.number)),
+          h('div', { style: { flex: 1, minWidth: 160 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: 'Изделие', value: form.product, onChange: e => setForm(p => ({ ...p, product: e.target.value })) }), fieldErrors.product && h('div', { className: 'error-message' }, fieldErrors.product)),
+          h('div', { style: { minWidth: 70 } }, h('input', { type: 'number', style: { ...S.inp, width: '100%' }, placeholder: 'Кол-во', value: form.qty, onChange: e => setForm(p => ({ ...p, qty: e.target.value })) }), fieldErrors.qty && h('div', { className: 'error-message' }, fieldErrors.qty)),
+          h('div', { style: { minWidth: 140 } }, h('input', { type: 'date', style: { ...S.inp, width: '100%' }, value: form.deadline, onChange: e => setForm(p => ({ ...p, deadline: e.target.value })) }), fieldErrors.deadline && h('div', { className: 'error-message' }, fieldErrors.deadline)),
+          h('div', { style: { minWidth: 120 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.priority, onChange: e => setForm(p => ({ ...p, priority: e.target.value })) }, h('option', { value: 'low' }, 'Низкий'), h('option', { value: 'medium' }, 'Средний'), h('option', { value: 'high' }, 'Высокий'), h('option', { value: 'critical' }, 'Критический'))),
+          h('div', { style: { minWidth: 100 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.productType, onChange: e => setForm(p => ({ ...p, productType: e.target.value })) }, h('option', { value: '' }, 'Тип'), productTypes.map(pt => h('option', { key: pt.id, value: pt.id }, pt.label)))),
+          h('div', { style: { minWidth: 90 } }, h('select', { style: { ...S.inp, width: '100%', color: form.boilerType ? 'var(--fg)' : 'var(--muted)' }, value: form.boilerType || '', onChange: e => setForm(p => ({ ...p, boilerType: e.target.value })), title: 'Тип котла (для сдельной оплаты)' }, h('option', { value: '' }, 'V2/V3'), h('option', { value: 'v2d' }, 'V2-D'), h('option', { value: 'v3d' }, 'V3-D'))),
+          h('div', { style: { minWidth: 80 } }, h('input', { type: 'number', style: { ...S.inp, width: '100%' }, placeholder: 'кВт', value: form.powerKw || '', onChange: e => setForm(p => ({ ...p, powerKw: e.target.value })), title: 'Мощность котла (для сдельной оплаты)' })),
+          h('div', { style: { minWidth: 140 } }, h('select', { style: { ...S.inp, width: '100%' }, value: form.bomId, onChange: e => setForm(p => ({ ...p, bomId: e.target.value })) }, h('option', { value: '' }, '— без BOM —'), data.bomTemplates.filter(b => !form.productType || b.productType === form.productType || !b.productType).map(b => h('option', { key: b.id, value: b.id }, b.productName)))),
+          h('div', { style: { minWidth: 180, flex: 1 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: '🔗 Ссылка (чертёж, ТЗ…)', value: form.drawingUrl, onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value })) })),
+          h('div', { style: { minWidth: 130 } }, h('input', { style: { ...S.inp, width: '100%' }, placeholder: '# Серийный №', value: form.serialNumber || '', title: 'Серийный номер изделия', onChange: e => setForm(p => ({ ...p, serialNumber: e.target.value })) }))
+        ),
+        // Проверка остатков при выборе BOM
+        form.bomId && form.qty && (() => {
+          const bom = data.bomTemplates.find(b => b.id === form.bomId);
+          if (!bom || !bom.materials?.length) return null;
+          const qty = Number(form.qty) || 1;
+          const checks = bom.materials.map(m => {
+            const mat = data.materials.find(dm => dm.id === m.materialId);
+            const need = m.qty * qty;
+            const have = mat?.quantity || 0;
+            return { name: mat?.name || '?', need, have, unit: mat?.unit || '', ok: have >= need };
+          });
+          const allOk = checks.every(c => c.ok);
+          return h('div', { style: { marginTop: 10, padding: '8px 12px', borderRadius: 8, background: allOk ? GN3 : RD3, border: `0.5px solid ${allOk ? GN : RD}` } },
+            h('div', { style: { fontSize: 11, fontWeight: 500, color: allOk ? GN2 : RD2, marginBottom: allOk ? 0 : 4 } }, allOk ? `✓ Все материалы в наличии (BOM: ${bom.productName})` : `⚠ Дефицит материалов (BOM: ${bom.productName}):`),
+            !allOk && checks.filter(c => !c.ok).map((c, i) => h('div', { key: i, style: { fontSize: 11, color: RD2 } }, `${c.name}: нужно ${c.need} ${c.unit}, есть ${c.have} ${c.unit}`))
+          );
+        })(),
+        h('div', { style: { display: 'flex', gap: 8, marginTop: 16 } },
+          h('button', { type: 'button', style: abtn(), onClick: addOrUpdate }, editingId ? '✓ Сохранить' : '+ Создать'),
+          h('button', { type: 'button', style: gbtn(), onClick: () => guardedResetOrder() }, 'Отмена')
+        )
+      )
     ),
     h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 8, flexWrap: 'wrap' } },
       h('div', { style: { display: 'flex', gap: 4 } },
@@ -1691,7 +1675,6 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
                 !ord.archived ? [
                   h('button', { key: 'edit', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Редактировать', title: 'Редактировать заказ', onClick: () => edit(ord) }, '✎'),
                   h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'В архив', title: 'Переместить в архив', onClick: () => del(ord.id) }, '✕'),
-                  h('button', { key: 'harddel', style: { ...gbtn({ fontSize: 11, padding: '4px 8px' }), color: RD2, borderColor: RD }, 'aria-label': 'Удалить навсегда', title: 'Удалить заказ навсегда вместе со всеми операциями (для дублей и ошибочных заказов)', onClick: () => confirmHardDelete(ord.id) }, '🗑'),
                   !ord.isParentOrder && h('button', { key: 'passport', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Паспорт PDF', title: 'Сформировать паспорт изделия (PDF)', onClick: () => generateFullPassport(ord, data) }, '📄'),
                   h('button', { key: 'materials', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Заявка на материалы', title: 'Заявка на материалы', onClick: () => setMaterialOrderId(ord.id) }, '🔩'),
                   !ord.isParentOrder && h('button', { key: 'route', style: gbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Маршрутный лист PDF', title: 'Распечатать маршрутный лист (PDF)', onClick: () => generateRouteSheet(ord, data) }, '📋'),
@@ -1748,7 +1731,6 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
                 h('td', { style: S.td }, h(Badge, { st: sub.shipped ? 'shipped' : subSt })),
                 h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
                   h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), title: 'Редактировать подзаказ', onClick: () => edit(sub) }, '✎'),
-                  h('button', { style: { ...gbtn({ fontSize: 11, padding: '4px 8px' }), color: RD2, borderColor: RD }, title: 'Удалить подзаказ навсегда вместе со всеми операциями', onClick: () => confirmHardDelete(sub.id) }, '🗑'),
                   h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), title: 'Паспорт PDF', onClick: () => generateFullPassport(sub, data) }, '📄'),
                   h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), title: 'Маршрутный лист', onClick: () => generateRouteSheet(sub, data) }, '📋'),
                   !sub.shipped && h('button', { style: { ...gbtn({ fontSize: 11, padding: '4px 8px' }), color: GN2, borderColor: GN }, title: 'Отгрузить', onClick: () => shipOrder(sub.id) }, '🚚'),
