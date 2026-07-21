@@ -1531,6 +1531,7 @@ const PayrollExport = memo(({ data }) => {
   const today = new Date();
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [viewYear,  setViewYear]  = useState(today.getFullYear());
+  const [expandedWorkerId, setExpandedWorkerId] = useState(null);
 
   const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
 
@@ -1606,7 +1607,22 @@ const PayrollExport = memo(({ data }) => {
         ? hourlyEarned
         : hourlyEarned + pieceEarned;
 
-      return { w, payType, hourlyRate, pieceRate, hours, pieceCount, pieceEarned, hourlyEarned, earned };
+      // Дополнительно: для детализации в UI и экспорте — группируем начисленные op по заказу.
+      // Каждая запись = { order, ops:[], sum, count, isFallback? }.
+      // Fallback (без op.earning) агрегирует по заказу — детализируем только по признаку "через отгрузку".
+      const byOrder = new Map();
+      pieceDetails.forEach(op => {
+        const order = (data.orders || []).find(o => o.id === op.orderId);
+        if (!order) return;
+        if (!byOrder.has(order.id)) byOrder.set(order.id, { order, ops: [], sum: 0, count: 0, isFallback: false });
+        const g = byOrder.get(order.id);
+        // На данного работника делится workerCount — уже посчитано в op.earning.amount
+        g.ops.push(op);
+        g.sum += op.earning.amount;
+        g.count++;
+      });
+
+      return { w, payType, hourlyRate, pieceRate, hours, pieceCount, pieceEarned, hourlyEarned, earned, pieceDetails, byOrder: Array.from(byOrder.values()) };
     });
   }, [data.workers, data.ops, data.orders, viewMonth, viewYear]);
 
@@ -1615,7 +1631,10 @@ const PayrollExport = memo(({ data }) => {
 
   const exportExcel = () => {
     if (typeof XLSX === 'undefined') { alert('XLSX не загружен'); return; }
-    const wsData = [
+    const wb = XLSX.utils.book_new();
+
+    // Лист 1: Свод по сотрудникам (то что было раньше)
+    const svodData = [
       ['ФИО', 'Должность', 'Тип оплаты', 'Ставка', 'Часы / Изделий', 'Расчётная сумма'],
       ...rows.map(r => [
         r.w.name, r.w.position || '—',
@@ -1626,9 +1645,78 @@ const PayrollExport = memo(({ data }) => {
       ]),
       ['', '', '', '', 'ИТОГО:', total]
     ];
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, `Зарплата ${MONTHS_RU[viewMonth]} ${viewYear}`);
+    const ws1 = XLSX.utils.aoa_to_sheet(svodData);
+    XLSX.utils.book_append_sheet(wb, ws1, 'Свод');
+
+    // Лист 2: По заказам — работник × заказ × сумма
+    // Каждая строка: работник, заказ, кол-во операций, сумма
+    const byOrderRows = [];
+    rows.forEach(r => {
+      if (!r.byOrder || r.byOrder.length === 0) return;
+      r.byOrder.forEach(g => {
+        byOrderRows.push([
+          r.w.name,
+          g.order.number || '—',
+          g.order.customer || '—',
+          g.order.product || (g.order.boilerType && g.order.powerKw ? `${g.order.boilerType} ${g.order.powerKw} кВт` : '—'),
+          g.count,
+          g.sum
+        ]);
+      });
+    });
+    const byOrderData = [
+      ['ФИО', 'Заказ', 'Заказчик', 'Изделие', 'Кол-во операций', 'Сумма ₽'],
+      ...byOrderRows,
+      ['', '', '', '', 'ИТОГО:', byOrderRows.reduce((s, r) => s + r[5], 0)]
+    ];
+    const ws2 = XLSX.utils.aoa_to_sheet(byOrderData);
+    XLSX.utils.book_append_sheet(wb, ws2, 'По заказам');
+
+    // Лист 3: Все операции — детально (кто, за что, когда, сколько)
+    const opsRows = [];
+    rows.forEach(r => {
+      (r.pieceDetails || []).forEach(op => {
+        const order = (data.orders || []).find(o => o.id === op.orderId);
+        const section = (data.sections || []).find(s => s.id === op.sectionId);
+        const stage = (data.productionStages || []).find(s => s.id === op.stageId);
+        const workerCount = (op.workerIds || []).length || 1;
+        const finishedDate = op.finishedAt ? new Date(op.finishedAt).toLocaleDateString('ru-RU') : '—';
+        const earn = op.earning || {};
+        // Тип: обычная сдельная или допработа
+        const kind = earn.source === 'extra_work'
+          ? `Доп.: ${op.extraKey || ''} ${op.extraParam != null ? op.extraParam : ''}`.trim()
+          : (earn.field === 'heatExchanger' ? 'Теплообменник'
+              : earn.field === 'coverFront' ? 'Крышка передняя'
+              : earn.field === 'coverBack' ? 'Крышка задняя'
+              : earn.field === 'rolling' ? 'Вальцовка'
+              : earn.field || '—');
+        // Доля этапа: если есть — показываем %; иначе прочерк
+        const share = earn.paymentShare != null ? `${earn.paymentShare}%` : '—';
+        opsRows.push([
+          r.w.name,
+          finishedDate,
+          order?.number || '—',
+          order?.customer || '—',
+          op.name || '—',
+          stage?.name || '—',
+          section?.name || '—',
+          kind,
+          share,
+          workerCount,
+          earn.amount || 0
+        ]);
+      });
+    });
+    // Сортируем по дате, потом ФИО
+    opsRows.sort((a, b) => (a[1] || '').localeCompare(b[1] || '') || (a[0] || '').localeCompare(b[0] || ''));
+    const opsData = [
+      ['ФИО', 'Дата', 'Заказ', 'Заказчик', 'Операция', 'Этап', 'Участок', 'Тип начисления', 'Доля', 'Работников', 'Сумма ₽'],
+      ...opsRows,
+      ['', '', '', '', '', '', '', '', '', 'ИТОГО:', opsRows.reduce((s, r) => s + r[10], 0)]
+    ];
+    const ws3 = XLSX.utils.aoa_to_sheet(opsData);
+    XLSX.utils.book_append_sheet(wb, ws3, 'Все операции');
+
     XLSX.writeFile(wb, `payroll_${viewYear}_${String(viewMonth+1).padStart(2,'0')}.xlsx`);
   };
 
@@ -1649,34 +1737,96 @@ const PayrollExport = memo(({ data }) => {
       h('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:13 } },
         h('thead', null,
           h('tr', null,
-            ['Сотрудник','Должность','Тип','Ставка','Отработано','Расчётная сумма'].map(col =>
+            ['', 'Сотрудник','Должность','Тип','Ставка','Отработано','Расчётная сумма'].map(col =>
               h('th', { key:col, style:{ textAlign:'left', padding:'7px 10px', fontSize:10, fontWeight:600, letterSpacing:'0.06em', textTransform:'uppercase', color:'var(--muted)', borderBottom:'0.5px solid var(--border)' } }, col)
             )
           )
         ),
         h('tbody', null,
-          rows.map(({ w, payType, hourlyRate, pieceRate, hours, pieceCount, pieceEarned, hourlyEarned, earned }) =>
-            h('tr', { key:w.id, style:{ borderBottom:'0.5px solid var(--border-soft)' } },
-              h('td', { style:{ padding:'8px 10px', fontWeight:500 } }, w.name),
-              h('td', { style:{ padding:'8px 10px', color:'var(--muted)', fontSize:12 } }, w.position||'—'),
-              h('td', { style:{ padding:'8px 10px' } },
-                h('span', { style:{ fontSize:10, padding:'2px 7px', borderRadius:8, background: payType==='hourly' ? AM3 : payType==='mixed' ? '#e8f4ff' : GN3, color: payType==='hourly' ? AM2 : payType==='mixed' ? '#1a6fb5' : GN2, border:`0.5px solid ${payType==='hourly' ? AM4 : payType==='mixed' ? '#a8d0f0' : GN}` } },
-                  payType==='hourly' ? '⏱ Часовая' : payType==='mixed' ? '⚡ Смешанная' : '🔧 Сдельная'
+          rows.map(({ w, payType, hourlyRate, pieceRate, hours, pieceCount, pieceEarned, hourlyEarned, earned, pieceDetails, byOrder }) => {
+            const isExp = expandedWorkerId === w.id;
+            const hasDetails = (pieceDetails || []).length > 0;
+            return h(React.Fragment, { key: w.id },
+              h('tr', {
+                onClick: () => hasDetails && setExpandedWorkerId(isExp ? null : w.id),
+                style: { borderBottom:'0.5px solid var(--border-soft)', cursor: hasDetails ? 'pointer' : 'default', background: isExp ? 'rgba(217,166,58,0.06)' : 'transparent' }
+              },
+                h('td', { style:{ padding:'8px 10px', width: 20, textAlign:'center', color:'var(--muted)', fontSize: 11 } },
+                  hasDetails ? (isExp ? '▼' : '▸') : ''),
+                h('td', { style:{ padding:'8px 10px', fontWeight:500 } }, w.name),
+                h('td', { style:{ padding:'8px 10px', color:'var(--muted)', fontSize:12 } }, w.position||'—'),
+                h('td', { style:{ padding:'8px 10px' } },
+                  h('span', { style:{ fontSize:10, padding:'2px 7px', borderRadius:8, background: payType==='hourly' ? AM3 : payType==='mixed' ? '#e8f4ff' : GN3, color: payType==='hourly' ? AM2 : payType==='mixed' ? '#1a6fb5' : GN2, border:`0.5px solid ${payType==='hourly' ? AM4 : payType==='mixed' ? '#a8d0f0' : GN}` } },
+                    payType==='hourly' ? '⏱ Часовая' : payType==='mixed' ? '⚡ Смешанная' : '🔧 Сдельная'
+                  )
+                ),
+                h('td', { style:{ padding:'8px 10px', fontSize:12, color:'var(--muted)' } },
+                  hourlyRate > 0 && pieceEarned > 0 ? `${fmt(hourlyRate)} р/ч + сдельные` : hourlyRate > 0 ? `${fmt(hourlyRate)} р/ч` : 'сдельные'
+                ),
+                h('td', { style:{ padding:'8px 10px', fontWeight:500 } },
+                  h('span', null, hours > 0 ? `${hours}ч` : '0ч', pieceCount > 0 && h('span', { style:{ color: GN2, fontSize:11, marginLeft:4 } }, `+${pieceCount} сд.`))
+                ),
+                h('td', { style:{ padding:'8px 10px', fontWeight:600, color: earned > 0 ? AM2 : 'var(--muted)' } },
+                  earned > 0 ? `${fmt(earned)} ₽` : '—'
                 )
               ),
-              h('td', { style:{ padding:'8px 10px', fontSize:12, color:'var(--muted)' } },
-                hourlyRate > 0 && pieceEarned > 0 ? `${fmt(hourlyRate)} р/ч + сдельные` : hourlyRate > 0 ? `${fmt(hourlyRate)} р/ч` : 'сдельные'
-              ),
-              h('td', { style:{ padding:'8px 10px', fontWeight:500 } },
-                h('span', null, hours > 0 ? `${hours}ч` : '0ч', pieceCount > 0 && h('span', { style:{ color: GN2, fontSize:11, marginLeft:4 } }, `+${pieceCount} сд.`))
-              ),
-              h('td', { style:{ padding:'8px 10px', fontWeight:600, color: earned > 0 ? AM2 : 'var(--muted)' } },
-                earned > 0 ? `${fmt(earned)} ₽` : '—'
+              // Раскрывающаяся детализация — операции сгруппированы по заказам
+              isExp && hasDetails && h('tr', { key: w.id + '_exp' },
+                h('td', { colSpan: 7, style: { padding: 0, background: '#fafaf7' } },
+                  h('div', { style: { padding: '10px 20px 14px 40px' } },
+                    h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' } },
+                      `📋 Начисления за месяц (${pieceCount} операций на ${byOrder.length} заказе${byOrder.length === 1 ? '' : (byOrder.length < 5 ? 'ах' : 'ах')})`
+                    ),
+                    (byOrder || []).map(g =>
+                      h('div', { key: g.order.id, style: { marginBottom: 10, padding: '8px 12px', background: '#fff', border: '0.5px solid var(--border-soft)', borderRadius: 6 } },
+                        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 } },
+                          h('div', null,
+                            h('b', { style: { fontSize: 13 } }, `Заказ ${g.order.number || '—'}`),
+                            g.order.customer && h('span', { style: { fontSize: 11, color: 'var(--muted)', marginLeft: 8 } }, g.order.customer),
+                            g.order.boilerType && g.order.powerKw && h('span', { style: { fontSize: 11, color: 'var(--muted)', marginLeft: 8 } }, `· ${g.order.boilerType} ${g.order.powerKw} кВт`)
+                          ),
+                          h('div', { style: { fontSize: 13, fontWeight: 600, color: AM2 } }, `${fmt(g.sum)} ₽`)
+                        ),
+                        h('table', { style: { width: '100%', fontSize: 11, borderCollapse: 'collapse' } },
+                          h('thead', null,
+                            h('tr', { style: { color: 'var(--muted)', fontSize: 10 } },
+                              ['Дата', 'Операция', 'Этап / Тип', 'Доля', 'Раб.', 'Сумма'].map(c =>
+                                h('th', { key: c, style: { textAlign: 'left', padding: '3px 6px', fontWeight: 500 } }, c))
+                            )
+                          ),
+                          h('tbody', null,
+                            g.ops.map(op => {
+                              const earn = op.earning || {};
+                              const stage = (data.productionStages || []).find(s => s.id === op.stageId);
+                              const workerCount = (op.workerIds || []).length || 1;
+                              const finishedDate = op.finishedAt ? new Date(op.finishedAt).toLocaleDateString('ru-RU') : '—';
+                              const kind = earn.source === 'extra_work'
+                                ? `💰 Доп.: ${op.extraKey} ${op.extraParam != null ? op.extraParam : ''}`
+                                : (earn.field === 'heatExchanger' ? 'Теплообм.'
+                                  : earn.field === 'coverFront' ? 'Крышка перед.'
+                                  : earn.field === 'coverBack' ? 'Крышка задн.'
+                                  : earn.field === 'rolling' ? 'Вальцовка'
+                                  : earn.field || '—');
+                              return h('tr', { key: op.id, style: { borderTop: '0.5px solid var(--border-soft)' } },
+                                h('td', { style: { padding: '4px 6px', color: 'var(--muted)' } }, finishedDate),
+                                h('td', { style: { padding: '4px 6px' } }, op.name || '—'),
+                                h('td', { style: { padding: '4px 6px', color: 'var(--muted)' } }, `${stage?.name || '—'} · ${kind}`),
+                                h('td', { style: { padding: '4px 6px', color: 'var(--muted)' } }, earn.paymentShare != null ? `${earn.paymentShare}%` : '—'),
+                                h('td', { style: { padding: '4px 6px', color: 'var(--muted)' } }, workerCount),
+                                h('td', { style: { padding: '4px 6px', fontWeight: 500, color: AM2 } }, `${fmt(earn.amount || 0)} ₽`)
+                              );
+                            })
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
               )
-            )
-          ),
+            );
+          }),
           h('tr', null,
-            h('td', { colSpan:5, style:{ padding:'10px 10px', fontWeight:600, textAlign:'right', borderTop:`1px solid var(--border)`, fontSize:13 } }, 'ИТОГО:'),
+            h('td', { colSpan:6, style:{ padding:'10px 10px', fontWeight:600, textAlign:'right', borderTop:`1px solid var(--border)`, fontSize:13 } }, 'ИТОГО:'),
             h('td', { style:{ padding:'10px 10px', fontWeight:700, color: AM2, borderTop:`1px solid var(--border)`, fontSize:15 } }, `${fmt(total)} ₽`)
           )
         )
