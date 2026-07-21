@@ -2186,12 +2186,184 @@ const ShiftSettings = memo(({ data, onUpdate, addToast }) => {
   );
 });
 
-// ==================== PieceworkRatesEditor ====================
+// ==================== PieceworkRatesEditor + ExtraWorksEditor ====================
+// Парсер прайс-листа (Excel):
+//   1) заполняет pieceworkRates — базовые расценки Lex V2/V3 (теплообменник + крышки);
+//   2) заполняет extraWorks — каталог допрасценок (вальцовка, стыки топки, стыки трубных досок, Duplex).
+// Прочие серии котлов (Lexender/Triplex/Lexor/Dilex) и токарные работы пропускаются.
+
+// Определяет категорию допработы по названию строки прайса.
+// Ключи закодированы явно — при реимпорте тиеры добавляются к той же категории,
+// а не создают дубли.
+const guessExtraWorkCategory = (name) => {
+  const l = String(name || '').toLowerCase();
+  if (l.includes('вальцовка') && l.includes('обечаек'))
+    return { key: 'rolling_thickness', name: 'Вальцовка обечаек', paramLabel: 'Толщина металла', paramUnit: 'мм' };
+  if (l.includes('стык') && (l.includes('трубы топки') || l.includes('трубе топки')))
+    return { key: 'furnace_pipe_joint', name: 'Стыковые соединения трубы топки', paramLabel: 'Диаметр топки', paramUnit: 'мм' };
+  if (l.includes('стык') && (l.includes('трубных досок') || l.includes('трубной доски')))
+    return { key: 'tube_sheet_joint', name: 'Стыковые соединения трубных досок', paramLabel: 'Толщина металла', paramUnit: 'мм' };
+  if (l.includes('обвязка') && l.includes('duplex'))
+    return { key: 'duplex_piping', name: 'Обвязка котла Duplex', paramLabel: 'Диаметр трубы', paramUnit: 'мм' };
+  return null;
+};
+
+const parsePriceListForPiecework = (arrayBuffer, opts) => {
+  opts = opts || { source: 'premium' }; // 'premium' | 'base'
+  const wb = XLSX.read(arrayBuffer, { type: 'array' });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+
+  const norm = s => String(s == null ? '' : s).replace(/\s+/g,' ').trim();
+  const low  = s => norm(s).toLowerCase();
+  const num  = v => {
+    if (v == null) return null;
+    if (typeof v === 'number') return isFinite(v) ? v : null;
+    const s = String(v).replace(/\s|\u00a0/g,'').replace(',','.');
+    if (!s || s === '-' || s === '–' || s === '—') return null;
+    const n = parseFloat(s);
+    return isFinite(n) ? n : null;
+  };
+  // Диапазон "D 100 - 250" / "D 3500" / "100-250" — двоеточия/тире любые
+  const parseRange = v => {
+    const s = norm(v).replace(/[–—]/g,'-');
+    let m = s.match(/(?:D{1,2}\s*)?(\d+(?:[.,]\d+)?)\s*-\s*(\d+(?:[.,]\d+)?)/i);
+    if (m) return { min: parseFloat(m[1].replace(',','.')), max: parseFloat(m[2].replace(',','.')) };
+    m = s.match(/(?:D{1,2}\s*)?(\d+(?:[.,]\d+)?)\s*$/);
+    if (m) return { min: parseFloat(m[1].replace(',','.')), max: parseFloat(m[1].replace(',','.')) };
+    return null;
+  };
+
+  const heRows = [];       // {type, powerMin, powerMax, heatExchanger}
+  const coversRows = [];   // {powerMin, powerMax, front, rear}   (только "Все водогрейные")
+  const extrasMap = new Map();  // key → { key, name, paramLabel, paramUnit, tiers[] }
+  const warnings = [];
+  let section = null;      // 'he' | 'covers' | 'extra' | 'other'
+  let series = null;       // 'v2d' | 'v3d' | null
+  let coversGroup = null;  // 'water_all' | null
+  let extraCat = null;     // текущая категория в секции 'extra'
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const c0 = norm(row[0]), l0 = low(row[0]);
+
+    if (l0.includes('прайс лист на изготовление теплообменника')) { section = 'he'; series = null; continue; }
+    if (l0.includes('прайс лист на изготовление крышек'))         { section = 'covers'; coversGroup = null; continue; }
+    if (l0.includes('прайс лист на дополнительные'))              { section = 'extra'; extraCat = null; continue; }
+    if (l0.includes('прайс лист на токарные'))                    { section = 'other'; continue; }
+    if (!section || section === 'other') continue;
+
+    if (section === 'extra') {
+      // Заголовок категории в первой колонке — открывает/переключает группу
+      if (c0) {
+        const cat = guessExtraWorkCategory(c0);
+        if (cat) {
+          if (!extrasMap.has(cat.key)) extrasMap.set(cat.key, { ...cat, tiers: [] });
+          extraCat = extrasMap.get(cat.key);
+          // на этой же строке может быть первый тиер — падаем ниже в парсинг тиера
+        }
+      }
+      if (!extraCat) continue;
+      const priceVal = num(row[2]);
+      if (priceVal == null) continue;
+      const rng = parseRange(row[1]);
+      if (!rng) continue;
+      if (extraCat.tiers.some(t => t.min === rng.min && t.max === rng.max)) continue;
+      extraCat.tiers.push({ min: rng.min, max: rng.max, price: priceVal });
+      continue;
+    }
+
+    if (section === 'he') {
+      // Только Lex V2 и Lex V3 — прочие серии сбрасывают series в null
+      if (/lex\s*v2/i.test(c0) && !/lexender/i.test(c0)) { series = 'v2d'; continue; }
+      if (/lex\s*v3/i.test(c0)) { series = 'v3d'; continue; }
+      if (/lexender|triplex|lexor|dilex/i.test(c0)) { series = null; continue; }
+      if (!series) continue;
+      const rng = parseRange(c0);
+      if (!rng) continue;
+      let mn = rng.min, mx = rng.max;
+      if (mx < mn) {
+        const guess = mx * 10;
+        if (guess >= mn) { warnings.push('Строка ' + (i+1) + ': "' + c0 + '" — max<min, принято ' + mn + '–' + guess + ' (проверьте!)'); mx = guess; }
+        else continue;
+      }
+      const base = num(row[1]), premium = num(row[2]);
+      if (base == null) continue;
+      const price = opts.source === 'base' ? base : (premium != null ? premium : base);
+      heRows.push({ type: series, powerMin: mn, powerMax: mx, heatExchanger: price });
+      continue;
+    }
+
+    if (section === 'covers') {
+      if (low(c0).includes('все водогрейные')) { coversGroup = 'water_all'; continue; }
+      if (/lex\s*v2|lex\s*v3|lexender|triplex|lexor|dilex/i.test(c0)) { coversGroup = null; continue; }
+      if (coversGroup !== 'water_all') continue;
+      const rng = parseRange(c0);
+      if (!rng) continue;
+      const front = num(row[1]), rear = num(row[2]);
+      if (front == null && rear == null) continue;
+      coversRows.push({ powerMin: rng.min, powerMax: rng.max, front: front || 0, rear: rear || 0 });
+      continue;
+    }
+  }
+  const extras = Array.from(extrasMap.values());
+  return { heRows, coversRows, extras, warnings };
+};
+
+// Мерж распарсенных допрасценок с существующими данными.
+// Возвращает превью: [{ existing, incoming, action, addedTiers, updatedTiers, removedTiers }]
+// action: 'add' — новая категория; 'update' — категория есть, что-то меняется;
+//         'skip' — категория есть, всё совпадает.
+// Ручные категории (source: 'manual') не трогаем ни в каком виде.
+const buildExtraWorksImportPreview = (parsedExtras, existingExtras) => {
+  return parsedExtras.map(inc => {
+    const existing = (existingExtras || []).find(e => e.key === inc.key);
+    if (!existing) return { key: inc.key, incoming: inc, action: 'add' };
+    if (existing.source === 'manual') {
+      return { key: inc.key, incoming: inc, existing, action: 'skip', reason: 'manual' };
+    }
+    const addedTiers = inc.tiers.filter(nt => !existing.tiers.some(et => et.min === nt.min && et.max === nt.max));
+    const updatedTiers = inc.tiers.filter(nt => existing.tiers.some(et => et.min === nt.min && et.max === nt.max && et.price !== nt.price));
+    if (addedTiers.length === 0 && updatedTiers.length === 0) {
+      return { key: inc.key, incoming: inc, existing, action: 'skip' };
+    }
+    return { key: inc.key, incoming: inc, existing, action: 'update', addedTiers, updatedTiers };
+  });
+};
+
+// Мерж распарсенных строк с существующими pieceworkRates.
+// Крышки подтягиваются к теплообменнику по midpoint диапазона мощности.
+// Rolling из существующих записей сохраняется (не сбрасывается импортом).
+const buildPieceworkImportPreview = (parsed, existingRates) => {
+  return parsed.heRows.map(he => {
+    const mid = (he.powerMin + he.powerMax) / 2;
+    const cover = parsed.coversRows.find(c => mid >= c.powerMin && mid <= c.powerMax);
+    const existing = existingRates.find(r =>
+      r.type === he.type && r.powerMin === he.powerMin && r.powerMax === he.powerMax
+    );
+    const newRow = {
+      type: he.type, powerMin: he.powerMin, powerMax: he.powerMax,
+      heatExchanger: he.heatExchanger,
+      coverFront: cover ? cover.front : 0,
+      coverBack:  cover ? cover.rear  : 0,
+      rolling: existing ? (existing.rolling || 0) : 0,
+      coverStatus: cover ? 'ok' : 'no_covers',
+    };
+    if (!existing) return Object.assign(newRow, { action: 'add' });
+    const same = existing.heatExchanger === newRow.heatExchanger
+              && existing.coverFront    === newRow.coverFront
+              && existing.coverBack     === newRow.coverBack;
+    return Object.assign(newRow, { action: same ? 'skip' : 'update', existing });
+  });
+};
+
 const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
-  console.log('PieceworkRatesEditor RENDER', !!data, !!onUpdate);
   const rates = data.pieceworkRates || [];
   const [form, setForm] = useState({ type:'v2d', powerMin:'', powerMax:'', heatExchanger:'', coverFront:'', coverBack:'', rolling:'' });
   const [editId, setEditId] = useState(null);
+  const [importPreview, setImportPreview] = useState(null); // { rows, warnings, source }
+  const [importSource, setImportSource] = useState('premium'); // 'premium' | 'base'
+  const fileInputRef = useRef(null);
 
   const BOILER_TYPES = [
     { id: 'v2d', label: 'Lex V2-D (двухходовой)' },
@@ -2231,6 +2403,96 @@ const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
     setEditId(r.id);
   };
 
+  // ---------- Импорт из Excel (прайс-лист) ----------
+  const handleFilePick = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const parsed = parsePriceListForPiecework(e.target.result, { source: importSource });
+        if (!parsed.heRows.length && !parsed.extras.length) {
+          addToast('В файле не найдено расценок. Проверьте, что это прайс-лист по котлам.', 'error'); return;
+        }
+        const preview = buildPieceworkImportPreview(parsed, rates);
+        const extrasPreview = buildExtraWorksImportPreview(parsed.extras, data.extraWorks || []);
+        setImportPreview({ rows: preview, extras: extrasPreview, warnings: parsed.warnings, source: importSource });
+      } catch (ex) {
+        console.error(ex);
+        addToast('Ошибка чтения файла: ' + ex.message, 'error');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    event.target.value = '';
+  };
+
+  const applyImport = async () => {
+    if (!importPreview) return;
+    let updated = [...rates];
+    let added = 0, changed = 0, skipped = 0;
+    for (const row of importPreview.rows) {
+      if (row.action === 'skip') { skipped++; continue; }
+      if (row.action === 'add') {
+        updated.push({
+          id: uid(),
+          type: row.type, powerMin: row.powerMin, powerMax: row.powerMax,
+          heatExchanger: row.heatExchanger, coverFront: row.coverFront,
+          coverBack: row.coverBack, rolling: row.rolling
+        });
+        added++;
+      } else if (row.action === 'update' && row.existing) {
+        updated = updated.map(r => r.id === row.existing.id
+          ? { ...r, heatExchanger: row.heatExchanger, coverFront: row.coverFront, coverBack: row.coverBack }
+          : r);
+        changed++;
+      }
+    }
+    updated.sort((a,b) => a.type.localeCompare(b.type) || a.powerMin - b.powerMin);
+
+    // Также применяем допрасценки
+    let extras = (data.extraWorks || []).slice();
+    let extrasAdded = 0, extrasChanged = 0;
+    for (const row of (importPreview.extras || [])) {
+      if (row.action === 'skip') continue;
+      if (row.action === 'add') {
+        extras.push({
+          id: uid(),
+          key: row.incoming.key,
+          name: row.incoming.name,
+          paramLabel: row.incoming.paramLabel,
+          paramUnit: row.incoming.paramUnit,
+          tiers: row.incoming.tiers.map(t => ({ ...t })),
+          source: 'price',
+        });
+        extrasAdded++;
+      } else if (row.action === 'update' && row.existing) {
+        extras = extras.map(e => {
+          if (e.id !== row.existing.id) return e;
+          // Мержим: обновляем цены существующих тиеров, добавляем новые.
+          // Пользовательские тиеры (которых нет в парсинге) — оставляем как были.
+          const merged = e.tiers.map(et => {
+            const inc = row.incoming.tiers.find(nt => nt.min === et.min && nt.max === et.max);
+            return inc ? { ...et, price: inc.price } : et;
+          });
+          for (const nt of (row.addedTiers || [])) merged.push({ ...nt });
+          return { ...e, name: row.incoming.name, paramLabel: row.incoming.paramLabel, paramUnit: row.incoming.paramUnit,
+            tiers: merged.sort((a,b) => a.min - b.min) };
+        });
+        extrasChanged++;
+      }
+    }
+
+    const d = { ...data, pieceworkRates: updated, extraWorks: extras };
+    onUpdate(d);
+    try { await DB.save(d); }
+    catch { onUpdate(data); addToast('Ошибка сохранения', 'error'); return; }
+    setImportPreview(null);
+    const extraNote = (extrasAdded || extrasChanged) ? `; допы: +${extrasAdded}/${extrasChanged}` : '';
+    addToast(`Импорт: +${added} новых, ${changed} обновлено, ${skipped} без изменений${extraNote}`, 'success');
+  };
+
+  const cancelImport = () => setImportPreview(null);
+
   const fmt = n => n ? Number(n).toLocaleString('ru-RU') : '—';
 
   const inp = (key, placeholder, type='number') => h('input', {
@@ -2239,10 +2501,122 @@ const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
     style: { ...S.inp, width: '100%' }
   });
 
+  const previewCounts = importPreview ? {
+    add:    importPreview.rows.filter(r => r.action === 'add').length,
+    update: importPreview.rows.filter(r => r.action === 'update').length,
+    skip:   importPreview.rows.filter(r => r.action === 'skip').length,
+    noCovers: importPreview.rows.filter(r => r.coverStatus === 'no_covers').length,
+    extrasAdd:    (importPreview.extras || []).filter(e => e.action === 'add').length,
+    extrasUpdate: (importPreview.extras || []).filter(e => e.action === 'update').length,
+  } : null;
+
   return h('div', { style: { ...S.card, marginTop: 16, border: `2px solid ${AM}` } },
-    h('div', { style: { ...S.sec, color: AM2 } }, '🔧 Сдельные расценки по мощности котла'),
+    // Заголовок + кнопка импорта
+    h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom:6 } },
+      h('div', { style: { ...S.sec, color: AM2, marginBottom: 0, flex: 1 } }, '🔧 Сдельные расценки по мощности котла'),
+      h('input', { type: 'file', accept: '.xls,.xlsx', ref: fileInputRef, onChange: handleFilePick, style: { display: 'none' } }),
+      h('select', {
+        value: importSource,
+        onChange: e => setImportSource(e.target.value),
+        title: 'Какую цену брать из прайса при импорте',
+        style: { ...S.inp, width: 180, fontSize: 11, padding: '4px 8px' }
+      },
+        h('option', { value: 'premium' }, 'Цена с премией (макс.)'),
+        h('option', { value: 'base' },    'Базовая цена (мин.)')
+      ),
+      h('button', {
+        style: gbtn({ fontSize: 12, padding: '5px 12px' }),
+        onClick: () => fileInputRef.current && fileInputRef.current.click(),
+        title: 'Загрузить прайс-лист .xls / .xlsx для автозаполнения'
+      }, '📥 Импорт из прайса')
+    ),
     h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 12 } },
-      'Стоимость работ по участкам для сдельной оплаты. Используется для расчёта зарплаты рабочих теплообменника и крышек.'
+      'Стоимость работ по участкам для сдельной оплаты. Используется для расчёта зарплаты рабочих теплообменника и крышек. Вальцовка вписывается вручную.'
+    ),
+
+    // ---------- Превью импорта ----------
+    importPreview && h('div', { style: { background:'#fffbea', border:'1px solid #f0c419', borderRadius:8, padding:12, marginBottom:16 } },
+      h('div', { style: { fontSize:13, fontWeight:500, marginBottom:8, color:'#8b6d00' } },
+        `📥 Импорт прайса (${importPreview.source === 'premium' ? 'цены с премией' : 'базовые цены'})`
+      ),
+      h('div', { style: { fontSize:12, marginBottom:10, display:'flex', gap:16, flexWrap:'wrap' } },
+        h('span', { style: { color:'#0a7' } }, `+ ${previewCounts.add} новых`),
+        h('span', { style: { color:'#a70' } }, `↻ ${previewCounts.update} обновится`),
+        h('span', { style: { color:'#888' } }, `= ${previewCounts.skip} без изменений`),
+        (previewCounts.extrasAdd + previewCounts.extrasUpdate > 0) && h('span', { style: { color:'#8b4d00', marginLeft:'auto' } },
+          `допы: +${previewCounts.extrasAdd}, ↻${previewCounts.extrasUpdate}`)
+      ),
+      // Предупреждения парсера
+      importPreview.warnings.length > 0 && h('div', { style: { background:'#ffe8e8', padding:8, borderRadius:6, marginBottom:10, fontSize:11 } },
+        importPreview.warnings.map((w, i) => h('div', { key: i, style: { marginBottom: 2 } }, '⚠ ' + w))
+      ),
+      // Предупреждение об отсутствующих крышках
+      previewCounts.noCovers > 0 && h('div', { style: { background:'#fff2e0', padding:8, borderRadius:6, marginBottom:10, fontSize:11, color:'#8b4d00' } },
+        `⚠ Для ${previewCounts.noCovers} диапазонов в прайсе не нашлось крышек (пропуск в таблице «Все водогрейные»). Крышки будут = 0, впишите вручную.`
+      ),
+      // Таблица превью — основные расценки
+      h('div', { style: { fontSize:11, fontWeight:500, color:'#8b6d00', marginBottom:4 } }, 'Основные расценки (теплообменник + крышки):'),
+      h('div', { style: { maxHeight: 200, overflowY:'auto', border:'0.5px solid #d4b83a', borderRadius: 6, background:'#fff', marginBottom: 10 } },
+        h('table', { style: { width:'100%', borderCollapse:'collapse', fontSize:11 } },
+          h('thead', { style: { position:'sticky', top:0, background:'#fffbea' } },
+            h('tr', null, ['', 'Тип', 'Мощность', 'Теплообм.', 'Крышка пер.', 'Крышка зад.', 'Вальц.'].map(col =>
+              h('th', { key: col, style: { textAlign:'left', padding:'4px 6px', fontWeight:500, color:'#666', fontSize:10 } }, col)
+            ))
+          ),
+          h('tbody', null,
+            importPreview.rows.map((r, i) => {
+              const bg = r.action === 'add' ? '#eaffea' : r.action === 'update' ? '#fff4d6' : '#f8f8f8';
+              const badge = r.action === 'add' ? '+' : r.action === 'update' ? '↻' : '=';
+              const badgeColor = r.action === 'add' ? '#0a7' : r.action === 'update' ? '#a70' : '#aaa';
+              return h('tr', { key: i, style: { background: bg, borderBottom:'0.5px solid #eee' } },
+                h('td', { style: { padding:'3px 6px', color: badgeColor, fontWeight:700, width: 20 } }, badge),
+                h('td', { style: { padding:'3px 6px' } }, r.type),
+                h('td', { style: { padding:'3px 6px' } }, `${r.powerMin}–${r.powerMax} кВт`),
+                h('td', { style: { padding:'3px 6px' } },
+                  r.action === 'update' && r.existing.heatExchanger !== r.heatExchanger
+                    ? h('span', null, `${fmt(r.existing.heatExchanger)} → `, h('b', null, fmt(r.heatExchanger)))
+                    : fmt(r.heatExchanger)
+                ),
+                h('td', { style: { padding:'3px 6px' } }, fmt(r.coverFront)),
+                h('td', { style: { padding:'3px 6px' } }, fmt(r.coverBack)),
+                h('td', { style: { padding:'3px 6px', color: r.rolling ? undefined : '#bbb' } }, r.rolling ? fmt(r.rolling) : 'вручную')
+              );
+            })
+          )
+        )
+      ),
+
+      // Превью допрасценок
+      importPreview.extras && importPreview.extras.length > 0 && [
+        h('div', { key:'extra-h', style: { fontSize:11, fontWeight:500, color:'#8b6d00', marginBottom:4 } },
+          `Доп. расценки (${importPreview.extras.filter(e => e.action !== 'skip').length} категорий с изменениями из ${importPreview.extras.length}):`
+        ),
+        h('div', { key:'extra-b', style: { border:'0.5px solid #d4b83a', borderRadius: 6, background:'#fff', padding: 8 } },
+          importPreview.extras.map((e, i) => {
+            const badge = e.action === 'add' ? '+' : e.action === 'update' ? '↻' : '=';
+            const badgeColor = e.action === 'add' ? '#0a7' : e.action === 'update' ? '#a70' : '#aaa';
+            return h('div', { key: i, style: { padding:'4px 0', borderBottom: i < importPreview.extras.length-1 ? '0.5px solid #eee' : 'none' } },
+              h('span', { style: { color: badgeColor, fontWeight:700, marginRight:6 } }, badge),
+              h('b', null, e.incoming.name),
+              e.action === 'skip' && e.reason === 'manual'
+                ? h('span', { style: { color:'#888', fontSize:10, marginLeft:8 } }, '(ручная — не трогаем)')
+                : e.action === 'skip'
+                ? h('span', { style: { color:'#888', fontSize:10, marginLeft:8 } }, '(без изменений)')
+                : h('span', { style: { color:'#666', fontSize:10, marginLeft:8 } },
+                    `${e.incoming.tiers.length} ${e.action === 'add' ? 'тиеров' : 'из прайса'}: `,
+                    e.incoming.tiers.map(t => `${t.min}${t.min!==t.max?'-'+t.max:''}${e.incoming.paramUnit}=${t.price}`).join(', ')
+                  )
+            );
+          })
+        )
+      ],
+      h('div', { style: { display:'flex', gap:8, marginTop:10 } },
+        h('button', { style: abtn({ fontSize: 12, padding:'6px 14px' }),
+          onClick: applyImport,
+          disabled: previewCounts.add + previewCounts.update + previewCounts.extrasAdd + previewCounts.extrasUpdate === 0
+        }, `✓ Применить (${previewCounts.add + previewCounts.update + previewCounts.extrasAdd + previewCounts.extrasUpdate})`),
+        h('button', { style: gbtn({ fontSize: 12, padding:'6px 14px' }), onClick: cancelImport }, 'Отмена')
+      )
     ),
 
     // Форма добавления
@@ -2264,11 +2638,11 @@ const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
         h('button', { style: abtn({ width: '100%' }), onClick: save }, editId ? '✓ Сохранить' : '+ Добавить')
       )
     ),
-    editId && h('button', { style: gbtn({ fontSize: 11, marginBottom: 12 }), onClick: () => { setEditId(null); setForm({ type:'v2d', powerMin:'', powerMax:'', heatExchanger:'', coverFront:'', coverBack:'' }); } }, '✕ Отмена'),
+    editId && h('button', { style: gbtn({ fontSize: 11, marginBottom: 12 }), onClick: () => { setEditId(null); setForm({ type:'v2d', powerMin:'', powerMax:'', heatExchanger:'', coverFront:'', coverBack:'', rolling:'' }); } }, '✕ Отмена'),
 
     // Таблица расценок
     rates.length === 0
-      ? h('div', { style: { textAlign:'center', color:'var(--muted)', padding: 20, fontSize: 13 } }, 'Расценки не заданы')
+      ? h('div', { style: { textAlign:'center', color:'var(--muted)', padding: 20, fontSize: 13 } }, 'Расценки не заданы — нажмите «📥 Импорт из прайса» или добавьте вручную')
       : h('table', { style: { width:'100%', borderCollapse:'collapse', fontSize: 12 } },
           h('thead', null,
             h('tr', null, ['Тип котла','Мощность, кВт','Теплообменник','Крышка пер.','Крышка зад.','Вальцовка',''].map(col =>
@@ -2292,5 +2666,165 @@ const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
             )
           )
         )
+  );
+});
+
+// ==================== ExtraWorksEditor ====================
+// Каталог допрасценок. Заполняется через тот же импорт прайса (см. PieceworkRatesEditor)
+// или вручную. Работники в кабинете (worker.js) выбирают отсюда категорию + вводят параметр,
+// система по каталогу подтягивает цену и создаёт op-допработу для согласования мастером.
+const ExtraWorksEditor = memo(({ data, onUpdate, addToast }) => {
+  const extras = data.extraWorks || [];
+  const [expandedId, setExpandedId] = useState(null);
+  const [newCatForm, setNewCatForm] = useState(null); // { key, name, paramLabel, paramUnit }
+  const [newTierByCat, setNewTierByCat] = useState({}); // { catId: { min, max, price } }
+
+  const saveAll = async (updated) => {
+    const d = { ...data, extraWorks: updated };
+    onUpdate(d);
+    try { await DB.save(d); }
+    catch { onUpdate(data); addToast('Ошибка сохранения', 'error'); }
+  };
+
+  const addCategory = () => {
+    if (!newCatForm.name.trim()) { addToast('Укажите название категории', 'error'); return; }
+    const key = 'manual_' + Date.now();
+    const cat = {
+      id: uid(), key,
+      name: newCatForm.name.trim(),
+      paramLabel: newCatForm.paramLabel.trim() || 'Параметр',
+      paramUnit: newCatForm.paramUnit.trim() || '',
+      tiers: [],
+      source: 'manual',
+    };
+    saveAll([...extras, cat]);
+    setNewCatForm(null);
+    setExpandedId(cat.id);
+    addToast('Категория добавлена', 'success');
+  };
+
+  const delCategory = (id) => {
+    if (!confirm('Удалить категорию со всеми тиерами? Уже созданные op-допработы это не затронет (у них цена заморожена).')) return;
+    saveAll(extras.filter(e => e.id !== id));
+    addToast('Категория удалена', 'info');
+  };
+
+  const addTier = (catId) => {
+    const t = newTierByCat[catId] || {};
+    const min = Number(t.min), max = Number(t.max), price = Number(t.price);
+    if (!isFinite(min) || !isFinite(max) || !isFinite(price)) { addToast('Заполните мин/макс/цену числами', 'error'); return; }
+    if (max < min) { addToast('Макс должен быть ≥ мин', 'error'); return; }
+    const updated = extras.map(e => e.id === catId
+      ? { ...e, tiers: [...e.tiers, { min, max, price }].sort((a,b) => a.min - b.min) }
+      : e);
+    saveAll(updated);
+    setNewTierByCat(p => ({ ...p, [catId]: { min:'', max:'', price:'' } }));
+  };
+
+  const delTier = (catId, idx) => {
+    const updated = extras.map(e => e.id === catId
+      ? { ...e, tiers: e.tiers.filter((_, i) => i !== idx) }
+      : e);
+    saveAll(updated);
+  };
+
+  const editTierPrice = (catId, idx, newPrice) => {
+    const p = Number(newPrice);
+    if (!isFinite(p)) return;
+    const updated = extras.map(e => e.id === catId
+      ? { ...e, tiers: e.tiers.map((t, i) => i === idx ? { ...t, price: p } : t) }
+      : e);
+    saveAll(updated);
+  };
+
+  const fmt = n => n ? Number(n).toLocaleString('ru-RU') : '—';
+
+  return h('div', { style: { ...S.card, marginTop: 16, border: `2px solid ${AM}` } },
+    h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom:6 } },
+      h('div', { style: { ...S.sec, color: AM2, marginBottom: 0, flex: 1 } }, '➕ Доп. расценки'),
+      h('button', {
+        style: gbtn({ fontSize: 12, padding:'5px 12px' }),
+        onClick: () => setNewCatForm({ name:'', paramLabel:'', paramUnit:'мм' })
+      }, '+ Категория')
+    ),
+    h('div', { style: { fontSize: 12, color:'var(--muted)', marginBottom: 12 } },
+      'Категории допработ с ценами по параметрам (толщина металла, диаметр). Заполняются при импорте прайса или вручную. Работники добавляют допработы к заказам из личного кабинета, мастер согласовывает.'
+    ),
+
+    // Форма новой категории
+    newCatForm && h('div', { style: { background:'#f5f5f2', padding: 12, borderRadius: 6, marginBottom: 12, border:'0.5px solid rgba(0,0,0,0.08)' } },
+      h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr 100px auto auto', gap: 6, alignItems: 'end' } },
+        h('div', null, h('label', { style: S.lbl }, 'Название категории'),
+          h('input', { style: { ...S.inp, width:'100%' }, placeholder:'Например: Пескоструйка', value: newCatForm.name,
+            onChange: e => setNewCatForm(p => ({ ...p, name: e.target.value })) })),
+        h('div', null, h('label', { style: S.lbl }, 'Название параметра'),
+          h('input', { style: { ...S.inp, width:'100%' }, placeholder:'Толщина металла', value: newCatForm.paramLabel,
+            onChange: e => setNewCatForm(p => ({ ...p, paramLabel: e.target.value })) })),
+        h('div', null, h('label', { style: S.lbl }, 'Ед. изм.'),
+          h('input', { style: { ...S.inp, width:'100%' }, placeholder:'мм', value: newCatForm.paramUnit,
+            onChange: e => setNewCatForm(p => ({ ...p, paramUnit: e.target.value })) })),
+        h('button', { style: abtn(), onClick: addCategory }, '+ Добавить'),
+        h('button', { style: gbtn(), onClick: () => setNewCatForm(null) }, 'Отмена')
+      )
+    ),
+
+    // Список категорий
+    extras.length === 0
+      ? h('div', { style: { textAlign:'center', color:'var(--muted)', padding: 20, fontSize: 13 } },
+          'Категории не заданы — заполнятся при импорте прайса или добавьте вручную')
+      : extras.map(cat => {
+          const isExp = expandedId === cat.id;
+          const tf = newTierByCat[cat.id] || {};
+          return h('div', { key: cat.id, style: { border:'0.5px solid var(--border-soft)', borderRadius: 6, marginBottom: 6, background:'#fff' } },
+            // шапка категории
+            h('div', {
+              style: { padding:'8px 12px', cursor:'pointer', display:'flex', alignItems:'center', gap: 8, background: isExp ? 'rgba(217,166,58,0.08)' : 'transparent' },
+              onClick: () => setExpandedId(isExp ? null : cat.id)
+            },
+              h('span', { style: { fontSize: 11 } }, isExp ? '▼' : '▶'),
+              h('b', { style: { flex: 1, fontSize: 13 } }, cat.name),
+              h('span', { style: { fontSize: 11, color:'var(--muted)' } }, `${cat.paramLabel}, ${cat.paramUnit || ''}`),
+              h('span', { style: { fontSize: 10, padding:'2px 6px', borderRadius: 4, background: cat.source === 'manual' ? '#e0e0d8' : '#f0e6c8', color:'#666' } },
+                cat.source === 'manual' ? 'ручная' : 'из прайса'),
+              h('span', { style: { fontSize: 11, color:'var(--muted)' } }, `${cat.tiers.length} тиеров`),
+              h('button', { style: rbtn({ fontSize: 10, padding:'3px 8px' }),
+                onClick: (e) => { e.stopPropagation(); delCategory(cat.id); } }, '✕')
+            ),
+            // тиеры (развёрнуто)
+            isExp && h('div', { style: { padding: 12, borderTop:'0.5px solid var(--border-soft)' } },
+              cat.tiers.length === 0
+                ? h('div', { style: { color:'var(--muted)', fontSize: 12, marginBottom: 8 } }, 'Тиеры не заданы')
+                : h('table', { style: { width:'100%', borderCollapse:'collapse', fontSize: 12, marginBottom: 8 } },
+                    h('thead', null,
+                      h('tr', null, [`${cat.paramLabel}, ${cat.paramUnit || ''}`, 'Цена ₽', ''].map(col =>
+                        h('th', { key: col, style: { textAlign:'left', padding:'4px 6px', fontSize: 10, color:'var(--muted)' } }, col)
+                      ))
+                    ),
+                    h('tbody', null,
+                      cat.tiers.map((t, i) => h('tr', { key: i, style: { borderTop:'0.5px solid var(--border-soft)' } },
+                        h('td', { style: { padding:'6px' } }, `${t.min}${t.min !== t.max ? ' – ' + t.max : ''}`),
+                        h('td', { style: { padding:'6px' } },
+                          h('input', { style: { ...S.inp, width: 100 }, type:'number', value: t.price,
+                            onChange: e => editTierPrice(cat.id, i, e.target.value) })),
+                        h('td', { style: { padding:'6px', textAlign:'right' } },
+                          h('button', { style: rbtn({ fontSize: 10, padding:'3px 8px' }), onClick: () => delTier(cat.id, i) }, '✕'))
+                      ))
+                    )
+                  ),
+              // добавление тиера
+              h('div', { style: { display:'flex', gap: 6, alignItems:'center' } },
+                h('input', { style: { ...S.inp, width: 80 }, type:'number', placeholder:'мин', value: tf.min || '',
+                  onChange: e => setNewTierByCat(p => ({ ...p, [cat.id]: { ...tf, min: e.target.value } })) }),
+                h('span', null, '–'),
+                h('input', { style: { ...S.inp, width: 80 }, type:'number', placeholder:'макс', value: tf.max || '',
+                  onChange: e => setNewTierByCat(p => ({ ...p, [cat.id]: { ...tf, max: e.target.value } })) }),
+                h('span', { style: { fontSize: 11, color:'var(--muted)' } }, cat.paramUnit),
+                h('input', { style: { ...S.inp, width: 100, marginLeft: 8 }, type:'number', placeholder:'цена ₽', value: tf.price || '',
+                  onChange: e => setNewTierByCat(p => ({ ...p, [cat.id]: { ...tf, price: e.target.value } })) }),
+                h('button', { style: abtn({ fontSize: 11, padding:'6px 12px' }), onClick: () => addTier(cat.id) }, '+ тиер')
+              )
+            )
+          );
+        })
   );
 });
