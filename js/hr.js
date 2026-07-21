@@ -1575,10 +1575,20 @@ const PayrollExport = memo(({ data }) => {
         }
       });
 
-      // Fallback для старых заказов без op.earning: calcPieceworkEarnings по отгруженным заказам
-      if (pieceEarned === 0 && (payType === 'piecework' || payType === 'mixed')) {
+      // Fallback для старых заказов, у операций которых ещё нет op.earning.
+      // ВАЖНО: пропускаем заказы, где хотя бы часть операций уже имеет earning —
+      // они посчитаны выше через основной путь, повторный счёт через calcPieceworkEarnings
+      // приведёт к удвоению суммы. Такая ситуация возникает во время миграции: старые
+      // отгруженные заказы платятся через fallback, новые — через op.earning.
+      if (payType === 'piecework' || payType === 'mixed') {
         const shippedOrders = (data.orders||[]).filter(o => o.shipped && o.shippedAt >= monthStart && o.shippedAt <= monthEnd);
         shippedOrders.forEach(o => {
+          // Пропуск: если по этому заказу хоть одна op уже начислена через op.earning
+          const orderOps = (data.ops||[]).filter(op => op.orderId === o.id && !op.archived);
+          const alreadyCounted = orderOps.some(op => op.earning && op.earning.amount > 0
+            && (op.workerIds||[]).includes(w.id));
+          if (alreadyCounted) return;
+
           const earnings = calcPieceworkEarnings(data, w.id, o.id);
           if (earnings && earnings.total > 0) {
             pieceEarned += earnings.total;
