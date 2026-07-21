@@ -132,6 +132,40 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
     setEditingId(op.id);
   }, []);
 
+  // Утверждение допработы, добавленной рабочим. Переводит op в 'done' через buildFinishUpdate —
+  // это заставит core.js посчитать op.earning из замороженной op.extraAmount (см. calcOpPieceworkEarning).
+  // Мастера в workerId кладём как условного "закрывающего" — buildFinishUpdate требует workerId для event-лога.
+  const approveExtraWork = useCallback(async (opId) => {
+    const op = data.ops.find(o => o.id === opId);
+    if (!op || !op.isExtraWork || op.status !== 'pending_approval') return;
+    // Проставляем "стартовал=финиш=сейчас" — для аудита, чтобы допоперация имела корректные метки
+    const opWithMeta = { ...op, startedAt: op.startedAt || now(), approvedByMaster: 'master', approvedAt: now() };
+    // buildFinishUpdate ожидает op в data.ops — временно подменим, чтобы получить корректный ops[]
+    const dataForBuild = { ...data, ops: data.ops.map(o => o.id === opId ? opWithMeta : o) };
+    const result = buildFinishUpdate(dataForBuild, opWithMeta, 'master', {});
+    const d = { ops: result.ops, events: result.events, reclamations: result.reclamations,
+      opNorms: result.opNorms || data.opNorms || {}, auxStats: result.auxStats || data.auxStats || {} };
+    const finalData = logAction({ ...data, ...d }, 'master_approve_extra_work',
+      { opId, orderId: op.orderId, extraKey: op.extraKey, param: op.extraParam, price: op.extraPrice, qty: op.extraQty, totalAmount: op.extraAmount });
+    onUpdate(finalData);
+    DB.save(finalData).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
+    addToast(`Допработа утверждена: ${(op.extraAmount || 0).toLocaleString('ru-RU')} ₽`, 'success');
+  }, [data, onUpdate, addToast]);
+
+  const rejectExtraWork = useCallback(async (opId) => {
+    const op = data.ops.find(o => o.id === opId);
+    if (!op || !op.isExtraWork || op.status !== 'pending_approval') return;
+    const reason = prompt('Причина отклонения (будет видна рабочему):');
+    if (reason == null) return; // отмена
+    const rejectedOp = { ...op, status: 'rejected', rejectedAt: now(), rejectedReason: reason.trim(), rejectedBy: 'master' };
+    const d = { ...data, ops: data.ops.map(o => o.id === opId ? rejectedOp : o) };
+    const finalData = logAction(d, 'master_reject_extra_work',
+      { opId, orderId: op.orderId, extraKey: op.extraKey, reason: reason.trim() });
+    onUpdate(finalData);
+    DB.save(finalData).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
+    addToast('Допработа отклонена', 'info');
+  }, [data, onUpdate, addToast]);
+
   const opsToShow = useMemo(() => {
     let filtered = data.ops.filter(o => showArchived ? true : !o.archived);
     // Фильтр по типу продукции (через заказ)
@@ -141,6 +175,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
     }
     if (filt === 'active') filtered = filtered.filter(o => o.status === 'in_progress');
     else if (filt === 'pending') filtered = filtered.filter(o => o.status === 'pending');
+    else if (filt === 'pending_approval') filtered = filtered.filter(o => o.status === 'pending_approval');
     else if (filt === 'issues') filtered = filtered.filter(o => o.status === 'defect' || o.status === 'rework');
     else if (filt === 'on_check') filtered = filtered.filter(o => o.status === 'on_check');
     else if (filt === 'done') filtered = filtered.filter(o => o.status === 'done');
@@ -148,6 +183,11 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
     // Скрываем завершённые если не включён showDone и не стоит фильтр 'done'
     if (!showDone && filt !== 'done') {
       filtered = filtered.filter(o => o.status !== 'done' && !o.hiddenFromFeed);
+    }
+    // 'all' по умолчанию не показывает pending_approval — они видны только на своём фильтре,
+    // чтобы не смешивать поток обычных операций с записями на согласование
+    if (filt === 'all') {
+      filtered = filtered.filter(o => o.status !== 'pending_approval');
     }
     return filtered;
   }, [data.ops, data.orders, filt, showArchived, opsFilterType, showDone]);
@@ -275,6 +315,18 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
     ),
     h('div', { style: { display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' } },
       [['all','Все'],['pending','Ожидают'],['active','В работе'],['on_check','На контроле'],['issues','Проблемы']].map(([id,l]) => h('button', { key: id, style: filt === id ? abtn() : gbtn(), onClick: () => setFilt(id) }, l)),
+      // Кнопка «На согласовании» — видна только когда есть что согласовывать (иначе не мозолит глаз)
+      (() => {
+        const pendingApprCount = data.ops.filter(o => o.status === 'pending_approval' && !o.archived).length;
+        if (pendingApprCount === 0 && filt !== 'pending_approval') return null;
+        const isActive = filt === 'pending_approval';
+        return h('button', {
+          style: isActive
+            ? { ...abtn(), background: '#c99a00', borderColor: '#c99a00' }
+            : { ...gbtn(), background: '#fffbea', borderColor: '#e0c060', color: '#8b6d00', fontWeight: 500 },
+          onClick: () => setFilt(isActive ? 'all' : 'pending_approval')
+        }, `🔔 На согласовании${pendingApprCount > 0 ? ` (${pendingApprCount})` : ''}`);
+      })(),
       h('button', {
         style: filt === 'done' ? { ...abtn({ fontSize: 12 }), background: GN, borderColor: GN } : gbtn({ fontSize: 12 }),
         onClick: () => { setFilt(filt === 'done' ? 'all' : 'done'); if (filt !== 'done') setShowDone(true); }
@@ -415,7 +467,16 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
               h('td', { style: { ...S.td, fontFamily: 'monospace' } }, dur),
               h('td', { style: S.td },
                 h('div', { style: { display: 'flex', gap: 4 } },
-                  !op.archived ? [
+                  // Для допработ на согласовании — кнопки утверждения (заменяют QR/edit)
+                  op.isExtraWork && op.status === 'pending_approval' ? [
+                    h('button', { key:'appr', style: { ...abtn({ fontSize: 11, padding: '4px 10px' }), background: GN, borderColor: GN, color:'#fff' },
+                      onClick: (e) => { e.stopPropagation(); approveExtraWork(op.id); },
+                      title: `Утвердить: ${(op.extraAmount||0).toLocaleString('ru-RU')} ₽ на ${(op.workerIds||[]).length} чел.` }, '✓ Утв.'),
+                    h('button', { key:'rej', style: rbtn({ fontSize: 11, padding: '4px 10px' }),
+                      onClick: (e) => { e.stopPropagation(); rejectExtraWork(op.id); } }, '✕ Откл.'),
+                    h('button', { key:'del2', style: gbtn({ fontSize: 10, padding: '3px 6px' }),
+                      onClick: (e) => { e.stopPropagation(); del(op.id); }, title: 'Удалить запись' }, '🗑')
+                  ] : !op.archived ? [
                     h('button', { key: 'qr', style: gbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => onShowQR(op, data.workers.find(w => w.id === op.workerIds?.[0])) }, 'QR'),
                     h('button', { key: 'edit', style: (editingId === op.id ? abtn : gbtn)({ fontSize: 11, padding: '4px 8px' }), onClick: () => editingId === op.id ? resetForm() : edit(op) }, editingId === op.id ? '✕' : '✎'),
                     editingId !== op.id && h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => del(op.id) }, '✕')
