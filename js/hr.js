@@ -1749,10 +1749,21 @@ const PayrollExport = memo(({ data }) => {
             return h(React.Fragment, { key: w.id },
               h('tr', {
                 onClick: () => hasDetails && setExpandedWorkerId(isExp ? null : w.id),
-                style: { borderBottom:'0.5px solid var(--border-soft)', cursor: hasDetails ? 'pointer' : 'default', background: isExp ? 'rgba(217,166,58,0.06)' : 'transparent' }
+                title: hasDetails ? `Клик — раскрыть детализацию по заказам (${pieceCount} операций)` : undefined,
+                style: { borderBottom:'0.5px solid var(--border-soft)', cursor: hasDetails ? 'pointer' : 'default', background: isExp ? 'rgba(217,166,58,0.10)' : 'transparent' }
               },
-                h('td', { style:{ padding:'8px 10px', width: 20, textAlign:'center', color:'var(--muted)', fontSize: 11 } },
-                  hasDetails ? (isExp ? '▼' : '▸') : ''),
+                h('td', { style:{ padding:'8px 10px', width: 34, textAlign:'center' } },
+                  hasDetails ? h('span', {
+                    style: {
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      width: 26, height: 26, borderRadius: 6,
+                      background: isExp ? AM : 'rgba(217,166,58,0.15)',
+                      color: isExp ? '#fff' : AM2,
+                      fontSize: 14, fontWeight: 700,
+                      transition: 'transform 0.15s',
+                      transform: isExp ? 'rotate(0deg)' : 'rotate(0deg)',
+                    }
+                  }, isExp ? '▼' : '▶') : ''),
                 h('td', { style:{ padding:'8px 10px', fontWeight:500 } }, w.name),
                 h('td', { style:{ padding:'8px 10px', color:'var(--muted)', fontSize:12 } }, w.position||'—'),
                 h('td', { style:{ padding:'8px 10px' } },
