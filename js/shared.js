@@ -845,6 +845,161 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
 
 
 
+// ==================== OrderEarningsRecalc — блок пересчёта начислений заказа ====================
+// Показывает разницу между уже начисленными op.earning и тем, что дала бы текущая формула
+// (актуальный прайс + текущие paymentShare этапов + фактические workerIds). Если есть расхождение —
+// показывает предупреждение и кнопку "Пересчитать" с превью изменений и подтверждением.
+// Не трогает старые операции без earning (fallback уже посчитан по отгрузке).
+// Не трогает op-допработы (isExtraWork): их сумма заморожена по замыслу и от справочника не зависит.
+const OrderEarningsRecalc = memo(({ ord, data, onUpdate, onClose }) => {
+  const [showPreview, setShowPreview] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  // Собираем все закрытые операции заказа, у которых на данный момент есть op.earning
+  const earnedOps = (data.ops || []).filter(o =>
+    o.orderId === ord.id && !o.archived && o.earning && o.earning.amount > 0);
+  const currentTotal = earnedOps.reduce((s, o) => s + o.earning.amount * ((o.workerIds || []).length || 1), 0);
+
+  // Вычисляем "как посчиталось бы сейчас" через calcOpPieceworkEarning
+  // Функция из core.js доступна глобально. Если её нет (старая сборка) — просто не показываем блок.
+  if (typeof calcOpPieceworkEarning !== 'function') return null;
+
+  const preview = earnedOps.map(op => {
+    // Пересчитываем на актуальных данных, но НЕ передаём earning — чтобы функция посчитала заново
+    const opFresh = { ...op, earning: null };
+    const newEarn = calcOpPieceworkEarning(data, opFresh);
+    const oldPerWorker = op.earning.amount;
+    const newPerWorker = newEarn?.amount || 0;
+    const workerCount = (op.workerIds || []).length || 1;
+    return {
+      op, oldPerWorker, newPerWorker,
+      oldTotal: oldPerWorker * workerCount,
+      newTotal: newPerWorker * workerCount,
+      workerCount,
+      oldShare: op.earning.paymentShare != null ? op.earning.paymentShare : 100,
+      newShare: newEarn?.paymentShare != null ? newEarn.paymentShare : (newEarn ? 100 : null),
+      newEarn,
+    };
+  });
+
+  const changed = preview.filter(p => p.oldPerWorker !== p.newPerWorker);
+  const newTotal = preview.reduce((s, p) => s + p.newTotal, 0);
+  const delta = newTotal - currentTotal;
+
+  // Если начислений нет вообще — не показываем блок
+  if (earnedOps.length === 0) return null;
+
+  // Если всё сходится — показываем зелёный "все ок"
+  if (changed.length === 0) {
+    return h('div', { style: { background: 'rgba(29,158,117,0.06)', border: `0.5px solid ${GN}`, borderRadius: 8, padding: '10px 14px', marginBottom: 12 } },
+      h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: GN2, textTransform: 'uppercase', marginBottom: 4 } }, '💰 Начисления по заказу'),
+      h('div', { style: { fontSize: 13 } },
+        `✓ Начислено ${currentTotal.toLocaleString('ru-RU')} ₽ по ${earnedOps.length} операциям — соответствует текущему прайсу и настройкам этапов.`)
+    );
+  }
+
+  // Есть расхождения — показываем warning + кнопку пересчёта
+  const doRecalc = async () => {
+    setBusy(true);
+    // Обновляем op.earning для всех изменённых операций
+    const updatedOps = data.ops.map(o => {
+      const p = preview.find(x => x.op.id === o.id);
+      if (!p || p.oldPerWorker === p.newPerWorker) return o;
+      if (!p.newEarn) return { ...o, earning: null }; // пересчёт даёт null → сбрасываем
+      return { ...o, earning: p.newEarn, earningRecalcedAt: Date.now() };
+    });
+    let d = { ...data, ops: updatedOps };
+    // Логируем действие для аудита
+    if (typeof logAction === 'function') {
+      d = logAction(d, 'earnings_recalc', {
+        orderId: ord.id, orderNumber: ord.number,
+        opsChanged: changed.length,
+        oldTotal: currentTotal, newTotal, delta,
+        details: changed.map(p => ({ opId: p.op.id, opName: p.op.name, oldPerWorker: p.oldPerWorker, newPerWorker: p.newPerWorker }))
+      });
+    }
+    onUpdate(d);
+    if (typeof DB !== 'undefined' && DB.save) {
+      try { await DB.save(d); }
+      catch { onUpdate(data); setBusy(false); return; }
+    }
+    setBusy(false);
+    setShowPreview(false);
+  };
+
+  const fmt = n => Number(n || 0).toLocaleString('ru-RU');
+  const deltaColor = delta > 0 ? GN2 : delta < 0 ? RD : '#666';
+  const deltaSign = delta > 0 ? '+' : '';
+
+  return h(React.Fragment, null,
+    h('div', { style: { background: 'rgba(239,159,39,0.08)', border: `0.5px solid ${AM}`, borderRadius: 8, padding: '10px 14px', marginBottom: 12 } },
+      h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: AM2, textTransform: 'uppercase', marginBottom: 6 } }, '💰 Начисления по заказу — есть расхождения'),
+      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 8 } },
+        h('div', { style: { fontSize: 12, flex: 1, lineHeight: 1.5 } },
+          `Начислено сейчас: `,
+          h('b', null, `${fmt(currentTotal)} ₽`),
+          ` по ${earnedOps.length} операциям. По текущим настройкам (прайс + доли этапов) должно быть `,
+          h('b', null, `${fmt(newTotal)} ₽`),
+          ` — изменения затронут ${changed.length} операций.`
+        ),
+        h('div', { style: { fontSize: 15, fontWeight: 700, color: deltaColor, whiteSpace: 'nowrap' } }, `${deltaSign}${fmt(delta)} ₽`)
+      ),
+      h('button', { style: { fontSize: 12, padding: '6px 14px', border: `1px solid ${AM}`, borderRadius: 7, background: AM, color: '#fff', cursor: 'pointer', fontWeight: 500 },
+        onClick: () => setShowPreview(true) }, '🔄 Пересчитать начисления')
+    ),
+
+    // Модалка превью с деталями и подтверждением
+    showPreview && h('div', {
+      role: 'dialog', 'aria-modal': 'true',
+      style: { position: 'fixed', inset: 0, background: 'rgba(20,18,15,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 400, padding: 16 },
+      onClick: e => e.target === e.currentTarget && !busy && setShowPreview(false),
+    },
+      h('div', { style: { background: 'var(--card)', borderRadius: 12, width: 'min(800px, calc(100vw - 32px))', maxHeight: '85vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' } },
+        h('div', { style: { padding: '16px 20px', borderBottom: '0.5px solid var(--border)' } },
+          h('div', { style: { fontSize: 16, fontWeight: 600, marginBottom: 4 } }, `🔄 Пересчёт начислений — заказ ${ord.number}`),
+          h('div', { style: { fontSize: 12, color: 'var(--muted)' } },
+            `${changed.length} операций будет обновлено. Итог заказа: ${fmt(currentTotal)} → ${fmt(newTotal)} ₽ (${deltaSign}${fmt(delta)} ₽)`)
+        ),
+        h('div', { style: { padding: '12px 20px', overflow: 'auto', flex: 1 } },
+          h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 } },
+            h('thead', null,
+              h('tr', { style: { color: 'var(--muted)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' } },
+                ['Операция', 'Раб.', 'Было /чел', 'Доля', 'Станет /чел', 'Доля', 'Δ Всего'].map(c =>
+                  h('th', { key: c, style: { textAlign: 'left', padding: '6px 8px', fontWeight: 500 } }, c))
+              )
+            ),
+            h('tbody', null,
+              changed.map(p => {
+                const rowDelta = p.newTotal - p.oldTotal;
+                return h('tr', { key: p.op.id, style: { borderTop: '0.5px solid var(--border-soft)' } },
+                  h('td', { style: { padding: '6px 8px' } }, p.op.name || '—'),
+                  h('td', { style: { padding: '6px 8px', color: 'var(--muted)' } }, p.workerCount),
+                  h('td', { style: { padding: '6px 8px', color: 'var(--muted)' } }, `${fmt(p.oldPerWorker)} ₽`),
+                  h('td', { style: { padding: '6px 8px', color: 'var(--muted)' } }, `${p.oldShare}%`),
+                  h('td', { style: { padding: '6px 8px', fontWeight: 500 } }, p.newEarn ? `${fmt(p.newPerWorker)} ₽` : h('span', { style: { color: RD, fontSize: 11 } }, 'не начисляется')),
+                  h('td', { style: { padding: '6px 8px' } }, p.newShare != null ? `${p.newShare}%` : '—'),
+                  h('td', { style: { padding: '6px 8px', fontWeight: 500, color: rowDelta > 0 ? GN2 : rowDelta < 0 ? RD : '#666', whiteSpace: 'nowrap' } },
+                    `${rowDelta > 0 ? '+' : ''}${fmt(rowDelta)} ₽`)
+                );
+              })
+            )
+          ),
+          h('div', { style: { marginTop: 12, padding: 10, background: 'rgba(226,75,74,0.06)', border: '0.5px solid rgba(226,75,74,0.3)', borderRadius: 6, fontSize: 11, color: '#a03030' } },
+            '⚠ Действие изменяет уже начисленные суммы. Если работникам уже выплачены деньги по старым цифрам — пересчёт создаст расхождение с бухгалтерией. Убедитесь что действие согласовано.'
+          )
+        ),
+        h('div', { style: { padding: '12px 20px', borderTop: '0.5px solid var(--border)', display: 'flex', gap: 8, justifyContent: 'flex-end' } },
+          h('button', { style: { fontSize: 12, padding: '8px 16px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: busy ? 'not-allowed' : 'pointer' },
+            onClick: () => !busy && setShowPreview(false), disabled: busy }, 'Отмена'),
+          h('button', { style: { fontSize: 12, padding: '8px 20px', border: `1px solid ${AM}`, borderRadius: 7, background: AM, color: '#fff', cursor: busy ? 'wait' : 'pointer', fontWeight: 500 },
+            onClick: doRecalc, disabled: busy }, busy ? '⏳ Обновление...' : '✓ Применить пересчёт')
+        )
+      )
+    )
+  );
+});
+
+
 // ==================== OrderCardModal — универсальная карточка заказа (360°) ====================
 // Использование:
 //   h(OrderCardModal, { orderId, data, onClose, canEdit: false })
@@ -1170,6 +1325,9 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
             ? h('div', { style: { fontSize: 16, fontWeight: 600, fontFamily: 'monospace', color: AM2 } }, ord.serialNumber)
             : h('div', { style: { fontSize: 12, color: '#aaa', fontStyle: 'italic' } }, 'Не присвоен — укажите в форме редактирования заказа')
         ),
+
+        // Начисления по заказу + кнопка пересчёта (только canEdit)
+        canEdit && h(OrderEarningsRecalc, { ord, data, onUpdate, onClose }),
 
         // Кнопки — только для canEdit
         h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
