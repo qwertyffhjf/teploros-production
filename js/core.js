@@ -626,7 +626,7 @@ const calcOpPieceworkEarning = (data, op) => {
   if (!order) return null;
 
   const rate = findPieceworkRate(data, order.boilerType, order.powerKw);
-  if (!rate || !rate[section.pieceworkField]) return null;
+  if (!rate) return null;
 
   // Определяем долю этапа в сумме расценки.
   // - null/undefined на этапе → обратная совместимость: 100% (для крышек и др.
@@ -637,19 +637,24 @@ const calcOpPieceworkEarning = (data, op) => {
   // рекомендуется явно ставить 0, чтобы не сработала обратная совместимость
   // и они бы не начисляли по 100%.
   let paymentShare = 100;
-  if (op.stageId) {
-    const stage = (data.productionStages || []).find(s => s.id === op.stageId);
-    if (stage && stage.paymentShare != null && stage.paymentShare !== '') {
-      paymentShare = Number(stage.paymentShare);
-    }
+  const stage = op.stageId ? (data.productionStages || []).find(s => s.id === op.stageId) : null;
+  if (stage && stage.paymentShare != null && stage.paymentShare !== '') {
+    paymentShare = Number(stage.paymentShare);
   }
   if (!isFinite(paymentShare) || paymentShare <= 0) return null;
 
+  // Поле прайса: если у этапа задан свой pieceworkField — используем его,
+  // иначе fallback на section.pieceworkField.
+  // Это позволяет участку «Крышки» иметь этапы с разными полями прайса
+  // (coverFront / coverBack) без разбиения участка.
+  const field = (stage && stage.pieceworkField) || section.pieceworkField;
+  if (!rate[field]) return null;
+
   const qty = order.qty || 1;
-  const amount = Math.round(rate[section.pieceworkField] * qty * paymentShare / 100 / workerCount);
+  const amount = Math.round(rate[field] * qty * paymentShare / 100 / workerCount);
   if (amount <= 0) return null;
 
-  return { amount, field: section.pieceworkField, rateId: rate.id, boilerType: order.boilerType, powerKw: order.powerKw, paymentShare };
+  return { amount, field, rateId: rate.id, boilerType: order.boilerType, powerKw: order.powerKw, paymentShare };
 };
 
 
