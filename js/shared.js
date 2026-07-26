@@ -101,8 +101,15 @@ const QRScannerModal = memo(({ onScan, onClose }) => {
   useEffect(() => { onScanRef.current = onScan; }, [onScan]);
 
   useEffect(() => {
-    if (!window.Html5Qrcode) { setError('Библиотека QR не загружена'); return; }
+    let cancelled = false;
+    // Обычно html5-qrcode уже загружен вместе с field-бандлом до того, как рабочий
+    // вообще увидел свой экран (см. core.js: BUNDLES.field). Но на случай, если этот
+    // компонент когда-нибудь станет доступен другой роли раньше готовности бандла —
+    // догружаем библиотеку явно, а не просто показываем ошибку.
+    ensureCdn('html5qrcode').catch(err => { if (!cancelled) setError('Не удалось загрузить библиотеку QR: ' + err.message); });
     const timer = setTimeout(() => {
+      if (cancelled) return;
+      if (!window.Html5Qrcode) { setError('Библиотека QR не загружена'); return; }
       const el = document.getElementById('qr-scanner-region');
       if (!el) { setError('Элемент не найден'); return; }
       try {
@@ -130,6 +137,7 @@ const QRScannerModal = memo(({ onScan, onClose }) => {
       } catch(e) { setError('Ошибка запуска: ' + e.message); }
     }, 300);
     return () => {
+      cancelled = true;
       clearTimeout(timer);
       if (scannerInstance.current) {
         scannerInstance.current.stop().catch(() => {});
@@ -313,8 +321,8 @@ const STATUS_MAP = {
 };
 
 // Экспорт в Excel через SheetJS
-const exportNeedsToExcel = (order, needs) => {
-  if (!XLSX) { alert('XLSX не загружен'); return; }
+const exportNeedsToExcel = async (order, needs) => {
+  await ensureCdn('xlsx');
   const wb = XLSX.utils.book_new();
   (needs.groups || []).forEach(group => {
     const rows = [
@@ -340,8 +348,9 @@ const exportNeedsToExcel = (order, needs) => {
 // Парсинг Excel (формат заявки технолога)
 const parseNeedsFromExcel = (file, onResult) => {
   const reader = new FileReader();
-  reader.onload = (e) => {
+  reader.onload = async (e) => {
     try {
+      await ensureCdn('xlsx');
       const wb = XLSX.read(e.target.result, { type: 'array' });
       const groups = [];
       wb.SheetNames.forEach(sheetName => {
@@ -1347,7 +1356,9 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
 
 
 // ==================== PDF Протокол гидравлического испытания ====================
-const generatePressureTestPDF = (test, data) => {
+const generatePressureTestPDF = async (test, data) => {
+  await ensureCdn('pdfmake');
+  await ensureCdn('vfsFonts');
   if (!pdfMake) { alert('pdfMake не загружен'); return; }
   const order    = data.orders.find(o => o.id === test.orderId);
   const operator = data.workers.find(w => w.id === test.operatorId);
@@ -1444,7 +1455,9 @@ const generatePressureTestPDF = (test, data) => {
   pdfMake.createPdf(docDefinition).download(`ГИ_${order?.number || 'протокол'}_${dateStr}.pdf`);
 };
 
-const generateFullPassport = (order, data) => {
+const generateFullPassport = async (order, data) => {
+  await ensureCdn('pdfmake');
+  await ensureCdn('vfsFonts');
   const ops = data.ops.filter(op => op.orderId === order.id && !op.archived);
   const cost = calcOrderCost(order, data);
 
