@@ -1174,6 +1174,9 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       pressureTests: (data.pressureTests || []).filter(pt => !ids.has(pt.orderId)),
       reclamations: (data.reclamations || []).filter(r => !ids.has(r.orderId)),
       defects: (data.defects || []).filter(df => !ids.has(df.orderId)),
+      // events хранит orderId (напр. material_receive) — без этой строки удалённые
+      // заказы оставляют записи-сироты в ленте событий (найдено при аудите).
+      events: (data.events || []).filter(e => !ids.has(e.orderId)),
     };
     d = logAction(d, 'orders_hard_delete', { orderIds: [...ids], orderNumbers: removedOrders.map(o => o.number), opsRemoved: removedOpsCount });
 
