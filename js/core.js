@@ -1112,6 +1112,14 @@ const DB = {
   _version:     null,    // версия последних загруженных данных (для optimistic locking)
   _saveHistory: [],      // 📜 История сохранений: [{ts, version, userId, summary}] — последние 10
   _lastBackupAt: null,   // ⏱ когда последний раз писали реальный снапшот в app_backups
+  // «База» для трёхстороннего слияния при конфликте (аудит): снапшот данных на момент,
+  // когда локальная сессия последний раз была синхронизирована с сервером — либо через
+  // load(), либо через принятый onSnapshot, либо сразу после успешного save(). Сравнивая
+  // toSave с этой базой, можно понять, какие именно ПОЛЯ объекта реально изменились
+  // локально, и переносить в результат слияния только их — а не весь объект целиком.
+  // Без базы (например сразу после холодного старта в офлайне) merge падает обратно на
+  // старое object-level поведение — это безопасный fallback, не хуже, чем было раньше.
+  _baseData: null,
 
   // ── Загрузка ──────────────────────────────────────────────────────────────
   async load() {
@@ -1164,7 +1172,9 @@ const DB = {
           localStorage.removeItem(CACHE_KEY);
           try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data: parsed, savedAt: Date.now() })); } catch(e2) {}
         }
-        return migrateData({ ...EMPTY_DATA, ...parsed });
+        const loaded = migrateData({ ...EMPTY_DATA, ...parsed });
+        DB._baseData = loaded;
+        return loaded;
       }
     } catch(e) {
       console.warn('Firebase load failed, using cache:', e);
@@ -1418,24 +1428,71 @@ const DB = {
                       remoteWh = typeof whSnap.data().payload === 'string' ? JSON.parse(whSnap.data().payload) : whSnap.data();
                     }
                   } catch(e) { remoteWh = {}; }
-                  // Мержим массивы: наши новые записи добавляем к удалённым
-                  const mergeArrayById = (remote, local, key) => {
-                    const remoteMap = new Map((remote || []).map(item => [item[key], item]));
-                    (local || []).forEach(item => remoteMap.set(item[key], item)); // наши перезаписывают по id
-                    return [...remoteMap.values()];
+                  // ── Field-level merge (аудит) ──────────────────────────────────────
+                  // СТАРОЕ поведение: при совпадении id локальный объект целиком перезаписывал
+                  // удалённый — если мастер поменял priority, а ОТК тем временем поменял status
+                  // ТОГО ЖЕ заказа, чей save() долетел вторым — правки первого тихо терялись.
+                  // Плюс отдельный баг: если remote успел удалить объект (напр. hardDeleteOrders),
+                  // а у нас в памяти была стухшая локальная копия — старый merge её РЕАНИМИРОВАЛ,
+                  // потому что просто брал объединение id из обоих массивов.
+                  //
+                  // НОВОЕ: сравниваем каждое поле объекта с «базой» (DB._baseData — снапшот на
+                  // момент, когда локальная сессия последний раз была синхронизирована). Поле
+                  // расходится с базой → значит его поменяли именно мы → берём наше значение.
+                  // Поле не менялось локально → берём значение с сервера (могло обновиться там).
+                  // Объект есть в базе, но исчез из local → значит удалили локально → не
+                  // возвращаем его, даже если он ещё жив на сервере. Объект есть в базе, но исчез
+                  // из remote → значит удалили на сервере → не реанимируем.
+                  //
+                  // Без базы для конкретного массива (напр. холодный старт в офлайне) —
+                  // fallback на старое object-level поведение, само по себе не хуже, чем было.
+                  const mergeArrayById = (remote, local, key, base) => {
+                    if (!base) {
+                      // Fallback — как было раньше, без диффа по полям.
+                      const remoteMap = new Map((remote || []).map(item => [item[key], item]));
+                      (local || []).forEach(item => remoteMap.set(item[key], item));
+                      return [...remoteMap.values()];
+                    }
+                    const remoteMap = new Map((remote || []).map(i => [i[key], i]));
+                    const baseMap   = new Map((base   || []).map(i => [i[key], i]));
+                    const result = new Map(remoteMap);
+                    (local || []).forEach(localItem => {
+                      const id = localItem[key];
+                      const remoteItem = remoteMap.get(id);
+                      const baseItem = baseMap.get(id);
+                      if (!remoteItem) {
+                        if (baseItem) return; // удалено на сервере — не реанимируем
+                        result.set(id, localItem); // новый локальный объект
+                        return;
+                      }
+                      if (!baseItem) {
+                        result.set(id, localItem); // нет базы для этого id — берём наше целиком
+                        return;
+                      }
+                      const mergedItem = { ...remoteItem };
+                      const allKeys = new Set([...Object.keys(localItem), ...Object.keys(baseItem)]);
+                      allKeys.forEach(k => {
+                        if (JSON.stringify(localItem[k]) !== JSON.stringify(baseItem[k])) mergedItem[k] = localItem[k];
+                      });
+                      result.set(id, mergedItem);
+                    });
+                    const localIds = new Set((local || []).map(i => i[key]));
+                    baseMap.forEach((_, id) => { if (!localIds.has(id)) result.delete(id); });
+                    return [...result.values()];
                   };
-                  toSave.orders = mergeArrayById(remoteData.orders, toSave.orders, 'id');
-                  toSave.ops = mergeArrayById(remoteData.ops, toSave.ops, 'id');
-                  toSave.workers = mergeArrayById(remoteData.workers, toSave.workers, 'id');
+                  const base = DB._baseData || {};
+                  toSave.orders = mergeArrayById(remoteData.orders, toSave.orders, 'id', base.orders);
+                  toSave.ops = mergeArrayById(remoteData.ops, toSave.ops, 'id', base.ops);
+                  toSave.workers = mergeArrayById(remoteData.workers, toSave.workers, 'id', base.workers);
                   // ⚠ Складские поля — сравниваем с remoteWh (warehouse_v1), а не с remoteData (production_v14)
-                  toSave.materials             = mergeArrayById(remoteWh.materials,             toSave.materials,             'id');
-                  toSave.materialConsumptions  = mergeArrayById(remoteWh.materialConsumptions,  toSave.materialConsumptions,  'id');
-                  toSave.materialReservations  = mergeArrayById(remoteWh.materialReservations,  toSave.materialReservations,  'id');
-                  toSave.materialDeliveries    = mergeArrayById(remoteWh.materialDeliveries,    toSave.materialDeliveries,    'id');
-                  toSave.equipment             = mergeArrayById(remoteWh.equipment,             toSave.equipment,             'id');
+                  toSave.materials             = mergeArrayById(remoteWh.materials,             toSave.materials,             'id', base.materials);
+                  toSave.materialConsumptions  = mergeArrayById(remoteWh.materialConsumptions,  toSave.materialConsumptions,  'id', base.materialConsumptions);
+                  toSave.materialReservations  = mergeArrayById(remoteWh.materialReservations,  toSave.materialReservations,  'id', base.materialReservations);
+                  toSave.materialDeliveries    = mergeArrayById(remoteWh.materialDeliveries,    toSave.materialDeliveries,    'id', base.materialDeliveries);
+                  toSave.equipment             = mergeArrayById(remoteWh.equipment,             toSave.equipment,             'id', base.equipment);
                   // ⚠ Раньше эти поля НЕ мержились и просто перезатирались при конфликте — отсюда пропажи табеля/рекламаций.
-                  toSave.reclamations = mergeArrayById(remoteData.reclamations, toSave.reclamations, 'id');
-                  toSave.duels        = mergeArrayById(remoteData.duels,        toSave.duels,        'id');
+                  toSave.reclamations = mergeArrayById(remoteData.reclamations, toSave.reclamations, 'id', base.reclamations);
+                  toSave.duels        = mergeArrayById(remoteData.duels,        toSave.duels,        'id', base.duels);
                   // Табель — вложенная структура timesheet[месяц][workerId][день]: глубокий мердж по дням, без потери чужих записей
                   const mergeTimesheet = (remote, local) => {
                     const out = { ...(remote || {}) };
@@ -1497,6 +1554,10 @@ const DB = {
             localStorage.setItem(VERSION_KEY, String(newVersion));
             DB._online = true;
             DB._clearQueue();
+            // toSave только что успешно записан (смёрженный или нет) — это и есть новое
+            // согласованное состояние. Следующий save() в этой же сессии должен сравнивать
+            // локальные правки именно с ним, а не со старой базой.
+            DB._baseData = toSave;
             // 📜 Логируем в историю: последние 10 сохранений
             const orderCount = toSave.orders?.length || 0;
             const opCount = toSave.ops?.length || 0;
@@ -1613,6 +1674,7 @@ const DB = {
       ]);
       DB._version = newVersion;
       localStorage.setItem(VERSION_KEY, String(newVersion));
+      DB._baseData = restored;
       return { success: true, message: `Восстановлено состояние на ${new Date(snap.data().ts).toLocaleString()}` };
     } catch(e) {
       return { error: e.message };
@@ -1629,7 +1691,11 @@ const DB = {
       if (!lastMain) return;
       const merged = { ...EMPTY_DATA, ...lastMain };
       if (lastWh) WH_FIELDS.forEach(f => { if (lastWh[f] !== undefined) merged[f] = lastWh[f]; });
-      callback(migrateData(merged));
+      const migrated = migrateData(merged);
+      // Это принятое (не заблокированное _saving) обновление становится новой базой
+      // для будущего трёхстороннего слияния — см. DB._baseData.
+      DB._baseData = migrated;
+      callback(migrated);
     };
 
     const unsubMain = DOC_REF.onSnapshot(
