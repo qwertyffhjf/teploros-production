@@ -1073,20 +1073,9 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
   // Для каждого участка со сдельной оплатой считаем сумму paymentShare
   // среди этапов, которые по умолчанию сажаются на этот участок (stage.sectionId === section.id).
   // Показываем предупреждение если сумма не 100% (или 0 — то есть никто не платит).
-  const piecework_sections = (data.sections || []).filter(sec =>
-    sec.pieceworkField && (sec.payType === 'piecework' || sec.payType === 'mixed'));
-  const shareIssues = piecework_sections.map(sec => {
-    const stagesOnSection = allStages.filter(s => s.sectionId === sec.id);
-    if (stagesOnSection.length === 0) return null; // ни один этап не привязан по умолчанию — пропускаем
-    // Считаем только этапы где paymentShare явно указан. Если ни один не указан — старая логика (обратная совм.), не warn.
-    const explicit = stagesOnSection.filter(s => s.paymentShare != null && s.paymentShare !== '');
-    if (explicit.length === 0) return null; // ни у кого не задано — работает обратная совм., промолчим
-    const sum = explicit.reduce((acc, s) => acc + Number(s.paymentShare || 0), 0);
-    // Этапы без указания доли — они по умолчанию платят 100% (обратная совм.).
-    // Если есть и указанные, и неуказанные — это ошибка конфигурации.
-    const missingCount = stagesOnSection.length - explicit.length;
-    return { sec, sum, explicit, missingCount, stagesOnSection };
-  }).filter(Boolean);
+  // Контроль долей переехал в раздел «Расценки» → «Привязка этапов к расценкам»,
+  // чтобы вся настройка оплаты была в одном месте. Здесь оставлены только бейджи.
+  const shareIssues = [];
 
   const sharesHeader = shareIssues.length > 0 ? h('div', {
     style: { marginBottom: 12, padding: '10px 14px', background: '#fffbea',
@@ -1155,6 +1144,13 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
                       h('span', { style: { fontSize: 13, fontWeight: 500 } }, stage.name),
                       (stage.checklist?.length > 0) && h('span', { style: { fontSize: 10, color: AM, background: AM3, padding: '1px 6px', borderRadius: 6 } }, `${stage.checklist.length} пунктов`),
                       (stage.requiredMaterialIds?.length > 0) && h('span', { style: { fontSize: 10, color: GN2, background: GN3, padding: '1px 6px', borderRadius: 6 } }, `📦 ${stage.requiredMaterialIds.length} материала`),
+                      stage.pieceworkField && h('span', {
+                        style: { fontSize: 10, color: '#2a7d5a', background: '#e3f5eb',
+                          padding: '1px 5px', borderRadius: 4, marginLeft: 4, fontWeight: 600 }
+                      }, stage.pieceworkField === 'heatExchanger' ? 'ТО'
+                        : stage.pieceworkField === 'coverFront' ? 'КП'
+                        : stage.pieceworkField === 'coverBack' ? 'КЗ'
+                        : stage.pieceworkField === 'rolling' ? 'ВЦ' : stage.pieceworkField),
                       (stage.paymentShare != null && stage.paymentShare !== '') && h('span', {
                         style: { fontSize: 10, color: Number(stage.paymentShare) > 0 ? '#8b6d00' : '#888',
                           background: Number(stage.paymentShare) > 0 ? '#fff2c6' : '#eee',
@@ -1250,31 +1246,21 @@ const StageDefaultsEditor = memo(({ stage, data, onSave, onClose }) => {
     equipmentId:  stage.equipmentId  || '',
     plannedHours: stage.plannedHours ? String(stage.plannedHours) : '',
     drawingUrl:   stage.drawingUrl   || '',
-    paymentShare: stage.paymentShare != null ? String(stage.paymentShare) : '',
   });
 
   const handleSave = () => {
-    // Валидация доли: пусто → null (обратная совместимость), число → clamp 0-100
-    let paymentShare = null;
-    if (form.paymentShare !== '' && form.paymentShare != null) {
-      const n = Number(form.paymentShare);
-      if (isFinite(n)) paymentShare = Math.max(0, Math.min(100, n));
-    }
+    // paymentShare / pieceworkField здесь НЕ трогаем — они настраиваются
+    // в разделе «Расценки» и не должны затираться сохранением этой формы.
     onSave({
       sectionId:    form.sectionId    || null,
       equipmentId:  form.equipmentId  || null,
       plannedHours: form.plannedHours ? Number(form.plannedHours) : null,
       drawingUrl:   form.drawingUrl.trim() || null,
-      paymentShare,
     });
   };
 
   const sectionName  = form.sectionId   ? (data.sections  || []).find(s => s.id === form.sectionId)?.name   : null;
   const equipName    = form.equipmentId ? (data.equipment || []).find(e => e.id === form.equipmentId)?.name  : null;
-  // Показываем подсказку только если участок сдельный (иначе % оплаты не имеет смысла)
-  const selectedSection = form.sectionId ? (data.sections || []).find(s => s.id === form.sectionId) : null;
-  const isPieceworkSection = selectedSection && selectedSection.pieceworkField
-    && (selectedSection.payType === 'piecework' || selectedSection.payType === 'mixed');
 
   return h('div', { style: { marginTop: 8, padding: '12px 14px', background: AM3, borderRadius: 8, border: `0.5px solid ${AM4}` } },
     h('div', { style: { fontSize: 10, color: AM2, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10, fontWeight: 600 } },
@@ -1331,33 +1317,26 @@ const StageDefaultsEditor = memo(({ stage, data, onSave, onClose }) => {
         form.drawingUrl && h('a', { href: form.drawingUrl, target: '_blank', rel: 'noopener', style: { fontSize: 10, color: BL, marginTop: 2, display: 'block' } }, '📐 Открыть ссылку')
       )
     ),
-    // 💰 Доля оплаты — отдельная секция, видна для сдельных участков
+    // 💰 Оплата — только read-only справка. Настраивается в HR → Расценки,
+    // чтобы вся денежная логика жила в одном разделе, а не была размазана.
     h('div', { style: {
-      padding: '10px 12px', marginBottom: 10, borderRadius: 6,
-      background: isPieceworkSection ? 'rgba(217,166,58,0.08)' : '#f5f5f2',
-      border: `0.5px solid ${isPieceworkSection ? AM4 : 'rgba(0,0,0,0.06)'}`,
+      padding: '9px 12px', marginBottom: 10, borderRadius: 6,
+      background: 'rgba(0,0,0,0.03)', border: '0.5px solid rgba(0,0,0,0.06)',
     } },
-      h('div', { style: { fontSize: 10, color: AM2, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, fontWeight: 600 } },
-        '💰 Доля оплаты этапа'
-      ),
-      h('div', { style: { display: 'flex', gap: 10, alignItems: 'center' } },
-        h('input', {
-          type: 'number', step: '1', min: '0', max: '100',
-          style: { ...S.inp, width: 80, fontSize: 12 },
-          placeholder: '—',
-          value: form.paymentShare,
-          onChange: e => setForm(p => ({ ...p, paymentShare: e.target.value }))
-        }),
-        h('span', { style: { fontSize: 12, color: '#666' } }, '%'),
-        h('div', { style: { fontSize: 11, color: '#666', flex: 1, lineHeight: 1.4 } },
-          isPieceworkSection
-            ? `Сколько от «${selectedSection.pieceworkField === 'heatExchanger' ? 'теплообменника'
-                : selectedSection.pieceworkField === 'coverFront' ? 'крышки передней'
-                : selectedSection.pieceworkField === 'coverBack' ? 'крышки задней'
-                : selectedSection.pieceworkField === 'rolling' ? 'вальцовки'
-                : selectedSection.pieceworkField}» получает этот этап. Пусто = 100% (старая логика, весь платёж на этот этап). Сумма долей всех этапов одного участка должна быть 100%.`
-            : 'Значение имеет смысл только если участок сдельный (piecework/mixed) и у него задан pieceworkField. Иначе игнорируется.'
-        )
+      h('div', { style: { fontSize: 11, color: '#666', lineHeight: 1.5 } },
+        stage.pieceworkField
+          ? h('span', null,
+              '💰 Оплата: ',
+              h('b', null, stage.pieceworkField === 'heatExchanger' ? 'Теплообменник'
+                : stage.pieceworkField === 'coverFront' ? 'Крышка перед.'
+                : stage.pieceworkField === 'coverBack' ? 'Крышка зад.'
+                : stage.pieceworkField === 'rolling' ? 'Вальцовка'
+                : stage.pieceworkField),
+              ' · доля ',
+              h('b', null, (stage.paymentShare != null && stage.paymentShare !== '' ? Number(stage.paymentShare) : 100) + '%'),
+              '. Изменить — в разделе «Расценки» → «Привязка этапов к расценкам».'
+            )
+          : h('span', null, '💰 Этап не оплачивается сдельно. Настроить — в разделе «Расценки» → «Привязка этапов к расценкам».')
       )
     ),
     h('div', { style: { display: 'flex', gap: 6 } },
@@ -2450,6 +2429,213 @@ const buildPieceworkImportPreview = (parsed, existingRates) => {
   });
 };
 
+// ==================== StagePaymentBinding ====================
+// ЕДИНЫЙ экран настройки сдельной оплаты. Живёт в разделе «Расценки» рядом
+// с прайсом, чтобы вся денежная логика была в одном месте.
+//
+// Здесь в одной таблице отвечаем на три вопроса про каждый этап:
+//   1) оплачивается ли он сдельно;
+//   2) из какой колонки прайса берётся цена (ТО / КП / КЗ / ВЦ);
+//   3) какую долю этой цены получает этап.
+//
+// Раньше это было размазано: участок хранил pieceworkField, этап — paymentShare,
+// прайс жил отдельно. Участок больше в расчёте не участвует, если у этапа
+// задана своя колонка (см. calcOpPieceworkEarning в core.js).
+const PIECEWORK_FIELDS = [
+  { id: 'heatExchanger', label: 'Теплообменник', short: 'ТО' },
+  { id: 'coverFront',    label: 'Крышка перед.', short: 'КП' },
+  { id: 'coverBack',     label: 'Крышка зад.',   short: 'КЗ' },
+  { id: 'rolling',       label: 'Вальцовка',     short: 'ВЦ' },
+];
+
+const StagePaymentBinding = memo(({ data, onUpdate, addToast }) => {
+  const allStages    = data.productionStages || [];
+  const rates        = data.pieceworkRates   || [];
+  const productTypes = data.settings?.productTypes || [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }];
+
+  const [ptype,   setPtype]   = useState(productTypes[0]?.id || 'boiler');
+  const [pvType,  setPvType]  = useState('v2d');
+  const [pvPower, setPvPower] = useState('2000');
+
+  const fmtR   = n => (n || n === 0) ? Number(n).toLocaleString('ru-RU') : '—';
+  const stages = allStages.filter(s => s.productType === ptype);
+
+  // Строка прайса для колонки «пример» — чтобы сразу видеть рубли, а не проценты
+  const pvRate = rates.find(r => r.type === pvType
+    && Number(pvPower) >= r.powerMin && Number(pvPower) <= r.powerMax) || null;
+
+  const patch = (stageId, p) => {
+    const d = { ...data, productionStages: allStages.map(s => s.id === stageId ? { ...s, ...p } : s) };
+    onUpdate(d);
+    DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
+  };
+
+  // При выборе «не оплачивается» ЯВНО ставим долю 0 — иначе сработает
+  // legacy-fallback на 100% и этап начнёт платить втихую.
+  const setField = (stage, field) => {
+    if (!field) { patch(stage.id, { pieceworkField: null, paymentShare: 0 }); return; }
+    const cur = stage.paymentShare;
+    const share = (cur == null || cur === '' || Number(cur) === 0) ? 100 : Number(cur);
+    patch(stage.id, { pieceworkField: field, paymentShare: share });
+  };
+
+  const setShare = (stage, v) => {
+    if (v === '') { patch(stage.id, { paymentShare: null }); return; }
+    const n = Number(v);
+    if (!isFinite(n)) return;
+    patch(stage.id, { paymentShare: Math.max(0, Math.min(100, n)) });
+  };
+
+  // Суммы долей по колонкам прайса — контроль что бюджет разошёлся ровно на 100%
+  const sums = {};
+  stages.forEach(s => {
+    if (!s.pieceworkField) return;
+    sums[s.pieceworkField] = (sums[s.pieceworkField] || 0) + Number(s.paymentShare || 0);
+  });
+
+  // Этапы, которые платят по старой логике (нет своей колонки, но участок сдельный)
+  const legacy = stages.filter(s => {
+    if (s.pieceworkField) return false;
+    const sec = (data.sections || []).find(x => x.id === s.sectionId);
+    if (!sec || !sec.pieceworkField) return false;
+    if (sec.payType !== 'piecework' && sec.payType !== 'mixed') return false;
+    return s.paymentShare == null || s.paymentShare === '' || Number(s.paymentShare) > 0;
+  });
+
+  const th = (t, w) => h('th', { key: t, style: { textAlign: 'left', padding: '6px 8px', fontSize: 10,
+    fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--muted)',
+    borderBottom: '0.5px solid var(--border)', width: w } }, t);
+
+  return h('div', { style: { marginTop: 26, paddingTop: 20, borderTop: '1px solid var(--border)' } },
+
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 } },
+      h('h3', { style: { margin: 0 } }, '🔗 Привязка этапов к расценкам'),
+      h('div', { style: { flex: 1 } }),
+      h('select', {
+        style: { ...S.inp, width: 'auto', fontSize: 12 }, value: ptype,
+        onChange: e => setPtype(e.target.value)
+      }, productTypes.map(pt => h('option', { key: pt.id, value: pt.id }, pt.label)))
+    ),
+    h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 12, lineHeight: 1.5 } },
+      'Какие этапы оплачиваются сдельно, из какой колонки прайса берётся цена и какую долю от неё получает этап. Этап без колонки не оплачивается. Сумма долей по каждой колонке должна быть 100%.'
+    ),
+
+    // ── Превью: подставляем реальный котёл и видим рубли ──────────────────
+    h('div', { style: { display: 'flex', gap: 10, alignItems: 'flex-end', marginBottom: 12,
+      padding: '10px 12px', background: 'var(--card-2)', border: '0.5px solid var(--border-soft)',
+      borderRadius: 8, flexWrap: 'wrap' } },
+      h('div', null, h('label', { style: S.lbl }, 'Пример: тип котла'),
+        h('select', { style: { ...S.inp, width: 170, fontSize: 12 }, value: pvType,
+          onChange: e => setPvType(e.target.value) },
+          h('option', { value: 'v2d' }, 'Lex V2-D'),
+          h('option', { value: 'v3d' }, 'Lex V3-D'))),
+      h('div', null, h('label', { style: S.lbl }, 'Мощность, кВт'),
+        h('input', { type: 'number', style: { ...S.inp, width: 100, fontSize: 12 }, value: pvPower,
+          onChange: e => setPvPower(e.target.value) })),
+      h('div', { style: { fontSize: 11, color: pvRate ? AM2 : '#a60', paddingBottom: 9, lineHeight: 1.4 } },
+        pvRate
+          ? 'Прайс ' + pvRate.powerMin + '–' + pvRate.powerMax + ' кВт · ТО ' + fmtR(pvRate.heatExchanger)
+            + ' · КП ' + fmtR(pvRate.coverFront) + ' · КЗ ' + fmtR(pvRate.coverBack) + ' · ВЦ ' + fmtR(pvRate.rolling)
+          : '⚠ Для этой мощности нет строки прайса'
+      )
+    ),
+
+    // ── Таблица этапов ───────────────────────────────────────────────────
+    stages.length === 0
+      ? h('div', { style: { textAlign: 'center', color: 'var(--muted)', padding: 20, fontSize: 13 } },
+          'Нет этапов для этого типа продукции')
+      : h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 } },
+          h('thead', null, h('tr', null,
+            th('Этап'), th('Участок', 150), th('Колонка прайса', 170), th('Доля', 90), th('Выйдет / шт', 120)
+          )),
+          h('tbody', null, stages.map(stage => {
+            const sec    = (data.sections || []).find(x => x.id === stage.sectionId);
+            const field  = stage.pieceworkField || '';
+            const paid   = !!field;
+            const share  = (stage.paymentShare == null || stage.paymentShare === '') ? null : Number(stage.paymentShare);
+            const isLegacy = legacy.includes(stage);
+            const money  = (paid && pvRate && share != null)
+              ? Math.round(pvRate[field] * share / 100) : null;
+
+            return h('tr', { key: stage.id, style: { borderBottom: '0.5px solid var(--border-soft)',
+              background: paid ? 'rgba(217,166,58,0.05)' : 'transparent' } },
+
+              h('td', { style: { padding: '7px 8px', fontWeight: paid ? 500 : 400,
+                color: paid ? 'var(--fg)' : 'var(--muted)' } },
+                stage.name,
+                isLegacy && h('span', { style: { fontSize: 10, color: '#a60', background: '#fff3e0',
+                  padding: '1px 5px', borderRadius: 4, marginLeft: 6 } }, '⚠ платит через участок')
+              ),
+
+              h('td', { style: { padding: '7px 8px', color: 'var(--muted)', fontSize: 11 } },
+                sec ? sec.name : '—'),
+
+              h('td', { style: { padding: '5px 8px' } },
+                h('select', {
+                  style: { ...S.inp, width: '100%', fontSize: 12, minHeight: 32, padding: '5px 8px' },
+                  value: field,
+                  onChange: e => setField(stage, e.target.value)
+                },
+                  h('option', { value: '' }, '— не оплачивается —'),
+                  PIECEWORK_FIELDS.map(f => h('option', { key: f.id, value: f.id }, f.label))
+                )
+              ),
+
+              h('td', { style: { padding: '5px 8px' } },
+                paid
+                  ? h('div', { style: { display: 'flex', gap: 3, alignItems: 'center' } },
+                      h('input', {
+                        type: 'number', step: '1', min: '0', max: '100',
+                        style: { ...S.inp, width: 58, fontSize: 12, minHeight: 32, padding: '5px 6px' },
+                        value: share == null ? '' : String(share),
+                        onChange: e => setShare(stage, e.target.value)
+                      }),
+                      h('span', { style: { fontSize: 11, color: 'var(--muted)' } }, '%')
+                    )
+                  : h('span', { style: { color: 'var(--muted)' } }, '—')
+              ),
+
+              h('td', { style: { padding: '7px 8px', fontWeight: 500, color: money ? AM2 : 'var(--muted)' } },
+                money ? fmtR(money) + ' ₽' : '—')
+            );
+          }))
+        ),
+
+    // ── Контроль сумм по колонкам ────────────────────────────────────────
+    Object.keys(sums).length > 0 && h('div', { style: { marginTop: 14, padding: '10px 12px',
+      background: '#fffbea', border: '0.5px solid #e0c060', borderRadius: 8 } },
+      h('div', { style: { fontSize: 11, fontWeight: 600, color: '#8b6d00', marginBottom: 8 } },
+        '💰 Контроль распределения — сумма долей по каждой колонке прайса'),
+      h('div', { style: { display: 'grid', gap: 5, fontSize: 12 } },
+        PIECEWORK_FIELDS.filter(f => sums[f.id] != null).map(f => {
+          const sum = sums[f.id];
+          const ok  = sum === 100;
+          const cnt = stages.filter(s => s.pieceworkField === f.id).length;
+          return h('div', { key: f.id, style: { padding: '5px 8px', borderRadius: 4,
+            background: ok ? 'rgba(0,150,80,0.06)' : 'rgba(255,150,0,0.10)',
+            display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' } },
+            h('b', { style: { minWidth: 130 } }, f.label),
+            h('span', { style: { color: 'var(--muted)', fontSize: 11 } }, cnt + ' этап(ов)'),
+            h('span', { style: { flex: 1 } }),
+            h('span', { style: { color: ok ? '#0a7' : '#a60', fontWeight: 500 } },
+              ok ? '✓ ' + sum + '%'
+                : sum < 100 ? '⚠ ' + sum + '% — ' + (100 - sum) + '% цены не выплачивается'
+                : '⚠ ' + sum + '% — переплата ' + (sum - 100) + '%')
+          );
+        })
+      ),
+      legacy.length > 0 && h('div', { style: { marginTop: 8, paddingTop: 8,
+        borderTop: '0.5px solid #e0c060', fontSize: 11, color: '#a60', lineHeight: 1.5 } },
+        '⚠ ' + legacy.length + ' этап(ов) без колонки платят по старой логике через участок. Выберите им колонку или «не оплачивается», чтобы убрать неявность.'
+      )
+    ),
+
+    h('div', { style: { marginTop: 10, fontSize: 11, color: 'var(--muted)', lineHeight: 1.5 } },
+      'Изменения применяются только к операциям, закрытым после правки. Уже начисленное заморожено — пересчитать можно в карточке заказа: «💰 Начисления по заказу» → «🔄 Пересчитать».'
+    )
+  );
+});
+
 const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
   const rates = data.pieceworkRates || [];
   const [form, setForm] = useState({ type:'v2d', powerMin:'', powerMax:'', heatExchanger:'', coverFront:'', coverBack:'', rolling:'' });
@@ -2758,7 +2944,10 @@ const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
               )
             )
           )
-        )
+        ),
+
+    // Единый экран привязки этапов к колонкам прайса — вся оплата в одном разделе
+    h(StagePaymentBinding, { data, onUpdate, addToast })
   );
 });
 
