@@ -2920,12 +2920,40 @@ const TabBar = memo(({ tabs, tab, setTab }) =>
 //
 // Порядок файлов внутри office сохранён таким же, каким он был в index.html — на
 // случай скрытых зависимостей порядка объявления между файлами.
+const CDN = {
+  xlsx:        { url: 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+                 fallback: 'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js',
+                 check: () => typeof window.XLSX !== 'undefined' },
+  pdfmake:     { url: 'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js',
+                 fallback: 'https://unpkg.com/pdfmake@0.2.7/build/pdfmake.min.js',
+                 check: () => typeof window.pdfMake !== 'undefined' },
+  vfsFonts:    { url: 'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.min.js',
+                 fallback: 'https://unpkg.com/pdfmake@0.2.7/build/vfs_fonts.js',
+                 check: () => typeof window.pdfMake !== 'undefined' && !!window.pdfMake.vfs },
+  chartjs:     { url: 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js',
+                 fallback: 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
+                 check: () => typeof window.Chart !== 'undefined' },
+  html5qrcode: { url: 'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js',
+                 fallback: 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js',
+                 check: () => typeof window.Html5Qrcode !== 'undefined' },
+};
+
 const BUNDLES = {
   // worker.js использует calcDayData из timesheet.js (проверено скриптом при аудите) —
   // поэтому timesheet.js входит в оба бандла. Дублирование ~32 КБ дешевле, чем городить
-  // отдельный «shared2»-слой ради одной функции.
-  field:  ['js/timesheet.js', 'js/worker.js'],
-  office: ['js/qms.js', 'js/analytics.js', 'js/timesheet.js', 'js/auxops.js',
+  // отдельный «shared2»-слой ради одной функции. html5-qrcode нужен только сканеру QR
+  // в кабинете рабочего (единственный потребитель — worker.js, проверено).
+  field:  ['cdn:html5qrcode', 'js/timesheet.js', 'js/worker.js'],
+  // xlsx/pdfmake/vfs_fonts/chartjs (аудит, perf): раньше грузились статическими <script>
+  // БЕЗ defer в <head> — блокировали парсинг страницы для абсолютно всех пользователей,
+  // даже тех, кто ни разу не жал «Экспорт в Excel» или «Печать PDF». Суммарно больше
+  // 3 МБ синхронной загрузки на пустом месте. Все реальные вызовы XLSX/pdfMake/Chart
+  // живут в office-файлах (analytics/auxops/hr/reference/timesheet/warehouse) — код не
+  // выполняется, пока office-экран не отрендерен, так что достаточно догрузить библиотеки
+  // вместе с бандлом. Два вызова в ВСЕГДА загруженных app.js/shared.js (экспорт заказов,
+  // протокол ГИ) обёрнуты отдельным ensureCdn() прямо в обработчике клика.
+  office: ['cdn:xlsx', 'cdn:pdfmake', 'cdn:vfsFonts', 'cdn:chartjs',
+           'js/qms.js', 'js/analytics.js', 'js/timesheet.js', 'js/auxops.js',
            'js/reference.js', 'js/quality.js', 'js/hr.js', 'js/warehouse.js', 'js/master.js'],
 };
 
@@ -2943,17 +2971,47 @@ const SCRIPT_VERSION = (() => {
 
 const _loadedBundles   = new Set();
 const _bundlePromises  = {};
+const _loadedCdn        = new Set();
+const _cdnPromises      = {};
 
-// Грузим файлы бандла последовательно (не Promise.all) — сохраняем тот же порядок
-// выполнения, что был в статических <script defer> тегах.
-function _loadScriptSeq(files) {
-  return files.reduce((p, src) => p.then(() => new Promise((resolve, reject) => {
+// Общий загрузчик одной CDN-библиотеки с fallback на второй источник — тот же паттерн,
+// что раньше был в <head> через onerror. check() пропускает загрузку, если библиотека
+// почему-то уже есть в window (например уже была загружена другим путём).
+function ensureCdn(key) {
+  const spec = CDN[key];
+  if (!spec) return Promise.reject(new Error('Неизвестная CDN-библиотека: ' + key));
+  if (_loadedCdn.has(key) || spec.check()) { _loadedCdn.add(key); return Promise.resolve(); }
+  if (_cdnPromises[key]) return _cdnPromises[key];
+  _cdnPromises[key] = new Promise((resolve, reject) => {
     const s = document.createElement('script');
-    s.src = src + (SCRIPT_VERSION ? '?v=' + SCRIPT_VERSION : '');
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error('Не удалось загрузить ' + src));
-    document.body.appendChild(s);
-  })), Promise.resolve());
+    s.src = spec.url;
+    s.onload = () => { _loadedCdn.add(key); resolve(); };
+    s.onerror = () => {
+      const s2 = document.createElement('script');
+      s2.src = spec.fallback;
+      s2.onload = () => { _loadedCdn.add(key); resolve(); };
+      s2.onerror = () => reject(new Error('Не удалось загрузить ' + key));
+      document.head.appendChild(s2);
+    };
+    document.head.appendChild(s);
+  });
+  return _cdnPromises[key];
+}
+
+// Грузим элементы бандла последовательно (не Promise.all) — сохраняем тот же порядок
+// выполнения, что был в статических <script defer> тегах. Элементы вида 'cdn:xlsx'
+// уходят через ensureCdn, остальные — как локальные версионированные js/-файлы.
+function _loadScriptSeq(items) {
+  return items.reduce((p, item) => p.then(() => {
+    if (item.startsWith('cdn:')) return ensureCdn(item.slice(4));
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = item + (SCRIPT_VERSION ? '?v=' + SCRIPT_VERSION : '');
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error('Не удалось загрузить ' + item));
+      document.body.appendChild(s);
+    });
+  }), Promise.resolve());
 }
 
 function ensureBundleLoaded(name) {
