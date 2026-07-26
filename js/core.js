@@ -616,39 +616,43 @@ const calcOpPieceworkEarning = (data, op) => {
     };
   }
 
-  // Ветка 2: обычная сдельная операция через участок
-  if (!op.sectionId) return null;
-  const section = (data.sections || []).find(s => s.id === op.sectionId);
-  if (!section?.pieceworkField) return null;
-  if (section.payType !== 'piecework' && section.payType !== 'mixed') return null;
+  // Ветка 2: обычная сдельная операция.
+  //
+  // Носитель настройки оплаты — ЭТАП (настраивается в HR → Расценки →
+  // «Привязка этапов к расценкам»). Если у этапа задан pieceworkField,
+  // участок в расчёте не участвует вообще — ни payType, ни его поле.
+  //
+  // Если у этапа поля нет — работает legacy-путь через участок
+  // (для старых конфигураций, где 1 участок = 1 колонка прайса).
+  const stage   = op.stageId   ? (data.productionStages || []).find(s => s.id === op.stageId)   : null;
+  const section = op.sectionId ? (data.sections || []).find(s => s.id === op.sectionId) : null;
+
+  let field = null;
+  if (stage && stage.pieceworkField) {
+    field = stage.pieceworkField;                       // новый путь: этап решает всё
+  } else if (section && section.pieceworkField
+      && (section.payType === 'piecework' || section.payType === 'mixed')) {
+    field = section.pieceworkField;                     // legacy: наследуем от участка
+  }
+  if (!field) return null;
 
   const order = (data.orders || []).find(o => o.id === op.orderId);
   if (!order) return null;
 
   const rate = findPieceworkRate(data, order.boilerType, order.powerKw);
-  if (!rate) return null;
+  if (!rate || !rate[field]) return null;
 
-  // Определяем долю этапа в сумме расценки.
-  // - null/undefined на этапе → обратная совместимость: 100% (для крышек и др.
-  //   участков где 1 этап на всю сумму, чтобы старая настройка не сломалась)
-  // - 0 → этап явно не оплачивается (мастер убрал долю)
-  // - >0 → доля в процентах от базовой цены
-  // Если долевая настройка используется у одного этапа участка, у остальных
-  // рекомендуется явно ставить 0, чтобы не сработала обратная совместимость
-  // и они бы не начисляли по 100%.
+  // Доля этапа в сумме расценки:
+  // - null/undefined → 100% (обратная совместимость для старых конфигураций)
+  // - 0              → этап явно не оплачивается
+  // - >0             → процент от цены колонки
+  // В новом UI «Привязка этапов» доля всегда проставляется явно (0 или >0),
+  // поэтому fallback на 100% там не срабатывает.
   let paymentShare = 100;
-  const stage = op.stageId ? (data.productionStages || []).find(s => s.id === op.stageId) : null;
   if (stage && stage.paymentShare != null && stage.paymentShare !== '') {
     paymentShare = Number(stage.paymentShare);
   }
   if (!isFinite(paymentShare) || paymentShare <= 0) return null;
-
-  // Поле прайса: если у этапа задан свой pieceworkField — используем его,
-  // иначе fallback на section.pieceworkField.
-  // Это позволяет участку «Крышки» иметь этапы с разными полями прайса
-  // (coverFront / coverBack) без разбиения участка.
-  const field = (stage && stage.pieceworkField) || section.pieceworkField;
-  if (!rate[field]) return null;
 
   const qty = order.qty || 1;
   const amount = Math.round(rate[field] * qty * paymentShare / 100 / workerCount);
