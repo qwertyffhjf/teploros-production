@@ -2903,6 +2903,71 @@ const TabBar = memo(({ tabs, tab, setTab }) =>
 );
 
 // ==================== CommandPalette (Cmd+K глобальный поиск) ====================
+// ==================== Ленивая подгрузка office/field бандлов (аудит, perf) ====================
+// Раньше index.html грузил все модули (master/hr/analytics/warehouse/auxops/quality/
+// timesheet/qms/reference/worker) статическими <script defer> ВСЕМ пользователям сразу,
+// независимо от роли. Рабочий на телефоне в цеху скачивал и парсил ~1.3 МБ кода
+// мастерского интерфейса, HR, аналитики — которым никогда не пользуется.
+//
+// Разбор app.js показал: реально изолирован только worker.js — ни один другой файл на
+// него не ссылается, и сам он ни на что не ссылается. Все остальные модули образуют
+// один плотно связанный кластер (например MasterScreen в master.js использует
+// MasterWorkers из hr.js, AnalyticsDashboard из analytics.js, MasterReclamations из
+// quality.js и т.д.) — растащить их по ролям без более глубокого рефакторинга нельзя.
+// Поэтому бандла два:
+//   field  — только рабочий кабинет (worker.js)
+//   office — все остальные роли (мастер/ПДО/директор/HR/админ/склад/контролёр)
+//
+// Порядок файлов внутри office сохранён таким же, каким он был в index.html — на
+// случай скрытых зависимостей порядка объявления между файлами.
+const BUNDLES = {
+  // worker.js использует calcDayData из timesheet.js (проверено скриптом при аудите) —
+  // поэтому timesheet.js входит в оба бандла. Дублирование ~32 КБ дешевле, чем городить
+  // отдельный «shared2»-слой ради одной функции.
+  field:  ['js/timesheet.js', 'js/worker.js'],
+  office: ['js/qms.js', 'js/analytics.js', 'js/timesheet.js', 'js/auxops.js',
+           'js/reference.js', 'js/quality.js', 'js/hr.js', 'js/warehouse.js', 'js/master.js'],
+};
+
+// Версия берём с собственного тега <script> core.js — core.js грузится синхронно
+// (без defer) самым первым, поэтому document.currentScript на момент его выполнения
+// надёжно указывает на его же тег. Так все бандлы всегда используют ту же версию,
+// что прописана в index.html, без риска рассинхрона при следующих деплоях.
+const SCRIPT_VERSION = (() => {
+  try {
+    const src = document.currentScript && document.currentScript.src || '';
+    const m = src.match(/[?&]v=([^&]+)/);
+    return m ? m[1] : '';
+  } catch(e) { return ''; }
+})();
+
+const _loadedBundles   = new Set();
+const _bundlePromises  = {};
+
+// Грузим файлы бандла последовательно (не Promise.all) — сохраняем тот же порядок
+// выполнения, что был в статических <script defer> тегах.
+function _loadScriptSeq(files) {
+  return files.reduce((p, src) => p.then(() => new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src + (SCRIPT_VERSION ? '?v=' + SCRIPT_VERSION : '');
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('Не удалось загрузить ' + src));
+    document.body.appendChild(s);
+  })), Promise.resolve());
+}
+
+function ensureBundleLoaded(name) {
+  if (_loadedBundles.has(name)) return Promise.resolve();
+  if (_bundlePromises[name]) return _bundlePromises[name];
+  const files = BUNDLES[name] || [];
+  _bundlePromises[name] = _loadScriptSeq(files).then(() => { _loadedBundles.add(name); });
+  return _bundlePromises[name];
+}
+
+function bundleForRole(role) {
+  return role === 'worker' ? 'field' : 'office';
+}
+
 const CommandPalette = memo(({ data, onClose, onNavigate }) => {
   const [q, setQ] = useState('');
   const inputRef = useRef(null);
