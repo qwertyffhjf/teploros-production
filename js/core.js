@@ -511,7 +511,12 @@ const findPieceworkRate = (data, boilerType, powerKw) => {
 
 // Рассчитать сдельный заработок рабочего за заказ
 // Возвращает { heatExchanger: N, coverFront: N, coverBack: N, rolling: N, total: N }
-const calcPieceworkEarnings = (data, workerId, orderId) => {
+// skipFields — Set полей ('heatExchanger'|'coverFront'|'coverBack'|'rolling'), которые
+// уже посчитаны через op.earning и не должны учитываться повторно (см. PayrollExport
+// в hr.js). Без этого параметра функция считает по всему заказу с нуля — что раньше
+// приводило либо к задвоению (если считать всегда), либо к недоплате (если пропускать
+// весь заказ при частичном покрытии) — найдено при аудите.
+const calcPieceworkEarnings = (data, workerId, orderId, skipFields = null) => {
   const order = data.orders.find(o => o.id === orderId);
   if (!order) return null;
 
@@ -526,6 +531,7 @@ const calcPieceworkEarnings = (data, workerId, orderId) => {
 
   // Считаем по pieceworkField участка (новая логика)
   const calcByField = (field) => {
+    if (skipFields && skipFields.has(field)) return 0;
     if (!rate[field]) return 0;
     // Находим все участки с этим pieceworkField
     const fieldSections = sections.filter(s =>
@@ -571,9 +577,9 @@ const calcPieceworkEarnings = (data, workerId, orderId) => {
       if (!workerSet.has(workerId) || workerSet.size === 0) return 0;
       return Math.round(rateAmount * qty / Math.max(workerSet.size, 1));
     };
-    heatExchanger = calcShare(heatSectionId, rate.heatExchanger);
-    coverFront    = calcShare(coverSectionId, rate.coverFront);
-    coverBack     = calcShare(coverSectionId, rate.coverBack);
+    heatExchanger = (skipFields && skipFields.has('heatExchanger')) ? 0 : calcShare(heatSectionId, rate.heatExchanger);
+    coverFront    = (skipFields && skipFields.has('coverFront'))    ? 0 : calcShare(coverSectionId, rate.coverFront);
+    coverBack     = (skipFields && skipFields.has('coverBack'))     ? 0 : calcShare(coverSectionId, rate.coverBack);
   }
 
   const total = heatExchanger + coverFront + coverBack + rolling;
