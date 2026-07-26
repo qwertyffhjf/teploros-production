@@ -846,7 +846,8 @@ const Dashboard = memo(({ data, addToast, onOrderClick }) => {
   const qualityToday = doneToday.length + defectsToday.length > 0 ? Math.round(doneToday.length / (doneToday.length + defectsToday.length) * 100) : 100;
   const mc = (color) => ({ ...S.card, textAlign: 'center', padding: '12px 8px', marginBottom: 0 });
 
-  const exportToExcel = useCallback(() => {
+  const exportToExcel = useCallback(async () => {
+    await ensureCdn('xlsx');
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.orders.map(o => ({ Номер: o.number, Изделие: o.product, Количество: o.qty, Дедлайн: o.deadline, Приоритет: PRIORITY[o.priority]?.label }))), 'Заказы');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.ops.map(op => ({ Заказ: data.orders.find(o => o.id === op.orderId)?.number, Операция: op.name, Статус: op.status, 'План,ч': op.plannedHours, Исполнители: (op.workerIds||[]).map(wid => data.workers.find(w => w.id === wid)?.name).join(', ') }))), 'Операции');
@@ -1109,8 +1110,9 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
   const [createdCount, setCreatedCount] = useState(0);
   const fileInputRef = React.useRef(null);
 
-  const parseExcel = (arrayBuffer) => {
+  const parseExcel = async (arrayBuffer) => {
     try {
+      await ensureCdn('xlsx');
       const wb = XLSX.read(arrayBuffer, { type: 'array' });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
@@ -1841,7 +1843,9 @@ const OrderComponentsBlock = memo(({ order, data, onUpdate, userRole }) => {
 // Вспомогательная функция маршрутного листа (вынесена наружу для переиспользования)
 
 
-function generateRouteSheet(order, data) {
+async function generateRouteSheet(order, data) {
+  await ensureCdn('pdfmake');
+  await ensureCdn('vfsFonts');
   const orderOps = (data?.ops || []).filter(op => op.orderId === order.id && !op.archived);
   const workerName = (id) => (data?.workers || []).find(w => w.id === id)?.name || '—';
 
