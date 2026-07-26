@@ -1044,6 +1044,16 @@ const MonthlyReport = memo(({ data }) => {
   const periodEnd   = new Date(year, month+1, 0, 23, 59, 59).getTime();
 
   const report = useMemo(() => {
+    // Оптимизация (аудит): раньше orders.filter(o => data.ops.filter(op => op.orderId===o.id))
+    // гоняло весь массив ops на КАЖДЫЙ заказ (дважды — для completed и completedClean),
+    // а topWorkers делал то же самое на каждого работника. При росте истории это
+    // O(orders × ops) и O(workers × ops). Строим индексы один раз — дальше O(1) на lookup.
+    const opsByOrderId = new Map();
+    data.ops.forEach(op => {
+      if (!opsByOrderId.has(op.orderId)) opsByOrderId.set(op.orderId, []);
+      opsByOrderId.get(op.orderId).push(op);
+    });
+
     const ops = data.ops.filter(o => o.finishedAt >= periodStart && o.finishedAt <= periodEnd);
     const done    = ops.filter(o => o.status === 'done').length;
     const defect  = ops.filter(o => o.status === 'defect').length;
@@ -1051,25 +1061,36 @@ const MonthlyReport = memo(({ data }) => {
     const quality = total > 0 ? Math.round(done/total*100) : 100;
 
     const orders = data.orders.filter(o => !o.archived);
-    const completed = orders.filter(o => {
-      const oOps = data.ops.filter(op => op.orderId === o.id);
-      return oOps.length > 0 && oOps.every(op => op.status === 'done' || op.status === 'defect');
+    const completedIds = new Set();
+    let completedCount = 0, completedCleanCount = 0;
+    orders.forEach(o => {
+      const oOps = opsByOrderId.get(o.id) || [];
+      if (oOps.length === 0) return;
+      if (oOps.every(op => op.status === 'done' || op.status === 'defect')) {
+        completedCount++;
+        completedIds.add(o.id);
+      }
+      if (oOps.every(op => op.status === 'done')) completedCleanCount++;
     });
-    // Заказы закрытые без брака (все операции done)
-    const completedClean = orders.filter(o => {
-      const oOps = data.ops.filter(op => op.orderId === o.id);
-      return oOps.length > 0 && oOps.every(op => op.status === 'done');
-    });
-    const overdue = orders.filter(o => o.deadline && new Date(o.deadline) < new Date() && !completed.find(c => c.id === o.id));
+    const overdue = orders.filter(o => o.deadline && new Date(o.deadline) < new Date() && !completedIds.has(o.id));
 
     const downtimeMs = data.events.filter(e => e.type==='downtime' && e.ts>=periodStart && e.ts<=periodEnd).reduce((s,e) => s+(e.duration||0), 0);
 
+    // Индекс по работнику для топа — вместо ops.filter(...includes(w.id)) на каждого работника
+    const opsByWorkerId = new Map();
+    ops.forEach(op => {
+      (op.workerIds || []).forEach(wid => {
+        if (!opsByWorkerId.has(wid)) opsByWorkerId.set(wid, []);
+        opsByWorkerId.get(wid).push(op);
+      });
+    });
     const activeWorkers = data.workers.filter(w => !w.archived);
-    const topWorkers = activeWorkers.map(w => ({
-      name: w.name,
-      done: ops.filter(o => o.status==='done' && o.workerIds?.includes(w.id)).length,
-      defects: ops.filter(o => o.status==='defect' && o.workerIds?.includes(w.id)).length,
-    })).filter(w => w.done+w.defects > 0).sort((a,b) => b.done - a.done).slice(0,5);
+    const topWorkers = activeWorkers.map(w => {
+      const wOps = opsByWorkerId.get(w.id) || [];
+      let d = 0, def = 0;
+      wOps.forEach(op => { if (op.status === 'done') d++; else if (op.status === 'defect') def++; });
+      return { name: w.name, done: d, defects: def };
+    }).filter(w => w.done+w.defects > 0).sort((a,b) => b.done - a.done).slice(0,5);
 
     // Нормы — топ операций с расхождением факт/план
     const normsAlert = Object.entries(data.opNorms || {}).map(([name, n]) => {
@@ -1078,7 +1099,7 @@ const MonthlyReport = memo(({ data }) => {
       return { name, avgH, samples: n.samples };
     }).sort((a,b) => b.samples - a.samples).slice(0,5);
 
-    return { done, defect, total, quality, orders: orders.length, completed: completed.length, completedClean: completedClean.length, overdue: overdue.length, downtimeH: Math.round(downtimeMs/3600000*10)/10, topWorkers, normsAlert };
+    return { done, defect, total, quality, orders: orders.length, completed: completedCount, completedClean: completedCleanCount, overdue: overdue.length, downtimeH: Math.round(downtimeMs/3600000*10)/10, topWorkers, normsAlert };
   }, [data, month, year]);
 
   const exportReport = useCallback(() => {
@@ -1539,6 +1560,30 @@ const PayrollExport = memo(({ data }) => {
   const monthEnd   = new Date(viewYear, viewMonth + 1, 0, 23, 59, 59, 999).getTime();
 
   const rows = useMemo(() => {
+    // Индексы (аудит, perf): раньше на КАЖДОГО работника гонялся полный проход по
+    // data.ops (workerOps), и внутри — ещё по одному полному проходу по data.ops на
+    // каждый отгруженный заказ месяца (orderOps в фоллбеке). При 50+ работниках и
+    // тысячах операций это O(workers × ops) плюс O(workers × orders × ops) для сдельных.
+    // Строим два индекса один раз за пересчёт вместо этого:
+    //   opsByWorkerId — только операции месяца/статуса done, сгруппированные по работнику;
+    //   opsByOrderId  — все неархивные операции, сгруппированные по заказу.
+    // Дальше лукап у каждого работника — O(1) вместо O(ops).
+    const periodDoneOps = (data.ops||[]).filter(op =>
+      op.status === 'done' && !op.archived && op.finishedAt >= monthStart && op.finishedAt <= monthEnd
+    );
+    const opsByWorkerId = new Map();
+    periodDoneOps.forEach(op => (op.workerIds||[]).forEach(wid => {
+      if (!opsByWorkerId.has(wid)) opsByWorkerId.set(wid, []);
+      opsByWorkerId.get(wid).push(op);
+    }));
+    const opsByOrderId = new Map();
+    (data.ops||[]).forEach(op => {
+      if (op.archived) return;
+      if (!opsByOrderId.has(op.orderId)) opsByOrderId.set(op.orderId, []);
+      opsByOrderId.get(op.orderId).push(op);
+    });
+    const shippedOrders = (data.orders||[]).filter(o => o.shipped && o.shippedAt >= monthStart && o.shippedAt <= monthEnd);
+
     return data.workers.filter(w => !w.archived).map(w => {
       const payType    = w.payType || 'hourly';
       const hourlyRate = parseFloat(w.hourlyRate) || 0;
@@ -1555,13 +1600,7 @@ const PayrollExport = memo(({ data }) => {
 
       // Сдельные — читаем op.earning (начисляется при завершении операции)
       // Период: операции завершённые в этом месяце (по finishedAt)
-      const workerOps = (data.ops||[]).filter(op =>
-        (op.workerIds||[]).includes(w.id) &&
-        op.status === 'done' &&
-        op.finishedAt >= monthStart &&
-        op.finishedAt <= monthEnd &&
-        !op.archived
-      );
+      const workerOps = opsByWorkerId.get(w.id) || [];
 
       let pieceEarned = 0;
       let pieceCount  = 0;
@@ -1577,24 +1616,31 @@ const PayrollExport = memo(({ data }) => {
       });
 
       // Fallback для старых заказов, у операций которых ещё нет op.earning.
-      // ВАЖНО: пропускаем заказы, где хотя бы часть операций уже имеет earning —
-      // они посчитаны выше через основной путь, повторный счёт через calcPieceworkEarnings
-      // приведёт к удвоению суммы. Такая ситуация возникает во время миграции: старые
-      // отгруженные заказы платятся через fallback, новые — через op.earning.
+      // ИСПРАВЛЕНО (аудит): раньше при частичном покрытии заказа через op.earning
+      // (часть операций работника уже посчитана, часть ещё нет — типичная ситуация
+      // во время миграции) весь fallback для заказа пропускался целиком, и непосчитанные
+      // операции оставались вообще без оплаты. Теперь считаем, какие именно поля прайса
+      // (heatExchanger/coverFront/coverBack/rolling) для этого работника в этом заказе
+      // уже покрыты через op.earning, и просим calcPieceworkEarnings досчитать только
+      // оставшиеся — без задвоения уже начисленного и без потери неначисленного.
       if (payType === 'piecework' || payType === 'mixed') {
-        const shippedOrders = (data.orders||[]).filter(o => o.shipped && o.shippedAt >= monthStart && o.shippedAt <= monthEnd);
         shippedOrders.forEach(o => {
-          // Пропуск: если по этому заказу хоть одна op уже начислена через op.earning
-          const orderOps = (data.ops||[]).filter(op => op.orderId === o.id && !op.archived);
-          const alreadyCounted = orderOps.some(op => op.earning && op.earning.amount > 0
-            && (op.workerIds||[]).includes(w.id));
-          if (alreadyCounted) return;
+          const orderOps = (opsByOrderId.get(o.id) || []).filter(op => (op.workerIds||[]).includes(w.id));
+          const coveredFields = new Set(
+            orderOps.filter(op => op.earning && op.earning.amount > 0 && op.earning.field)
+              .map(op => op.earning.field)
+          );
+          // Все 4 поля уже покрыты op.earning — фоллбеку считать нечего, пропускаем заказ.
+          if (coveredFields.size >= 4) return;
 
-          const earnings = calcPieceworkEarnings(data, w.id, o.id);
+          const earnings = calcPieceworkEarnings(data, w.id, o.id, coveredFields);
           if (earnings && earnings.total > 0) {
             pieceEarned += earnings.total;
             pieceCount++;
-          } else if (pieceRate) {
+          } else if (pieceRate && coveredFields.size === 0) {
+            // pieceRate-фоллбек (когда нет настроенного прайса вообще) считаем только
+            // если по заказу вообще ничего не начислено этому работнику — иначе рискуем
+            // задвоить сумму поверх уже посчитанных через op.earning операций.
             const hasOp = workerOps.some(op => op.orderId === o.id);
             if (hasOp) { pieceEarned += Math.round((o.qty||1) * pieceRate); pieceCount++; }
           }
