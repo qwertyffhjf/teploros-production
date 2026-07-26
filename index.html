@@ -588,31 +588,20 @@
   })();
 </script>
 
-<!-- Core: константы, DB, утилиты, общие компоненты -->
+<!-- Core: константы, DB, утилиты, общие компоненты, загрузчик office/field бандлов -->
 <script src="js/core.js?v=20260726a"></script>
 <!-- Shared: QR, PDF, LoadForecast, WorkerCardModal, MasterOnboarding -->
 <script defer src="js/shared.js?v=20260726a"></script>
-<script defer src="js/qms.js?v=20260726a"></script>
-<!-- Аналитика: графики, SectionAnalytics, ReportsBuilder -->
-<script defer src="js/analytics.js?v=20260726a"></script>
-<!-- Табель: isWorkday, calcDayData, MasterTimeTracking -->
-<script defer src="js/timesheet.js?v=20260726a"></script>
-<!-- Доп. работы: AuxOpsViewer -->
-<script defer src="js/auxops.js?v=20260726a"></script>
-<!-- Справочники: PasteImport, Sections, Equipment, Materials, BOM, Stages, Admin -->
-<script defer src="js/reference.js?v=20260726a"></script>
-<!-- Качество: ControllerScreen, MasterReclamations -->
-<script defer src="js/quality.js?v=20260726a"></script>
-<!-- Сотрудники: HR, Workers, Instructions, Vacations, MonthlyReport -->
-<script defer src="js/hr.js?v=20260726a"></script>
-<!-- Чат -->
+<!-- Чат — общий для всех ролей, поэтому грузится статически -->
 <script defer src="js/chat.js?v=20260726a"></script>
-<!-- Склад: MaterialImport, WarehouseScreen -->
-<script defer src="js/warehouse.js?v=20260726a"></script>
-<!-- Производство: MasterOps, MasterOrders, Kanban, Gantt, MasterScreen -->
-<script defer src="js/master.js?v=20260726a"></script>
-<!-- Рабочий: WorkerScreen -->
-<script defer src="js/worker.js?v=20260726a"></script>
+<!--
+  Ленивая подгрузка по роли (аудит, perf) — вместо статических тегов ниже.
+  qms.js, analytics.js, timesheet.js, auxops.js, reference.js, quality.js, hr.js,
+  warehouse.js, master.js (office) и timesheet.js + worker.js (field) теперь
+  подгружаются динамически через core.js: BUNDLES/ensureBundleLoaded — см. app.js,
+  эффект на effectiveRole. Экономит рабочим на телефоне ~1.1 МБ на первую загрузку,
+  так как master.js/hr.js/analytics.js и т.д. им никогда не нужны.
+-->
 <!-- Приложение: App, Login, Dashboard, роутинг, PWA -->
 <script defer src="js/app.js?v=20260726a"></script>
 </body>
