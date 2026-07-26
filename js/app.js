@@ -2582,6 +2582,21 @@ function App() {
   // Определяем «настоящую» роль для рендера — chat_master и chat_controller рендерятся как чат
   const effectiveRole = role === 'chat_master' || role === 'chat_controller' ? 'chat' : role;
 
+  // Ленивая подгрузка office/field бандла (аудит, perf) — см. core.js: BUNDLES/ensureBundleLoaded.
+  // 'chat' не нуждается ни в одном из бандлов — ChatScreen живёт в chat.js, грузится статически.
+  const [bundleReady, setBundleReady] = useState(false);
+  const [bundleError, setBundleError] = useState(null);
+  useEffect(() => {
+    if (!effectiveRole || effectiveRole === 'chat') return;
+    let cancelled = false;
+    setBundleReady(false);
+    setBundleError(null);
+    ensureBundleLoaded(bundleForRole(effectiveRole))
+      .then(() => { if (!cancelled) setBundleReady(true); })
+      .catch(err => { console.error('Bundle load error:', err); if (!cancelled) setBundleError(err.message); });
+    return () => { cancelled = true; };
+  }, [effectiveRole]);
+
   // Цветовое зонирование по роли — меняем CSS переменные
   useEffect(() => {
     const ROLE_THEMES = {
@@ -2753,7 +2768,15 @@ function App() {
     h(GreetingBanner, { key: greetingKey, role: effectiveRole, name: currentUser.name, data, workerId }),
     showChat
       ? h(ChatScreen, { data, onUpdate: save, addToast, currentUser, onBack: () => setShowChat(false) })
-      : h('div', null,
+      : !bundleReady
+        // Модуль для этой роли ещё грузится (первый вход в сессии) — короткая пауза,
+        // дальше бандл закеширован Service Worker'ом и подгружается мгновенно.
+        ? h('div', { style: { display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'60px 20px', gap:10, color:'var(--muted)', fontSize:13 } },
+            bundleError
+              ? h('div', { style: { color: '#c33', textAlign:'center' } }, '⚠ Не удалось загрузить модуль: ' + bundleError + '. Проверьте соединение и обновите страницу.')
+              : h(React.Fragment, null, h('div', { style: { fontSize: 24 } }, '⏳'), 'Загрузка модуля…')
+          )
+        : h('div', null,
           effectiveRole === 'master'      && h(MasterScreen,   { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId, role: 'master' }),
           effectiveRole === 'pdo'         && h(PDOScreen,       { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }),
           effectiveRole === 'director'    && h(DirectorScreen,  { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }),
