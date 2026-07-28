@@ -1340,51 +1340,54 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnl
       ),
       // Таблица
       data.materials.length === 0 ? h('div', { style: S.card }, h(EmptyState, { icon: '🗄️', title: 'Нет материалов', desc: 'Добавьте первый материал на склад', action: 'Добавить материал', onAction: () => setShowMatForm(true) })) :
-        h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null,
-            h('th', { style: { ...S.th, width: 36 } },
-              h('input', { type: 'checkbox',
+        (() => {
+        const stockRows = (data.materials || []).map(m => {
+          const reserved = (data.materialReservations || []).filter(r => r.materialId === m.id).reduce((s, r) => s + r.qty, 0);
+          const free = Math.max(0, m.quantity - reserved);
+          // Единый критерий критичности — по свободному остатку (в старой вёрстке
+          // сортировка шла по quantity, подсветка по free — рассинхрон, аудит Блок 1)
+          const crit = !!(m.minStock && free <= m.minStock);
+          return { ...m, reserved, free, crit };
+        }).sort((a, b) => {
+          if (a.crit && !b.crit) return -1; if (!a.crit && b.crit) return 1;
+          return a.name.localeCompare(b.name);
+        });
+        return h(DataTable, {
+          rows: stockRows,
+          density: 'compact',
+          maxHeight: 560,
+          rowClassName: m => selectedStock.has(m.id) ? 'tp-row--selected' : m.crit ? 'tp-row--danger' : '',
+          columns: [
+            { key: 'sel', sortable: false, width: 36,
+              label: h('input', { type: 'checkbox',
                 checked: selectedStock.size === data.materials.length && data.materials.length > 0,
                 onChange: () => toggleAllStock(data.materials),
-                style: { width: 14, height: 14, cursor: 'pointer', accentColor: RD } })
-            ),
-            ['Материал','Остаток','Зарезерв.','Свободно','Мин.','Цена','Стоимость',''].map((t,i) =>
-              h('th', { key: i, style: S.th }, t))
-          )),
-          h('tbody', null, [...data.materials].sort((a, b) => {
-            const aCrit = a.minStock && a.quantity <= a.minStock;
-            const bCrit = b.minStock && b.quantity <= b.minStock;
-            if (aCrit && !bCrit) return -1; if (!aCrit && bCrit) return 1;
-            return a.name.localeCompare(b.name);
-          }).map(m => {
-            const reserved = (data.materialReservations || []).filter(r => r.materialId === m.id).reduce((s, r) => s + r.qty, 0);
-            const free = Math.max(0, m.quantity - reserved);
-            const crit = m.minStock && free <= m.minStock;
-            const isSel = selectedStock.has(m.id);
-            return h('tr', { key: m.id, style: { background: isSel ? 'rgba(226,75,74,0.06)' : crit ? RD3 : 'transparent', transition: 'background 0.1s' } },
-              h('td', { style: { ...S.td, width: 36 } },
-                h('input', { type: 'checkbox', checked: isSel, onChange: () => toggleStock(m.id),
-                  style: { width: 14, height: 14, cursor: 'pointer', accentColor: RD } })
-              ),
-              h('td', { style: { ...S.td, fontWeight: crit ? 500 : 400 } }, `${m.name} (${m.unit})`),
-              h('td', { style: { ...S.td, textAlign: 'center' } }, m.quantity),
-              h('td', { style: { ...S.td, textAlign: 'center', color: reserved > 0 ? AM2 : '#888' } }, reserved > 0 ? reserved : '—'),
-              h('td', { style: { ...S.td, color: crit ? RD : free > 0 ? GN : '#888', fontWeight: 500, textAlign: 'center' } }, free),
-              h('td', { style: { ...S.td, textAlign: 'center', color: '#888' } }, m.minStock || '—'),
-              h('td', { style: { ...S.td, textAlign: 'center' } }, m.unitCost ? `${m.unitCost}₽` : '—'),
-              h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'right' } }, m.unitCost ? `${(m.quantity * m.unitCost).toLocaleString()}₽` : '—'),
-              h('td', { style: S.td },
-                h('button', { onClick: async () => {
-                  const ok = await ask({ message: `Удалить «${m.name}»?`, detail: 'Материал будет удалён из справочника', danger: true });
-                  if (ok) {
-                    const d = { ...data, materials: data.materials.filter(x => x.id !== m.id) };
-                    try { onUpdate(d); await DB.save(d); addToast('Удалено', 'info'); } catch(e) { onUpdate(data); addToast('Ошибка удаления', 'error'); }
-                  }
-                }, style: { fontSize: 13, color: RD, background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 4px' }, title: 'Удалить' }, '🗑')
-              )
-            );
-          }))
-        )))
+                style: { width: 14, height: 14, cursor: 'pointer', accentColor: RD } }),
+              render: m => h('input', { type: 'checkbox', checked: selectedStock.has(m.id), onChange: () => toggleStock(m.id),
+                style: { width: 14, height: 14, cursor: 'pointer', accentColor: RD } }) },
+            { key: 'name', label: 'Материал',
+              render: m => h('span', { style: m.crit ? { fontWeight: 500 } : undefined }, `${m.name} (${m.unit})`) },
+            { key: 'quantity', label: 'Остаток', num: true },
+            { key: 'reserved', label: 'Зарезерв.', num: true,
+              render: m => m.reserved > 0 ? h('span', { style: { color: AM2 } }, m.reserved) : '—' },
+            { key: 'free', label: 'Свободно', num: true,
+              render: m => h('span', { style: { color: m.crit ? RD : m.free > 0 ? GN : 'var(--muted)', fontWeight: 500 } }, m.free) },
+            { key: 'minStock', label: 'Мин.', num: true, render: m => m.minStock || '—' },
+            { key: 'unitCost', label: 'Цена', num: true, render: m => m.unitCost ? `${m.unitCost}₽` : '—' },
+            { key: 'total', label: 'Стоимость', num: true,
+              sortValue: m => m.unitCost ? m.quantity * m.unitCost : null,
+              render: m => m.unitCost ? `${(m.quantity * m.unitCost).toLocaleString()}₽` : '—' },
+            { key: 'act', label: '', sortable: false, width: 40,
+              render: m => h('button', { onClick: async () => {
+                const ok = await ask({ message: `Удалить «${m.name}»?`, detail: 'Материал будет удалён из справочника', danger: true });
+                if (ok) {
+                  const d = { ...data, materials: data.materials.filter(x => x.id !== m.id) };
+                  try { onUpdate(d); await DB.save(d); addToast('Удалено', 'info'); } catch(e) { onUpdate(data); addToast('Ошибка удаления', 'error'); }
+                }
+              }, style: { fontSize: 13, color: RD, background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 4px' }, title: 'Удалить' }, '🗑') },
+          ],
+        });
+      })()
     ),
 
     // Заявки
