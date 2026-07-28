@@ -374,133 +374,154 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
           action: filt !== 'all' ? null : 'Добавить операцию',
           onAction: filt !== 'all' ? null : () => setShowForm(true),
         }))
-      : h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null, [h('th', { style: { ...S.th, width: 44, textAlign: 'center', padding: '8px 4px' } }, h('input', { type: 'checkbox', style: { width: 18, height: 18, cursor: 'pointer' }, checked: selectedOps.size === opsToShow.length && opsToShow.length > 0, onChange: selectAllVisible, title: 'Выбрать все' })), ...['ID','Операция','Заказ','Исполнители','Участок','Оборуд.','План, ч','План. старт','Чертёж','Статус','Время',''].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t))])),
-          h('tbody', null, paginated.map(op => {
-            const ord = data.orders.find(o => o.id === op.orderId);
-            const section = data.sections.find(s => s.id === op.sectionId);
-            const eq = data.equipment.find(e => e.id === op.equipmentId);
-            const dur = op.startedAt && op.finishedAt ? fmtDur(op.finishedAt - op.startedAt) : op.startedAt ? fmtDur(now() - op.startedAt) + ' ↻' : '—';
-            const rowOpacity = (op.status === 'done' || op.hiddenFromFeed) ? 0.45 : 1;
-            return [h('tr', { key: op.id, style: { background: op.archived ? 'var(--border-soft,#eee)' : (op.status === 'defect' ? RD3 : op.status === 'rework' ? AM3 : op.status === 'on_check' ? '#E1F5FE' : op.status === 'done' ? GN3 : editingId === op.id ? AM3 : 'transparent'), cursor: 'pointer', opacity: rowOpacity }, onClick: () => toggleOpSelection(op.id) },
-              h('td', { style: { ...S.td, width: 44, textAlign: 'center', padding: '8px 4px' }, onClick: e => e.stopPropagation() },
-              h('input', { type: 'checkbox', style: { width: 18, height: 18, cursor: 'pointer', accentColor: AM }, checked: selectedOps.has(op.id), onChange: () => toggleOpSelection(op.id) })
-            ),
-              h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 10 } }, op.id),
-              h('td', { style: { ...S.td, fontWeight: 500 }, title: [
+      : h(DataTable, {
+        rows: paginated,
+        density: 'compact',
+        sortable: true,
+        onRowClick: op => toggleOpSelection(op.id),
+        rowClassName: op => {
+          if (op.archived) return 'tp-row--muted';
+          if (op.status === 'defect') return 'tp-row--danger';
+          if (op.status === 'rework') return 'tp-row--warning';
+          if (op.status === 'on_check') return 'tp-row--info';
+          if (op.status === 'done') return 'tp-row--success';
+          if (editingId === op.id) return 'tp-row--warning';
+          return '';
+        },
+        rowStyle: op => ({
+          opacity: (op.status === 'done' || op.hiddenFromFeed) ? 0.45 : 1,
+          background: op.archived ? 'var(--border-soft,#eee)' : undefined,
+        }),
+        // Inline-редактирование — full-width строка под редактируемой операцией
+        renderAfterRow: op => editingId !== op.id ? null :
+          h('div', { style: { padding: '10px', background: AM3, borderBottom: `2px solid ${AM}` } },
+            h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' } },
+              h('div', { style: { minWidth: 140 } }, h('div', { style: S.lbl }, 'Операция'), h('select', { style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })) }, stagesList.map(s => h('option', { key: s, value: s }, s)))),
+              h('div', { style: { minWidth: 100 } }, h('div', { style: S.lbl }, 'Участок'), h('select', { style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.sectionId, onChange: e => setForm(p => ({ ...p, sectionId: e.target.value })) }, h('option', { value: '' }, '—'), data.sections.map(s => h('option', { key: s.id, value: s.id }, s.name)))),
+              h('div', { style: { minWidth: 100 } }, h('div', { style: S.lbl }, 'Оборудов.'), h('select', { style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.equipmentId, onChange: e => setForm(p => ({ ...p, equipmentId: e.target.value })) }, h('option', { value: '' }, '—'), data.equipment.map(eq => h('option', { key: eq.id, value: eq.id }, eq.name)))),
+              h('div', { style: { minWidth: 80 } }, h('div', { style: S.lbl }, 'План, ч'), h('input', { type: 'number', step: '0.1', style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.plannedHours, onChange: e => setForm(p => ({ ...p, plannedHours: e.target.value })) })),
+              h('div', { style: { minWidth: 130 } }, h('div', { style: S.lbl }, 'План. старт'), h('input', { type: 'datetime-local', style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.plannedStartDate, onChange: e => setForm(p => ({ ...p, plannedStartDate: e.target.value })) })),
+              h('div', { style: { minWidth: 130 } }, h('div', { style: S.lbl }, 'Чертёж'), h('input', { style: { ...S.inp, width: '100%', fontSize: 11 }, placeholder: 'URL', value: form.drawingUrl, onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value })) })),
+              h('button', { style: abtn({ padding: '7px 16px' }), onClick: addOrUpdate }, '✓ Сохранить'),
+              h('button', { style: gbtn({ padding: '7px 12px' }), onClick: guardedResetOp }, 'Отмена')
+            )
+          ),
+        columns: [
+          { key: 'sel', sortable: false, width: 44, center: true,
+            label: h('input', { type: 'checkbox', style: { width: 18, height: 18, cursor: 'pointer' }, checked: selectedOps.size === opsToShow.length && opsToShow.length > 0, onChange: selectAllVisible, title: 'Выбрать все' }),
+            render: op => h('span', { onClick: e => e.stopPropagation() },
+              h('input', { type: 'checkbox', style: { width: 18, height: 18, cursor: 'pointer', accentColor: AM }, checked: selectedOps.has(op.id), onChange: () => toggleOpSelection(op.id) })) },
+          { key: 'id', label: 'ID', sortable: false,
+            render: op => h('span', { style: { fontFamily: 'monospace', fontSize: 10 } }, op.id) },
+          { key: 'name', label: 'Операция',
+            render: op => h('span', { style: { fontWeight: 500 }, title: [
                 op.name,
                 op.defectNote ? '⚠ ' + op.defectNote : null,
                 op.plannedHours ? 'Плановое время: ' + op.plannedHours + ' ч' : null,
                 op.sectionId ? 'Участок: ' + (data.sections.find(s=>s.id===op.sectionId)?.name||'') : null,
               ].filter(Boolean).join('\n') },
               op.name,
-              op.defectNote && h('div', { style: { fontSize: 10, color: RD } }, op.defectNote)),
-              h('td', { style: { ...S.td, fontSize: 11 } },
-                onOrderClick && ord
-                  ? h('span', { style: { color: AM, fontWeight: 500, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => onOrderClick(ord.id), title: 'Открыть карточку заказа' }, ord.number)
-                  : h('span', { style: { color: AM } }, ord?.number || '—')
+              op.defectNote && h('div', { style: { fontSize: 10, color: RD } }, op.defectNote)) },
+          { key: 'order', label: 'Заказ',
+            sortValue: op => data.orders.find(o => o.id === op.orderId)?.number || '',
+            render: op => {
+              const ord = data.orders.find(o => o.id === op.orderId);
+              return onOrderClick && ord
+                ? h('span', { className: 'tp-link', onClick: e => { e.stopPropagation(); onOrderClick(ord.id); }, title: 'Открыть карточку заказа' }, ord.number)
+                : h('span', { style: { color: AM } }, ord?.number || '—');
+            } },
+          { key: 'workers', label: 'Исполнители', sortable: false,
+            render: op => h('div', { style: { minWidth: 120 } },
+              (op.workerIds || []).length > 0 && h('div', { style: { display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 4 } },
+                (op.workerIds || []).map(wid => {
+                  const w = data.workers.find(w => w.id === wid);
+                  return w ? h('span', { key: wid, style: { display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', fontSize: 10, background: AM3, color: AM2, borderRadius: 6 } },
+                    h(WN, { workerId: wid, data, onWorkerClick, style: { fontSize: 11 } }),
+                    !op.archived && h('span', { style: { cursor: 'pointer', fontWeight: 500, marginLeft: 2 }, onClick: () => assignWorkers(op.id, (op.workerIds || []).filter(id => id !== wid)) }, '×')
+                  ) : null;
+                })
               ),
-              h('td', { style: { ...S.td, minWidth: 120 } },
-                (op.workerIds || []).length > 0 && h('div', { style: { display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 4 } },
-                  (op.workerIds || []).map(wid => {
-                    const w = data.workers.find(w => w.id === wid);
-                    return w ? h('span', { key: wid, style: { display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', fontSize: 10, background: AM3, color: AM2, borderRadius: 6 } },
-                      h(WN, { workerId: wid, data, onWorkerClick, style: { fontSize: 11 } }),
-                      !op.archived && h('span', { style: { cursor: 'pointer', fontWeight: 500, marginLeft: 2 }, onClick: () => assignWorkers(op.id, (op.workerIds || []).filter(id => id !== wid)) }, '×')
-                    ) : null;
-                  })
-                ),
-                !op.archived && h('details', { style: { fontSize: 10 } },
-                  h('summary', { style: { cursor: 'pointer', color: AM, userSelect: 'none', padding: '2px 0', fontWeight: 500 } }, '➕ Добавить'),
-                  h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, padding: '6px 0', maxHeight: 200, overflowY: 'auto' } },
-                    (() => {
-                      const LEVEL_ICONS = { 0: '', 1: '🟡', 2: '🟠', 3: '🟢' };
-                      const LEVEL_LABELS = { 0: '—', 1: 'Новичок', 2: 'Компетентен', 3: 'Эксперт' };
-                      const getLevel = (w) => (w.competenceLevels || {})[op.name] || 0;
-                      const checkExpired = (w) => {
-                        const meta = (w.competenceMeta || {})[op.name];
-                        if (!meta?.expiresAt) return false;
-                        return meta.expiresAt < Date.now();
-                      };
-                      const available = data.workers.filter(w => !w.archived && !(op.workerIds || []).includes(w.id));
-                      const withPermit  = available.filter(w => (w.competences || []).includes(op.name))
-                        .sort((a, b) => getLevel(b) - getLevel(a)); // сортировка по уровню
-                      const noRestrict  = available.filter(w => !w.competences || w.competences.length === 0);
-                      const noPermit    = available.filter(w => w.competences?.length > 0 && !w.competences.includes(op.name));
-                      const mkRow = (w, badge) => {
-                        const level = getLevel(w);
-                        const expired = checkExpired(w);
-                        return h('div', { key: w.id,
-                          style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 8px', borderRadius: 6, cursor: 'pointer', background: 'var(--card,#f5f5f2)', border: '0.5px solid var(--border,#ddd)', fontSize: 11, userSelect: 'none', color: 'var(--fg,#222)', opacity: expired ? 0.6 : 1 },
-                          title: level > 0 ? `${LEVEL_LABELS[level]}${expired ? ' (допуск просрочен!)' : ''}` : '',
-                          onClick: () => assignWorkers(op.id, [...(op.workerIds || []), w.id])
-                        },
-                          h('span', null,
-                            h('span', { style: { color: GN, fontWeight: 600, marginRight: 4 } }, '+'),
-                            w.name,
-                            level > 0 && h('span', { style: { marginLeft: 4, fontSize: 12 } }, LEVEL_ICONS[level])
-                          ),
-                          h('span', { style: { display: 'flex', gap: 3 } },
-                            expired && h('span', { style: { fontSize: 9, background: RD3, color: RD2, padding: '1px 5px', borderRadius: 4 } }, '⚠ просрочен'),
-                            badge
-                          )
-                        );
-                      };
-                      return [
-                        withPermit.length > 0 && h('div', { key: 'g1', style: { fontSize: 10, color: GN2, fontWeight: 500, padding: '4px 0 2px', borderBottom: `1px solid var(--border-soft,#eee)`, marginBottom: 2 } }, `★ Есть допуск (${withPermit.length})`),
-                        ...withPermit.map(w => mkRow(w, h('span', { style: { fontSize: 9, background: GN3, color: GN2, padding: '1px 5px', borderRadius: 4 } }, LEVEL_LABELS[getLevel(w)] || '✓'))),
-                        noRestrict.length > 0 && h('div', { key: 'g2', style: { fontSize: 10, color: '#888', padding: '4px 0 2px', borderBottom: `1px solid var(--border-soft,#eee)`, marginBottom: 2, marginTop: 4 } }, `Без ограничений (${noRestrict.length})`),
-                        ...noRestrict.map(w => mkRow(w, h('span', { style: { fontSize: 9, background: 'var(--card,#f0f0f0)', color: '#888', padding: '1px 5px', borderRadius: 4 } }, 'любые'))),
-                        noPermit.length > 0 && h('div', { key: 'g3', style: { fontSize: 10, color: RD2, padding: '4px 0 2px', borderBottom: `1px solid var(--border-soft,#eee)`, marginBottom: 2, marginTop: 4 } }, `Нет допуска (${noPermit.length})`),
-                        ...noPermit.map(w => mkRow(w, h('span', { style: { fontSize: 9, background: RD3, color: RD2, padding: '1px 5px', borderRadius: 4 } }, '✕ нет')))
-                      ];
-                    })()
-                  )
-                )
-              ),
-              h('td', { style: { ...S.td, fontSize: 11 } }, section?.name || '—'),
-              h('td', { style: { ...S.td, fontSize: 11 } }, eq?.name || '—'),
-              h('td', { style: { ...S.td, textAlign: 'center' } }, op.plannedHours || '—'),
-              h('td', { style: { ...S.td, fontSize: 11 } }, op.plannedStartDate ? new Date(op.plannedStartDate).toLocaleString() : '—'),
-              h('td', { style: { ...S.td, fontSize: 11 } }, op.drawingUrl ? h('a', { href: op.drawingUrl, target: '_blank', rel: 'noopener', style: { color: BL, textDecoration: 'none' } }, '📐') : '—'),
-              h('td', { style: S.td }, h(Badge, { st: op.status })),
-              h('td', { style: { ...S.td, fontFamily: 'monospace' } }, dur),
-              h('td', { style: S.td },
-                h('div', { style: { display: 'flex', gap: 4 } },
-                  // Для допработ на согласовании — кнопки утверждения (заменяют QR/edit)
-                  op.isExtraWork && op.status === 'pending_approval' ? [
-                    h('button', { key:'appr', style: { ...abtn({ fontSize: 11, padding: '4px 10px' }), background: GN, borderColor: GN, color:'#fff' },
-                      onClick: (e) => { e.stopPropagation(); approveExtraWork(op.id); },
-                      title: `Утвердить: ${(op.extraAmount||0).toLocaleString('ru-RU')} ₽ на ${(op.workerIds||[]).length} чел.` }, '✓ Утв.'),
-                    h('button', { key:'rej', style: rbtn({ fontSize: 11, padding: '4px 10px' }),
-                      onClick: (e) => { e.stopPropagation(); rejectExtraWork(op.id); } }, '✕ Откл.'),
-                    h('button', { key:'del2', style: gbtn({ fontSize: 10, padding: '3px 6px' }),
-                      onClick: (e) => { e.stopPropagation(); del(op.id); }, title: 'Удалить запись' }, '🗑')
-                  ] : !op.archived ? [
-                    h('button', { key: 'qr', style: gbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => onShowQR(op, data.workers.find(w => w.id === op.workerIds?.[0])) }, 'QR'),
-                    h('button', { key: 'edit', style: (editingId === op.id ? abtn : gbtn)({ fontSize: 11, padding: '4px 8px' }), onClick: () => editingId === op.id ? resetForm() : edit(op) }, editingId === op.id ? '✕' : '✎'),
-                    editingId !== op.id && h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => del(op.id) }, '✕')
-                  ] : h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => restore(op.id) }, '↩')
+              !op.archived && h('details', { style: { fontSize: 10 }, onClick: e => e.stopPropagation() },
+                h('summary', { style: { cursor: 'pointer', color: AM, userSelect: 'none', padding: '2px 0', fontWeight: 500 } }, '➕ Добавить'),
+                h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, padding: '6px 0', maxHeight: 200, overflowY: 'auto' } },
+                  (() => {
+                    const LEVEL_ICONS = { 0: '', 1: '🟡', 2: '🟠', 3: '🟢' };
+                    const LEVEL_LABELS = { 0: '—', 1: 'Новичок', 2: 'Компетентен', 3: 'Эксперт' };
+                    const getLevel = (w) => (w.competenceLevels || {})[op.name] || 0;
+                    const checkExpired = (w) => {
+                      const meta = (w.competenceMeta || {})[op.name];
+                      if (!meta?.expiresAt) return false;
+                      return meta.expiresAt < Date.now();
+                    };
+                    const available = data.workers.filter(w => !w.archived && !(op.workerIds || []).includes(w.id));
+                    const withPermit  = available.filter(w => (w.competences || []).includes(op.name))
+                      .sort((a, b) => getLevel(b) - getLevel(a)); // сортировка по уровню
+                    const noRestrict  = available.filter(w => !w.competences || w.competences.length === 0);
+                    const noPermit    = available.filter(w => w.competences?.length > 0 && !w.competences.includes(op.name));
+                    const mkRow = (w, badge) => {
+                      const level = getLevel(w);
+                      const expired = checkExpired(w);
+                      return h('div', { key: w.id,
+                        style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 8px', borderRadius: 6, cursor: 'pointer', background: 'var(--card,#f5f5f2)', border: '0.5px solid var(--border,#ddd)', fontSize: 11, userSelect: 'none', color: 'var(--fg,#222)', opacity: expired ? 0.6 : 1 },
+                        title: level > 0 ? `${LEVEL_LABELS[level]}${expired ? ' (допуск просрочен!)' : ''}` : '',
+                        onClick: () => assignWorkers(op.id, [...(op.workerIds || []), w.id])
+                      },
+                        h('span', null,
+                          h('span', { style: { color: GN, fontWeight: 600, marginRight: 4 } }, '+'),
+                          w.name,
+                          level > 0 && h('span', { style: { marginLeft: 4, fontSize: 12 } }, LEVEL_ICONS[level])
+                        ),
+                        h('span', { style: { display: 'flex', gap: 3 } },
+                          expired && h('span', { style: { fontSize: 9, background: RD3, color: RD2, padding: '1px 5px', borderRadius: 4 } }, '⚠ просрочен'),
+                          badge
+                        )
+                      );
+                    };
+                    return [
+                      withPermit.length > 0 && h('div', { key: 'g1', style: { fontSize: 10, color: GN2, fontWeight: 500, padding: '4px 0 2px', borderBottom: `1px solid var(--border-soft,#eee)`, marginBottom: 2 } }, `★ Есть допуск (${withPermit.length})`),
+                      ...withPermit.map(w => mkRow(w, h('span', { style: { fontSize: 9, background: GN3, color: GN2, padding: '1px 5px', borderRadius: 4 } }, LEVEL_LABELS[getLevel(w)] || '✓'))),
+                      noRestrict.length > 0 && h('div', { key: 'g2', style: { fontSize: 10, color: '#888', padding: '4px 0 2px', borderBottom: `1px solid var(--border-soft,#eee)`, marginBottom: 2, marginTop: 4 } }, `Без ограничений (${noRestrict.length})`),
+                      ...noRestrict.map(w => mkRow(w, h('span', { style: { fontSize: 9, background: 'var(--card,#f0f0f0)', color: '#888', padding: '1px 5px', borderRadius: 4 } }, 'любые'))),
+                      noPermit.length > 0 && h('div', { key: 'g3', style: { fontSize: 10, color: RD2, padding: '4px 0 2px', borderBottom: `1px solid var(--border-soft,#eee)`, marginBottom: 2, marginTop: 4 } }, `Нет допуска (${noPermit.length})`),
+                      ...noPermit.map(w => mkRow(w, h('span', { style: { fontSize: 9, background: RD3, color: RD2, padding: '1px 5px', borderRadius: 4 } }, '✕ нет')))
+                    ];
+                  })()
                 )
               )
-            ),
-            // Inline-редактирование — карточка под строкой
-            editingId === op.id && h('tr', { key: op.id + '_edit' },
-              h('td', { colSpan: 12, style: { padding: '10px', background: AM3, borderBottom: `2px solid ${AM}` } },
-                h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' } },
-                  h('div', { style: { minWidth: 140 } }, h('div', { style: S.lbl }, 'Операция'), h('select', { style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.name, onChange: e => setForm(p => ({ ...p, name: e.target.value })) }, stagesList.map(s => h('option', { key: s, value: s }, s)))),
-                  h('div', { style: { minWidth: 100 } }, h('div', { style: S.lbl }, 'Участок'), h('select', { style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.sectionId, onChange: e => setForm(p => ({ ...p, sectionId: e.target.value })) }, h('option', { value: '' }, '—'), data.sections.map(s => h('option', { key: s.id, value: s.id }, s.name)))),
-                  h('div', { style: { minWidth: 100 } }, h('div', { style: S.lbl }, 'Оборудов.'), h('select', { style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.equipmentId, onChange: e => setForm(p => ({ ...p, equipmentId: e.target.value })) }, h('option', { value: '' }, '—'), data.equipment.map(eq => h('option', { key: eq.id, value: eq.id }, eq.name)))),
-                  h('div', { style: { minWidth: 80 } }, h('div', { style: S.lbl }, 'План, ч'), h('input', { type: 'number', step: '0.1', style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.plannedHours, onChange: e => setForm(p => ({ ...p, plannedHours: e.target.value })) })),
-                  h('div', { style: { minWidth: 130 } }, h('div', { style: S.lbl }, 'План. старт'), h('input', { type: 'datetime-local', style: { ...S.inp, width: '100%', fontSize: 11 }, value: form.plannedStartDate, onChange: e => setForm(p => ({ ...p, plannedStartDate: e.target.value })) })),
-                  h('div', { style: { minWidth: 130 } }, h('div', { style: S.lbl }, 'Чертёж'), h('input', { style: { ...S.inp, width: '100%', fontSize: 11 }, placeholder: 'URL', value: form.drawingUrl, onChange: e => setForm(p => ({ ...p, drawingUrl: e.target.value })) })),
-                  h('button', { style: abtn({ padding: '7px 16px' }), onClick: addOrUpdate }, '✓ Сохранить'),
-                  h('button', { style: gbtn({ padding: '7px 12px' }), onClick: guardedResetOp }, 'Отмена')
-                )
-              )
-            )];
-          }))
-        ))),
+            ) },
+          { key: 'section', label: 'Участок',
+            sortValue: op => data.sections.find(s => s.id === op.sectionId)?.name || '',
+            render: op => data.sections.find(s => s.id === op.sectionId)?.name || '—' },
+          { key: 'equipment', label: 'Оборуд.', sortable: false,
+            render: op => data.equipment.find(e => e.id === op.equipmentId)?.name || '—' },
+          { key: 'plannedHours', label: 'План, ч', num: true, render: op => op.plannedHours || '—' },
+          { key: 'plannedStartDate', label: 'План. старт',
+            render: op => op.plannedStartDate ? new Date(op.plannedStartDate).toLocaleString() : '—' },
+          { key: 'drawing', label: 'Чертёж', sortable: false, center: true,
+            render: op => op.drawingUrl ? h('a', { href: op.drawingUrl, target: '_blank', rel: 'noopener', style: { color: BL, textDecoration: 'none' }, onClick: e => e.stopPropagation() }, '📐') : '—' },
+          { key: 'status', label: 'Статус', sortValue: op => op.status, render: op => h(Badge, { st: op.status }) },
+          { key: 'time', label: 'Время', sortable: false,
+            render: op => h('span', { style: { fontFamily: 'monospace' } },
+              op.startedAt && op.finishedAt ? fmtDur(op.finishedAt - op.startedAt) : op.startedAt ? fmtDur(now() - op.startedAt) + ' ↻' : '—') },
+          { key: 'actions', label: '', sortable: false,
+            render: op => h('div', { style: { display: 'flex', gap: 4 } },
+              // Для допработ на согласовании — кнопки утверждения (заменяют QR/edit)
+              op.isExtraWork && op.status === 'pending_approval' ? [
+                h('button', { key:'appr', style: { ...abtn({ fontSize: 11, padding: '4px 10px' }), background: GN, borderColor: GN, color:'#fff' },
+                  onClick: (e) => { e.stopPropagation(); approveExtraWork(op.id); },
+                  title: `Утвердить: ${(op.extraAmount||0).toLocaleString('ru-RU')} ₽ на ${(op.workerIds||[]).length} чел.` }, '✓ Утв.'),
+                h('button', { key:'rej', style: rbtn({ fontSize: 11, padding: '4px 10px' }),
+                  onClick: (e) => { e.stopPropagation(); rejectExtraWork(op.id); } }, '✕ Откл.'),
+                h('button', { key:'del2', style: gbtn({ fontSize: 10, padding: '3px 6px' }),
+                  onClick: (e) => { e.stopPropagation(); del(op.id); }, title: 'Удалить запись' }, '🗑')
+              ] : !op.archived ? [
+                h('button', { key: 'qr', style: gbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => onShowQR(op, data.workers.find(w => w.id === op.workerIds?.[0])) }, 'QR'),
+                h('button', { key: 'edit', style: (editingId === op.id ? abtn : gbtn)({ fontSize: 11, padding: '4px 8px' }), onClick: () => editingId === op.id ? resetForm() : edit(op) }, editingId === op.id ? '✕' : '✎'),
+                editingId !== op.id && h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => del(op.id) }, '✕')
+              ] : h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => restore(op.id) }, '↩')
+            ) },
+        ],
+      }),
     h('div', { className: 'pagination' },
       h('button', { style: gbtn({ opacity: page === 1 ? 0.4 : 1 }), disabled: page === 1, onClick: () => setPage(p => Math.max(1, p-1)) }, '← Пред'),
       h('span', { style: { fontSize: 12 } }, `${page} / ${Math.ceil(opsToShow.length / pageSize) || 1}`),
@@ -3221,20 +3242,28 @@ const CostAnalytics = memo(({ data, onUpdate, addToast }) => {
         h('button', { style: gbtn({ fontSize:11, padding:'6px 10px' }), onClick: () => setShowRates(v => !v) }, showRates ? '▼ Ставки' : '▶ Ставки сотрудников')
       ),
       // 📋 Таблица себестоимости
-      h('div', { className:'table-responsive' }, h('table', { style: { width:'100%', borderCollapse:'collapse', fontSize:11 } },
-        h('thead', null, h('tr', null,
-          ['Заказ','Цена','Материал','Рабсила','Себест','Прибыль','Маржа'].map((h, i) => h('th', { key:i, style: S.th }, h))
-        )),
-        h('tbody', null, costReport.map(r => h('tr', { key:r.orderId },
-          h('td', { style: S.td }, data.orders?.find(o => o.id === r.orderId)?.number || '—'),
-          h('td', { style: S.td }, `${r.price} ₽`),
-          h('td', { style: S.td }, `${r.materialCost} ₽`),
-          h('td', { style: S.td }, `${r.laborCost} ₽`),
-          h('td', { style: S.td }, `${r.totalCost} ₽`),
-          h('td', { style: { ...S.td, color: r.profit >= 0 ? GN : RD, fontWeight:500 } }, `${r.profit} ₽`),
-          h('td', { style: { ...S.td, background: r.margin >= 20 ? '#E8F5E9' : r.margin >= 0 ? '#FFF8E1' : '#FFF0F0', fontWeight:500 } }, `${r.margin}%`)
-        )))
-      )),
+      h(DataTable, {
+        rows: costReport,
+        getRowId: r => r.orderId,
+        density: 'compact',
+        defaultSort: { key: 'margin', dir: 'desc' },
+        empty: { icon: '💰', title: 'Нет данных', desc: 'Завершите заказы, чтобы увидеть рентабельность' },
+        columns: [
+          { key: 'order', label: 'Заказ',
+            sortValue: r => data.orders?.find(o => o.id === r.orderId)?.number || '',
+            render: r => data.orders?.find(o => o.id === r.orderId)?.number || '—' },
+          { key: 'price',        label: 'Цена',     num: true, render: r => `${r.price} ₽` },
+          { key: 'materialCost', label: 'Материал', num: true, render: r => `${r.materialCost} ₽` },
+          { key: 'laborCost',    label: 'Рабсила',  num: true, render: r => `${r.laborCost} ₽` },
+          { key: 'totalCost',    label: 'Себест',   num: true, render: r => `${r.totalCost} ₽` },
+          { key: 'profit',       label: 'Прибыль',  num: true,
+            render: r => h('span', { style: { color: r.profit >= 0 ? GN : RD, fontWeight: 500 } }, `${r.profit} ₽`) },
+          { key: 'margin',       label: 'Маржа',    num: true,
+            render: r => h('span', { style: { display: 'inline-block', padding: '1px 7px', borderRadius: 6, fontWeight: 500,
+              background: r.margin >= 20 ? 'var(--c-gn3)' : r.margin >= 0 ? 'var(--c-am3)' : 'var(--c-rd3)',
+              color: r.margin >= 20 ? 'var(--c-gn2)' : r.margin >= 0 ? 'var(--c-am2)' : 'var(--c-rd2)' } }, `${r.margin}%`) },
+        ],
+      }),
       // 📊 Ставки сотрудников (редактируемо)
       showRates && h('div', { style: { marginTop:16, padding:12, background:'#f8f8f5', borderRadius:8 } },
         h('div', { style: { fontSize:12, fontWeight:500, marginBottom:12 } }, 'Установить часовую ставку (руб/час):'),
