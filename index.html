@@ -557,6 +557,77 @@
     .app-header-role { font-size: 12px; font-weight: 500; color: var(--fg-muted); padding: 3px 9px; background: var(--card-2); border: 0.5px solid var(--border-soft); border-radius: 20px; }
     .app-header-spacer { flex: 1; }
 
+
+    /* ═══════════════════════════════════════════════════════════════════
+       TP Design System · Таблицы данных (DataTable) — аудит, Блок 4
+       Заменяет inline S.th / S.td. Стиль меняется здесь — один раз для всех.
+       Плотности: --compact (~28px строка), base (~40px), --relaxed (~52px)
+       ═══════════════════════════════════════════════════════════════════ */
+    .tp-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .tp-table { width: 100%; border-collapse: collapse; }
+    .tp-table th {
+      text-align: left; padding: 8px 10px;
+      font-size: 11px; font-weight: 500;
+      text-transform: uppercase; letter-spacing: 0.07em;
+      color: var(--muted);
+      border-bottom: 0.5px solid var(--border-soft);
+      background: var(--card);
+      white-space: nowrap;
+    }
+    .tp-table td {
+      padding: 10px; font-size: 13px;
+      color: var(--fg);
+      border-bottom: 0.5px solid var(--border-soft);
+      vertical-align: middle;
+    }
+    .tp-table tbody tr { transition: background-color 0.12s; }
+    .tp-table tbody tr:hover { background: var(--card-2); }
+    .tp-table tbody tr:last-child td { border-bottom: none; }
+    .tp-table--sticky thead th { position: sticky; top: 0; z-index: 2; }
+
+    /* — Плотности — */
+    .tp-table--compact th { padding: 5px 8px; font-size: 10px; }
+    .tp-table--compact td { padding: 5px 8px; font-size: 12px; }
+    .tp-table--relaxed td { padding: 16px 12px; font-size: 14px; }
+
+    /* — Числовые колонки: моноширинные цифры, выравнивание вправо — */
+    .tp-th--num, .tp-td--num { text-align: right; }
+    .tp-td--num { font-variant-numeric: tabular-nums; }
+    .tp-th--center, .tp-td--center { text-align: center; }
+
+    /* — Сортируемые заголовки — */
+    .tp-th--sortable { cursor: pointer; user-select: none; }
+    .tp-th--sortable:hover { color: var(--fg); }
+    .tp-sort-arrow { display: inline-block; margin-left: 3px; font-size: 8px; opacity: 0.8; }
+
+    /* — Ссылка внутри данных (номер заказа и т.п.) — */
+    .tp-link {
+      color: var(--brand); font-weight: 500; cursor: pointer;
+      text-decoration: underline; text-decoration-style: dotted;
+      text-underline-offset: 2px;
+    }
+    .tp-link:hover { text-decoration-style: solid; }
+
+    /* — Состояния строк (токены темы — работают в light и dark) — */
+    .tp-table tbody tr.tp-row--danger,
+    .tp-table tbody tr.tp-row--danger:hover   { background: var(--c-rd3); }
+    .tp-table tbody tr.tp-row--warning,
+    .tp-table tbody tr.tp-row--warning:hover  { background: var(--c-am3); }
+    .tp-table tbody tr.tp-row--success,
+    .tp-table tbody tr.tp-row--success:hover  { background: var(--c-gn3); }
+    .tp-table tbody tr.tp-row--selected,
+    .tp-table tbody tr.tp-row--selected:hover { background: rgba(226,75,74,0.08); }
+    .tp-table tbody tr.tp-row--info,
+    .tp-table tbody tr.tp-row--info:hover     { background: rgba(55,138,221,0.10); }
+    .tp-table tbody tr.tp-row--muted td { opacity: 0.55; }
+    .tp-row--clickable { cursor: pointer; }
+
+    /* — Итоговая строка (tfoot) — */
+    .tp-table tfoot td {
+      padding: 10px; font-size: 13px; font-weight: 600;
+      color: var(--fg); border-top: 1px solid var(--border);
+    }
+
   </style>
 </head>
 <body>
@@ -588,11 +659,11 @@
 </script>
 
 <!-- Core: константы, DB, утилиты, общие компоненты, загрузчик office/field бандлов -->
-<script src="js/core.js?v=20260727a"></script>
+<script src="js/core.js?v=20260727c"></script>
 <!-- Shared: QR, PDF, LoadForecast, WorkerCardModal, MasterOnboarding -->
-<script defer src="js/shared.js?v=20260727a"></script>
+<script defer src="js/shared.js?v=20260727c"></script>
 <!-- Чат — общий для всех ролей, поэтому грузится статически -->
-<script defer src="js/chat.js?v=20260727a"></script>
+<script defer src="js/chat.js?v=20260727c"></script>
 <!--
   Ленивая подгрузка по роли (аудит, perf) — вместо статических тегов ниже.
   qms.js, analytics.js, timesheet.js, auxops.js, reference.js, quality.js, hr.js,
@@ -602,6 +673,6 @@
   так как master.js/hr.js/analytics.js и т.д. им никогда не нужны.
 -->
 <!-- Приложение: App, Login, Dashboard, роутинг, PWA -->
-<script defer src="js/app.js?v=20260727a"></script>
+<script defer src="js/app.js?v=20260727c"></script>
 </body>
 </html>
