@@ -167,34 +167,36 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
       h('div', { style: S.sec }, 'Операции, ожидающие контроля'),
       pendingQC.length === 0
         ? h('div', null, h(EmptyState, { icon: '✓', title: 'Нет операций на контроле', desc: 'Все операции проверены', positive: true, compact: true }))
-        : h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-            h('thead', null, h('tr', null,
-              ['Заказ','Операция','Сотрудник','Параметры','Действия'].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t))
-            )),
-            h('tbody', null, pendingQC.map(op => {
-              const order = data.orders.find(o => o.id === op.orderId);
-              const workerIds = op.workerIds || [];
-              return h('tr', { key: op.id, style: { transition: 'background 0.12s' }, onMouseEnter: e => e.currentTarget.style.background = 'rgba(239,159,39,0.05)', onMouseLeave: e => e.currentTarget.style.background = '' },
-                h('td', { style: S.td },
-                  onOrderClick && order
-                    ? h('span', { style: { color: AM, fontWeight: 500, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => onOrderClick(order.id), title: 'Открыть карточку' }, order.number)
-                    : order?.number || '—'
-                ),
-                h('td', { style: S.td }, op.name),
-                h('td', { style: S.td },
-                  workerIds.length === 0 ? '—' :
-                  h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
-                    workerIds.map(wid => h(WN, { key: wid, workerId: wid, data, onWorkerClick }))
-                  )
-                ),
-                h('td', { style: S.td }, op.weldParams ? `Шов: ${op.weldParams.seamNumber}, Электрод: ${op.weldParams.electrode}` : '—'),
-                h('td', { style: S.td }, h('div', { style: { display: 'flex', gap: 4 } },
-                  h('button', { style: abtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Принять операцию', onClick: () => { vibrateAction('finish'); acceptOp(op); } }, 'Принять'),
-                  h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px' }), 'aria-label': 'Забраковать операцию', onClick: () => { navigator.vibrate?.([40]); setRejectModal({ op }); setRejectNote(''); } }, 'Брак')
-                ))
-              );
-            }))
-          ))
+        : h(DataTable, {
+            card: false,  // секция уже обёрнута в S.card выше
+            rows: pendingQC,
+            defaultSort: { key: 'order', dir: 'asc' },
+            columns: [
+              { key: 'order', label: 'Заказ', width: 110,
+                sortValue: op => data.orders.find(o => o.id === op.orderId)?.number || '',
+                render: op => {
+                  const order = data.orders.find(o => o.id === op.orderId);
+                  return onOrderClick && order
+                    ? h('span', { className: 'tp-link', title: 'Открыть карточку', onClick: () => onOrderClick(order.id) }, order.number)
+                    : order?.number || '—';
+                } },
+              { key: 'name', label: 'Операция' },
+              { key: 'workers', label: 'Сотрудник', sortable: false,
+                render: op => {
+                  const workerIds = op.workerIds || [];
+                  return workerIds.length === 0 ? '—' :
+                    h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
+                      workerIds.map(wid => h(WN, { key: wid, workerId: wid, data, onWorkerClick })));
+                } },
+              { key: 'params', label: 'Параметры', sortable: false,
+                render: op => op.weldParams ? `Шов: ${op.weldParams.seamNumber}, Электрод: ${op.weldParams.electrode}` : '—' },
+              { key: 'actions', label: 'Действия', sortable: false, width: 150,
+                render: op => h('div', { style: { display: 'flex', gap: 4 } },
+                  h('button', { style: abtn({ fontSize: 11, padding: '4px 8px', minHeight: 32 }), 'aria-label': 'Принять операцию', onClick: () => { vibrateAction('finish'); acceptOp(op); } }, 'Принять'),
+                  h('button', { style: rbtn({ fontSize: 11, padding: '4px 8px', minHeight: 32 }), 'aria-label': 'Забраковать операцию', onClick: () => { navigator.vibrate?.([40]); setRejectModal({ op }); setRejectNote(''); } }, 'Брак')
+                ) },
+            ],
+          })
     ),
 
     // Вкладка «Заказы» — тот же MasterOrders, что у начальника цеха (read-only режим не нужен,
