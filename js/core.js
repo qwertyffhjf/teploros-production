@@ -1876,7 +1876,7 @@ const S = {
   lbl: { fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6, display: 'block', fontWeight: 500 },
   sec: { fontSize: 12, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12, fontWeight: 600 }
 };
-const abtn = (e) => ({ padding: '10px 16px', background: AM, color: AM2, border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e });
+const abtn = (e) => ({ padding: '10px 16px', background: AM, color: 'var(--brand-ink, #412402)', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e }); // color: brand-ink вместо AM2 — AM2 в dark-теме светлый и терял контраст на оранжевом (аудит 4.4)
 const gbtn = (e) => ({ padding: '10px 16px', background: 'transparent', color: 'var(--fg)', border: '0.5px solid var(--border)', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e });
 const rbtn = (e) => ({ padding: '10px 16px', background: RD3, color: RD2, border: `0.5px solid ${RD}`, borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e });
 
@@ -2165,6 +2165,157 @@ const EmptyState = memo(({ icon, title, desc, action, onAction, positive = false
       style: { fontSize: 11, color: 'var(--muted, #888)', marginTop: 6, opacity: 0.75, lineHeight: 1.5, maxWidth: 260 }
     }, hint)
   );
+});
+
+// ==================== DataTable — единый компонент таблиц данных ====================
+// Заменяет ручную вёрстку h('table') + S.th/S.td (аудит, Блок 4). Стили — в CSS
+// классах .tp-table (index.html), не inline: изменение вида таблиц во всей системе
+// делается в одном месте. Hover, sticky, плотности — через CSS, без onMouseEnter.
+//
+// Использование:
+//   h(DataTable, {
+//     columns: [
+//       { key: 'number', label: 'Заказ', render: r => h('span', { className: 'tp-link', onClick: ... }, r.number) },
+//       { key: 'free',   label: 'Свободно', num: true, sortValue: r => r.free },
+//       { key: 'act',    label: '', sortable: false, render: r => h('button', ...) },
+//     ],
+//     rows,                      // массив объектов; ключ строки — row.id (или getRowId)
+//     density: 'normal',         // 'compact' | 'normal' | 'relaxed'
+//     sortable: true,            // сортировка кликом по заголовку: asc → desc → исходный порядок
+//     defaultSort: null,         // { key, dir: 'asc'|'desc' } или null (исходный порядок rows)
+//     onRowClick: (row) => {},   // опционально; интерактивные элементы в ячейках должны
+//                                // вызывать e.stopPropagation(), чтобы не триггерить строку
+//     rowClassName: (row) => '', // 'tp-row--danger' | '--warning' | '--success' | '--info' | '--selected' | '--muted'
+//     rowStyle: (row) => ({}),   // inline-стиль строки поверх классов (opacity и т.п.)
+//     renderAfterRow: (row) => node|null,  // раскрывающаяся строка после row (см. ведомость hr.js)
+//     footerCells: [{ content, colSpan, num }],  // итоговая строка (tfoot)
+//     empty: { icon, title, desc },  // EmptyState при rows.length === 0
+//     stickyHeader: true,
+//     maxHeight: null,           // px — вертикальный скролл внутри таблицы
+//     card: true,                // обернуть в S.card (padding: 0)
+//   })
+//
+// Колонка: { key, label, render?, sortValue?, sortable?, num?, center?, width?, title? }
+//   render(row, index) — содержимое ячейки; по умолчанию row[key] (null → '—')
+//   sortValue(row)     — значение для сортировки; по умолчанию row[key]
+//   num: true          — числовая колонка (вправо + tabular-nums)
+//   center: true       — по центру (для коротких статусов)
+const DataTable = memo(({
+  columns, rows,
+  density = 'normal',
+  sortable = true,
+  defaultSort = null,
+  onRowClick = null,
+  rowClassName = null,
+  rowStyle = null,       // (row) => styleObj — inline-стиль строки (opacity, borderLeft-акценты)
+  renderAfterRow = null, // (row, i) => node|null — full-width строка ПОСЛЕ row (inline-редактирование,
+                         // раскрывающаяся детализация); рендерится как tr > td[colSpan] с padding: 0
+  footerCells = null,    // [{ content, colSpan?, num?, style? }] — итоговая строка в tfoot (ИТОГО)
+  empty = null,
+  stickyHeader = true,
+  maxHeight = null,
+  card = true,
+  getRowId = null,
+}) => {
+  // Хуки — строго до любых early return (React error #310)
+  const [sort, setSort] = useState(defaultSort);
+
+  const sortedRows = useMemo(() => {
+    const src = rows || [];
+    if (!sort || !sort.key) return src;
+    const col = (columns || []).find(c => c.key === sort.key);
+    if (!col) return src;
+    const getVal = col.sortValue || ((r) => r[sort.key]);
+    const dir = sort.dir === 'desc' ? -1 : 1;
+    return [...src].sort((a, b) => {
+      const va = getVal(a), vb = getVal(b);
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;   // пустые значения — всегда в конец
+      if (vb == null) return -1;
+      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+      return String(va).localeCompare(String(vb), 'ru', { numeric: true }) * dir;
+    });
+  }, [rows, sort, columns]);
+
+  const toggleSort = (col) => {
+    if (!sortable || col.sortable === false) return;
+    setSort(prev => {
+      if (!prev || prev.key !== col.key) return { key: col.key, dir: 'asc' };
+      if (prev.dir === 'asc') return { key: col.key, dir: 'desc' };
+      return defaultSort; // третий клик — возврат к исходному порядку
+    });
+  };
+
+  if (!rows || rows.length === 0) {
+    if (!empty) return null;
+    const es = h(EmptyState, { compact: true, ...empty });
+    return card ? h('div', { style: S.card }, es) : es;
+  }
+
+  const tableCls = [
+    'tp-table',
+    density === 'compact' && 'tp-table--compact',
+    density === 'relaxed' && 'tp-table--relaxed',
+    stickyHeader && 'tp-table--sticky',
+  ].filter(Boolean).join(' ');
+
+  const table = h('div', {
+    className: 'tp-table-wrap',
+    style: maxHeight ? { maxHeight, overflowY: 'auto' } : undefined,
+  },
+    h('table', { className: tableCls },
+      h('thead', null, h('tr', null,
+        columns.map(col => {
+          const canSort = sortable && col.sortable !== false;
+          const active = sort && sort.key === col.key;
+          return h('th', {
+            key: col.key, scope: 'col', title: col.title,
+            className: [
+              col.num && 'tp-th--num',
+              col.center && 'tp-th--center',
+              canSort && 'tp-th--sortable',
+            ].filter(Boolean).join(' ') || undefined,
+            style: col.width ? { width: col.width } : undefined,
+            onClick: canSort ? () => toggleSort(col) : undefined,
+            'aria-sort': active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined,
+          },
+            col.label,
+            active && h('span', { className: 'tp-sort-arrow' }, sort.dir === 'asc' ? '▲' : '▼')
+          );
+        })
+      )),
+      h('tbody', null, sortedRows.flatMap((row, i) => {
+        const rid = getRowId ? getRowId(row) : (row.id != null ? row.id : i);
+        const stateCls = rowClassName ? rowClassName(row) : '';
+        const mainTr = h('tr', {
+          key: rid,
+          className: [stateCls, onRowClick && 'tp-row--clickable'].filter(Boolean).join(' ') || undefined,
+          style: rowStyle ? rowStyle(row) : undefined,
+          onClick: onRowClick ? () => onRowClick(row) : undefined,
+        },
+          columns.map(col => h('td', {
+            key: col.key,
+            className: [col.num && 'tp-td--num', col.center && 'tp-td--center'].filter(Boolean).join(' ') || undefined,
+          }, col.render ? col.render(row, i) : (row[col.key] != null ? row[col.key] : '—')))
+        );
+        const after = renderAfterRow ? renderAfterRow(row, i) : null;
+        if (!after) return [mainTr];
+        return [mainTr, h('tr', { key: rid + '_after' },
+          h('td', { colSpan: columns.length, style: { padding: 0 } }, after)
+        )];
+      })),
+      footerCells && footerCells.length > 0 && h('tfoot', null, h('tr', null,
+        footerCells.map((fc, i) => h('td', {
+          key: i,
+          colSpan: fc.colSpan || 1,
+          className: fc.num ? 'tp-td--num' : undefined,
+          style: fc.style,
+        }, fc.content))
+      ))
+    )
+  );
+
+  return card ? h('div', { style: { ...S.card, padding: 0, overflow: 'hidden' } }, table) : table;
 });
 
 // ==================== useSave — универсальный хук сохранения ====================
