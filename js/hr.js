@@ -1006,30 +1006,29 @@ const VacationPlanner = memo(({ data, onUpdate, addToast }) => {
       )
     ),
 
-    h('div', { style:{ ...S.card, padding:0, overflowX: 'auto', WebkitOverflowScrolling: 'touch' } },
-      h('table', { style:{ borderCollapse:'collapse', minWidth: 520, fontSize:12 } },
-        h('thead', null, h('tr', null,
-          ['Сотрудник','Начало','Конец','Дней','Статус','Утверждён',''].map((t,i) => h('th', { key:i, style:S.th }, t))
-        )),
-        h('tbody', null, [...vacations].sort((a,b) => a.startDate.localeCompare(b.startDate)).map(v => {
-          const w = data.workers.find(x => x.id === v.workerId);
-          const st = getVacStatus(v);
-          const [bg, cl] = statusColors[st];
-          return h('tr', { key:v.id },
-            h('td', { style:S.td }, w?.name || '—'),
-            h('td', { style:S.td }, v.startDate),
-            h('td', { style:S.td }, v.endDate),
-            h('td', { style:{ ...S.td, textAlign:'center' } }, v.days),
-            h('td', { style:S.td }, h('span', { style:{ padding:'2px 8px', borderRadius:4, background:bg, color:cl, fontSize:10 } }, statusLabels[st])),
-            h('td', { style:{ ...S.td, textAlign:'center' } },
-              h('input', { type:'checkbox', checked:v.approved, onChange:()=>toggle(v.id), style:{ accentColor:GN, width:16, height:16 } })
-            ),
-            h('td', { style:S.td }, h('button', { style:{ background:'none', border:'none', color:'#ccc', cursor:'pointer' }, onClick:()=>del(v.id) }, '×'))
-          );
-        })),
-        vacations.length === 0 && h('tr', null, h('td', { colSpan:7, style: S.td }, h(EmptyState, { icon: '🏖️', title: 'Нет отпусков', desc: 'Запланированных отпусков нет', compact: true })))
-      )
-    )
+    (() => {
+      const vacRows = [...vacations].sort((a,b) => a.startDate.localeCompare(b.startDate))
+        .map(v => ({ ...v, workerName: data.workers.find(x => x.id === v.workerId)?.name || '—', vacStatus: getVacStatus(v) }));
+      return h(DataTable, {
+        rows: vacRows,
+        empty: { icon: '🏖️', title: 'Нет отпусков', desc: 'Запланированных отпусков нет' },
+        columns: [
+          { key: 'workerName', label: 'Сотрудник' },
+          { key: 'startDate', label: 'Начало' },
+          { key: 'endDate', label: 'Конец' },
+          { key: 'days', label: 'Дней', num: true },
+          { key: 'status', label: 'Статус', sortValue: v => v.vacStatus,
+            render: v => {
+              const [bg, cl] = statusColors[v.vacStatus];
+              return h('span', { style:{ padding:'2px 8px', borderRadius:4, background:bg, color:cl, fontSize:10 } }, statusLabels[v.vacStatus]);
+            } },
+          { key: 'approved', label: 'Утверждён', center: true, sortValue: v => v.approved ? 1 : 0,
+            render: v => h('input', { type:'checkbox', checked:v.approved, onChange:()=>toggle(v.id), style:{ accentColor:GN, width:16, height:16 } }) },
+          { key: 'act', label: '', sortable: false, width: 36,
+            render: v => h('button', { style:{ background:'none', border:'none', color:'#ccc', cursor:'pointer' }, onClick:()=>del(v.id) }, '×') },
+        ],
+      });
+    })()
   );
 });
 
@@ -1473,45 +1472,37 @@ const ToolIssueManager = memo(({ data, onUpdate, addToast }) => {
     h('div', { style: S.card },
       issues.length === 0
         ? h(EmptyState, { icon:'🔧', title:'Записей нет', desc:'Выдайте инструмент через кнопку выше' })
-        : h('table', { style: { width:'100%', borderCollapse:'collapse', fontSize:13 } },
-            h('thead', null,
-              h('tr', null,
-                ['Сотрудник','Инструмент','Инв. №','Стоимость','Выдан','Состояние','Статус',''].map(col =>
-                  h('th', { key:col, style: { textAlign:'left', padding:'7px 10px', fontSize:10, fontWeight:600,
-                    letterSpacing:'0.06em', textTransform:'uppercase', color:'var(--muted)',
-                    borderBottom:`0.5px solid var(--border)` } }, col)
-                )
-              )
-            ),
-            h('tbody', null, issues.map(t => {
-              const w = data.workers.find(x=>x.id===t.workerId);
-              return h('tr', { key:t.id, style: { borderBottom:'0.5px solid var(--border-soft)' } },
-                h('td', { style:{ padding:'8px 10px', fontWeight:500 } }, w?.name || '—'),
-                h('td', { style:{ padding:'8px 10px' } },
+        : h(DataTable, {
+            card: false,  // уже внутри S.card
+            rows: issues,
+            columns: [
+              { key: 'worker', label: 'Сотрудник',
+                sortValue: t => data.workers.find(x=>x.id===t.workerId)?.name || '',
+                render: t => h('span', { style:{ fontWeight:500 } }, data.workers.find(x=>x.id===t.workerId)?.name || '—') },
+              { key: 'tool', label: 'Инструмент', sortValue: t => t.toolName,
+                render: t => h('div', null,
                   h('div', null, t.toolName),
-                  t.category && h('div', { style:{fontSize:11,color:'var(--muted)'} }, t.category)
-                ),
-                h('td', { style:{ padding:'8px 10px', color:'var(--muted)', fontSize:12 } }, t.invNumber||'—'),
-                h('td', { style:{ padding:'8px 10px', fontWeight:500, color: AM2 } }, t.cost ? `${fmt(t.cost)} ₽` : '—'),
-                h('td', { style:{ padding:'8px 10px', fontSize:12, color:'var(--muted)' } },
-                  new Date(t.issuedAt).toLocaleDateString('ru-RU', {day:'2-digit',month:'2-digit',year:'numeric'})
-                ),
-                h('td', { style:{ padding:'8px 10px', fontSize:12 } }, CONDITION_LABEL[t.condition]||t.condition||'—'),
-                h('td', { style:{ padding:'8px 10px' } },
-                  h('span', { style: { fontSize:11, padding:'3px 9px', borderRadius:10, fontWeight:500,
+                  t.category && h('div', { style:{fontSize:11,color:'var(--muted)'} }, t.category)) },
+              { key: 'invNumber', label: 'Инв. №', sortable: false,
+                render: t => h('span', { style:{ color:'var(--muted)', fontSize:12 } }, t.invNumber||'—') },
+              { key: 'cost', label: 'Стоимость', num: true, sortValue: t => t.cost || 0,
+                render: t => t.cost ? h('span', { style:{ fontWeight:500, color: AM2 } }, `${fmt(t.cost)} ₽`) : '—' },
+              { key: 'issuedAt', label: 'Выдан', sortValue: t => t.issuedAt,
+                render: t => h('span', { style:{ fontSize:12, color:'var(--muted)' } },
+                  new Date(t.issuedAt).toLocaleDateString('ru-RU', {day:'2-digit',month:'2-digit',year:'numeric'})) },
+              { key: 'condition', label: 'Состояние', sortable: false,
+                render: t => CONDITION_LABEL[t.condition]||t.condition||'—' },
+              { key: 'status', label: 'Статус', sortValue: t => t.status,
+                render: t => h('span', { style: { fontSize:11, padding:'3px 9px', borderRadius:10, fontWeight:500,
                     background: t.status==='active' ? AM3 : t.status==='returned' ? GN3 : RD3,
                     color: t.status==='active' ? AM2 : t.status==='returned' ? GN2 : RD2 } },
-                    t.status==='active' ? 'на руках' : t.status==='returned' ? 'возвращён' : 'списан'
-                  )
-                ),
-                h('td', { style:{ padding:'8px 10px' } },
-                  t.status === 'active' && h('button', { style: gbtn({ fontSize:11, padding:'4px 10px' }),
+                  t.status==='active' ? 'на руках' : t.status==='returned' ? 'возвращён' : 'списан') },
+              { key: 'act', label: '', sortable: false,
+                render: t => t.status === 'active' ? h('button', { style: gbtn({ fontSize:11, padding:'4px 10px', minHeight: 32 }),
                     onClick: () => { setReturnModal(t.id); setReturnNote(''); setReturnCondition('good'); }
-                  }, '↩ Принять')
-                )
-              );
-            }))
-          )
+                  }, '↩ Принять') : null },
+            ],
+          })
     ),
 
     // Модал возврата
@@ -1780,114 +1771,97 @@ const PayrollExport = memo(({ data }) => {
         '* Расчётные суммы на основе фактических данных системы. Для начисления используйте данные бухгалтерии.'
       ),
 
-      h('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:13 } },
-        h('thead', null,
-          h('tr', null,
-            ['', 'Сотрудник','Должность','Тип','Ставка','Отработано','Расчётная сумма'].map(col =>
-              h('th', { key:col, style:{ textAlign:'left', padding:'7px 10px', fontSize:10, fontWeight:600, letterSpacing:'0.06em', textTransform:'uppercase', color:'var(--muted)', borderBottom:'0.5px solid var(--border)' } }, col)
-            )
-          )
-        ),
-        h('tbody', null,
-          rows.map(({ w, payType, hourlyRate, pieceRate, hours, pieceCount, pieceEarned, hourlyEarned, earned, pieceDetails, byOrder }) => {
-            const isExp = expandedWorkerId === w.id;
-            const hasDetails = (pieceDetails || []).length > 0;
-            return h(React.Fragment, { key: w.id },
-              h('tr', {
-                onClick: () => hasDetails && setExpandedWorkerId(isExp ? null : w.id),
-                title: hasDetails ? `Клик — раскрыть детализацию по заказам (${pieceCount} операций)` : undefined,
-                style: { borderBottom:'0.5px solid var(--border-soft)', cursor: hasDetails ? 'pointer' : 'default', background: isExp ? 'rgba(217,166,58,0.10)' : 'transparent' }
-              },
-                h('td', { style:{ padding:'8px 10px', width: 34, textAlign:'center' } },
-                  hasDetails ? h('span', {
-                    style: {
-                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                      width: 26, height: 26, borderRadius: 6,
-                      background: isExp ? AM : 'rgba(217,166,58,0.15)',
-                      color: isExp ? '#fff' : AM2,
-                      fontSize: 14, fontWeight: 700,
-                      transition: 'transform 0.15s',
-                      transform: isExp ? 'rotate(0deg)' : 'rotate(0deg)',
-                    }
-                  }, isExp ? '▼' : '▶') : ''),
-                h('td', { style:{ padding:'8px 10px', fontWeight:500 } }, w.name),
-                h('td', { style:{ padding:'8px 10px', color:'var(--muted)', fontSize:12 } }, w.position||'—'),
-                h('td', { style:{ padding:'8px 10px' } },
-                  h('span', { style:{ fontSize:10, padding:'2px 7px', borderRadius:8, background: payType==='hourly' ? AM3 : payType==='mixed' ? '#e8f4ff' : GN3, color: payType==='hourly' ? AM2 : payType==='mixed' ? '#1a6fb5' : GN2, border:`0.5px solid ${payType==='hourly' ? AM4 : payType==='mixed' ? '#a8d0f0' : GN}` } },
-                    payType==='hourly' ? '⏱ Часовая' : payType==='mixed' ? '⚡ Смешанная' : '🔧 Сдельная'
-                  )
-                ),
-                h('td', { style:{ padding:'8px 10px', fontSize:12, color:'var(--muted)' } },
-                  hourlyRate > 0 && pieceEarned > 0 ? `${fmt(hourlyRate)} р/ч + сдельные` : hourlyRate > 0 ? `${fmt(hourlyRate)} р/ч` : 'сдельные'
-                ),
-                h('td', { style:{ padding:'8px 10px', fontWeight:500 } },
-                  h('span', null, hours > 0 ? `${hours}ч` : '0ч', pieceCount > 0 && h('span', { style:{ color: GN2, fontSize:11, marginLeft:4 } }, `+${pieceCount} сд.`))
-                ),
-                h('td', { style:{ padding:'8px 10px', fontWeight:600, color: earned > 0 ? AM2 : 'var(--muted)' } },
-                  earned > 0 ? `${fmt(earned)} ₽` : '—'
-                )
+      h(DataTable, {
+        card: false,  // внутри S.card секции ведомости
+        rows: rows,
+        getRowId: r => r.w.id,
+        onRowClick: r => (r.pieceDetails || []).length > 0 && setExpandedWorkerId(expandedWorkerId === r.w.id ? null : r.w.id),
+        rowStyle: r => ({ background: expandedWorkerId === r.w.id ? 'rgba(217,166,58,0.10)' : undefined }),
+        footerCells: [
+          { content: 'ИТОГО:', colSpan: 6, num: true },
+          { content: h('span', { style: { fontWeight: 700, color: AM2, fontSize: 15 } }, `${fmt(total)} ₽`), num: true },
+        ],
+        columns: [
+          { key: 'exp', label: '', sortable: false, width: 34, center: true,
+            render: r => (r.pieceDetails || []).length > 0 ? h('span', {
+              style: {
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                width: 26, height: 26, borderRadius: 6,
+                background: expandedWorkerId === r.w.id ? AM : 'rgba(217,166,58,0.15)',
+                color: expandedWorkerId === r.w.id ? '#fff' : AM2,
+                fontSize: 14, fontWeight: 700,
+              }
+            }, expandedWorkerId === r.w.id ? '▼' : '▶') : '' },
+          { key: 'name', label: 'Сотрудник', sortValue: r => r.w.name,
+            render: r => h('span', { style:{ fontWeight:500 }, title: (r.pieceDetails || []).length > 0 ? `Клик — раскрыть детализацию по заказам (${r.pieceCount} операций)` : undefined }, r.w.name) },
+          { key: 'position', label: 'Должность', sortable: false,
+            render: r => h('span', { style:{ color:'var(--muted)', fontSize:12 } }, r.w.position||'—') },
+          { key: 'payType', label: 'Тип', sortValue: r => r.payType,
+            render: r => h('span', { style:{ fontSize:10, padding:'2px 7px', borderRadius:8, background: r.payType==='hourly' ? AM3 : r.payType==='mixed' ? '#e8f4ff' : GN3, color: r.payType==='hourly' ? AM2 : r.payType==='mixed' ? '#1a6fb5' : GN2, border:`0.5px solid ${r.payType==='hourly' ? AM4 : r.payType==='mixed' ? '#a8d0f0' : GN}` } },
+              r.payType==='hourly' ? '⏱ Часовая' : r.payType==='mixed' ? '⚡ Смешанная' : '🔧 Сдельная') },
+          { key: 'rate', label: 'Ставка', sortable: false,
+            render: r => h('span', { style:{ fontSize:12, color:'var(--muted)' } },
+              r.hourlyRate > 0 && r.pieceEarned > 0 ? `${fmt(r.hourlyRate)} р/ч + сдельные` : r.hourlyRate > 0 ? `${fmt(r.hourlyRate)} р/ч` : 'сдельные') },
+          { key: 'hours', label: 'Отработано', num: true, sortValue: r => r.hours,
+            render: r => h('span', { style:{ fontWeight:500 } }, r.hours > 0 ? `${r.hours}ч` : '0ч',
+              r.pieceCount > 0 && h('span', { style:{ color: GN2, fontSize:11, marginLeft:4 } }, `+${r.pieceCount} сд.`)) },
+          { key: 'earned', label: 'Расчётная сумма', num: true, sortValue: r => r.earned,
+            render: r => h('span', { style:{ fontWeight:600, color: r.earned > 0 ? AM2 : 'var(--muted)' } },
+              r.earned > 0 ? `${fmt(r.earned)} ₽` : '—') },
+        ],
+        // Раскрывающаяся детализация — операции сгруппированы по заказам
+        renderAfterRow: r => {
+          if (expandedWorkerId !== r.w.id || (r.pieceDetails || []).length === 0) return null;
+          const { pieceCount, byOrder } = r;
+          return h('div', { style: { background: 'var(--card-2, #fafaf7)' } },
+            h('div', { style: { padding: '10px 20px 14px 40px' } },
+              h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' } },
+                `📋 Начисления за месяц (${pieceCount} операций на ${byOrder.length} заказе${byOrder.length === 1 ? '' : (byOrder.length < 5 ? 'ах' : 'ах')})`
               ),
-              // Раскрывающаяся детализация — операции сгруппированы по заказам
-              isExp && hasDetails && h('tr', { key: w.id + '_exp' },
-                h('td', { colSpan: 7, style: { padding: 0, background: '#fafaf7' } },
-                  h('div', { style: { padding: '10px 20px 14px 40px' } },
-                    h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' } },
-                      `📋 Начисления за месяц (${pieceCount} операций на ${byOrder.length} заказе${byOrder.length === 1 ? '' : (byOrder.length < 5 ? 'ах' : 'ах')})`
+              (byOrder || []).map(g =>
+                h('div', { key: g.order.id, style: { marginBottom: 10, padding: '8px 12px', background: 'var(--card, #fff)', border: '0.5px solid var(--border-soft)', borderRadius: 6 } },
+                  h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 } },
+                    h('div', null,
+                      h('b', { style: { fontSize: 13 } }, `Заказ ${g.order.number || '—'}`),
+                      g.order.customer && h('span', { style: { fontSize: 11, color: 'var(--muted)', marginLeft: 8 } }, g.order.customer),
+                      g.order.boilerType && g.order.powerKw && h('span', { style: { fontSize: 11, color: 'var(--muted)', marginLeft: 8 } }, `· ${g.order.boilerType} ${g.order.powerKw} кВт`)
                     ),
-                    (byOrder || []).map(g =>
-                      h('div', { key: g.order.id, style: { marginBottom: 10, padding: '8px 12px', background: '#fff', border: '0.5px solid var(--border-soft)', borderRadius: 6 } },
-                        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 } },
-                          h('div', null,
-                            h('b', { style: { fontSize: 13 } }, `Заказ ${g.order.number || '—'}`),
-                            g.order.customer && h('span', { style: { fontSize: 11, color: 'var(--muted)', marginLeft: 8 } }, g.order.customer),
-                            g.order.boilerType && g.order.powerKw && h('span', { style: { fontSize: 11, color: 'var(--muted)', marginLeft: 8 } }, `· ${g.order.boilerType} ${g.order.powerKw} кВт`)
-                          ),
-                          h('div', { style: { fontSize: 13, fontWeight: 600, color: AM2 } }, `${fmt(g.sum)} ₽`)
-                        ),
-                        h('table', { style: { width: '100%', fontSize: 11, borderCollapse: 'collapse' } },
-                          h('thead', null,
-                            h('tr', { style: { color: 'var(--muted)', fontSize: 10 } },
-                              ['Дата', 'Операция', 'Этап / Тип', 'Доля', 'Раб.', 'Сумма'].map(c =>
-                                h('th', { key: c, style: { textAlign: 'left', padding: '3px 6px', fontWeight: 500 } }, c))
-                            )
-                          ),
-                          h('tbody', null,
-                            g.ops.map(op => {
-                              const earn = op.earning || {};
-                              const stage = (data.productionStages || []).find(s => s.id === op.stageId);
-                              const workerCount = (op.workerIds || []).length || 1;
-                              const finishedDate = op.finishedAt ? new Date(op.finishedAt).toLocaleDateString('ru-RU') : '—';
-                              const kind = earn.source === 'extra_work'
-                                ? `💰 Доп.: ${op.extraKey} ${op.extraParam != null ? op.extraParam : ''}`
-                                : (earn.field === 'heatExchanger' ? 'Теплообм.'
-                                  : earn.field === 'coverFront' ? 'Крышка перед.'
-                                  : earn.field === 'coverBack' ? 'Крышка задн.'
-                                  : earn.field === 'rolling' ? 'Вальцовка'
-                                  : earn.field || '—');
-                              return h('tr', { key: op.id, style: { borderTop: '0.5px solid var(--border-soft)' } },
-                                h('td', { style: { padding: '4px 6px', color: 'var(--muted)' } }, finishedDate),
-                                h('td', { style: { padding: '4px 6px' } }, op.name || '—'),
-                                h('td', { style: { padding: '4px 6px', color: 'var(--muted)' } }, `${stage?.name || '—'} · ${kind}`),
-                                h('td', { style: { padding: '4px 6px', color: 'var(--muted)' } }, earn.paymentShare != null ? `${earn.paymentShare}%` : '—'),
-                                h('td', { style: { padding: '4px 6px', color: 'var(--muted)' } }, workerCount),
-                                h('td', { style: { padding: '4px 6px', fontWeight: 500, color: AM2 } }, `${fmt(earn.amount || 0)} ₽`)
-                              );
-                            })
-                          )
-                        )
-                      )
-                    )
-                  )
+                    h('div', { style: { fontSize: 13, fontWeight: 600, color: AM2 } }, `${fmt(g.sum)} ₽`)
+                  ),
+                  h(DataTable, {
+                    card: false, density: 'compact', stickyHeader: false, sortable: false,
+                    rows: g.ops,
+                    columns: [
+                      { key: 'date', label: 'Дата',
+                        render: op => h('span', { style: { color: 'var(--muted)' } }, op.finishedAt ? new Date(op.finishedAt).toLocaleDateString('ru-RU') : '—') },
+                      { key: 'name', label: 'Операция', render: op => op.name || '—' },
+                      { key: 'kind', label: 'Этап / Тип',
+                        render: op => {
+                          const earn = op.earning || {};
+                          const stage = (data.productionStages || []).find(s => s.id === op.stageId);
+                          const kind = earn.source === 'extra_work'
+                            ? `💰 Доп.: ${op.extraKey} ${op.extraParam != null ? op.extraParam : ''}`
+                            : (earn.field === 'heatExchanger' ? 'Теплообм.'
+                              : earn.field === 'coverFront' ? 'Крышка перед.'
+                              : earn.field === 'coverBack' ? 'Крышка задн.'
+                              : earn.field === 'rolling' ? 'Вальцовка'
+                              : earn.field || '—');
+                          return h('span', { style: { color: 'var(--muted)' } }, `${stage?.name || '—'} · ${kind}`);
+                        } },
+                      { key: 'share', label: 'Доля', num: true,
+                        render: op => h('span', { style: { color: 'var(--muted)' } }, (op.earning || {}).paymentShare != null ? `${op.earning.paymentShare}%` : '—') },
+                      { key: 'wc', label: 'Раб.', num: true,
+                        render: op => h('span', { style: { color: 'var(--muted)' } }, (op.workerIds || []).length || 1) },
+                      { key: 'amount', label: 'Сумма', num: true,
+                        render: op => h('span', { style: { fontWeight: 500, color: AM2 } }, `${fmt((op.earning || {}).amount || 0)} ₽`) },
+                    ],
+                  })
                 )
               )
-            );
-          }),
-          h('tr', null,
-            h('td', { colSpan:6, style:{ padding:'10px 10px', fontWeight:600, textAlign:'right', borderTop:`1px solid var(--border)`, fontSize:13 } }, 'ИТОГО:'),
-            h('td', { style:{ padding:'10px 10px', fontWeight:700, color: AM2, borderTop:`1px solid var(--border)`, fontSize:15 } }, `${fmt(total)} ₽`)
-          )
-        )
-      )
+            )
+          );
+        },
+      })
     )
   );
 });
