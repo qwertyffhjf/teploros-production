@@ -48,12 +48,12 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
       ['orders', '📋 Заказы'],
     ], tab, setTab: setControllerTab }),
     // Панель уведомлений ОТК
-    h('div', { style: { ...S.card, marginBottom: 8, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: pendingQC.length > 0 ? 'rgba(2,119,189,0.07)' : '#f8f8f5', border: pendingQC.length > 0 ? '1px solid #90CAF9' : '0.5px solid #eee' } },
+    h('div', { style: { ...S.card, marginBottom: 8, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: pendingQC.length > 0 ? 'rgba(2,119,189,0.07)' : 'var(--card-2)', border: pendingQC.length > 0 ? '1px solid #90CAF9' : '0.5px solid #eee' } },
       h('div', null,
         h('div', { style: { fontWeight: 600, fontSize: 13, color: pendingQC.length > 0 ? '#0277BD' : '#888' } },
           pendingQC.length > 0 ? `🔍 На контроле: ${pendingQC.length} операций` : '✓ Нет операций на контроле'
         ),
-        pendingQC.length > 0 && h('div', { style: { fontSize: 11, color: '#888', marginTop: 2 } },
+        pendingQC.length > 0 && h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 2 } },
           pendingQC.map(op => data.orders.find(o => o.id === op.orderId)?.number).filter(Boolean).join(', ')
         )
       ),
@@ -81,9 +81,9 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
     h(SectionAnalytics, { section: 'quality', data }),
     // Модалка отклонения — вместо prompt()
     rejectModal && h('div', { role: 'dialog', 'aria-modal': 'true', style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 } },
-      h('div', { style: { background: '#fff', borderRadius: 12, padding: 20, width: 'min(380px,100%)' } },
+      h('div', { style: { background: 'var(--card-solid,#fff)', borderRadius: 12, padding: 20, width: 'min(380px,100%)' } },
         h('div', { style: { fontSize: 14, fontWeight: 500, marginBottom: 4 } }, '⚠ Брак: ' + rejectModal.op.name),
-        h('div', { style: { fontSize: 11, color: '#888', marginBottom: 12 } }, 'Укажите причину — это поможет при анализе'),
+        h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 12 } }, 'Укажите причину — это поможет при анализе'),
         h('textarea', { style: { ...S.inp, width: '100%', marginBottom: 12 }, rows: 3, placeholder: 'Опишите дефект или причину отклонения...', value: rejectNote, onChange: e => setRejectNote(e.target.value), autoFocus: true }),
         h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
           h('button', { style: gbtn(), onClick: () => { setRejectModal(null); setRejectNote(''); } }, 'Отмена'),
@@ -110,9 +110,9 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
                     h('div', { style: { fontSize: 13, fontWeight: 500 } }, 'Протокол ГИ · ',
                       h('span', { style: { color: AM, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => order && setViewOrderId(order.id) }, order?.number || '—')
                     ),
-                    h('div', { style: { fontSize: 12, color: '#888', marginTop: 2 } }, order?.product || '—'),
-                    test.serialNumber && h('div', { style: { fontSize: 11, color: '#888', fontFamily: 'monospace' } }, `С/н: ${test.serialNumber}`),
-                    h('div', { style: { fontSize: 11, color: '#888', marginTop: 2 } },
+                    h('div', { style: { fontSize: 12, color: 'var(--muted)', marginTop: 2 } }, order?.product || '—'),
+                    test.serialNumber && h('div', { style: { fontSize: 11, color: 'var(--muted)', fontFamily: 'monospace' } }, `С/н: ${test.serialNumber}`),
+                    h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 2 } },
                       `Оператор: ${operator?.name || '—'} · ${new Date(test.createdAt).toLocaleString('ru-RU')}`
                     )
                   ),
@@ -135,7 +135,7 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
                     ['Падение',      `${(drop != null && !isNaN(drop)) ? drop.toFixed(2) : '—'} бар`],
                     ['Потение швов', test.sweatingFound ? '⚠ Да' : 'Нет'],
                   ].map(([l,v], i) => h('div', { key: i, style: { background: 'var(--bg)', borderRadius: 6, padding: '6px 8px' } },
-                    h('div', { style: { fontSize: 10, color: '#888' } }, l),
+                    h('div', { style: { fontSize: 10, color: 'var(--muted)' } }, l),
                     h('div', { style: { fontSize: 13, fontWeight: 500 } }, v)
                   ))
                 ),
@@ -351,31 +351,31 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
         ),
         // Группа 3: остальные — скрыты в раскрывающемся списке
         others.length > 0 && h('details', { style: { marginTop: 6, fontSize: 11 } },
-          h('summary', { style: { cursor: 'pointer', color: '#888' } }, `Другие сотрудники (${others.length})`),
+          h('summary', { style: { cursor: 'pointer', color: 'var(--muted)' } }, `Другие сотрудники (${others.length})`),
           h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 } },
             others.map(w => h('button', { key: w.id, style: gbtn({ fontSize: 10, padding: '3px 8px' }), onClick: () => saveD8(rec.id, 'team', [...(d8.team || []), w.id]) }, `+ ${w.name}`))
           )
         ),
-        !opName && executors.length === 0 && competent.length === 0 && h('div', { style: { fontSize: 11, color: '#888', marginTop: 4 } }, 'Не указан этап операции — все сотрудники в разделе «Другие»')
+        !opName && executors.length === 0 && competent.length === 0 && h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 4 } }, 'Не указан этап операции — все сотрудники в разделе «Другие»')
       );
     }
 
     if (stepIdx === 1) return h('div', null,
       lbl('Описание проблемы'),
-      h('div', { style: { background: '#f8f8f5', borderRadius: 8, padding: '10px 12px', fontSize: 12, lineHeight: 1.6, marginBottom: 8 } }, rec.description || '—'),
+      h('div', { style: { background: 'var(--card-2)', borderRadius: 8, padding: '10px 12px', fontSize: 12, lineHeight: 1.6, marginBottom: 8 } }, rec.description || '—'),
       (workerNames.length > 0 || defectReason) && h('div', { style: { background: RD3, borderRadius: 8, padding: '10px 12px', marginBottom: 8, fontSize: 12 } },
         workerNames.length > 0 && h('div', { style: { display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' } },
-          h('span', { style: { color: '#888' } }, 'Исполнитель: '),
+          h('span', { style: { color: 'var(--muted)' } }, 'Исполнитель: '),
           ...(linkedOp?.workerIds || []).map(wid => h(WN, { key: wid, workerId: wid, data, onWorkerClick, style: { fontWeight: 500, color: RD2 } }))
         ),
-        defectReason && h('div', null, h('span', { style: { color: '#888' } }, 'Причина: '), defectReason),
-        rec.defectNote && h('div', null, h('span', { style: { color: '#888' } }, 'Описание: '), rec.defectNote)
+        defectReason && h('div', null, h('span', { style: { color: 'var(--muted)' } }, 'Причина: '), defectReason),
+        rec.defectNote && h('div', null, h('span', { style: { color: 'var(--muted)' } }, 'Описание: '), rec.defectNote)
       ),
       linkedOp && h('div', { style: { fontSize: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px' } },
-        h('div', null, h('span', { style: { color: '#888' } }, 'Заказ: '), order?.number || '—'),
-        h('div', null, h('span', { style: { color: '#888' } }, 'Операция: '), linkedOp.name),
-        linkedOp.startedAt && h('div', null, h('span', { style: { color: '#888' } }, 'Начата: '), new Date(linkedOp.startedAt).toLocaleString()),
-        linkedOp.finishedAt && h('div', null, h('span', { style: { color: '#888' } }, 'Завершена: '), new Date(linkedOp.finishedAt).toLocaleString())
+        h('div', null, h('span', { style: { color: 'var(--muted)' } }, 'Заказ: '), order?.number || '—'),
+        h('div', null, h('span', { style: { color: 'var(--muted)' } }, 'Операция: '), linkedOp.name),
+        linkedOp.startedAt && h('div', null, h('span', { style: { color: 'var(--muted)' } }, 'Начата: '), new Date(linkedOp.startedAt).toLocaleString()),
+        linkedOp.finishedAt && h('div', null, h('span', { style: { color: 'var(--muted)' } }, 'Завершена: '), new Date(linkedOp.finishedAt).toLocaleString())
       )
     );
 
@@ -452,13 +452,13 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
     ),
     // Фильтры
     h('div', { style: { display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' } },
-      h('span', { style: { fontSize: 11, color: '#888', alignSelf: 'center', marginRight: 4 } }, 'Тип:'),
+      h('span', { style: { fontSize: 11, color: 'var(--muted)', alignSelf: 'center', marginRight: 4 } }, 'Тип:'),
       [['all', 'Все'], ['external', '🌐 Внешние'], ['internal', '🏭 Внутренние']].map(([id, label]) =>
         h('button', { key: id, style: filterType === id ? abtn({ fontSize: 11 }) : gbtn({ fontSize: 11 }), onClick: () => setFilterType(id) }, label)
       )
     ),
     h('div', { style: { display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' } },
-      h('span', { style: { fontSize: 11, color: '#888', marginRight: 4 } }, 'Статус:'),
+      h('span', { style: { fontSize: 11, color: 'var(--muted)', marginRight: 4 } }, 'Статус:'),
       [['all', 'Все'], ['open', 'Открытые'], ['in_work', 'В работе'], ['closed', 'Закрытые']].map(([id, label]) =>
         h('button', { key: id, style: filterStatus === id ? abtn({ fontSize: 11 }) : gbtn({ fontSize: 11 }), onClick: () => setFilterStatus(id) }, label)
       ),
@@ -541,7 +541,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
                   h('span', { style: { padding: '2px 8px', fontSize: 10, borderRadius: 6, background: sev.bg, color: sev.cl, fontWeight: 500 } }, sev.label),
                   h('span', { style: { padding: '2px 8px', fontSize: 10, borderRadius: 6, background: st.bg, color: st.cl, fontWeight: 500 } }, st.label)
                 ),
-                h('div', { style: { fontSize: 11, color: '#888' } },
+                h('div', { style: { fontSize: 11, color: 'var(--muted)' } },
                   new Date(rec.createdAt).toLocaleDateString(),
                   rec.operationName && h('span', { style: { marginLeft: 8, color: AM } }, `Этап: ${rec.operationName}`)
                 ),
@@ -558,7 +558,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
                   onMouseEnter: e => e.currentTarget.style.color = RD,
                   onMouseLeave: e => e.currentTarget.style.color = '#ccc',
                 }, '✕'),
-                h('span', { style: { fontSize: 11, color: '#aaa' } }, isExpanded ? '▾' : '▸')
+                h('span', { style: { fontSize: 11, color: 'var(--muted)' } }, isExpanded ? '▾' : '▸')
               )
             ),
             // 8D визард
@@ -567,7 +567,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
               h('div', { style: { display: 'flex', gap: 2, margin: '12px 0 4px' } },
                 D8_LABELS.map((label, i) => h('div', { key: i, style: { flex: 1, height: 6, borderRadius: 3, cursor: 'pointer', background: i < completedSteps ? GN : i === d8Step ? AM : '#e0e0e0' }, onClick: () => setD8Steps(p => ({ ...p, [rec.id]: i })) }))
               ),
-              h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#888', marginBottom: 12 } },
+              h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--muted)', marginBottom: 12 } },
                 h('span', null, D8_LABELS[d8Step]),
                 h('span', null, `Шаг ${d8Step + 1} из 8`)
               ),
