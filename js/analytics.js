@@ -132,8 +132,8 @@ const MiniSparkline = memo(({ values, color, height = 36 }) => {
 const KpiCard = memo(({ label, value, delta, deltaDir, color, spark }) => {
   const deltaColor = deltaDir === 'up' ? GN2 : deltaDir === 'dn' ? RD2 : '#888';
   const deltaIcon  = deltaDir === 'up' ? '▲' : deltaDir === 'dn' ? '▼' : '=';
-  return h('div', { style: { background: '#fff', border: '0.5px solid rgba(0,0,0,0.08)', borderRadius: 10, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 2 } },
-    h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' } }, label),
+  return h('div', { style: { background: 'var(--card-solid,#fff)', border: '0.5px solid rgba(0,0,0,0.08)', borderRadius: 10, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 2 } },
+    h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em' } }, label),
     h('div', { style: { fontSize: 22, fontWeight: 500, color: color || 'inherit', lineHeight: 1.1 } }, value),
     delta && h('div', { style: { fontSize: 10, color: deltaColor } }, `${deltaIcon} ${delta}`),
     spark && h(MiniSparkline, { values: spark.values, color: spark.color, height: 28 })
@@ -312,7 +312,7 @@ const FullAnalyticsModal = memo(({ section, data, onClose }) => {
   return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 300, overflowY: 'auto', padding: '16px 8px' }, onClick: e => e.target === e.currentTarget && onClose() },
     h('div', { style: { background: '#f5f5f2', borderRadius: 14, width: 'min(900px,100%)', margin: '0 auto', boxShadow: '0 8px 40px rgba(0,0,0,0.2)' } },
       // Шапка
-      h('div', { style: { background: '#fff', borderRadius: '14px 14px 0 0', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '0.5px solid rgba(0,0,0,0.08)' } },
+      h('div', { style: { background: 'var(--card-solid,#fff)', borderRadius: '14px 14px 0 0', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '0.5px solid rgba(0,0,0,0.08)' } },
         h('div', { style: { fontSize: 15, fontWeight: 500 } }, TITLES[section] || 'Аналитика'),
         h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
           // Период
@@ -332,30 +332,30 @@ const FullAnalyticsModal = memo(({ section, data, onClose }) => {
             }
             XLSX.writeFile(wb, `analytics_${section}_${new Date().toISOString().slice(0,10)}.xlsx`);
           } }, '📥 Excel'),
-          h('button', { onClick: onClose, style: { background: 'none', border: 'none', fontSize: 22, color: '#aaa', cursor: 'pointer' } }, '×')
+          h('button', { onClick: onClose, style: { background: 'none', border: 'none', fontSize: 22, color: 'var(--muted)', cursor: 'pointer' } }, '×')
         )
       ),
       h('div', { style: { padding: 16 } },
         // Графики
         h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 } },
-          h('div', { style: { background: '#fff', borderRadius: 10, padding: '12px 14px', border: '0.5px solid rgba(0,0,0,0.08)' } },
-            h('div', { style: { fontSize: 11, fontWeight: 500, color: '#555', marginBottom: 8 } },
+          h('div', { style: { background: 'var(--card-solid,#fff)', borderRadius: 10, padding: '12px 14px', border: '0.5px solid rgba(0,0,0,0.08)' } },
+            h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--fg-muted)', marginBottom: 8 } },
               section === 'warehouse' ? 'Движение по дням' :
               section === 'hr' ? 'Выработка сотрудников' :
               section === 'quality' ? 'Качество по дням (%)' : 'Выполнение по дням'
             ),
             h('div', { className: 'op-card-anim', style: { height: 200, animationDelay: '0.05s' } }, h('canvas', { ref: c1.canvasRef }))
           ),
-          h('div', { style: { background: '#fff', borderRadius: 10, padding: '12px 14px', border: '0.5px solid rgba(0,0,0,0.08)' } },
-            h('div', { style: { fontSize: 11, fontWeight: 500, color: '#555', marginBottom: 8 } },
+          h('div', { style: { background: 'var(--card-solid,#fff)', borderRadius: 10, padding: '12px 14px', border: '0.5px solid rgba(0,0,0,0.08)' } },
+            h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--fg-muted)', marginBottom: 8 } },
               section === 'warehouse' ? 'Топ расхода материалов' :
               section === 'hr' ? 'Статус сотрудников' :
               section === 'quality' ? 'Брак по причинам' : 'Выработка по сотрудникам'
             ),
             h('div', { className: 'op-card-anim', style: { height: 200, animationDelay: '0.12s' } }, h('canvas', { ref: c2.canvasRef }))
           ),
-          (section === 'production' || section === 'dashboard' || section === 'quality') && h('div', { style: { background: '#fff', borderRadius: 10, padding: '12px 14px', border: '0.5px solid rgba(0,0,0,0.08)', gridColumn: '1 / -1' } },
-            h('div', { style: { fontSize: 11, fontWeight: 500, color: '#555', marginBottom: 8 } },
+          (section === 'production' || section === 'dashboard' || section === 'quality') && h('div', { style: { background: 'var(--card-solid,#fff)', borderRadius: 10, padding: '12px 14px', border: '0.5px solid rgba(0,0,0,0.08)', gridColumn: '1 / -1' } },
+            h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--fg-muted)', marginBottom: 8 } },
               section === 'quality' ? 'Брак по исполнителям' : 'Брак по причинам'
             ),
             h('div', { className: 'op-card-anim', style: { height: 160, animationDelay: '0.18s' } }, h('canvas', { ref: c3.canvasRef }))
@@ -524,10 +524,10 @@ const KPIReport = memo(({ data, onWorkerClick }) => {
       h('span', { style: { fontWeight: 500 } }, 'Грейды:'),
       h('span', { style: { color: GN } }, 'A (85+) = +30% премия'),
       h('span', { style: { color: AM } }, 'B (70-84) = +15%'),
-      h('span', { style: { color: '#888' } }, 'C (50-69) = 0%'),
+      h('span', { style: { color: 'var(--muted)' } }, 'C (50-69) = 0%'),
       h('span', { style: { color: RD } }, 'D (<50) = −10%')
     ),
-    workerKPIs.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888' } }, 'Нет данных за период') :
+    workerKPIs.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', color: 'var(--muted)' } }, 'Нет данных за период') :
       h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
         h('thead', null, h('tr', null, ['Сотрудник', 'Ур.', 'Операций', 'Качество', 'Произв.', 'Универс.', 'Простои', 'KPI', 'Грейд'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
         h('tbody', null, workerKPIs.map((w, i) => h('tr', { key: w.id, style: { background: i === 0 ? '#FFFDE7' : 'transparent' } },
@@ -587,13 +587,13 @@ const AssignmentRecommendations = memo(({ data, onUpdate, addToast }) => {
       recommendations.length > 0 && h('button', { style: abtn(), onClick: assignAll }, `🤖 Назначить всех (${recommendations.length})`)
     ),
     recommendations.length === 0
-      ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888', padding: 20 } }, 'Все операции имеют исполнителей')
+      ? h('div', { style: { ...S.card, textAlign: 'center', color: 'var(--muted)', padding: 20 } }, 'Все операции имеют исполнителей')
       : recommendations.slice(0, 20).map(rec => h('div', { key: rec.opId, style: { ...S.card, padding: 12, marginBottom: 8, borderLeft: `4px solid ${PRIORITY[rec.orderPriority]?.color || '#888'}` } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 8 } },
             h('div', null,
               h('span', { style: { fontSize: 13, fontWeight: 500 } }, rec.opName),
               h('span', { style: { marginLeft: 8, fontSize: 11, color: AM } }, rec.orderNumber),
-              rec.deadline && h('span', { style: { marginLeft: 8, fontSize: 10, color: '#888' } }, `до ${rec.deadline}`)
+              rec.deadline && h('span', { style: { marginLeft: 8, fontSize: 10, color: 'var(--muted)' } }, `до ${rec.deadline}`)
             ),
             h('span', { style: { fontSize: 10, color: PRIORITY[rec.orderPriority]?.color } }, PRIORITY[rec.orderPriority]?.label)
           ),
@@ -615,7 +615,7 @@ const AssignmentRecommendations = memo(({ data, onUpdate, addToast }) => {
                   return h('div', { key: c.workerId,
                     style: { flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
                       borderRadius: 10, cursor: 'pointer',
-                      background: noBadge ? '#f5f5f2' : isTop ? GN3 : '#f8f8f5',
+                      background: noBadge ? '#f5f5f2' : isTop ? GN3 : 'var(--card-2)',
                       border: noBadge ? '0.5px solid rgba(0,0,0,0.08)' : isTop ? `0.5px solid ${GN}` : '0.5px solid rgba(0,0,0,0.1)',
                       opacity: noBadge ? 0.7 : 1,
                       minWidth: 160, maxWidth: 200 },
@@ -625,7 +625,7 @@ const AssignmentRecommendations = memo(({ data, onUpdate, addToast }) => {
                         c.workerName,
                         isTop && h('span', { style: { marginLeft: 4, fontSize: 10, color: GN } }, '★')
                       ),
-                      h('div', { style: { fontSize: 10, color: '#888', marginTop: 2 } },
+                      h('div', { style: { fontSize: 10, color: 'var(--muted)', marginTop: 2 } },
                         `Ур.${c.level} · Опыт:${c.details.experience} · Кач:${c.qualityScore}/25`
                       )
                     ),
@@ -1095,10 +1095,10 @@ const AnalyticsDashboard = memo(({ data, onWorkerClick }) => {
     h('div', { style: { ...S.card, marginBottom: 12 } },
       h('div', { style: S.sec }, 'Такт производства'),
       h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 10, marginBottom: 8 } },
-        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: GN } }, taktData.completedInPeriod), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, `Завершено за ${period}д`)),
-        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: AM } }, taktData.pendingOrders), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'В очереди')),
-        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: taktData.taktOk ? GN : RD } }, `${taktData.actualRate}`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Факт (заказов/день)')),
-        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: taktData.taktOk ? GN : RD } }, `${taktData.requiredRate}`), h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase' } }, 'Нужно (заказов/день)'))
+        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: GN } }, taktData.completedInPeriod), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, `Завершено за ${period}д`)),
+        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: AM } }, taktData.pendingOrders), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'В очереди')),
+        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: taktData.taktOk ? GN : RD } }, `${taktData.actualRate}`), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Факт (заказов/день)')),
+        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: taktData.taktOk ? GN : RD } }, `${taktData.requiredRate}`), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Нужно (заказов/день)'))
       ),
       !taktData.taktOk && taktData.requiredRate > 0 && h('div', { style: { fontSize: 11, color: RD, fontWeight: 500, marginTop: 4 } }, `⚠ Производство не успевает: нужно ${taktData.requiredRate} заказов/день, факт ${taktData.actualRate}. Среднее время до дедлайна: ${taktData.avgDaysToDeadline} дней.`)
     ),
@@ -1106,10 +1106,10 @@ const AnalyticsDashboard = memo(({ data, onWorkerClick }) => {
     // Lead Time
     h('div', { style: { ...S.card, marginBottom: 12 } },
       h('div', { style: S.sec }, 'Lead Time — время прохождения заказа'),
-      leadTimeData.length === 0 ? h('div', { style: { padding: 12, color: '#888', textAlign: 'center' } }, 'Нет завершённых операций') : h('div', null,
+      leadTimeData.length === 0 ? h('div', { style: { padding: 12, color: 'var(--muted)', textAlign: 'center' } }, 'Нет завершённых операций') : h('div', null,
         h('div', { style: { display: 'flex', gap: 16, marginBottom: 12 } },
-          h('div', null, h('div', { style: { fontSize: 24, fontWeight: 500, color: AM } }, fmtDur(avgLeadTime)), h('div', { style: { fontSize: 10, color: '#888' } }, 'Средний Lead Time')),
-          h('div', null, h('div', { style: { fontSize: 24, fontWeight: 500, color: avgWaitingPct > 50 ? RD : AM } }, `${avgWaitingPct}%`), h('div', { style: { fontSize: 10, color: '#888' } }, 'Среднее ожидание'))
+          h('div', null, h('div', { style: { fontSize: 24, fontWeight: 500, color: AM } }, fmtDur(avgLeadTime)), h('div', { style: { fontSize: 10, color: 'var(--muted)' } }, 'Средний Lead Time')),
+          h('div', null, h('div', { style: { fontSize: 24, fontWeight: 500, color: avgWaitingPct > 50 ? RD : AM } }, `${avgWaitingPct}%`), h('div', { style: { fontSize: 10, color: 'var(--muted)' } }, 'Среднее ожидание'))
         ),
         h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
           h('thead', null, h('tr', null, ['Заказ', 'Изделие', 'Lead Time', 'В работе', 'Ожидание', '% ожид.', 'Операций'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
@@ -1129,13 +1129,13 @@ const AnalyticsDashboard = memo(({ data, onWorkerClick }) => {
     // Тренды качества (график)
     h('div', { style: { ...S.card, marginBottom: 12 } },
       h('div', { style: S.sec }, 'Тренды качества (по неделям)'),
-      qualityTrends.weeks.length === 0 ? h('div', { style: { padding: 12, color: '#888', textAlign: 'center' } }, 'Нет данных') : h('canvas', { ref: canvasRef2 })
+      qualityTrends.weeks.length === 0 ? h('div', { style: { padding: 12, color: 'var(--muted)', textAlign: 'center' } }, 'Нет данных') : h('canvas', { ref: canvasRef2 })
     ),
 
     // Парето-анализ простоев (график + таблица)
     h('div', { style: { ...S.card, marginBottom: 12 } },
       h('div', { style: S.sec }, 'Парето-анализ простоев'),
-      paretoData.length === 0 ? h('div', { style: { padding: 12, color: '#888', textAlign: 'center' } }, 'Нет простоев за период') : h('div', null,
+      paretoData.length === 0 ? h('div', { style: { padding: 12, color: 'var(--muted)', textAlign: 'center' } }, 'Нет простоев за период') : h('div', null,
         h('canvas', { ref: canvasRef1, style: { marginBottom: 12 } }),
         h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
           h('thead', null, h('tr', null, ['Причина', 'Кол-во', 'Потеряно (ч)', 'Доля', 'Накопит.'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
@@ -1147,14 +1147,14 @@ const AnalyticsDashboard = memo(({ data, onWorkerClick }) => {
             h('td', { style: { ...S.td, textAlign: 'center', fontWeight: 500, color: d.cumPct <= 80 ? RD : '#888' } }, `${d.cumPct}%`)
           )))
         )),
-        h('div', { style: { fontSize: 10, color: '#888', marginTop: 6 } }, 'Жёлтым выделены причины, дающие 80% потерь (правило Парето)')
+        h('div', { style: { fontSize: 10, color: 'var(--muted)', marginTop: 6 } }, 'Жёлтым выделены причины, дающие 80% потерь (правило Парето)')
       )
     ),
 
     // Автонормирование
     h('div', { style: { ...S.card, marginBottom: 12 } },
       h('div', { style: S.sec }, 'Нормирование операций (факт vs план)'),
-      normSuggestions.length === 0 ? h('div', { style: { padding: 12, color: '#888', textAlign: 'center' } }, 'Недостаточно данных (нужно ≥3 завершённых операций каждого типа)') :
+      normSuggestions.length === 0 ? h('div', { style: { padding: 12, color: 'var(--muted)', textAlign: 'center' } }, 'Недостаточно данных (нужно ≥3 завершённых операций каждого типа)') :
         h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
           h('thead', null, h('tr', null, ['Операция', 'Замеров', 'Текущая норма', 'Медиана факт', 'Мин', 'Макс', 'Отклонение', 'Рекомендация'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
           h('tbody', null, normSuggestions.map((s, i) => h('tr', { key: i, style: { background: s.deviation && Math.abs(s.deviation) > 30 ? '#FFF8E1' : 'transparent' } },
@@ -1162,8 +1162,8 @@ const AnalyticsDashboard = memo(({ data, onWorkerClick }) => {
             h('td', { style: { ...S.td, textAlign: 'center' } }, s.count),
             h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'center' } }, s.current ? `${s.current}ч` : '—'),
             h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'center', fontWeight: 500 } }, `${s.median}ч`),
-            h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'center', color: '#888' } }, `${s.min}ч`),
-            h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'center', color: '#888' } }, `${s.max}ч`),
+            h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'center', color: 'var(--muted)' } }, `${s.min}ч`),
+            h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'center', color: 'var(--muted)' } }, `${s.max}ч`),
             h('td', { style: { ...S.td, textAlign: 'center', color: s.deviation === null ? '#888' : Math.abs(s.deviation) > 30 ? RD : GN, fontWeight: 500 } }, s.deviation !== null ? `${s.deviation > 0 ? '+' : ''}${s.deviation}%` : '—'),
             h('td', { style: { ...S.td, fontSize: 11 } }, s.deviation !== null && Math.abs(s.deviation) > 20 ? `Обновить до ${s.suggested}ч` : '✓ Норма актуальна')
           )))
@@ -1409,11 +1409,11 @@ const DashWidget = memo(({ widget, data, editMode, onChangeType, onRemove, onEdi
     return () => { if (chartRef.current) { try { chartRef.current.destroy(); } catch(e) {} } };
   }, [chartData, widget.type, color]);
 
-  return h('div', { style: { background: '#fff', border: '0.5px solid rgba(0,0,0,0.08)', borderRadius: 10, overflow: 'hidden' } },
+  return h('div', { style: { background: 'var(--card-solid,#fff)', border: '0.5px solid rgba(0,0,0,0.08)', borderRadius: 10, overflow: 'hidden' } },
     // Заголовок виджета
     h('div', { style: { padding: '10px 12px 8px', display: 'flex', alignItems: 'center', gap: 6, borderBottom: '0.5px solid rgba(0,0,0,0.05)' } },
-      h('span', { style: { fontSize: 12, fontWeight: 500, color: '#333', flex: 1 } }, widget.title),
-      h('span', { style: { fontSize: 10, color: '#aaa', marginRight: 4 } }, `${widget.period}д`),
+      h('span', { style: { fontSize: 12, fontWeight: 500, color: 'var(--fg)', flex: 1 } }, widget.title),
+      h('span', { style: { fontSize: 10, color: 'var(--muted)', marginRight: 4 } }, `${widget.period}д`),
       // В режиме редактирования — кнопки типов
       editMode && m?.types.map(t => h('button', { key: t, title: CHART_TYPE_LABELS[t],
         style: { ...( widget.type === t ? abtn({ fontSize: 10, padding: '2px 7px' }) : gbtn({ fontSize: 10, padding: '2px 7px' }) ) },
@@ -1427,7 +1427,7 @@ const DashWidget = memo(({ widget, data, editMode, onChangeType, onRemove, onEdi
     // График
     h('div', { style: { padding: '8px 12px 12px', height: 160 } },
       chartData.labels.length === 0
-        ? h('div', { style: { height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#aaa', fontSize: 12 } }, 'Нет данных за период')
+        ? h('div', { style: { height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', fontSize: 12 } }, 'Нет данных за период')
         : h('canvas', { ref: canvasRef, style: { width: '100%', height: '100%' } })
     )
   );
@@ -1438,8 +1438,8 @@ const WidgetEditPanel = memo(({ widget, onUpdate, onClose }) => {
   const [form, setForm] = useState({ ...widget });
   const m = WIDGET_METRICS.find(x => x.id === form.metric);
 
-  return h('div', { style: { background: '#fff', border: `1.5px solid ${AM}`, borderRadius: 10, padding: 16, marginBottom: 14 } },
-    h('div', { style: { fontSize: 13, fontWeight: 500, marginBottom: 14, color: '#333' } }, '⚙ Настройка виджета'),
+  return h('div', { style: { background: 'var(--card-solid,#fff)', border: `1.5px solid ${AM}`, borderRadius: 10, padding: 16, marginBottom: 14 } },
+    h('div', { style: { fontSize: 13, fontWeight: 500, marginBottom: 14, color: 'var(--fg)' } }, '⚙ Настройка виджета'),
     // Метрика
     h('div', { style: { marginBottom: 10 } },
       h('label', { style: S.lbl }, 'Метрика'),
@@ -1563,14 +1563,14 @@ const ReportsBuilder = memo(({ data }) => {
     ),
 
     // Библиотека метрик
-    showLibrary && h('div', { style: { background: '#f8f8f5', border: '0.5px solid rgba(0,0,0,0.08)', borderRadius: 10, padding: 14, marginBottom: 14 } },
-      h('div', { style: { fontSize: 11, fontWeight: 500, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 } }, 'Выберите метрику для добавления'),
+    showLibrary && h('div', { style: { background: 'var(--card-2)', border: '0.5px solid rgba(0,0,0,0.08)', borderRadius: 10, padding: 14, marginBottom: 14 } },
+      h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 } }, 'Выберите метрику для добавления'),
       h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6 } },
         WIDGET_METRICS.map(m => h('button', { key: m.id,
           style: { ...gbtn(), textAlign: 'left', padding: '8px 10px', lineHeight: 1.4 },
           onClick: () => addWidget(m.id)
         },
-          h('div', { style: { fontSize: 9, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 } }, m.cat),
+          h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 } }, m.cat),
           h('div', { style: { fontSize: 12 } }, m.name)
         ))
       )
@@ -1581,7 +1581,7 @@ const ReportsBuilder = memo(({ data }) => {
 
     // Сетка виджетов
     layout.length === 0
-      ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888', padding: 40 } },
+      ? h('div', { style: { ...S.card, textAlign: 'center', color: 'var(--muted)', padding: 40 } },
           h('div', { style: { fontSize: 24, marginBottom: 8 } }, '📊'),
           h('div', { style: { marginBottom: 12 } }, 'Дашборд пустой — добавьте виджеты'),
           h('button', { style: abtn(), onClick: () => { setShowLibrary(true); setEditMode(true); } }, '+ Добавить виджет')
