@@ -170,7 +170,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
     task_done: { bg: GN3, border: GN, icon: '✅' },
     waiting: { bg: AM3, border: AM, icon: '⏸' },
     thanks: { bg: '#FFF8E1', border: '#FFC107', icon: '🤝' },
-    achievement: { bg: '#E8F5E9', border: '#4CAF50', icon: '🏆' }
+    achievement: { bg: 'var(--st-ok-bg)', border: '#4CAF50', icon: '🏆' }
   };
 
   return h('div', { style: { ...S.card, height: '100%', minHeight: 500, display: 'flex', flexDirection: 'column', padding: 12 } },
@@ -217,17 +217,17 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
 
     // Сообщения
     h('div', { 'aria-live': 'polite', style: { flex: 1, overflowY: 'auto', padding: 8, background: '#fafaf8', borderRadius: 8, marginBottom: 8 } },
-      regularMessages.length === 0 && h('div', { style: { textAlign: 'center', color: '#888', fontSize: 12, marginTop: 32 } }, 'Сообщений пока нет. Используйте быстрые кнопки для общения.'),
+      regularMessages.length === 0 && h('div', { style: { textAlign: 'center', color: 'var(--muted)', fontSize: 12, marginTop: 32 } }, 'Сообщений пока нет. Используйте быстрые кнопки для общения.'),
       regularMessages.map(m => {
         const ts = typeStyles[m.type];
         const isMe = m.senderId === myId;
         const isUnread = !isMe && m.timestamp > lastReadTs;
         return h('div', { key: m.id, style: { marginBottom: 10, display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', paddingLeft: isUnread ? 8 : 0, borderLeft: isUnread ? `3px solid ${AM}` : 'none' } },
-          h('div', { style: { fontSize: 10, color: '#888', marginBottom: 2, display: 'flex', gap: 6, alignItems: 'center' } },
+          h('div', { style: { fontSize: 10, color: 'var(--muted)', marginBottom: 2, display: 'flex', gap: 6, alignItems: 'center' } },
             h('span', { style: { fontWeight: 500, cursor: m.senderId !== 'system' ? 'pointer' : 'default', color: m.senderId !== 'system' ? AM : '#888' }, onClick: () => { const w = data.workers.find(w => w.id === m.senderId); if (w) setViewProfileId(w.id); } }, m.senderName),
             m.senderRole === 'master' && h('span', { style: { fontSize: 9, padding: '1px 4px', background: AM3, color: AM2, borderRadius: 4 } }, 'мастер'),
             m.orderNumber && h('span', { style: { fontSize: 9, color: AM } }, `📋 ${m.orderNumber}`),
-            m.opName && h('span', { style: { fontSize: 9, color: '#666' } }, `→ ${m.opName}`),
+            m.opName && h('span', { style: { fontSize: 9, color: 'var(--fg-muted)' } }, `→ ${m.opName}`),
             (canModerate || (m.senderId === myId && m.senderId !== 'system')) &&
               h('button', { title: 'Удалить сообщение', style: { background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 12, padding: '0 2px', lineHeight: 1, marginLeft: 2 }, onClick: async () => {
                 if (canModerate && m.senderId !== myId) {
@@ -251,7 +251,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
                 : part
             )
           ),
-          h('div', { style: { fontSize: 9, color: '#aaa', marginTop: 2 } }, new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+          h('div', { style: { fontSize: 9, color: 'var(--muted)', marginTop: 2 } }, new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
         );
       }),
       h('div', { ref: messagesEndRef })
@@ -260,7 +260,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
     // Быстрые действия (раскрывающиеся)
     showQuickActions && h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 8 } },
       quickActions.map(qa => h('button', { key: qa.type, type: 'button',
-        style: { padding: '10px 6px', fontSize: 12, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: (typeStyles[qa.type]?.bg) || '#fff', color: '#333', cursor: 'pointer', textAlign: 'center', minHeight: 44 },
+        style: { padding: '10px 6px', fontSize: 12, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: (typeStyles[qa.type]?.bg) || '#fff', color: 'var(--fg)', cursor: 'pointer', textAlign: 'center', minHeight: 44 },
         onClick: () => sendMessage(`${qa.icon} ${qa.label}`, qa.type)
       }, `${qa.icon}\n${qa.label}`))
     ),
@@ -270,7 +270,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
       h('div', { style: { fontSize: 11, fontWeight: 500, marginBottom: 6 } }, '🤝 Кому сказать спасибо?'),
       h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
         data.workers.filter(w => w.id !== myId && isWorkerOnShift(w, data.timesheet)).map(w =>
-          h('button', { key: w.id, style: { padding: '8px 14px', fontSize: 12, borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)', background: '#fff', cursor: 'pointer', minHeight: 40 }, onClick: () => sendThanks(w.id) }, w.name)
+          h('button', { key: w.id, style: { padding: '8px 14px', fontSize: 12, borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)', background: 'var(--card-solid,#fff)', cursor: 'pointer', minHeight: 40 }, onClick: () => sendThanks(w.id) }, w.name)
         ),
         h('button', { style: gbtn({ fontSize: 11 }), onClick: () => setShowThanks(false) }, '✕ Отмена')
       )
@@ -311,7 +311,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
         return h('div', { key: d.id, style: { ...S.card, padding: 10, marginBottom: 4, border: `0.5px solid ${AM}`, background: AM3 } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 } },
             h('span', { style: { fontSize: 12, fontWeight: 500, color: AM2 } }, `⚔ Дуэль: ${d.targetOps} операций`),
-            h('span', { style: { fontSize: 10, color: '#888' } }, fmtDur(now() - d.createdAt))
+            h('span', { style: { fontSize: 10, color: 'var(--muted)' } }, fmtDur(now() - d.createdAt))
           ),
           h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 } },
             h('div', null,
@@ -333,7 +333,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
       const order = op ? data.orders.find(o => o.id === op.orderId) : null;
       return h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', background: AM3, borderRadius: 6, marginBottom: 6, fontSize: 11 } },
         h('span', { style: { color: AM } }, `📋 ${order?.number || '—'} → ${op?.name || '—'}`),
-        h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', color: '#888', fontSize: 14, padding: 0 }, onClick: () => setContextOp('') }, '×')
+        h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 14, padding: 0 }, onClick: () => setContextOp('') }, '×')
       );
     })(),
 
@@ -346,7 +346,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
 
       return h('div', { style: { position: 'relative' } },
         // Выпадающий список @
-        mentionSuggestions.length > 0 && h('div', { style: { position: 'absolute', bottom: '100%', left: 0, right: 0, background: '#fff', border: '0.5px solid rgba(0,0,0,0.15)', borderRadius: 8, boxShadow: '0 -4px 12px rgba(0,0,0,0.1)', marginBottom: 4, overflow: 'hidden', zIndex: 10 } },
+        mentionSuggestions.length > 0 && h('div', { style: { position: 'absolute', bottom: '100%', left: 0, right: 0, background: 'var(--card-solid,#fff)', border: '0.5px solid rgba(0,0,0,0.15)', borderRadius: 8, boxShadow: '0 -4px 12px rgba(0,0,0,0.1)', marginBottom: 4, overflow: 'hidden', zIndex: 10 } },
           mentionSuggestions.map(w => h('div', { key: w.id, style: { padding: '8px 12px', cursor: 'pointer', fontSize: 13, borderBottom: '0.5px solid rgba(0,0,0,0.05)' },
             onMouseDown: (e) => {
               e.preventDefault();
@@ -355,7 +355,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
             }
           },
             h('span', { style: { fontWeight: 500 } }, w.name),
-            w.position && h('span', { style: { fontSize: 11, color: '#888', marginLeft: 8 } }, w.position)
+            w.position && h('span', { style: { fontSize: 11, color: 'var(--muted)', marginLeft: 8 } }, w.position)
           ))
         ),
         h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
@@ -389,7 +389,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
           ),
           h('div', { style: { flex: 1 } },
             h('div', { style: { fontSize: 12, fontWeight: 500 } }, w.name),
-            h('div', { style: { fontSize: 10, color: '#888' } }, `${getLevelTitle(lvl)} · ${s.doneCount} оп. · 🤝${s.thanksReceived}`)
+            h('div', { style: { fontSize: 10, color: 'var(--muted)' } }, `${getLevelTitle(lvl)} · ${s.doneCount} оп. · 🤝${s.thanksReceived}`)
           ),
           (w.achievements || []).length > 0 && h('div', { style: { display: 'flex', gap: 2 } },
             (w.achievements || []).slice(0, 4).map(aid => h('span', { key: aid, style: { fontSize: 12 }, title: ACHIEVEMENTS[aid]?.title }, ACHIEVEMENTS[aid]?.icon || ''))
@@ -408,7 +408,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
       const quality = s.doneCount + s.defectCount > 0 ? Math.round(s.doneCount / (s.doneCount + s.defectCount) * 100) : 100;
       const earned = w.achievements || [];
       return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 80 }, onClick: () => setViewProfileId(null) },
-        h('div', { style: { background: '#fff', borderRadius: 12, padding: 20, width: 'min(380px, calc(100vw - 32px))', maxHeight: '85vh', overflowY: 'auto' }, onClick: e => e.stopPropagation() },
+        h('div', { style: { background: 'var(--card-solid,#fff)', borderRadius: 12, padding: 20, width: 'min(380px, calc(100vw - 32px))', maxHeight: '85vh', overflowY: 'auto' }, onClick: e => e.stopPropagation() },
           // Шапка
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 } },
             h('div', { style: { width: 52, height: 52, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 500, color: AM2, position: 'relative' } },
@@ -418,16 +418,16 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
             h('div', { style: { flex: 1 } },
               h('div', { style: { fontSize: 16, fontWeight: 500 } }, w.name),
               h('div', { style: { fontSize: 12, color: AM } }, `${getLevelTitle(lvl)} · Уровень ${lvl}`),
-              w.position && h('div', { style: { fontSize: 11, color: '#888' } }, w.position)
+              w.position && h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, w.position)
             ),
-            h('button', { style: { background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }, onClick: () => setViewProfileId(null) }, '×')
+            h('button', { style: { background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--muted)' }, onClick: () => setViewProfileId(null) }, '×')
           ),
           // Метрики
           h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, marginBottom: 12 } },
-            h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500, color: AM } }, s.doneCount), h('div', { style: { fontSize: 8, color: '#888', textTransform: 'uppercase' } }, 'Операций')),
-            h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500, color: quality >= 95 ? GN : AM } }, `${quality}%`), h('div', { style: { fontSize: 8, color: '#888', textTransform: 'uppercase' } }, 'Качество')),
-            h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500, color: '#F57F17' } }, s.thanksReceived), h('div', { style: { fontSize: 8, color: '#888', textTransform: 'uppercase' } }, 'Спасибо')),
-            h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500 } }, earned.length), h('div', { style: { fontSize: 8, color: '#888', textTransform: 'uppercase' } }, 'Наград'))
+            h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500, color: AM } }, s.doneCount), h('div', { style: { fontSize: 8, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Операций')),
+            h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500, color: quality >= 95 ? GN : AM } }, `${quality}%`), h('div', { style: { fontSize: 8, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Качество')),
+            h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500, color: '#F57F17' } }, s.thanksReceived), h('div', { style: { fontSize: 8, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Спасибо')),
+            h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500 } }, earned.length), h('div', { style: { fontSize: 8, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Наград'))
           ),
           // Достижения
           earned.length > 0 && h('div', null,
