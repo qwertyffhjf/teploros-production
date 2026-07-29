@@ -97,16 +97,16 @@ const PasteImportWidget = memo(({ columns, onImport, addToast, hint }) => {
     step === 'paste' && h('div', {
       onPaste: handlePaste,
       tabIndex: 0,
-      style: { border: `2px dashed ${AM}`, borderRadius: 8, padding: '20px', textAlign: 'center', cursor: 'text', background: '#fff', outline: 'none', fontSize: 13, color: '#888' },
+      style: { border: `2px dashed ${AM}`, borderRadius: 8, padding: '20px', textAlign: 'center', cursor: 'text', background: 'var(--card-solid,#fff)', outline: 'none', fontSize: 13, color: 'var(--muted)' },
     },
       h('div', { style: { fontSize: 24, marginBottom: 6 } }, '📋'),
-      h('div', { style: { fontWeight: 500, color: '#555', marginBottom: 4 } }, 'Кликните сюда и нажмите Ctrl+V'),
+      h('div', { style: { fontWeight: 500, color: 'var(--fg-muted)', marginBottom: 4 } }, 'Кликните сюда и нажмите Ctrl+V'),
       h('div', { style: { fontSize: 11 } }, 'Скопируйте ячейки из Excel или Google Sheets, заголовки — необязательны')
     ),
 
     // Шаг 2: маппинг колонок
     step === 'map' && h('div', null,
-      h('div', { style: { fontSize: 11, color: '#666', marginBottom: 8 } },
+      h('div', { style: { fontSize: 11, color: 'var(--fg-muted)', marginBottom: 8 } },
         `Найдено ${preview.rows.length} строк, ${preview.headers.length} столбцов. Сопоставьте колонки:`
       ),
       h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 } },
@@ -126,7 +126,7 @@ const PasteImportWidget = memo(({ columns, onImport, addToast, hint }) => {
       h('div', { className: 'table-responsive', style: { marginBottom: 10 } },
         h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 11 } },
           h('thead', null, h('tr', null, preview.headers.slice(0, 5).map(hd =>
-            h('th', { key: hd, style: { ...S.th, background: Object.values(colMap).includes(hd) ? AM3 : '#f8f8f5' } }, hd)
+            h('th', { key: hd, style: { ...S.th, background: Object.values(colMap).includes(hd) ? AM3 : 'var(--card-2)' } }, hd)
           ))),
           h('tbody', null, preview.rows.slice(0, 3).map((row, i) =>
             h('tr', { key: i }, preview.headers.slice(0, 5).map((hd, j) =>
@@ -152,7 +152,7 @@ const PasteImportWidget = memo(({ columns, onImport, addToast, hint }) => {
       h('div', { className: 'table-responsive', style: { maxHeight: 180, overflowY: 'auto', border: '0.5px solid rgba(0,0,0,0.1)', borderRadius: 6, marginBottom: 10 } },
         h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 } },
           h('thead', null, h('tr', null, columns.filter(c => colMap[c.key] || c.required).map(c =>
-            h('th', { key: c.key, style: { ...S.th, position: 'sticky', top: 0, background: '#f8f8f5' } }, c.label)
+            h('th', { key: c.key, style: { ...S.th, position: 'sticky', top: 0, background: 'var(--card-2)' } }, c.label)
           ))),
           h('tbody', null, mappedRows.slice(0, 10).map((row, i) =>
             h('tr', { key: i, style: { background: i % 2 ? '#fafafa' : 'transparent' } },
@@ -161,7 +161,7 @@ const PasteImportWidget = memo(({ columns, onImport, addToast, hint }) => {
               )
             )
           )),
-          mappedRows.length > 10 && h('tr', null, h('td', { colSpan: columns.length, style: { ...S.td, color: '#888', textAlign: 'center' } }, `... ещё ${mappedRows.length - 10} строк`))
+          mappedRows.length > 10 && h('tr', null, h('td', { colSpan: columns.length, style: { ...S.td, color: 'var(--muted)', textAlign: 'center' } }, `... ещё ${mappedRows.length - 10} строк`))
         )
       ),
       h('div', { style: { display: 'flex', gap: 8 } },
@@ -480,9 +480,9 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
     confirmEl,
     // Модал корректировки остатка
     adjustModal && h('div', { style: { position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:60 } },
-      h('div', { style: { background:'#fff', borderRadius:14, padding:20, width:'min(360px, calc(100vw - 24px))', maxHeight:'85vh', overflowY:'auto' } },
+      h('div', { style: { background:'var(--card-solid,#fff)', borderRadius:14, padding:20, width:'min(360px, calc(100vw - 24px))', maxHeight:'85vh', overflowY:'auto' } },
         h('div', { style: { fontSize:15, fontWeight:500, marginBottom:4 } }, 'Корректировка: '+adjustModal.name),
-        h('div', { style: { fontSize:12, color:'#888', marginBottom:16 } }, 'Текущий остаток: '+adjustModal.quantity+' '+adjustModal.unit),
+        h('div', { style: { fontSize:12, color:'var(--muted)', marginBottom:16 } }, 'Текущий остаток: '+adjustModal.quantity+' '+adjustModal.unit),
         h('label', { style: S.lbl }, 'Новое количество'),
         h('input', { type:'number', min:0, step:'0.001', style: { ...S.inp, marginBottom:10 }, value: adjustForm.qty, onChange: e => setAdjustForm(p => ({ ...p, qty: e.target.value })) }),
         (() => {
@@ -495,13 +495,13 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
         h('label', { style: S.lbl }, 'Причина корректировки *'),
         h('textarea', { style: { ...S.inp, marginBottom:10 }, rows:3, placeholder:'Инвентаризация, пересчёт, ошибка учёта...', value: adjustForm.comment, onChange: e => setAdjustForm(p => ({ ...p, comment: e.target.value })) }),
         adjustModal.adjustHistory?.length > 0 && h('div', { style: { marginBottom:12 } },
-          h('div', { style: { fontSize:11, color:'#888', marginBottom:6 } }, 'История ('+adjustModal.adjustHistory.length+'):'),
-          adjustModal.adjustHistory.slice(-3).reverse().map((h2, i) => h('div', { key:i, style: { fontSize:11, padding:'4px 8px', background:'#f8f8f5', borderRadius:6, marginBottom:4 } },
+          h('div', { style: { fontSize:11, color:'var(--muted)', marginBottom:6 } }, 'История ('+adjustModal.adjustHistory.length+'):'),
+          adjustModal.adjustHistory.slice(-3).reverse().map((h2, i) => h('div', { key:i, style: { fontSize:11, padding:'4px 8px', background:'var(--card-2)', borderRadius:6, marginBottom:4 } },
             h('div', { style: { display:'flex', justifyContent:'space-between' } },
               h('span', { style: { color: h2.diff >= 0 ? GN2 : RD2, fontWeight:500 } }, (h2.diff >= 0 ? '+' : '')+Math.round(h2.diff*1000)/1000+' -> '+h2.newQty),
-              h('span', { style: { color:'#aaa' } }, new Date(h2.ts).toLocaleDateString())
+              h('span', { style: { color:'var(--muted)' } }, new Date(h2.ts).toLocaleDateString())
             ),
-            h('div', { style: { color:'#888', marginTop:2 } }, h2.comment)
+            h('div', { style: { color:'var(--muted)', marginTop:2 } }, h2.comment)
           ))
         ),
         h('div', { style: { display:'flex', gap:8 } },
@@ -565,7 +565,7 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
         h('button', { style: abtn(), onClick: addOrUpdate }, editingId ? '✓' : '+'),
         editingId && h('button', { style: gbtn(), onClick: resetForm }, '✕')
       ),
-      h('div', { style: { fontSize: 10, color: '#888', marginTop: 6 } }, 'Excel: колонки «Название», «Ед. изм.», «Количество», «Цена/ед.», «Партия», «Мин. остаток». При совпадении названия — обновляет остаток.')
+      h('div', { style: { fontSize: 10, color: 'var(--muted)', marginTop: 6 } }, 'Excel: колонки «Название», «Ед. изм.», «Количество», «Цена/ед.», «Партия», «Мин. остаток». При совпадении названия — обновляет остаток.')
     ),
     // Панель пакетного удаления
     selectedIds.size > 0 && h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'rgba(226,75,74,0.08)', border: `0.5px solid ${RD}`, borderRadius: 8, marginBottom: 8 } },
@@ -601,7 +601,7 @@ const MasterMaterials = memo(({ data, onUpdate, addToast }) => {
             ),
             h('td', { style: S.td }, m.unit),
             h('td', { style: { ...S.td, fontWeight: 500, color: isLow ? RD : 'inherit' } }, m.quantity),
-            h('td', { style: { ...S.td, color: '#888' } }, m.minStock || '—'),
+            h('td', { style: { ...S.td, color: 'var(--muted)' } }, m.minStock || '—'),
             h('td', { style: S.td }, m.unitCost ? `${m.unitCost}₽` : '—'),
             h('td', { style: { ...S.td, color: AM } }, m.unitCost ? `${Math.round(m.quantity * m.unitCost).toLocaleString()}₽` : '—'),
             h('td', { style: S.td }, m.batch || '—'),
@@ -702,7 +702,7 @@ const MasterBOM = memo(({ data, onUpdate, addToast }) => {
     h('div', { style: { display: 'flex', gap: 8, marginBottom: 12 } },
       h('button', { style: abtn(), onClick: () => document.getElementById('bom-import-xlsx').click() }, '📤 Импорт BOM из Excel'),
       h('input', { type: 'file', id: 'bom-import-xlsx', style: { display: 'none' }, accept: '.xlsx,.xls,.csv', onChange: importBOM }),
-      h('div', { style: { fontSize: 10, color: '#888', alignSelf: 'center' } }, 'Excel: колонки «Изделие», «Материал», «Количество»')
+      h('div', { style: { fontSize: 10, color: 'var(--muted)', alignSelf: 'center' } }, 'Excel: колонки «Изделие», «Материал», «Количество»')
     ),
     // Создать
     h('div', { style: S.card },
@@ -737,7 +737,7 @@ const MasterBOM = memo(({ data, onUpdate, addToast }) => {
       )
     ),
     // Спецификации
-    data.bomTemplates.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888' } }, 'Нет спецификаций. Создайте или импортируйте из Excel.') :
+    data.bomTemplates.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', color: 'var(--muted)' } }, 'Нет спецификаций. Создайте или импортируйте из Excel.') :
       data.bomTemplates.map(bom => {
         const stock = checkStock(bom);
         const allOk = stock.every(s => s.ok);
@@ -759,7 +759,7 @@ const MasterBOM = memo(({ data, onUpdate, addToast }) => {
               h('td', { style: { ...S.td, color: s.ok ? GN : RD, fontWeight: 500 } }, s.ok ? '✓' : `−${s.deficit}`),
               h('td', { style: S.td }, h('button', { style: { background: 'none', border: 'none', color: RD, cursor: 'pointer' }, onClick: () => removeMaterial(bom.id, i) }, '×'))
             )))
-          )) : h('div', { style: { fontSize: 12, color: '#888', marginBottom: 8 } }, 'Нет материалов. Добавьте ниже.'),
+          )) : h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 8 } }, 'Нет материалов. Добавьте ниже.'),
           // Добавить материал
           h('div', { style: { display: 'flex', gap: 6, marginTop: 8 } },
             h('select', { style: { ...S.inp, flex: 2 }, value: matForm.bomId === bom.id ? matForm.materialId : '', onChange: e => setMatForm({ bomId: bom.id, materialId: e.target.value, qty: matForm.bomId === bom.id ? matForm.qty : '' }) },
@@ -833,7 +833,7 @@ const MasterTodayPlan = memo(({ data }) => {
       h('div', { style: { fontSize: 10, color: RD, textTransform: 'uppercase', fontWeight: 500, marginBottom: 8 } }, `⚠ Прогноз срыва дедлайна (${cascadeAlerts.length} заказов)`),
       cascadeAlerts.map(a => h('div', { key: a.orderId, style: { padding: '6px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', fontSize: 12 } },
         h('div', { style: { fontWeight: 500, color: RD2 } }, `Заказ ${a.orderNumber}`),
-        h('div', { style: { color: '#666', fontSize: 11 } },
+        h('div', { style: { color: 'var(--fg-muted)', fontSize: 11 } },
           `Накопленная задержка: ${fmtDur(a.delay)} · Дедлайн: ${a.deadline} · `,
           h('span', { style: { fontWeight: 500, color: RD } }, `Опоздание: ~${fmtDur(a.overshoot)}`),
           ` · Осталось операций: ${a.remainingOps}`
@@ -845,7 +845,7 @@ const MasterTodayPlan = memo(({ data }) => {
     h('div', { style: { ...S.card, overflowX: 'auto' } },
       h('div', { style: S.sec }, `План на сегодня (${plannedToday.length})`),
       plannedToday.length === 0
-        ? h('div', { style: { padding: 16, textAlign: 'center', color: '#888' } }, 'Нет запланированных операций на сегодня')
+        ? h('div', { style: { padding: 16, textAlign: 'center', color: 'var(--muted)' } }, 'Нет запланированных операций на сегодня')
         : h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
             h('thead', null, h('tr', null, ['Заказ','Операция','Исполнитель','Плановое начало','Статус','Задержка'].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
             h('tbody', null, plannedToday.map(op => {
@@ -898,7 +898,7 @@ const MasterNotifications = memo(({ data }) => {
       notifications.length > 0 && h('span', { className: 'notification-badge', 'aria-label': `${notifications.length} уведомлений` }, notifications.length)
     ),
     notifications.length === 0
-      ? h('div', { style: { padding: 8, color: '#888' } }, 'Нет новых уведомлений')
+      ? h('div', { style: { padding: 8, color: 'var(--muted)' } }, 'Нет новых уведомлений')
       : notifications.map(n => h('div', { key: n.id, style: { padding: '6px 0', borderBottom: '0.5px solid #eee', fontSize: 12, color: n.type === 'overdue' ? RD : (n.type === 'deadline' ? AM : '#333') } }, n.message))
   );
 });
@@ -1128,7 +1128,7 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
     h('div', { style: S.card },
       h('div', { style: S.sec }, `Этапы · ${productTypes.find(p => p.id === stageType)?.label || stageType} (${typeStages.length})`),
       typeStages.length === 0
-        ? h('div', { style: { padding: 16, textAlign: 'center', color: '#888' } }, 'Нет этапов для этого типа продукции. Добавьте выше.')
+        ? h('div', { style: { padding: 16, textAlign: 'center', color: 'var(--muted)' } }, 'Нет этапов для этого типа продукции. Добавьте выше.')
         : h('div', { 'data-draggable-list': true },
             typeStages.map((stage, index) =>
               h('div', { key: stage.id, ...stagesDrag.containerProps(index), style: { ...stagesDrag.containerProps(index).style, padding: '8px 0', borderBottom: '0.5px solid #eee', display: 'flex', flexDirection: 'column' } },
@@ -1169,9 +1169,9 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
               // Редактор материалов
               editingMaterials === stage.id && h('div', { style: { marginTop: 8, padding: '10px 12px', background: '#f0f8f0', borderRadius: 8, border: `1px solid ${GN}` } },
                 h('div', { style: { fontSize: 10, color: GN2, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8, fontWeight: 500 } }, '📦 Материалы необходимые для начала этого этапа'),
-                h('div', { style: { fontSize: 11, color: '#666', marginBottom: 8 } }, 'Отмеченные материалы должны поступить на склад прежде чем операция станет доступна рабочему'),
+                h('div', { style: { fontSize: 11, color: 'var(--fg-muted)', marginBottom: 8 } }, 'Отмеченные материалы должны поступить на склад прежде чем операция станет доступна рабочему'),
                 (data.materials || []).length === 0
-                  ? h('div', { style: { fontSize: 12, color: '#888', padding: 8 } }, 'Нет материалов в справочнике. Сначала добавьте материалы в раздел Материалы.')
+                  ? h('div', { style: { fontSize: 12, color: 'var(--muted)', padding: 8 } }, 'Нет материалов в справочнике. Сначала добавьте материалы в раздел Материалы.')
                   : h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 6 } },
                       (data.materials || []).map(mat => {
                         const checked = (stage.requiredMaterialIds || []).includes(mat.id);
@@ -1179,7 +1179,7 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
                           h('input', { type: 'checkbox', checked, onChange: () => toggleStageMaterial(stage.id, mat.id), style: { width: 16, height: 16, accentColor: GN, cursor: 'pointer' } }),
                           h('div', null,
                             h('div', { style: { fontWeight: checked ? 500 : 400, color: checked ? GN2 : '#333' } }, mat.name),
-                            mat.unit && h('div', { style: { fontSize: 10, color: '#888' } }, mat.unit)
+                            mat.unit && h('div', { style: { fontSize: 10, color: 'var(--muted)' } }, mat.unit)
                           )
                         );
                       })
@@ -1196,7 +1196,7 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
               }),
 
               // Редактор чек-листа с drag & drop
-              editingChecklist === stage.id && h('div', { style: { marginTop: 8, padding: '10px 12px', background: '#f8f8f5', borderRadius: 8 } },
+              editingChecklist === stage.id && h('div', { style: { marginTop: 8, padding: '10px 12px', background: 'var(--card-2)', borderRadius: 8 } },
                 h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 } }, 'Чек-лист (при запуске операции копируется рабочему)'),
                 h(ChecklistDraggable, {
                   key: stage.id,
@@ -1212,7 +1212,7 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
                   h('input', { style: { ...S.inp, flex: 1, fontSize: 12 }, placeholder: 'Новый пункт проверки...', value: newCheckItem, onChange: e => setNewCheckItem(e.target.value), onKeyDown: e => e.key === 'Enter' && addCheckItem(stage.id) }),
                   h('button', { style: abtn({ fontSize: 11, padding: '4px 10px' }), onClick: () => addCheckItem(stage.id) }, '+')
                 ),
-                (stage.checklist || []).length === 0 && h('div', { style: { fontSize: 11, color: '#888', padding: 4 } }, 'Нет пунктов. Добавьте пункты проверки для этого этапа.')
+                (stage.checklist || []).length === 0 && h('div', { style: { fontSize: 11, color: 'var(--muted)', padding: 4 } }, 'Нет пунктов. Добавьте пункты проверки для этого этапа.')
               )
             )  // конец h('div', containerProps) — один этап
           )    // конец typeStages.map
@@ -1230,7 +1230,7 @@ const ChecklistDraggable = memo(({ items, onReorder, onRemove }) => {
     items.map((item, idx) =>
       h('div', { key: idx, ...containerProps(idx), style: { ...containerProps(idx).style, display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: 12, borderBottom: '0.5px solid #eee' } },
         h('span', { ...dragHandleProps(idx), ...touchHandleProps(idx), style: { ...dragHandleProps(idx).style, fontSize: 14 } }, '⠿'),
-        h('span', { style: { color: '#888', fontSize: 10, width: 16, flexShrink: 0 } }, `${idx + 1}.`),
+        h('span', { style: { color: 'var(--muted)', fontSize: 10, width: 16, flexShrink: 0 } }, `${idx + 1}.`),
         h('span', { style: { flex: 1 } }, item),
         h('span', { style: { cursor: 'pointer', color: RD, fontSize: 14, padding: '0 4px' }, onClick: () => onRemove(idx) }, '×')
       )
@@ -1323,7 +1323,7 @@ const StageDefaultsEditor = memo(({ stage, data, onSave, onClose }) => {
       padding: '9px 12px', marginBottom: 10, borderRadius: 6,
       background: 'rgba(0,0,0,0.03)', border: '0.5px solid rgba(0,0,0,0.06)',
     } },
-      h('div', { style: { fontSize: 11, color: '#666', lineHeight: 1.5 } },
+      h('div', { style: { fontSize: 11, color: 'var(--fg-muted)', lineHeight: 1.5 } },
         stage.pieceworkField
           ? h('span', null,
               '💰 Оплата: ',
@@ -1476,7 +1476,7 @@ const ArchiveViewer = memo(({ data }) => {
     h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
       h('div', null,
         h('div', { style: S.sec }, '📦 Архив заказов'),
-        h('div', { style: { fontSize: 11, color: '#888' } }, 'Заказы старше 90 дней переносятся в архив автоматически')
+        h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, 'Заказы старше 90 дней переносятся в архив автоматически')
       ),
       h('span', { style: { fontSize: 12, color: AM4 } }, 'Открыть →')
     )
@@ -1487,8 +1487,8 @@ const ArchiveViewer = memo(({ data }) => {
       h('div', { style: S.sec }, '📦 Архив заказов'),
       h('button', { style: gbtn({ fontSize: 11 }), onClick: () => setOpen(false) }, '× Закрыть')
     ),
-    loading && h('div', { style: { fontSize: 12, color: '#888', textAlign: 'center', padding: 12 } }, 'Загрузка...'),
-    months.length === 0 && !loading && h('div', { style: { fontSize: 12, color: '#888', textAlign: 'center', padding: 12 } }, 'Архивных данных нет'),
+    loading && h('div', { style: { fontSize: 12, color: 'var(--muted)', textAlign: 'center', padding: 12 } }, 'Загрузка...'),
+    months.length === 0 && !loading && h('div', { style: { fontSize: 12, color: 'var(--muted)', textAlign: 'center', padding: 12 } }, 'Архивных данных нет'),
     months.length > 0 && h('div', null,
       h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 } },
         months.map(m => h('button', { key: m,
@@ -1497,7 +1497,7 @@ const ArchiveViewer = memo(({ data }) => {
         }, m))
       ),
       archive && h('div', null,
-        h('div', { style: { fontSize: 11, color: '#888', marginBottom: 8 } },
+        h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 8 } },
           `${archive.orders?.length || 0} заказов · ${archive.ops?.length || 0} операций`
         ),
         h('div', { className: 'table-responsive' },
@@ -1555,7 +1555,7 @@ const BackupRestorePanel = memo(({ onUpdate, addToast }) => {
     h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
       h('div', null,
         h('div', { style: S.sec }, '💾 Восстановление данных'),
-        h('div', { style: { fontSize: 11, color: '#888' } }, 'Снимки всех данных каждые ~10 минут, глубина — последние часы')
+        h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, 'Снимки всех данных каждые ~10 минут, глубина — последние часы')
       ),
       h('span', { style: { fontSize: 12, color: AM4 } }, 'Открыть →')
     )
@@ -1569,14 +1569,14 @@ const BackupRestorePanel = memo(({ onUpdate, addToast }) => {
     h('div', { style: { background: '#fffbe6', border: '0.5px solid #f5c518', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 11, color: '#7a5900' } },
       '⚠ Восстановление перезапишет текущие данные. Перед этим автоматически создаётся снимок текущего состояния — можно откатиться обратно.'
     ),
-    loading && h('div', { style: { fontSize: 12, color: '#888', textAlign: 'center', padding: 12 } }, 'Загрузка снимков...'),
-    !loading && backups.length === 0 && h('div', { style: { fontSize: 12, color: '#888', textAlign: 'center', padding: 12 } }, 'Снимков пока нет — появятся после следующих сохранений'),
+    loading && h('div', { style: { fontSize: 12, color: 'var(--muted)', textAlign: 'center', padding: 12 } }, 'Загрузка снимков...'),
+    !loading && backups.length === 0 && h('div', { style: { fontSize: 12, color: 'var(--muted)', textAlign: 'center', padding: 12 } }, 'Снимков пока нет — появятся после следующих сохранений'),
     !loading && backups.length > 0 && h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
       backups.map(b => h('div', {
         key: b.id,
         style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', border: '0.5px solid #e5e5e0', borderRadius: 8 }
       },
-        h('div', { style: { fontSize: 12, color: '#333' } }, b.date),
+        h('div', { style: { fontSize: 12, color: 'var(--fg)' } }, b.date),
         h('button', {
           style: gbtn({ fontSize: 11 }),
           disabled: restoring === b.id,
@@ -1657,12 +1657,12 @@ const StorageMonitor = memo(({ data, addToast }) => {
       ),
       h('div', { style: { display:'flex', gap:16, marginBottom:12, flexWrap:'wrap' } },
         h('div', null,
-          h('div', { style: { fontSize:10, color:'#888', textTransform:'uppercase', marginBottom:4 } }, 'Размер БД'),
+          h('div', { style: { fontSize:10, color:'var(--muted)', textTransform:'uppercase', marginBottom:4 } }, 'Размер БД'),
           h('div', { style: { fontSize:20, fontWeight:700, color: isCritical ? '#d32f2f' : AM } }, `${sizeMb} МБ`),
-          h('div', { style: { fontSize:10, color:'#888' } }, `${percentFilled}% заполнено`)
+          h('div', { style: { fontSize:10, color:'var(--muted)' } }, `${percentFilled}% заполнено`)
         ),
         h('div', { style: { flex:1, minWidth:150 } },
-          h('div', { style: { fontSize:10, color:'#888', textTransform:'uppercase', marginBottom:4 } }, 'Прогресс'),
+          h('div', { style: { fontSize:10, color:'var(--muted)', textTransform:'uppercase', marginBottom:4 } }, 'Прогресс'),
           h('div', { style: { height:8, background:'#f0f0f0', borderRadius:4, overflow:'hidden' } },
             h('div', { style: { height:'100%', background: isCritical ? '#d32f2f' : AM, width:`${Math.min(percentFilled, 100)}%`, transition:'width 0.3s' } })
           ),
@@ -1670,19 +1670,19 @@ const StorageMonitor = memo(({ data, addToast }) => {
         )
       ),
       showAnalysis && h('div', null,
-        h('div', { style: { marginBottom:12, padding:10, background:'#f8f8f5', borderRadius:8 } },
-          h('div', { style: { fontSize:12, fontWeight:500, marginBottom:8, color:'#333' } }, 'Топ объектов по размеру:'),
+        h('div', { style: { marginBottom:12, padding:10, background:'var(--card-2)', borderRadius:8 } },
+          h('div', { style: { fontSize:12, fontWeight:500, marginBottom:8, color:'var(--fg)' } }, 'Топ объектов по размеру:'),
           getTopObjects.map(item => h('div', { key:item.name, style: { fontSize:11, display:'flex', justifyContent:'space-between', padding:'4px 0', borderBottom:'0.5px solid rgba(0,0,0,0.05)' } },
             h('span', null, item.name),
             h('span', { style: { fontWeight:500, color:AM } }, `${Math.round(item.size / 1024)} КБ`)
           ))
         ),
         h('div', { style: { marginBottom:12, padding:10, background:'#fef8f5', borderRadius:8 } },
-          h('div', { style: { fontSize:12, fontWeight:500, marginBottom:8, color:'#333' } }, 'Целостность данных:'),
+          h('div', { style: { fontSize:12, fontWeight:500, marginBottom:8, color:'var(--fg)' } }, 'Целостность данных:'),
           checkIntegrity.map((issue, i) => h('div', { key:i, style: { fontSize:11, padding:'3px 0', color: issue.startsWith('✅') ? '#2e7d32' : '#d32f2f', fontFamily:'monospace', wordBreak:'break-word' } }, issue))
         ),
         findDuplicates.length > 0 && h('div', { style: { padding:10, background:'#fff3e0', borderRadius:8 } },
-          h('div', { style: { fontSize:12, fontWeight:500, marginBottom:8, color:'#333' } }, `⚠️ Найдено ${findDuplicates.length} дубликатов событий:`),
+          h('div', { style: { fontSize:12, fontWeight:500, marginBottom:8, color:'var(--fg)' } }, `⚠️ Найдено ${findDuplicates.length} дубликатов событий:`),
           findDuplicates.map(([key, count], i) => h('div', { key:i, style: { fontSize:10, padding:'2px 0', color:'#e65100' } }, `${key}: ${count}x`))
         )
       )
@@ -1840,7 +1840,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         )
       ),
       h('button', { style: abtn(), onClick: savePins }, 'Сохранить PIN-коды'),
-      h('div', { style: { fontSize: 10, color: '#888', marginTop: 6 } }, '💡 Заполняйте только те поля, которые хотите изменить. Пустые поля сохранят текущие значения.')
+      h('div', { style: { fontSize: 10, color: 'var(--muted)', marginTop: 6 } }, '💡 Заполняйте только те поля, которые хотите изменить. Пустые поля сохранят текущие значения.')
     ),
     h('div', { style: S.card },
       h('div', { style: S.sec }, '🤖 AI-аналитик'),
@@ -1919,10 +1919,10 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         h('div', { style: { flex:1, minWidth:180 } }, h('label', { style: S.lbl }, 'Подзаголовок'), h('input', { type:'text', style: { ...S.inp, width:'100%' }, value: welcomeSubtitle, onChange: e => setWelcomeSubtitle(e.target.value) })),
         h('div', { style: { flex:1, minWidth:180 } }, h('label', { style: S.lbl }, 'Метка'), h('input', { type:'text', style: { ...S.inp, width:'100%' }, value: welcomeLabel, onChange: e => setWelcomeLabel(e.target.value) }))
       ),
-      h('div', { style: { ...S.card, background:'#f8f8f5', marginBottom:12, textAlign:'center' } },
-        h('div', { style: { fontSize:10, color:'#888', marginBottom:8 } }, 'Предпросмотр:'),
+      h('div', { style: { ...S.card, background:'var(--card-2)', marginBottom:12, textAlign:'center' } },
+        h('div', { style: { fontSize:10, color:'var(--muted)', marginBottom:8 } }, 'Предпросмотр:'),
         h('div', { style: { fontSize:24, fontWeight:700, color:AM } }, welcomeTitle),
-        h('div', { style: { fontSize:12, color:'#888', letterSpacing:'0.15em', textTransform:'uppercase' } }, welcomeSubtitle),
+        h('div', { style: { fontSize:12, color:'var(--muted)', letterSpacing:'0.15em', textTransform:'uppercase' } }, welcomeSubtitle),
         h('div', { style: { fontSize:10, color:AM4, textTransform:'uppercase', letterSpacing:'0.15em', marginTop:8 } }, welcomeLabel)
       ),
       h('button', { style: abtn(), onClick: saveWelcome }, 'Сохранить текст')
@@ -1934,7 +1934,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         h('div', { style: { flex:1 } }, h('label', { style: S.lbl }, 'Высота'), h('input', { type:'number', min:15, max:150, style: { ...S.inp, width:'100%' }, value: labelHeight, onChange: e => setLabelHeight(e.target.value) })),
         h('button', { style: abtn({ height:36 }), onClick: saveWelcome }, 'Сохранить')
       ),
-      h('div', { style: { fontSize:11, color:'#888' } }, 'По умолчанию: 50 × 35. Применяется при печати QR-этикеток.')
+      h('div', { style: { fontSize:11, color:'var(--muted)' } }, 'По умолчанию: 50 × 35. Применяется при печати QR-этикеток.')
     ),
     h(StorageMonitor, { data, addToast }),
     h('div', { style: S.card },
@@ -1956,7 +1956,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
           addToast('Данные восстановлены из резервной копии', 'success');
         }})
       ),
-      h('div', { style: { fontSize:11, color:'#888' } }, 'Сохраните резервную копию перед чисткой или восстановлением. Восстановление требует мастер-ключ.')
+      h('div', { style: { fontSize:11, color:'var(--muted)' } }, 'Сохраните резервную копию перед чисткой или восстановлением. Восстановление требует мастер-ключ.')
     ),
     (() => {
       // Журнал действий админа — последние 20 записей
@@ -1978,7 +1978,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         h('div', { style: { maxHeight: 240, overflowY: 'auto' } },
           adminActions.map(e => h('div', { key: e.id, style: { fontSize: 11, padding: '5px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', display: 'flex', justifyContent: 'space-between', gap: 12 } },
             h('span', null, labels[e.action] || e.action, e.details?.counts ? ` · ${e.details.counts}` : e.details?.fileName ? ` · ${e.details.fileName}` : ''),
-            h('span', { style: { color: '#888', whiteSpace: 'nowrap' } }, new Date(e.ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }))
+            h('span', { style: { color: 'var(--muted)', whiteSpace: 'nowrap' } }, new Date(e.ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }))
           ))
         )
       );
@@ -2042,7 +2042,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         h('div', { style: S.sec }, 'Служебное · диагностика данных'),
         h('div', { style: { marginBottom: 12 } },
           h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:4 } },
-            h('span', { style: { fontSize: 12, color: '#666' } }, `Занято: ${sizeKb} КБ из ${limitKb} КБ`),
+            h('span', { style: { fontSize: 12, color: 'var(--fg-muted)' } }, `Занято: ${sizeKb} КБ из ${limitKb} КБ`),
             h('span', { style: { fontSize: 14, fontWeight: 500, color: pctColor } }, `${pct}%`)
           ),
           h('div', { style: { height: 8, background: '#eee', borderRadius: 4, overflow:'hidden' } },
@@ -2051,15 +2051,15 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         ),
         h('div', { style: { display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(110px, 1fr))', gap:8, marginBottom:12 } },
           Object.entries(counts).map(([k, v]) =>
-            h('div', { key: k, style: { background: '#f8f8f5', borderRadius: 6, padding: '6px 10px' } },
-              h('div', { style: { fontSize: 10, color: '#888' } }, k),
+            h('div', { key: k, style: { background: 'var(--card-2)', borderRadius: 6, padding: '6px 10px' } },
+              h('div', { style: { fontSize: 10, color: 'var(--muted)' } }, k),
               h('div', { style: { fontSize: 16, fontWeight: 500 } }, v)
             )
           )
         ),
         // Очистка событий
-        h('div', { style: { background: '#f8f8f5', borderRadius: 6, padding: 10, marginBottom: 8 } },
-          h('div', { style: { fontSize: 11, color: '#888', marginBottom: 6 } }, 'Удалить события старше:'),
+        h('div', { style: { background: 'var(--card-2)', borderRadius: 6, padding: 10, marginBottom: 8 } },
+          h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 6 } }, 'Удалить события старше:'),
           h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
             h('select', { defaultValue: '90', style: { ...S.inp, width: 100 }, onChange: e => { cleanupEventsDays = parseInt(e.target.value); } },
               periodOpts.map(d => h('option', { key: d, value: d }, `${d} дней`))
@@ -2068,8 +2068,8 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
           )
         ),
         // Очистка сообщений
-        h('div', { style: { background: '#f8f8f5', borderRadius: 6, padding: 10, marginBottom: 8 } },
-          h('div', { style: { fontSize: 11, color: '#888', marginBottom: 6 } }, 'Удалить сообщения чата старше:'),
+        h('div', { style: { background: 'var(--card-2)', borderRadius: 6, padding: 10, marginBottom: 8 } },
+          h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 6 } }, 'Удалить сообщения чата старше:'),
           h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
             h('select', { defaultValue: '30', style: { ...S.inp, width: 100 }, onChange: e => { cleanupMsgDays = parseInt(e.target.value); } },
               periodOpts.map(d => h('option', { key: d, value: d }, `${d} дней`))
@@ -2113,14 +2113,14 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         }),
         h('div', null,
           h('div', { style: { fontSize: 13, fontWeight: 500 } }, 'Запрашивать списание материалов после операции'),
-          h('div', { style: { fontSize: 11, color: '#888', marginTop: 2 } }, 'Оператору будет предложено указать расход материалов при завершении каждой операции')
+          h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 2 } }, 'Оператору будет предложено указать расход материалов при завершении каждой операции')
         )
       )
     ),
     h('div', { style: S.card },
       h('div', { style: S.sec }, 'PIN-коды сотрудников'),
       data.workers.length === 0
-        ? h('div', { style: { fontSize:12, color:'#888', padding:8 } }, 'Нет сотрудников')
+        ? h('div', { style: { fontSize:12, color:'var(--muted)', padding:8 } }, 'Нет сотрудников')
         : h('div', { className: 'table-responsive' }, h('table', { style: { width:'100%', borderCollapse:'collapse' } },
             h('thead', null, h('tr', null,
               ['Сотрудник','Текущий PIN','Новый PIN','Действия'].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t))
@@ -2133,7 +2133,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
                     ? w.pin.startsWith('H_')
                       ? h('span', { title: 'PIN сохранён (захеширован). Введите новый для замены.' }, '••••')
                       : w.pin
-                    : h('span', { style: { color: '#aaa', fontFamily: 'inherit', fontSize: 12, letterSpacing: 0 } }, 'не задан')
+                    : h('span', { style: { color: 'var(--muted)', fontFamily: 'inherit', fontSize: 12, letterSpacing: 0 } }, 'не задан')
                 ),
                 h('td', { style: S.td },
                   h('input', {
@@ -2206,15 +2206,15 @@ const ShiftSettings = memo(({ data, onUpdate, addToast }) => {
     // График работы
     h('div', { style: { ...S.card, marginTop: 16 } },
       h('div', { style: S.sec }, 'График работы'),
-      h('div', { style: { fontSize: 11, color: '#888', marginBottom: 12 } },
+      h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 12 } },
         'Определяет какие дни считаются выходными в табеле учёта рабочего времени'
       ),
       h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 } },
-        SCHEDULE_TYPES.map(st => h('label', { key: st.id, style: { display: 'flex', alignItems: 'flex-start', gap: 10, padding: '8px 10px', borderRadius: 8, background: schedForm.type === st.id ? AM3 : '#f8f8f5', border: `0.5px solid ${schedForm.type === st.id ? AM4 : 'rgba(0,0,0,0.08)'}`, cursor: 'pointer' } },
+        SCHEDULE_TYPES.map(st => h('label', { key: st.id, style: { display: 'flex', alignItems: 'flex-start', gap: 10, padding: '8px 10px', borderRadius: 8, background: schedForm.type === st.id ? AM3 : 'var(--card-2)', border: `0.5px solid ${schedForm.type === st.id ? AM4 : 'rgba(0,0,0,0.08)'}`, cursor: 'pointer' } },
           h('input', { type: 'radio', name: 'schedtype', value: st.id, checked: schedForm.type === st.id, onChange: () => setSchedForm(p => ({ ...p, type: st.id })), style: { marginTop: 2, accentColor: AM } }),
           h('div', null,
             h('div', { style: { fontSize: 13, fontWeight: 500, color: schedForm.type === st.id ? AM2 : '#333' } }, st.label),
-            h('div', { style: { fontSize: 11, color: '#888', marginTop: 1 } }, st.desc)
+            h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 1 } }, st.desc)
           )
         ))
       ),
@@ -2222,7 +2222,7 @@ const ShiftSettings = memo(({ data, onUpdate, addToast }) => {
       ['2/2','3/3','4/2','custom'].includes(schedForm.type) && h('div', { style: { marginBottom: 12 } },
         h('label', { style: S.lbl }, 'Дата начала отсчёта паттерна'),
         h('input', { type: 'date', style: { ...S.inp, maxWidth: 200 }, value: schedForm.startDate, onChange: e => setSchedForm(p => ({ ...p, startDate: e.target.value })) }),
-        h('div', { style: { fontSize: 11, color: '#888', marginTop: 4 } }, 'С этой даты начинается цикл рабочих/выходных дней')
+        h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 4 } }, 'С этой даты начинается цикл рабочих/выходных дней')
       ),
       // Свой паттерн
       schedForm.type === 'custom' && h('div', { style: { marginBottom: 12 } },
@@ -2241,7 +2241,7 @@ const ShiftSettings = memo(({ data, onUpdate, addToast }) => {
     // Смены (временные диапазоны)
     h('div', { style: { ...S.card, marginTop: 16 } },
       h('div', { style: S.sec }, 'Временные диапазоны смен'),
-      h('div', { style: { fontSize: 11, color: '#888', marginBottom: 10 } }, 'Используются для разбивки журнала событий и отчётов по сменам.'),
+      h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 10 } }, 'Используются для разбивки журнала событий и отчётов по сменам.'),
       shifts.length > 0 && h('div', { style: { marginBottom: 12 } },
         shifts.map(s => h('div', { key: s.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)' } },
           h('span', { style: { flex: 1, fontSize: 13 } }, `${s.name} (${s.start}:00 — ${s.end}:00)`),
@@ -2821,7 +2821,7 @@ const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
       h('div', { style: { fontSize:12, marginBottom:10, display:'flex', gap:16, flexWrap:'wrap' } },
         h('span', { style: { color:'#0a7' } }, `+ ${previewCounts.add} новых`),
         h('span', { style: { color:'#a70' } }, `↻ ${previewCounts.update} обновится`),
-        h('span', { style: { color:'#888' } }, `= ${previewCounts.skip} без изменений`),
+        h('span', { style: { color:'var(--muted)' } }, `= ${previewCounts.skip} без изменений`),
         (previewCounts.extrasAdd + previewCounts.extrasUpdate > 0) && h('span', { style: { color:'#8b4d00', marginLeft:'auto' } },
           `допы: +${previewCounts.extrasAdd}, ↻${previewCounts.extrasUpdate}`)
       ),
@@ -2835,11 +2835,11 @@ const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
       ),
       // Таблица превью — основные расценки
       h('div', { style: { fontSize:11, fontWeight:500, color:'#8b6d00', marginBottom:4 } }, 'Основные расценки (теплообменник + крышки):'),
-      h('div', { style: { maxHeight: 200, overflowY:'auto', border:'0.5px solid #d4b83a', borderRadius: 6, background:'#fff', marginBottom: 10 } },
+      h('div', { style: { maxHeight: 200, overflowY:'auto', border:'0.5px solid #d4b83a', borderRadius: 6, background:'var(--card-solid,#fff)', marginBottom: 10 } },
         h('table', { style: { width:'100%', borderCollapse:'collapse', fontSize:11 } },
           h('thead', { style: { position:'sticky', top:0, background:'#fffbea' } },
             h('tr', null, ['', 'Тип', 'Мощность', 'Теплообм.', 'Крышка пер.', 'Крышка зад.', 'Вальц.'].map(col =>
-              h('th', { key: col, style: { textAlign:'left', padding:'4px 6px', fontWeight:500, color:'#666', fontSize:10 } }, col)
+              h('th', { key: col, style: { textAlign:'left', padding:'4px 6px', fontWeight:500, color:'var(--fg-muted)', fontSize:10 } }, col)
             ))
           ),
           h('tbody', null,
@@ -2870,7 +2870,7 @@ const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
         h('div', { key:'extra-h', style: { fontSize:11, fontWeight:500, color:'#8b6d00', marginBottom:4 } },
           `Доп. расценки (${importPreview.extras.filter(e => e.action !== 'skip').length} категорий с изменениями из ${importPreview.extras.length}):`
         ),
-        h('div', { key:'extra-b', style: { border:'0.5px solid #d4b83a', borderRadius: 6, background:'#fff', padding: 8 } },
+        h('div', { key:'extra-b', style: { border:'0.5px solid #d4b83a', borderRadius: 6, background:'var(--card-solid,#fff)', padding: 8 } },
           importPreview.extras.map((e, i) => {
             const badge = e.action === 'add' ? '+' : e.action === 'update' ? '↻' : '=';
             const badgeColor = e.action === 'add' ? '#0a7' : e.action === 'update' ? '#a70' : '#aaa';
@@ -2878,10 +2878,10 @@ const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
               h('span', { style: { color: badgeColor, fontWeight:700, marginRight:6 } }, badge),
               h('b', null, e.incoming.name),
               e.action === 'skip' && e.reason === 'manual'
-                ? h('span', { style: { color:'#888', fontSize:10, marginLeft:8 } }, '(ручная — не трогаем)')
+                ? h('span', { style: { color:'var(--muted)', fontSize:10, marginLeft:8 } }, '(ручная — не трогаем)')
                 : e.action === 'skip'
-                ? h('span', { style: { color:'#888', fontSize:10, marginLeft:8 } }, '(без изменений)')
-                : h('span', { style: { color:'#666', fontSize:10, marginLeft:8 } },
+                ? h('span', { style: { color:'var(--muted)', fontSize:10, marginLeft:8 } }, '(без изменений)')
+                : h('span', { style: { color:'var(--fg-muted)', fontSize:10, marginLeft:8 } },
                     `${e.incoming.tiers.length} ${e.action === 'add' ? 'тиеров' : 'из прайса'}: `,
                     e.incoming.tiers.map(t => `${t.min}${t.min!==t.max?'-'+t.max:''}${e.incoming.paramUnit}=${t.price}`).join(', ')
                   )
@@ -3057,7 +3057,7 @@ const ExtraWorksEditor = memo(({ data, onUpdate, addToast }) => {
       : extras.map(cat => {
           const isExp = expandedId === cat.id;
           const tf = newTierByCat[cat.id] || {};
-          return h('div', { key: cat.id, style: { border:'0.5px solid var(--border-soft)', borderRadius: 6, marginBottom: 6, background:'#fff' } },
+          return h('div', { key: cat.id, style: { border:'0.5px solid var(--border-soft)', borderRadius: 6, marginBottom: 6, background:'var(--card-solid,#fff)' } },
             // шапка категории
             h('div', {
               style: { padding:'8px 12px', cursor:'pointer', display:'flex', alignItems:'center', gap: 8, background: isExp ? 'rgba(217,166,58,0.08)' : 'transparent' },
@@ -3066,7 +3066,7 @@ const ExtraWorksEditor = memo(({ data, onUpdate, addToast }) => {
               h('span', { style: { fontSize: 11 } }, isExp ? '▼' : '▶'),
               h('b', { style: { flex: 1, fontSize: 13 } }, cat.name),
               h('span', { style: { fontSize: 11, color:'var(--muted)' } }, `${cat.paramLabel}, ${cat.paramUnit || ''}`),
-              h('span', { style: { fontSize: 10, padding:'2px 6px', borderRadius: 4, background: cat.source === 'manual' ? '#e0e0d8' : '#f0e6c8', color:'#666' } },
+              h('span', { style: { fontSize: 10, padding:'2px 6px', borderRadius: 4, background: cat.source === 'manual' ? '#e0e0d8' : '#f0e6c8', color:'var(--fg-muted)' } },
                 cat.source === 'manual' ? 'ручная' : 'из прайса'),
               h('span', { style: { fontSize: 11, color:'var(--muted)' } }, `${cat.tiers.length} тиеров`),
               h('button', { style: rbtn({ fontSize: 10, padding:'3px 8px' }),
