@@ -1,0 +1,454 @@
+// teploros · chat.js
+// Автоматически извлечено из монолита
+
+// ==================== ChatScreen ====================
+const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
+  const [newMessage, setNewMessage] = useState('');
+  const [showQuickActions, setShowQuickActions] = useState(false);
+  const [showThanks, setShowThanks] = useState(false);
+  const [showDuelCreate, setShowDuelCreate] = useState(false);
+  const [duelTarget, setDuelTarget] = useState('');
+  const [duelOps, setDuelOps] = useState(3);
+  const [contextOp, setContextOp] = useState('');
+  const [isAnnouncement, setIsAnnouncement] = useState(false);
+  const [viewProfileId, setViewProfileId] = useState(null);
+  const [showPeople, setShowPeople] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const messagesEndRef = useRef(null);
+
+  const deleteMessage = useCallback(async (msgId) => {
+    const d = { ...data, messages: (data.messages || []).filter(m => m.id !== msgId) };
+    await DB.save(d); onUpdate(d);
+  }, [data, onUpdate]);
+
+  const scrollToBottom = () => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); };
+  useEffect(scrollToBottom, [data.messages]);
+
+  // Непрочитанные: считаем входящие (не мои) после последнего просмотра
+  const lastReadKey = `chat_lastRead_${currentUser.id || 'anon'}`;
+  const lastReadTs = parseInt(localStorage.getItem(lastReadKey) || '0');
+  useEffect(() => { localStorage.setItem(lastReadKey, String(now())); }, [data.messages?.length, lastReadKey]);
+
+  // 🔔 Звук и вибро при @упоминании текущего пользователя
+  useEffect(() => {
+    const lastMsg = data.messages?.[data.messages.length - 1];
+    if (lastMsg && lastMsg.mentions?.includes(currentUser.id) && lastMsg.senderId !== currentUser.id) {
+      // Вибро (если поддерживается)
+      if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+      // Звук (Web Audio API или простой beep)
+      try {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        oscillator.frequency.value = 800;
+        oscillator.type = 'sine';
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+        oscillator.start(audioContext.currentTime);
+        oscillator.stop(audioContext.currentTime + 0.1);
+      } catch(e) {}
+    }
+  }, [data.messages?.length, currentUser.id]);
+
+  const myId = currentUser.id || 'system';
+  const isMaster = currentUser.role === 'master';
+  const isWarehouse = currentUser.role === 'warehouse';
+  // Модерация: мастер, завсклад, админ, руководитель, начальник цеха
+  const canModerate = ['master', 'warehouse', 'admin', 'director', 'pdo'].includes(currentUser.role);
+
+  // Текущая операция рабочего (для контекста)
+  const activeOp = useMemo(() => {
+    if (!currentUser.id || currentUser.role !== 'worker') return null;
+    return data.ops.find(op => op.status === 'in_progress' && op.workerIds?.includes(currentUser.id));
+  }, [data.ops, currentUser]);
+
+  const sendMessage = useCallback(async (text, type = 'text', extra = {}) => {
+    if (!text?.trim()) return;
+    const opData = contextOp ? data.ops.find(o => o.id === contextOp) : activeOp;
+    const orderData = opData ? data.orders.find(o => o.id === opData.orderId) : null;
+    // Парсим @упоминания: ищем по имени (первое слово или полное имя)
+    const mentionedIds = [];
+    const mentionMatches = text.match(/@([a-zA-Zа-яА-ЯёЁ]+(?:\s[a-zA-Zа-яА-ЯёЁ]+)?)/g) || [];
+    mentionMatches.forEach(m => {
+      const name = m.slice(1).trim().toLowerCase();
+      const worker = data.workers.find(w => !w.archived && (w.name.toLowerCase() === name || w.name.toLowerCase().split(' ')[0] === name));
+      if (worker && !mentionedIds.includes(worker.id)) mentionedIds.push(worker.id);
+    });
+    const message = {
+      id: uid(), senderId: myId,
+      senderName: currentUser.name || 'Система',
+      senderRole: currentUser.role,
+      text: text.trim(), type,
+      timestamp: now(),
+      pinned: isAnnouncement && (isMaster || isWarehouse),
+      opId: opData?.id || undefined,
+      opName: opData?.name || undefined,
+      orderNumber: orderData?.number || undefined,
+      mentions: mentionedIds.length > 0 ? mentionedIds : undefined,
+      ...extra
+    };
+    const updatedMessages = [...(data.messages || []), message].slice(-200);
+    let updated = { ...data, messages: updatedMessages };
+    // Уведомления для мастера и склада при быстрых действиях
+    const notifyTypes = ['need_material', 'equipment_issue', 'need_help', 'drawing_question'];
+    if (notifyTypes.includes(type)) {
+      const notifTargets = type === 'need_material' ? ['master', 'warehouse'] : ['master'];
+      const notif = { id: uid(), type: 'chat_alert', alertType: type, senderId: myId, senderName: currentUser.name, text: text.trim(), opName: opData?.name, orderNumber: orderData?.number, targets: notifTargets, ts: now(), read: false };
+      updated = { ...updated, events: [...updated.events, notif] };
+    }
+    // Уведомления для упомянутых @
+    mentionedIds.forEach(wid => {
+      const mentionNotif = { id: uid(), type: 'chat_mention', senderId: myId, senderName: currentUser.name, text: text.trim(), targetWorkerId: wid, ts: now(), read: false };
+      updated = { ...updated, events: [...updated.events, mentionNotif] };
+    });
+    await DB.save(updated); onUpdate(updated);
+    setNewMessage(''); setContextOp(''); setIsAnnouncement(false); setShowQuickActions(false);
+  }, [data, myId, currentUser, contextOp, activeOp, isAnnouncement, isMaster, isWarehouse, onUpdate]);
+
+  // Быстрые действия
+  const quickActions = [
+    { icon: '🔧', label: 'Нужен материал', type: 'need_material' },
+    { icon: '⚠️', label: 'Проблема с оборудованием', type: 'equipment_issue' },
+    { icon: '📋', label: 'Вопрос по чертежу', type: 'drawing_question' },
+    { icon: '🆘', label: 'Нужна помощь', type: 'need_help' },
+    { icon: '✅', label: 'Задача выполнена', type: 'task_done' },
+    { icon: '⏸', label: 'Жду решения', type: 'waiting' }
+  ];
+
+  // Отправить благодарность
+  const sendThanks = useCallback(async (toWorkerId) => {
+    const toWorker = data.workers.find(w => w.id === toWorkerId);
+    if (!toWorker) return;
+    const text = `🤝 ${currentUser.name} благодарит ${toWorker.name}!`;
+    const thankEvent = { id: uid(), type: 'thanks', toWorkerId, fromWorkerId: myId, ts: now() };
+    const message = { id: uid(), senderId: 'system', senderName: 'Система', senderRole: 'system', text, type: 'thanks', timestamp: now(), toWorkerId, fromWorkerId: myId };
+    const updatedMessages = [...(data.messages || []), message].slice(-200);
+    const updated = { ...data, messages: updatedMessages, events: [...data.events, thankEvent] };
+    const withAch = checkAchievements(toWorkerId, updated);
+    await DB.save(withAch !== updated ? withAch : updated);
+    onUpdate(withAch !== updated ? withAch : updated);
+    setShowThanks(false);
+    addToast(`Благодарность отправлена ${toWorker.name}`, 'success');
+  }, [data, myId, currentUser, onUpdate, addToast]);
+
+  // Дуэли
+  const createDuel = useCallback(async () => {
+    if (!duelTarget || duelTarget === myId) { addToast('Выберите соперника', 'error'); return; }
+    const opponent = data.workers.find(w => w.id === duelTarget);
+    const duel = { id: uid(), challengerId: myId, challengerName: currentUser.name, opponentId: duelTarget, opponentName: opponent?.name || '?', targetOps: duelOps, status: 'active', createdAt: now(), challengerOps: 0, opponentOps: 0 };
+    const msg = { id: uid(), senderId: 'system', senderName: 'Система', senderRole: 'system', text: `⚔ ${currentUser.name} вызывает ${opponent?.name} на дуэль! Кто первым выполнит ${duelOps} операций?`, type: 'achievement', timestamp: now() };
+    const d = { ...data, duels: [...(data.duels || []), duel], messages: [...(data.messages || []), msg].slice(-200) };
+    await DB.save(d); onUpdate(d);
+    setShowDuelCreate(false); setDuelTarget(''); setDuelOps(3);
+    addToast(`Дуэль начата! Цель: ${duelOps} операций`, 'success');
+  }, [data, myId, currentUser, duelTarget, duelOps, onUpdate, addToast]);
+
+  const activeDuels = useMemo(() => (data.duels || []).filter(d => d.status === 'active'), [data.duels]);
+  const myDuels = useMemo(() => activeDuels.filter(d => d.challengerId === myId || d.opponentId === myId), [activeDuels, myId]);
+
+  const messages = useMemo(() => (data.messages || []).slice().sort((a, b) => a.timestamp - b.timestamp), [data.messages]);
+  const pinnedMessages = useMemo(() => {
+    const msgIds = new Set(messages.map(m => m.id));
+    return messages.filter(m => m.pinned && msgIds.has(m.id));
+  }, [messages]);
+  const regularMessages = useMemo(() => {
+    const base = messages.filter(m => !m.pinned);
+    if (!searchQuery.trim()) return base;
+    const q = searchQuery.toLowerCase();
+    return base.filter(m => (m.text || '').toLowerCase().includes(q) || (m.senderName || '').toLowerCase().includes(q));
+  }, [messages, searchQuery]);
+  const unreadCount = useMemo(() => messages.filter(m => m.senderId !== myId && m.timestamp > lastReadTs).length, [messages, myId, lastReadTs]);
+
+  // Стили сообщений по типу
+  const typeStyles = {
+    need_material: { bg: '#FFF3E0', border: '#FF9800', icon: '🔧' },
+    equipment_issue: { bg: RD3, border: RD, icon: '⚠️' },
+    drawing_question: { bg: '#E3F2FD', border: BL, icon: '📋' },
+    need_help: { bg: '#FCE4EC', border: '#E91E63', icon: '🆘' },
+    task_done: { bg: GN3, border: GN, icon: '✅' },
+    waiting: { bg: AM3, border: AM, icon: '⏸' },
+    thanks: { bg: '#FFF8E1', border: '#FFC107', icon: '🤝' },
+    achievement: { bg: 'var(--st-ok-bg)', border: '#4CAF50', icon: '🏆' }
+  };
+
+  return h('div', { style: { ...S.card, height: '100%', minHeight: 500, display: 'flex', flexDirection: 'column', padding: 12 } },
+    // Шапка с кнопкой назад
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 8, flexWrap: 'wrap' } },
+      h('div', { style: { ...S.sec, display: 'flex', alignItems: 'center', gap: 6 } },
+        '💬 Чат производства',
+        unreadCount > 0 && h('span', { style: { background: RD, color: '#fff', borderRadius: 10, padding: '1px 7px', fontSize: 10, fontWeight: 500 } }, unreadCount)
+      ),
+      h('input', { type: 'search', placeholder: '🔎 поиск', value: searchQuery, onChange: e => setSearchQuery(e.target.value),
+        style: { ...S.inp, flex: '1 1 140px', maxWidth: 200, fontSize: 12, padding: '6px 10px' } }),
+      canModerate && h('button', {
+        title: 'Очистить системные сообщения',
+        style: gbtn({ fontSize: 11, padding: '4px 10px' }),
+        onClick: async () => {
+          const systemMsgs = (data.messages || []).filter(m => m.senderId === 'system');
+          if (systemMsgs.length === 0) { addToast('Нет системных сообщений', 'info'); return; }
+          if (!confirm(`Удалить ${systemMsgs.length} системных сообщений (достижения, благодарности)?`)) return;
+          const d = { ...data, messages: (data.messages || []).filter(m => m.senderId !== 'system') };
+          await DB.save(d); onUpdate(d);
+          addToast(`Удалено ${systemMsgs.length} системных сообщений`, 'success');
+        }
+      }, '🧹 Системные'),
+      onBack && h('button', { style: gbtn({ fontSize: 11, padding: '4px 12px' }), onClick: onBack }, '← Назад')
+    ),
+
+    // Закреплённые объявления
+    pinnedMessages.length > 0 && h('div', { style: { marginBottom: 8 } },
+      pinnedMessages.slice(-3).map(m => h('div', { key: m.id, style: { padding: '8px 12px', background: AM3, borderLeft: `3px solid ${AM}`, borderRadius: '0 8px 8px 0', marginBottom: 4, fontSize: 12 } },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 } },
+          h('div', { style: { flex: 1 } }, h('span', { style: { fontWeight: 500, color: AM2 } }, '📌 '), m.text),
+          h('div', { style: { display: 'flex', gap: 4, alignItems: 'center' } },
+            h('span', { style: { fontSize: 9, color: AM4, whiteSpace: 'nowrap' } }, new Date(m.timestamp).toLocaleDateString()),
+            canModerate && h('button', { title: 'Открепить', style: { background: 'none', border: 'none', cursor: 'pointer', color: AM4, fontSize: 11, padding: '0 2px' },
+              onClick: async () => {
+                const d = { ...data, messages: data.messages.map(msg => msg.id === m.id ? { ...msg, pinned: false } : msg) };
+                await DB.save(d); onUpdate(d);
+              }
+            }, '✕')
+          )
+        )
+      ))
+    ),
+
+    // Сообщения
+    h('div', { 'aria-live': 'polite', style: { flex: 1, overflowY: 'auto', padding: 8, background: '#fafaf8', borderRadius: 8, marginBottom: 8 } },
+      regularMessages.length === 0 && h('div', { style: { textAlign: 'center', color: 'var(--muted)', fontSize: 12, marginTop: 32 } }, 'Сообщений пока нет. Используйте быстрые кнопки для общения.'),
+      regularMessages.map(m => {
+        const ts = typeStyles[m.type];
+        const isMe = m.senderId === myId;
+        const isUnread = !isMe && m.timestamp > lastReadTs;
+        return h('div', { key: m.id, style: { marginBottom: 10, display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', paddingLeft: isUnread ? 8 : 0, borderLeft: isUnread ? `3px solid ${AM}` : 'none' } },
+          h('div', { style: { fontSize: 10, color: 'var(--muted)', marginBottom: 2, display: 'flex', gap: 6, alignItems: 'center' } },
+            h('span', { style: { fontWeight: 500, cursor: m.senderId !== 'system' ? 'pointer' : 'default', color: m.senderId !== 'system' ? AM : '#888' }, onClick: () => { const w = data.workers.find(w => w.id === m.senderId); if (w) setViewProfileId(w.id); } }, m.senderName),
+            m.senderRole === 'master' && h('span', { style: { fontSize: 9, padding: '1px 4px', background: AM3, color: AM2, borderRadius: 4 } }, 'мастер'),
+            m.orderNumber && h('span', { style: { fontSize: 9, color: AM } }, `📋 ${m.orderNumber}`),
+            m.opName && h('span', { style: { fontSize: 9, color: 'var(--fg-muted)' } }, `→ ${m.opName}`),
+            (canModerate || (m.senderId === myId && m.senderId !== 'system')) &&
+              h('button', { title: 'Удалить сообщение', style: { background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 12, padding: '0 2px', lineHeight: 1, marginLeft: 2 }, onClick: async () => {
+                if (canModerate && m.senderId !== myId) {
+                  const who = m.senderId === 'system' ? 'системное сообщение' : `от ${m.senderName}`;
+                  if (!confirm(`Удалить ${who}?`)) return;
+                }
+                deleteMessage(m.id);
+              } }, '×')
+          ),
+          h('div', { style: {
+            background: ts ? ts.bg : isMe ? AM3 : '#fff',
+            border: ts ? `1px solid ${ts.border}` : (m.mentions?.includes(myId) ? `1.5px solid ${AM}` : '0.5px solid rgba(0,0,0,0.1)'),
+            borderRadius: 12, padding: '8px 14px', maxWidth: '85%', fontSize: 13
+          }},
+            ts && h('span', { style: { marginRight: 6 } }, ts.icon),
+            m.mentions?.includes(myId) && h('span', { style: { background: AM, color: '#fff', fontSize: 9, padding: '1px 5px', borderRadius: 4, marginRight: 6, fontWeight: 500 } }, 'ВАМ'),
+            // Рендерим текст с подсветкой @упоминаний
+            m.text.split(/(@[a-zA-Zа-яА-ЯёЁ]+(?:\s[a-zA-Zа-яА-ЯёЁ]+)?)/g).map((part, i) =>
+              part.startsWith('@')
+                ? h('span', { key: i, style: { color: AM, fontWeight: 500 } }, part)
+                : part
+            )
+          ),
+          h('div', { style: { fontSize: 9, color: 'var(--muted)', marginTop: 2 } }, new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+        );
+      }),
+      h('div', { ref: messagesEndRef })
+    ),
+
+    // Быстрые действия (раскрывающиеся)
+    showQuickActions && h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 8 } },
+      quickActions.map(qa => h('button', { key: qa.type, type: 'button',
+        style: { padding: '10px 6px', fontSize: 12, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: (typeStyles[qa.type]?.bg) || '#fff', color: 'var(--fg)', cursor: 'pointer', textAlign: 'center', minHeight: 44 },
+        onClick: () => sendMessage(`${qa.icon} ${qa.label}`, qa.type)
+      }, `${qa.icon}\n${qa.label}`))
+    ),
+
+    // Благодарности (выбор коллеги)
+    showThanks && h('div', { style: { ...S.card, marginBottom: 8, padding: 10 } },
+      h('div', { style: { fontSize: 11, fontWeight: 500, marginBottom: 6 } }, '🤝 Кому сказать спасибо?'),
+      h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+        data.workers.filter(w => w.id !== myId && isWorkerOnShift(w, data.timesheet)).map(w =>
+          h('button', { key: w.id, style: { padding: '8px 14px', fontSize: 12, borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)', background: 'var(--card-solid,#fff)', cursor: 'pointer', minHeight: 40 }, onClick: () => sendThanks(w.id) }, w.name)
+        ),
+        h('button', { style: gbtn({ fontSize: 11 }), onClick: () => setShowThanks(false) }, '✕ Отмена')
+      )
+    ),
+
+    // Создание дуэли
+    showDuelCreate && h('div', { style: { ...S.card, marginBottom: 8, padding: 10 } },
+      h('div', { style: { fontSize: 11, fontWeight: 500, marginBottom: 6 } }, '⚔ Вызвать на дуэль'),
+      h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' } },
+        h('div', { style: { flex: 2, minWidth: 140 } },
+          h('div', { style: S.lbl }, 'Соперник'),
+          h('select', { style: { ...S.inp, width: '100%', fontSize: 12 }, value: duelTarget, onChange: e => setDuelTarget(e.target.value) },
+            h('option', { value: '' }, '— выберите —'),
+            data.workers.filter(w => w.id !== myId && !w.archived && isWorkerOnShift(w, data.timesheet)).map(w => h('option', { key: w.id, value: w.id }, w.name))
+          )
+        ),
+        h('div', { style: { minWidth: 80 } },
+          h('div', { style: S.lbl }, 'Цель (операций)'),
+          h('select', { style: { ...S.inp, width: '100%', fontSize: 12 }, value: duelOps, onChange: e => setDuelOps(Number(e.target.value)) },
+            [3, 5, 7, 10].map(n => h('option', { key: n, value: n }, n))
+          )
+        ),
+        h('button', { style: abtn({ padding: '7px 14px' }), onClick: createDuel }, '⚔ Вызвать!'),
+        h('button', { style: gbtn({ padding: '7px 10px' }), onClick: () => setShowDuelCreate(false) }, '✕')
+      )
+    ),
+
+    // Активные дуэли
+    myDuels.length > 0 && h('div', { style: { marginBottom: 8 } },
+      myDuels.map(d => {
+        const isChallenger = d.challengerId === myId;
+        const myOpsCount = data.ops.filter(op => op.workerIds?.includes(myId) && op.status === 'done' && op.finishedAt >= d.createdAt).length;
+        const oppId = isChallenger ? d.opponentId : d.challengerId;
+        const oppOpsCount = data.ops.filter(op => op.workerIds?.includes(oppId) && op.status === 'done' && op.finishedAt >= d.createdAt).length;
+        const myPct = Math.min(100, Math.round(myOpsCount / d.targetOps * 100));
+        const oppPct = Math.min(100, Math.round(oppOpsCount / d.targetOps * 100));
+        const oppName = isChallenger ? d.opponentName : d.challengerName;
+        return h('div', { key: d.id, style: { ...S.card, padding: 10, marginBottom: 4, border: `0.5px solid ${AM}`, background: AM3 } },
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 } },
+            h('span', { style: { fontSize: 12, fontWeight: 500, color: AM2 } }, `⚔ Дуэль: ${d.targetOps} операций`),
+            h('span', { style: { fontSize: 10, color: 'var(--muted)' } }, fmtDur(now() - d.createdAt))
+          ),
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 } },
+            h('div', null,
+              h('div', { style: { fontSize: 11, fontWeight: 500, color: myPct >= 100 ? GN : AM2 } }, `Я: ${myOpsCount}/${d.targetOps}`),
+              h('div', { style: { height: 6, background: 'rgba(0,0,0,0.08)', borderRadius: 3, overflow: 'hidden', marginTop: 3 } }, h('div', { style: { height: 6, background: myPct >= 100 ? GN : AM, borderRadius: 3, width: `${myPct}%` } }))
+            ),
+            h('div', null,
+              h('div', { style: { fontSize: 11, fontWeight: 500, color: oppPct >= 100 ? GN : '#888' } }, `${oppName}: ${oppOpsCount}/${d.targetOps}`),
+              h('div', { style: { height: 6, background: 'rgba(0,0,0,0.08)', borderRadius: 3, overflow: 'hidden', marginTop: 3 } }, h('div', { style: { height: 6, background: oppPct >= 100 ? GN : '#ccc', borderRadius: 3, width: `${oppPct}%` } }))
+            )
+          )
+        );
+      })
+    ),
+
+    // Привязка к операции
+    contextOp && (() => {
+      const op = data.ops.find(o => o.id === contextOp);
+      const order = op ? data.orders.find(o => o.id === op.orderId) : null;
+      return h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', background: AM3, borderRadius: 6, marginBottom: 6, fontSize: 11 } },
+        h('span', { style: { color: AM } }, `📋 ${order?.number || '—'} → ${op?.name || '—'}`),
+        h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 14, padding: 0 }, onClick: () => setContextOp('') }, '×')
+      );
+    })(),
+
+    // Панель ввода
+    (() => {
+      // Подсказки @упоминаний
+      const mentionMatch = newMessage.match(/@([a-zA-Zа-яА-ЯёЁ]*)$/);
+      const mentionQuery = mentionMatch ? mentionMatch[1].toLowerCase() : '';
+      const mentionSuggestions = mentionMatch ? data.workers.filter(w => !w.archived && w.name.toLowerCase().includes(mentionQuery)).slice(0, 5) : [];
+
+      return h('div', { style: { position: 'relative' } },
+        // Выпадающий список @
+        mentionSuggestions.length > 0 && h('div', { style: { position: 'absolute', bottom: '100%', left: 0, right: 0, background: 'var(--card-solid,#fff)', border: '0.5px solid rgba(0,0,0,0.15)', borderRadius: 8, boxShadow: '0 -4px 12px rgba(0,0,0,0.1)', marginBottom: 4, overflow: 'hidden', zIndex: 10 } },
+          mentionSuggestions.map(w => h('div', { key: w.id, style: { padding: '8px 12px', cursor: 'pointer', fontSize: 13, borderBottom: '0.5px solid rgba(0,0,0,0.05)' },
+            onMouseDown: (e) => {
+              e.preventDefault();
+              const firstName = w.name.split(' ')[0];
+              setNewMessage(prev => prev.replace(/@[a-zA-Zа-яА-ЯёЁ]*$/, '@' + firstName + ' '));
+            }
+          },
+            h('span', { style: { fontWeight: 500 } }, w.name),
+            w.position && h('span', { style: { fontSize: 11, color: 'var(--muted)', marginLeft: 8 } }, w.position)
+          ))
+        ),
+        h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
+      // Кнопки инструментов
+      h('div', { style: { display: 'flex', gap: 4 } },
+        h('button', { type: 'button', title: 'Быстрые действия', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: showQuickActions ? AM3 : 'transparent' }, onClick: () => { setShowQuickActions(v => !v); setShowThanks(false); } }, '⚡'),
+        h('button', { type: 'button', title: 'Спасибо коллеге', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: showThanks ? AM3 : 'transparent' }, onClick: () => { setShowThanks(v => !v); setShowQuickActions(false); setShowDuelCreate(false); } }, '🤝'),
+        h('button', { type: 'button', title: 'Дуэль', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: showDuelCreate ? AM3 : 'transparent' }, onClick: () => { setShowDuelCreate(v => !v); setShowQuickActions(false); setShowThanks(false); } }, '⚔'),
+        h('button', { type: 'button', title: 'Сотрудники', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: showPeople ? AM3 : 'transparent' }, onClick: () => setShowPeople(v => !v) }, '👥'),
+        activeOp && h('button', { type: 'button', title: 'Привязать к текущей операции', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: contextOp ? AM3 : 'transparent' }, onClick: () => setContextOp(contextOp ? '' : activeOp.id) }, '📋'),
+        isMaster && h('button', { type: 'button', title: 'Закрепить как объявление', style: { ...gbtn({ padding: '8px 10px', fontSize: 14 }), background: isAnnouncement ? AM3 : 'transparent' }, onClick: () => setIsAnnouncement(v => !v) }, '📌')
+      ),
+      h('input', { style: { ...S.inp, flex: 1, minWidth: 120 }, placeholder: isAnnouncement ? 'Объявление для всех...' : 'Сообщение (@имя для упоминания)...', value: newMessage, onChange: e => setNewMessage(e.target.value), onKeyDown: e => {
+        if (e.key === 'Enter' && !e.shiftKey) sendMessage(newMessage);
+      } }),
+      h('button', { style: abtn({ padding: '10px 16px' }), onClick: () => sendMessage(newMessage) }, '→')
+        )
+      );
+    })(),
+
+    // Каталог сотрудников
+    showPeople && h('div', { style: { ...S.card, marginTop: 8, padding: 10, maxHeight: 300, overflowY: 'auto' } },
+      h('div', { style: S.sec }, 'Сотрудники производства'),
+      useMemo(() => data.workers.filter(w => !w.archived).map(w => {
+        const s = calcWorkerStats(w.id, data, Date.now());
+        const lvl = getWorkerLevel(s.doneCount);
+        return h('div', { key: w.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', cursor: 'pointer' }, onClick: () => { setViewProfileId(w.id); setShowPeople(false); } },
+          h('div', { style: { width: 32, height: 32, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 500, color: AM2, position: 'relative' } },
+            w.name?.charAt(0) || '?',
+            h('div', { style: { position: 'absolute', bottom: -2, right: -2, background: AM, color: '#fff', fontSize: 8, fontWeight: 500, borderRadius: '50%', width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, lvl)
+          ),
+          h('div', { style: { flex: 1 } },
+            h('div', { style: { fontSize: 12, fontWeight: 500 } }, w.name),
+            h('div', { style: { fontSize: 10, color: 'var(--muted)' } }, `${getLevelTitle(lvl)} · ${s.doneCount} оп. · 🤝${s.thanksReceived}`)
+          ),
+          (w.achievements || []).length > 0 && h('div', { style: { display: 'flex', gap: 2 } },
+            (w.achievements || []).slice(0, 4).map(aid => h('span', { key: aid, style: { fontSize: 12 }, title: ACHIEVEMENTS[aid]?.title }, ACHIEVEMENTS[aid]?.icon || ''))
+          ),
+          w.id !== myId && h('button', { style: gbtn({ fontSize: 10, padding: '3px 8px' }), onClick: (e) => { e.stopPropagation(); sendThanks(w.id); setShowPeople(false); } }, '🤝')
+        );
+      }), [data, myId, showPeople])
+    ),
+
+    // Просмотр профиля сотрудника
+    viewProfileId && (() => {
+      const w = data.workers.find(w => w.id === viewProfileId);
+      if (!w) return null;
+      const s = calcWorkerStats(w.id, data, Date.now());
+      const lvl = getWorkerLevel(s.doneCount);
+      const quality = s.doneCount + s.defectCount > 0 ? Math.round(s.doneCount / (s.doneCount + s.defectCount) * 100) : 100;
+      const earned = w.achievements || [];
+      return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 80 }, onClick: () => setViewProfileId(null) },
+        h('div', { style: { background: 'var(--card-solid,#fff)', borderRadius: 12, padding: 20, width: 'min(380px, calc(100vw - 32px))', maxHeight: '85vh', overflowY: 'auto' }, onClick: e => e.stopPropagation() },
+          // Шапка
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 } },
+            h('div', { style: { width: 52, height: 52, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 500, color: AM2, position: 'relative' } },
+              w.name?.charAt(0) || '?',
+              h('div', { style: { position: 'absolute', bottom: -3, right: -3, background: AM, color: '#fff', fontSize: 11, fontWeight: 500, borderRadius: '50%', width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, lvl)
+            ),
+            h('div', { style: { flex: 1 } },
+              h('div', { style: { fontSize: 16, fontWeight: 500 } }, w.name),
+              h('div', { style: { fontSize: 12, color: AM } }, `${getLevelTitle(lvl)} · Уровень ${lvl}`),
+              w.position && h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, w.position)
+            ),
+            h('button', { style: { background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--muted)' }, onClick: () => setViewProfileId(null) }, '×')
+          ),
+          // Метрики
+          h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, marginBottom: 12 } },
+            h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500, color: AM } }, s.doneCount), h('div', { style: { fontSize: 8, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Операций')),
+            h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500, color: quality >= 95 ? GN : AM } }, `${quality}%`), h('div', { style: { fontSize: 8, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Качество')),
+            h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500, color: '#F57F17' } }, s.thanksReceived), h('div', { style: { fontSize: 8, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Спасибо')),
+            h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500 } }, earned.length), h('div', { style: { fontSize: 8, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Наград'))
+          ),
+          // Достижения
+          earned.length > 0 && h('div', null,
+            h('div', { style: S.sec }, `Награды (${earned.length}/${Object.keys(ACHIEVEMENTS).length})`),
+            h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 } },
+              earned.map(aid => {
+                const a = ACHIEVEMENTS[aid];
+                return a ? h('div', { key: aid, style: { display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', background: AM3, borderRadius: 6, fontSize: 11 }, title: a.desc },
+                  h('span', { style: { fontSize: 14 } }, a.icon),
+                  h('span', { style: { color: AM2, fontWeight: 500 } }, a.title)
+                ) : null;
+              })
+            )
+          ),
+          // Кнопка благодарности
+          w.id !== myId && h('button', { style: abtn({ width: '100%', padding: 12 }), onClick: () => { sendThanks(w.id); setViewProfileId(null); } }, `🤝 Сказать спасибо ${w.name.split(' ')[0]}`)
+        )
+      );
+    })()
+  );
+});
+
+
+

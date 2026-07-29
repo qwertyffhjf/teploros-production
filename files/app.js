@@ -1,0 +1,2845 @@
+// teploros · app.js
+// Автоматически извлечено из монолита
+
+// ==================== Таблица лидеров ====================
+const Leaderboard = memo(({ data }) => {
+  const workers = useMemo(() => data.workers.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet)), [data.workers]);
+  const boards = useMemo(() => {
+    const stats = workers.map(w => {
+      const s = calcWorkerStats(w.id, data, Date.now());
+      const doneCount = s.doneCount;
+      const quality = s.doneCount + s.defectCount > 0 ? Math.round(s.doneCount / (s.doneCount + s.defectCount) * 100) : 100;
+      const thanks = s.thanksReceived;
+      const lvl = getWorkerLevel(doneCount);
+      return { id: w.id, name: w.name, doneCount, quality, thanks, lvl, achCount: (w.achievements || []).length };
+    });
+    return {
+      xp: [...stats].sort((a, b) => b.doneCount - a.doneCount).slice(0, 5),
+      quality: [...stats].filter(s => s.doneCount >= 5).sort((a, b) => b.quality - a.quality || b.doneCount - a.doneCount).slice(0, 5),
+      thanks: [...stats].filter(s => s.thanks > 0).sort((a, b) => b.thanks - a.thanks).slice(0, 5),
+    };
+  }, [workers, data]);
+
+  const medals = ['🥇', '🥈', '🥉', '4.', '5.'];
+  const renderBoard = (title, list, valueKey, valueSuffix) => {
+    if (list.length === 0) return null;
+    return h('div', { style: { flex: 1, minWidth: 150 } },
+      h('div', { style: { fontSize: 10, color: AM4, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, fontWeight: 500 } }, title),
+      list.map((s, i) => h('div', { key: s.id, style: { display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: 12 } },
+        h('span', { style: { fontSize: i < 3 ? 14 : 11, width: 22 } }, medals[i]),
+        h('span', { style: { flex: 1, fontWeight: i === 0 ? 500 : 400 } }, s.name.split(' ')[0]),
+        h('span', { style: { fontWeight: 500, color: AM } }, `${s[valueKey]}${valueSuffix}`)
+      ))
+    );
+  };
+
+  if (workers.length < 2) return null;
+  return h('div', { style: { display: 'flex', gap: 16, flexWrap: 'wrap', padding: '12px 0' } },
+    renderBoard('Опыт', boards.xp, 'doneCount', ' оп.'),
+    renderBoard('Качество', boards.quality, 'quality', '%'),
+    boards.thanks.length > 0 && renderBoard('Благодарности', boards.thanks, 'thanks', '')
+  );
+});
+
+// teploros · app.js — patch for LoginScreen (Apple-inspired skin)
+// ───────────────────────────────────────────────────────────────────────────
+// HOW TO APPLY
+//   1. Открой js/app.js
+//   2. Найди блок, который начинается со строки:
+//        // ==================== LoginScreen ...
+//      и заканчивается перед строкой:
+//        // ==================== GreetingBanner ====================
+//   3. Полностью замени его кодом ниже.
+//   4. Закоммить и запушь.
+// ───────────────────────────────────────────────────────────────────────────
+//
+// Что меняется визуально:
+//   • Хедер «teploros» отрисован как маленькая фирменная марка (квадратный
+//     токен с буквой t + wordmark рядом), а не огромный заголовок по центру.
+//   • Заголовок «Вход в систему» — display 28/600 с tight-tracking,
+//     подзаголовок caps как в Apple.
+//   • Роли — без emoji. Чистые pill-чипы (rounded.pill), серый фон,
+//     активная роль = заливка брендом + тёмный ink-цвет текста.
+//   • Контролёр с очередью на проверке: красная точка-индикатор справа от
+//     лейбла вместо «🔍 Контролёр 🔴 N».
+//   • PIN-поле узкое, центрированное; индикатор «глаз» — через SVG, не emoji.
+//   • Кнопка «Войти» — Apple pill primary (border-radius 9999px, scale-press).
+//   • Лидерборд под футером — без emoji-медалей; ранг как тонкий numeric chip.
+//   • Никаких теней на UI; единственная тень допустима только в продуктовых
+//     рендерах (здесь их нет).
+
+const LoginScreen = ({ data, onLogin, onResetPin }) => {
+  const onCheckCount = useMemo(
+    () => (data?.ops || []).filter(o => o.status === 'on_check' && !o.archived).length,
+    [data]
+  );
+  const [role, setRole] = useState('worker');
+  const [pin, setPin] = useState('');
+  const [showPin, setShowPin] = useState(false);
+  const [loginError, setLoginError] = useState('');
+  const [resetMode, setResetMode] = useState(false);
+  const [resetKey, setResetKey] = useState('');
+  const [resetTarget, setResetTarget] = useState('');
+  const [resetNewPin, setResetNewPin] = useState('');
+  const [resetError, setResetError] = useState('');
+  const [resetSuccess, setResetSuccess] = useState('');
+
+  const settings = data.settings || EMPTY_DATA.settings;
+
+  // ─── Apple-inspired tokens (локальные, чтобы не плодить глобальный CSS) ───
+  const T = {
+    bg:        '#f5f5f7',
+    canvas:    'rgba(255,255,255,0.12)',
+    ink:       '#ffffff',
+    inkMuted:  'rgba(255,255,255,0.72)',
+    fine:      'rgba(255,255,255,0.55)',
+    hairline:  'rgba(255,255,255,0.22)',
+    brand:     '#EF9F27',
+    brandInk:  '#412402',
+    brandSoft: '#fdf3e0',
+    danger:    '#d6342f',
+    info:      '#0066cc',
+    success:   '#1d8a3a',
+    fontDisp:  '"SF Pro Display", "Inter", system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
+    fontText:  '"SF Pro Text", "Inter", system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
+  };
+
+  // ─── Стили (вместо S.inp / abtn / gbtn — единый Apple-словарь) ───
+  const stylesL = {
+    page: {
+      minHeight: '100vh',
+      background: `linear-gradient(rgba(0,0,0,0.68), rgba(0,0,0,0.72)), url('./78878.webp') center/cover no-repeat fixed`,
+      fontFamily: T.fontText,
+      color: T.ink,
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      padding: '40px 20px 80px',
+    },
+    brand: {
+      display: 'flex', alignItems: 'center', gap: 10, marginBottom: 48,
+    },
+    brandMark: {
+      width: 32, height: 32, borderRadius: 8,
+      background: T.brand, color: T.brandInk,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: T.fontDisp, fontWeight: 700, fontSize: 17, letterSpacing: '-0.4px',
+    },
+    brandWord: {
+      fontFamily: T.fontDisp, fontSize: 17, fontWeight: 600,
+      color: T.ink, letterSpacing: '-0.3px',
+    },
+    eyebrow: {
+      fontSize: 12, fontWeight: 600, color: T.fine,
+      letterSpacing: '0.12em', textTransform: 'uppercase',
+      marginBottom: 12, textAlign: 'center',
+      textShadow: '0 1px 4px rgba(0,0,0,0.8)',
+    },
+    h1: {
+      fontFamily: T.fontDisp,
+      fontSize: 40, fontWeight: 600, lineHeight: 1.1,
+      letterSpacing: '-0.6px',
+      color: T.ink, margin: 0, textAlign: 'center',
+      textShadow: '0 1px 8px rgba(0,0,0,0.6)',
+    },
+    sub: {
+      marginTop: 8, fontSize: 17, color: T.inkMuted,
+      letterSpacing: '-0.374px', textAlign: 'center',
+      maxWidth: 420,
+    },
+    rolesWrap: {
+      width: '100%', maxWidth: 720,
+      marginTop: 36, marginBottom: 28,
+      display: 'flex', flexDirection: 'column', gap: 10,
+    },
+    rolesGroupLbl: {
+      fontSize: 11, fontWeight: 600, color: T.fine,
+      letterSpacing: '0.08em', textTransform: 'uppercase',
+      marginBottom: 2, marginLeft: 4,
+    },
+    rolesRow: {
+      display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center',
+    },
+    chip: (active) => ({
+      position: 'relative',
+      padding: '9px 18px',
+      minHeight: 36,
+      borderRadius: 9999,
+      border: active ? 'none' : `1px solid ${T.hairline}`,
+      background: active ? T.brand : 'rgba(255,255,255,0.15)',
+      color: active ? T.brandInk : '#ffffff',
+      backdropFilter: 'blur(8px)',
+      fontFamily: T.fontText,
+      fontSize: 14, fontWeight: active ? 600 : 500,
+      letterSpacing: '-0.224px',
+      cursor: 'pointer',
+      transition: 'transform 120ms cubic-bezier(0.4,0,0.2,1), background 120ms',
+    }),
+    chipDot: {
+      display: 'inline-block', marginLeft: 8,
+      width: 6, height: 6, borderRadius: '50%',
+      background: T.danger, verticalAlign: 'middle',
+    },
+    pinBlock: {
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+      marginBottom: 16,
+    },
+    pinShell: { position: 'relative', display: 'inline-block' },
+    pinInput: {
+      width: 240, height: 56,
+      background: 'rgba(255,255,255,0.15)',
+      border: `1px solid rgba(255,255,255,0.3)`,
+      borderRadius: 12,
+      backdropFilter: 'blur(8px)',
+      padding: '0 48px 0 18px',
+      fontFamily: T.fontDisp,
+      fontSize: 22, letterSpacing: '0.42em', textAlign: 'center',
+      color: '#ffffff',
+      outline: 'none',
+      transition: 'border-color 120ms, box-shadow 120ms',
+    },
+    pinInputFocus: {
+      borderColor: T.brand,
+      boxShadow: `0 0 0 3px rgba(239,159,39,0.18)`,
+    },
+    pinEye: {
+      position: 'absolute', right: 8, top: '50%',
+      transform: 'translateY(-50%)',
+      background: 'transparent', border: 'none',
+      width: 32, height: 32, borderRadius: 8,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      cursor: 'pointer', color: T.fine,
+      minHeight: 32, padding: 0,
+    },
+    pinHint: { fontSize: 13, color: T.inkMuted, letterSpacing: '-0.224px' },
+    err: {
+      color: T.danger, fontSize: 13, fontWeight: 500,
+      letterSpacing: '-0.224px', textAlign: 'center', marginTop: 4,
+    },
+    primary: {
+      marginTop: 12,
+      background: T.brand, color: T.brandInk,
+      border: 'none', borderRadius: 9999,
+      padding: '13px 40px',
+      fontFamily: T.fontText,
+      fontSize: 17, fontWeight: 600, letterSpacing: '-0.374px',
+      cursor: 'pointer', minHeight: 44,
+      transition: 'transform 120ms',
+    },
+    link: {
+      marginTop: 18,
+      background: 'none', border: 'none', padding: 0,
+      color: T.info, fontSize: 14, letterSpacing: '-0.224px',
+      cursor: 'pointer', minHeight: 'auto',
+    },
+    divider: {
+      width: '100%', maxWidth: 720,
+      height: 1, background: T.hairline,
+      margin: '36px 0 24px',
+    },
+    leadersWrap: { width: '100%', maxWidth: 720 },
+    resetWrap: {
+      width: '100%', maxWidth: 380,
+      display: 'flex', flexDirection: 'column', gap: 14,
+      marginTop: 40,
+    },
+    label: {
+      fontSize: 12, fontWeight: 600, color: T.fine,
+      letterSpacing: '0.04em', textTransform: 'uppercase',
+      marginBottom: 6, display: 'block',
+    },
+    field: {
+      width: '100%', height: 44,
+      background: T.canvas,
+      border: `1px solid ${T.hairline}`,
+      borderRadius: 10, padding: '0 14px',
+      fontFamily: T.fontText, fontSize: 15, color: T.ink,
+      outline: 'none', letterSpacing: '-0.224px',
+    },
+    fieldCenter: {
+      textAlign: 'center', fontSize: 22, letterSpacing: '0.32em',
+      fontFamily: T.fontDisp,
+    },
+    btnGhost: {
+      flex: 1,
+      background: T.canvas, color: T.ink,
+      border: `1px solid ${T.hairline}`,
+      borderRadius: 9999, padding: '12px 22px',
+      fontSize: 15, fontWeight: 500, letterSpacing: '-0.224px',
+      cursor: 'pointer', minHeight: 44,
+    },
+  };
+
+  // ─── PIN resolve / login (логика без изменений) ───
+  const resolvePin = (inputPin) => {
+    const p = inputPin.trim();
+    if (!p) return null;
+    if (pinMatch(p, settings.masterPin     || 'H_18D7OAL')) return { role: 'master',      workerId: null, sectionId: null, name: 'Начальник цеха' };
+    if (pinMatch(p, settings.controllerPin || 'H_18D8GW1')) return { role: 'controller',  workerId: null, sectionId: null, name: 'Контролёр' };
+    if (pinMatch(p, settings.warehousePin  || 'H_18D99HH')) return { role: 'warehouse',   workerId: null, sectionId: null, name: 'Склад' };
+    if (pinMatch(p, settings.pdoPin        || 'H_18DA22X')) return { role: 'pdo',         workerId: null, sectionId: null, name: 'ПДО' };
+    if (pinMatch(p, settings.directorPin   || 'H_18DAUOD')) return { role: 'director',    workerId: null, sectionId: null, name: 'Руководитель' };
+    if (pinMatch(p, settings.hrPin         || 'H_18DBN9T')) return { role: 'hr',          workerId: null, sectionId: null, name: 'HR' };
+    if (pinMatch(p, settings.shopMasterPin || 'H_18DCFV9')) return { role: 'shop_master', workerId: null, sectionId: null, name: 'Сменный мастер' };
+    if (pinMatch(p, settings.adminPin      || 'H_18DD8GP')) return { role: 'admin',       workerId: null, sectionId: null, name: 'Администратор' };
+    if (pinMatch(p, settings.salesPin      || 'H_18SALES1')) return { role: 'sales',       workerId: null, sectionId: null, name: 'Менеджер' };
+    const worker = data.workers.find(w => pinMatch(p, w.pin));
+    if (worker) return { role: 'worker', workerId: worker.id, sectionId: worker.sectionId || null, name: worker.name };
+    return null;
+  };
+
+  // ─── WebAuthn / Passkey ───────────────────────────────────────────────
+  const isPhone = () => window.innerWidth < 768 && navigator.maxTouchPoints > 1;
+  const PASSKEY_KEY = 'teploros_passkeys'; // localStorage: { credId, role, workerId, sectionId, name }[]
+
+  const getSavedPasskeys = () => {
+    try { return JSON.parse(localStorage.getItem(PASSKEY_KEY) || '[]'); } catch { return []; }
+  };
+  const savePasskey = (entry) => {
+    const list = getSavedPasskeys().filter(p => p.credId !== entry.credId);
+    localStorage.setItem(PASSKEY_KEY, JSON.stringify([...list, entry]));
+  };
+
+  // Регистрация биометрии после успешного PIN-входа
+  const registerPasskey = async (resolved) => {
+    if (!window.PublicKeyCredential) return;
+    try {
+      const challenge = crypto.getRandomValues(new Uint8Array(32));
+      const userId = new TextEncoder().encode(resolved.workerId || resolved.role);
+      const cred = await navigator.credentials.create({ publicKey: {
+        challenge,
+        rp: { name: 'Теплорос МЭС', id: location.hostname },
+        user: { id: userId, name: resolved.name, displayName: resolved.name },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required' },
+        timeout: 30000,
+      }});
+      if (cred) {
+        savePasskey({ credId: btoa(String.fromCharCode(...new Uint8Array(cred.rawId))), role: resolved.role, workerId: resolved.workerId, sectionId: resolved.sectionId, name: resolved.name });
+        return true;
+      }
+    } catch(e) { console.warn('Passkey register:', e.message); }
+    return false;
+  };
+
+  // Вход по биометрии
+  const loginWithPasskey = async () => {
+    if (!window.PublicKeyCredential) return;
+    const saved = getSavedPasskeys();
+    if (!saved.length) return;
+    try {
+      const challenge = crypto.getRandomValues(new Uint8Array(32));
+      const allowCreds = saved.map(p => ({
+        type: 'public-key',
+        id: Uint8Array.from(atob(p.credId), c => c.charCodeAt(0)),
+        transports: ['internal'],
+      }));
+      const assertion = await navigator.credentials.get({ publicKey: {
+        challenge, allowCredentials: allowCreds, userVerification: 'required', timeout: 30000,
+      }});
+      if (assertion) {
+        const credId = btoa(String.fromCharCode(...new Uint8Array(assertion.rawId)));
+        const match = saved.find(p => p.credId === credId);
+        if (match) { onLogin(match.role, match.workerId, match.sectionId); return true; }
+      }
+    } catch(e) { console.warn('Passkey auth:', e.message); }
+    return false;
+  };
+
+  // Есть ли сохранённые passkey для показа кнопки
+  const [hasPasskeys] = useState(() => getSavedPasskeys().length > 0);
+  const [offerPasskey, setOfferPasskey] = useState(false);
+
+  const handleLogin = async () => {
+    setLoginError('');
+    if (role === 'dashboard') { onLogin('dashboard', null, null); return; }
+    if (!pin.trim()) { setLoginError('Введите PIN-код'); return; }
+    const resolved = resolvePin(pin);
+    if (!resolved) { setLoginError('Неверный PIN-код'); return; }
+    if (role === 'chat') {
+      if (resolved.role === 'worker') { onLogin('chat', resolved.workerId, resolved.sectionId); return; }
+      onLogin('chat_' + resolved.role, null, null);
+      return;
+    }
+    // На телефоне — предложить зарегистрировать биометрию
+    if (isPhone() && window.PublicKeyCredential) {
+      const existing = getSavedPasskeys().find(p => p.role === resolved.role && p.workerId === resolved.workerId);
+      if (!existing) { setOfferPasskey(resolved); return; }
+    }
+    onLogin(resolved.role, resolved.workerId, resolved.sectionId);
+  };
+
+  const handleMasterKeyReset = () => {
+    setResetError(''); setResetSuccess('');
+    if (!pinMatch(resetKey.trim(), settings.masterKey || 'H_18DETNL')) { setResetError('Неверный мастер-ключ'); return; }
+    if (!resetTarget) { setResetError('Выберите сотрудника'); return; }
+    if (!resetNewPin.trim() || resetNewPin.trim().length < 4) { setResetError('Новый PIN — минимум 4 цифры'); return; }
+    const conflict = data.workers.find(w => w.id !== resetTarget && pinMatch(resetNewPin.trim(), w.pin));
+    if (conflict) { setResetError(`PIN уже занят (${conflict.name})`); return; }
+    onResetPin(resetTarget, resetNewPin.trim());
+    setResetSuccess(`PIN успешно сброшен`);
+    setResetKey(''); setResetNewPin(''); setResetTarget('');
+    setTimeout(() => { setResetMode(false); setResetSuccess(''); }, 2000);
+  };
+
+  const roleHints = {
+    worker:      'PIN сотрудника',
+    master:      'PIN начальника цеха',
+    shop_master: 'PIN сменного мастера',
+    controller:  'PIN контролёра',
+    warehouse:   'PIN кладовщика',
+    pdo:         'PIN ПДО',
+    director:    'PIN руководителя',
+    hr:          'PIN HR',
+    admin:       'PIN администратора',
+    chat:        'Любой PIN для чата',
+    dashboard:   '',
+  };
+
+  // SVG-глаз (без emoji)
+  const EyeIcon = (open) => h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round' },
+    open
+      ? [h('path', { key: 'p', d: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z' }),
+         h('circle', { key: 'c', cx: 12, cy: 12, r: 3 })]
+      : [h('path', { key: 'p', d: 'M3 3l18 18M10.6 10.6a3 3 0 004.2 4.2M9.5 5.4A10.7 10.7 0 0112 5c6.5 0 10 7 10 7a16.4 16.4 0 01-3.3 4.1M6.6 6.6A16.4 16.4 0 002 12s3.5 7 10 7c1.4 0 2.7-.3 4-.7' })]
+  );
+
+  // ─── Reset mode ───
+  if (resetMode) return h('div', { style: stylesL.page },
+    h('div', { style: stylesL.brand },
+      h('div', { style: stylesL.brandMark }, 't'),
+      h('div', { style: stylesL.brandWord }, 'teploros')
+    ),
+    h('div', { style: stylesL.eyebrow }, 'Сброс PIN'),
+    h('h1', { style: stylesL.h1 }, 'Аварийный сброс'),
+    h('div', { style: stylesL.sub }, 'Введите мастер-ключ, выберите сотрудника и задайте новый PIN.'),
+
+    h('div', { style: stylesL.resetWrap },
+      h('div', null,
+        h('label', { style: stylesL.label }, 'Мастер-ключ'),
+        h('input', { type: 'password', inputMode: 'numeric',
+          style: { ...stylesL.field, ...stylesL.fieldCenter },
+          placeholder: '••••', value: resetKey, maxLength: 8,
+          onChange: e => setResetKey(e.target.value) })
+      ),
+      h('div', null,
+        h('label', { style: stylesL.label }, 'Сотрудник'),
+        h('select', { style: stylesL.field, value: resetTarget, onChange: e => setResetTarget(e.target.value) },
+          h('option', { value: '' }, '— выберите —'),
+          data.workers.map(w => h('option', { key: w.id, value: w.id }, w.name))
+        )
+      ),
+      h('div', null,
+        h('label', { style: stylesL.label }, 'Новый PIN (минимум 4 цифры)'),
+        h('input', { type: 'password', inputMode: 'numeric',
+          style: { ...stylesL.field, ...stylesL.fieldCenter },
+          placeholder: '••••', value: resetNewPin, maxLength: 8,
+          onChange: e => setResetNewPin(e.target.value),
+          onKeyDown: e => e.key === 'Enter' && handleMasterKeyReset() })
+      ),
+      resetError   && h('div', { role: 'alert',  style: stylesL.err }, resetError),
+      resetSuccess && h('div', { role: 'status', style: { ...stylesL.err, color: T.success } }, resetSuccess),
+      h('div', { style: { display: 'flex', gap: 10, marginTop: 6 } },
+        h('button', { style: stylesL.btnGhost, onClick: () => { setResetMode(false); setResetKey(''); setResetNewPin(''); setResetTarget(''); setResetError(''); } }, 'Назад'),
+        h('button', { style: { ...stylesL.primary, marginTop: 0, flex: 1 }, onClick: handleMasterKeyReset }, 'Сбросить PIN')
+      )
+    )
+  );
+
+  // ─── Group definitions (без emoji, чистые лейблы) ───
+  const groupProduction = [
+    ['worker',      'Сотрудник'],
+    ['shop_master', 'Сменный мастер'],
+    ['controller',  'Контролёр',    onCheckCount > 0 ? onCheckCount : null],
+    ['warehouse',   'Склад'],
+    ['sales',       'Менеджер'],
+  ];
+  const groupManagement = [
+    ['pdo',      'ПДО'],
+    ['master',   'Начальник цеха'],
+    ['director', 'Руководитель'],
+    ['hr',       'HR'],
+    ['admin',    'Администратор'],
+  ];
+  const groupView = [
+    ['dashboard', 'Дашборд'],
+    ['chat',      'Чат'],
+  ];
+
+  const renderRow = (items) => h('div', { style: stylesL.rolesRow },
+    items.map(([r, label, badge]) => h('button', {
+      key: r,
+      style: stylesL.chip(role === r),
+      onClick: () => { setRole(r); setLoginError(''); setPin(''); },
+      onMouseDown: (e) => { e.currentTarget.style.transform = 'scale(0.95)'; },
+      onMouseUp:   (e) => { e.currentTarget.style.transform = ''; },
+      onMouseLeave:(e) => { e.currentTarget.style.transform = ''; },
+    }, label, badge ? h('span', { style: stylesL.chipDot, title: `${badge} на проверке` }) : null))
+  );
+
+  // ─── Main view ───
+  return h('div', { style: stylesL.page },
+    // Brand
+    h('div', { style: stylesL.brand },
+      h('div', { style: stylesL.brandMark }, 't'),
+      h('div', { style: stylesL.brandWord }, settings.welcomeTitle || 'teploros')
+    ),
+
+    // Title
+    h('div', { style: stylesL.eyebrow }, settings.welcomeLabel || 'Производственный учёт · НТ'),
+    h('h1', { style: stylesL.h1 }, 'Вход в систему'),
+    h('div', { style: stylesL.sub }, settings.welcomeSubtitle ? settings.welcomeSubtitle : 'Выберите свою роль и введите PIN-код.'),
+
+    // Roles
+    h('div', { style: stylesL.rolesWrap },
+      renderRow(groupProduction),
+      renderRow(groupManagement),
+      renderRow(groupView),
+    ),
+
+    // PIN field / dashboard hint
+    role !== 'dashboard'
+      ? h('div', { style: stylesL.pinBlock },
+          h('div', { style: stylesL.pinShell },
+            h('input', {
+              type: showPin ? 'text' : 'password', inputMode: 'numeric', autoFocus: true,
+              style: stylesL.pinInput,
+              placeholder: '••••', value: pin, maxLength: 8,
+              onChange:  e => setPin(e.target.value),
+              onKeyDown: e => e.key === 'Enter' && handleLogin(),
+              onFocus:   e => Object.assign(e.target.style, stylesL.pinInputFocus),
+              onBlur:    e => { e.target.style.borderColor = T.hairline; e.target.style.boxShadow = 'none'; },
+            }),
+            h('button', { type: 'button', style: stylesL.pinEye,
+              'aria-label': showPin ? 'Скрыть PIN' : 'Показать PIN',
+              onClick: () => setShowPin(v => !v) }, EyeIcon(!showPin))
+          ),
+          h('div', { style: stylesL.pinHint }, roleHints[role] || 'Введите PIN-код')
+        )
+      : h('div', { style: stylesL.pinHint }, 'Открытый просмотр без PIN'),
+
+    loginError && h('div', { role: 'alert', style: stylesL.err }, loginError),
+
+    // Face ID / Passkey кнопка (только телефон + есть сохранённые)
+    hasPasskeys && isPhone() && h('button', {
+      style: { ...stylesL.primary, background: 'rgba(255,255,255,0.15)', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 },
+      onClick: async () => { const ok = await loginWithPasskey(); if (!ok) addToast?.('Биометрия не прошла', 'error'); }
+    }, '🔐 Войти по Face ID / отпечатку'),
+
+    // Модал: предложение зарегистрировать биометрию
+    offerPasskey && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 } },
+      h('div', { style: { background: '#1c1c1e', borderRadius: 18, padding: 28, maxWidth: 320, width: '100%', textAlign: 'center' } },
+        h('div', { style: { fontSize: 40, marginBottom: 12 } }, '🔐'),
+        h('div', { style: { fontSize: 17, fontWeight: 600, color: '#fff', marginBottom: 8 } }, 'Войти быстрее'),
+        h('div', { style: { fontSize: 14, color: 'rgba(255,255,255,0.65)', marginBottom: 24, lineHeight: 1.5 } }, 'Зарегистрировать Face ID или отпечаток для быстрого входа на этом телефоне?'),
+        h('button', {
+          style: { ...stylesL.primary, width: '100%', marginBottom: 10 },
+          onClick: async () => {
+            const ok = await registerPasskey(offerPasskey);
+            setOfferPasskey(false);
+            onLogin(offerPasskey.role, offerPasskey.workerId, offerPasskey.sectionId);
+          }
+        }, 'Настроить биометрию'),
+        h('button', {
+          style: { width: '100%', padding: '12px', background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.5)', fontSize: 14, cursor: 'pointer', borderRadius: 12 },
+          onClick: () => { setOfferPasskey(false); onLogin(offerPasskey.role, offerPasskey.workerId, offerPasskey.sectionId); }
+        }, 'Пропустить')
+      )
+    ),
+
+    // Submit
+    h('button', {
+      style: stylesL.primary, onClick: handleLogin,
+      onMouseDown:  e => { e.currentTarget.style.transform = 'scale(0.95)'; },
+      onMouseUp:    e => { e.currentTarget.style.transform = ''; },
+      onMouseLeave: e => { e.currentTarget.style.transform = ''; },
+    }, 'Войти'),
+
+    // Reset link
+    h('button', { style: stylesL.link, onClick: () => setResetMode(true) }, 'Сбросить PIN мастер-ключом'),
+
+    // Divider + leaderboard
+    h('div', { style: stylesL.divider }),
+    h('div', { style: stylesL.leadersWrap },
+      h(Leaderboard, { data })
+    )
+  );
+};
+
+// ==================== GreetingBanner ====================
+// Баннер приветствия — показывается 5 секунд после входа, затем сам закрывается
+const GreetingBanner = memo(({ role, name, data, workerId }) => {
+  const [visible, setVisible] = React.useState(true);
+  const [leaving, setLeaving] = React.useState(false);
+
+  React.useEffect(() => {
+    const hideTimer = setTimeout(() => {
+      setLeaving(true);
+      setTimeout(() => setVisible(false), 400);
+    }, 5000);
+    return () => clearTimeout(hideTimer);
+  }, []);
+
+  const close = () => { setLeaving(true); setTimeout(() => setVisible(false), 400); };
+
+  if (!visible) return null;
+
+  // Приветствие по времени суток
+  const hour = new Date().getHours();
+  const timeGreeting = hour < 6 ? 'Доброй ночи' : hour < 12 ? 'Доброе утро' : hour < 18 ? 'Добрый день' : 'Добрый вечер';
+
+  // Метрики по роли
+  const today = new Date(); today.setHours(0,0,0,0); const todayTs = today.getTime();
+  const activeOrders = (data.orders || []).filter(o => !o.archived && !o.shipped && !o.isParentOrder);
+  const activeOps    = (data.ops    || []).filter(o => !o.archived);
+  const now_ts = Date.now();
+
+  // Дедлайны — заказы у которых срок <= 3 дней
+  const urgentOrders = activeOrders
+    .filter(o => o.deadline && !o.shipped)
+    .map(o => ({ ...o, daysLeft: Math.ceil((new Date(o.deadline) - now_ts) / 86400000) }))
+    .filter(o => o.daysLeft <= 3)
+    .sort((a, b) => a.daysLeft - b.daysLeft)
+    .slice(0, 2);
+
+  const metrics = (() => {
+    if (role === 'worker' && workerId) {
+      const myOps     = activeOps.filter(o => (o.workerIds || []).includes(workerId));
+      const myActive  = myOps.filter(o => o.status === 'in_progress');
+      const myPending = myOps.filter(o => o.status === 'pending');
+      const myDone    = activeOps.filter(o => (o.workerIds || []).includes(workerId) && o.status === 'done' && o.finishedAt >= todayTs);
+      return [
+        myActive.length  > 0 ? { icon: '▶', label: 'В работе',         val: myActive.length,  color: AM2  } : null,
+        myPending.length > 0 ? { icon: '⏳', label: 'Ожидают тебя',    val: myPending.length, color: 'var(--fg-muted)' } : null,
+        myDone.length    > 0 ? { icon: '✓',  label: 'Готово сегодня',  val: myDone.length,    color: GN   } : null,
+      ].filter(Boolean);
+      // Мотивирующая фраза для рабочего
+      const MOTIVATIONS = [
+        'Хорошего рабочего дня! 🛠',
+        'Сделаем сегодня всё по плану! 💪',
+        'Ты справишься — вперёд! ⚡',
+        'Качество — наш приоритет! 🎯',
+        'Команда на тебя рассчитывает! 🤝',
+      ];
+      const motivation = MOTIVATIONS[new Date().getDay() % MOTIVATIONS.length];
+    }
+
+    if (role === 'master' || role === 'shop_master') {
+      const inWork    = activeOps.filter(o => o.status === 'in_progress').length;
+      const pending   = activeOps.filter(o => o.status === 'pending').length;
+      const overdue   = activeOrders.filter(o => o.deadline && new Date(o.deadline) < new Date()).length;
+      const onCheck   = activeOps.filter(o => o.status === 'on_check').length;
+      const freeW     = (data.workers || []).filter(w => !w.archived && !activeOps.some(o => o.status === 'in_progress' && (o.workerIds||[]).includes(w.id))).length;
+      return [
+        { icon: '▶',  label: 'В работе',    val: inWork,   color: AM2   },
+        { icon: '⏳', label: 'Ожидают',     val: pending,  color: 'var(--fg-muted)' },
+        onCheck  > 0 ? { icon: '🔍', label: 'На контроле', val: onCheck,  color: '#0277BD' } : null,
+        overdue  > 0 ? { icon: '⚠',  label: 'Просрочено', val: overdue,  color: RD        } : null,
+        { icon: '👤', label: 'Свободных',   val: freeW,    color: GN    },
+      ].filter(Boolean);
+    }
+
+    if (role === 'pdo' || role === 'director') {
+      const inWork  = activeOrders.filter(o => activeOps.some(op => op.orderId === o.id && op.status === 'in_progress')).length;
+      const overdue = activeOrders.filter(o => o.deadline && new Date(o.deadline) < new Date()).length;
+      const doneToday = activeOps.filter(o => o.status === 'done' && o.finishedAt >= todayTs).length;
+      return [
+        { icon: '📋', label: 'Активных заказов', val: activeOrders.length, color: 'var(--fg-muted)'  },
+        { icon: '▶',  label: 'В производстве',   val: inWork,              color: AM2     },
+        overdue > 0 ? { icon: '⚠', label: 'Просрочено', val: overdue, color: RD } : null,
+        { icon: '✓',  label: 'Операций сегодня', val: doneToday,           color: GN      },
+      ].filter(Boolean);
+    }
+
+    if (role === 'controller') {
+      const onCheck = activeOps.filter(o => o.status === 'on_check').length;
+      const defects = activeOps.filter(o => o.status === 'defect' || o.status === 'rework').length;
+      return [
+        { icon: '🔍', label: 'Ждут проверки', val: onCheck, color: onCheck > 0 ? AM2 : GN },
+        defects > 0 ? { icon: '⚠', label: 'На доработке', val: defects, color: RD } : null,
+      ].filter(Boolean);
+    }
+
+    if (role === 'warehouse') {
+      const pending   = (data.materialDeliveries || []).filter(d => d.status === 'pending').length;
+      const readyShip = activeOrders.filter(o => {
+        const ops = activeOps.filter(op => op.orderId === o.id);
+        return ops.length > 0 && ops.every(op => op.status === 'done');
+      }).length;
+      const compPending = activeOrders.reduce((acc, o) => acc + (o.components || []).filter(c => c.status !== 'confirmed').length, 0);
+      return [
+        pending    > 0 ? { icon: '📦', label: 'Поставок ожидается', val: pending,    color: AM2 } : null,
+        compPending > 0 ? { icon: '🔩', label: 'Компл. не получено', val: compPending, color: AM4 } : null,
+        readyShip  > 0 ? { icon: '🚚', label: 'Готово к отгрузке',   val: readyShip,  color: GN  } : null,
+      ].filter(Boolean);
+    }
+
+    if (role === 'hr') {
+      const total   = (data.workers || []).filter(w => !w.archived).length;
+      const onVac   = (data.workers || []).filter(w => w.status === 'vacation').length;
+      const onSick  = (data.workers || []).filter(w => w.status === 'sick').length;
+      return [
+        { icon: '👥', label: 'Сотрудников',  val: total,  color: 'var(--fg-muted)' },
+        onVac  > 0 ? { icon: '🏖', label: 'В отпуске',  val: onVac,  color: AM2 } : null,
+        onSick > 0 ? { icon: '🤒', label: 'На больничном', val: onSick, color: RD } : null,
+      ].filter(Boolean);
+    }
+
+    return [];
+  })();
+
+  const bannerStyle = {
+    position: 'fixed', top: 0, left: 0, right: 0, zIndex: 500,
+    background: 'linear-gradient(135deg, #1a1a18 0%, #2d2a24 100%)',
+    color: '#fff',
+    padding: '12px 16px',
+    boxShadow: '0 4px 24px rgba(0,0,0,0.25)',
+    display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+    transition: 'transform 0.4s cubic-bezier(0.4,0,0.2,1), opacity 0.4s',
+    transform: leaving ? 'translateY(-110%)' : 'translateY(0)',
+    opacity: leaving ? 0 : 1,
+  };
+
+  const progressStyle = {
+    position: 'absolute', bottom: 0, left: 0,
+    height: 2, background: AM,
+    animation: 'greetingProgress 5s linear forwards',
+  };
+
+  return h('div', { style: bannerStyle },
+    // Стиль для progress bar
+    h('style', null, '@keyframes greetingProgress { from { width: 100% } to { width: 0% } }'),
+
+    // Приветствие
+    h('div', { style: { flexShrink: 0 } },
+      h('div', { style: { fontSize: 13, fontWeight: 600, color: '#fff', lineHeight: 1.3 } },
+        `${timeGreeting}, ${name} 👋`
+      ),
+      role === 'worker' && h('div', { style: { fontSize: 11, color: 'rgba(255,255,255,0.65)', marginTop: 2 } },
+        typeof motivation !== 'undefined' ? motivation : ''
+      ),
+      h('div', { style: { fontSize: 10, color: 'rgba(255,255,255,0.5)', marginTop: 1 } },
+        new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' })
+      )
+    ),
+
+    // Разделитель
+    metrics.length > 0 && h('div', { style: { width: 1, height: 32, background: 'rgba(255,255,255,0.15)', flexShrink: 0 } }),
+
+    // Метрики
+    h('div', { style: { display: 'flex', gap: 16, flexWrap: 'wrap', flex: 1 } },
+      metrics.map((m, i) => m && h('div', { key: i, style: { display: 'flex', alignItems: 'center', gap: 5 } },
+        h('span', { style: { fontSize: 13 } }, m.icon),
+        h('span', { style: { fontSize: 20, fontWeight: 700, color: m.color, lineHeight: 1 } }, m.val),
+        h('span', { style: { fontSize: 10, color: 'rgba(255,255,255,0.55)', lineHeight: 1.2, maxWidth: 60 } }, m.label)
+      ))
+    ),
+
+    // Срочные дедлайны
+    urgentOrders.length > 0 && role !== 'worker' && h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', flexShrink: 0 } },
+      urgentOrders.map(o => h('div', { key: o.id, style: {
+        background: o.daysLeft <= 0 ? 'rgba(226,75,74,0.3)' : 'rgba(239,159,39,0.2)',
+        border: `0.5px solid ${o.daysLeft <= 0 ? RD : AM}`,
+        borderRadius: 6, padding: '3px 8px', fontSize: 11,
+      } },
+        h('span', { style: { fontWeight: 600, color: o.daysLeft <= 0 ? '#ff8a80' : AM } },
+          o.daysLeft <= 0 ? '⚠ Просрочен' : o.daysLeft === 0 ? '⚡ Сегодня' : `⏰ ${o.daysLeft} дн`
+        ),
+        h('span', { style: { color: 'rgba(255,255,255,0.7)', marginLeft: 4 } }, o.number)
+      ))
+    ),
+
+    // Прогресс-бар и кнопка закрытия
+    h('button', {
+      onClick: close,
+      title: 'Закрыть',
+      style: { background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 4px', flexShrink: 0, marginLeft: 'auto' }
+    }, '×'),
+
+    h('div', { style: progressStyle })
+  );
+});
+
+// ==================== Dashboard (Цеховое табло) ====================
+const Dashboard = memo(({ data, addToast, onOrderClick }) => {
+  const [, setTick] = useState(0);
+  const [onlineUsers, setOnlineUsers] = useState([]);
+  useEffect(() => { const t = setInterval(() => setTick(n => n + 1), 15000); return () => clearInterval(t); }, []);
+  useEffect(() => {
+    const fetchOnline = () => Presence.getOnline().then(users => setOnlineUsers(users)).catch(() => {});
+    fetchOnline();
+    const t = setInterval(fetchOnline, 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Проверка сроков: удостоверения, медосмотр, инструктажи
+  const expiryIssues = useMemo(() => {
+    const issues = [];
+    const today = new Date();
+    data.workers.forEach(w => {
+      if (w.archived) return;
+      
+      // Удостоверения
+      (w.licences || []).forEach(lic => {
+        if (lic.expiryDate && new Date(lic.expiryDate) < today) {
+          issues.push({ worker: w, type: 'licence', detail: lic.name });
+        }
+      });
+      
+      // Медосмотр
+      if (w.medicalExamNextDate && new Date(w.medicalExamNextDate) < today) {
+        issues.push({ worker: w, type: 'medical' });
+      }
+      
+      // Инструктажи (повторный ежегодно)
+      if (w.instructions && w.instructions.length > 0) {
+        const lastRepeat = w.instructions
+          .filter(i => i.type === 'repeat')
+          .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+        if (lastRepeat) {
+          const nextDue = new Date(lastRepeat.date);
+          nextDue.setFullYear(nextDue.getFullYear() + 1);
+          if (nextDue < today) {
+            issues.push({ worker: w, type: 'instruction' });
+          }
+        }
+      }
+    });
+    return issues;
+  }, [data.workers]);
+  const pendingOps = useMemo(() => data.ops.filter(o => o.status === 'pending' && !o.archived), [data.ops]);
+  const onCheckOps = useMemo(() => data.ops.filter(o => o.status === 'on_check' && !o.archived), [data.ops]);
+  const defectOps = useMemo(() => data.ops.filter(o => (o.status === 'defect' || o.status === 'rework') && !o.archived), [data.ops]);
+  const doneToday = useMemo(() => { const t = new Date().setHours(0,0,0,0); return data.ops.filter(o => o.status === 'done' && o.finishedAt >= t); }, [data.ops]);
+  const defectsToday = useMemo(() => { const t = new Date().setHours(0,0,0,0); return data.ops.filter(o => o.status === 'defect' && o.finishedAt >= t); }, [data.ops]);
+  const downtimesToday = useMemo(() => { const t = new Date().setHours(0,0,0,0); return data.events.filter(e => e.type === 'downtime' && e.ts >= t); }, [data.events]);
+  const totalDowntimeMin = useMemo(() => Math.round(downtimesToday.reduce((s, e) => s + (e.duration || 0), 0) / 60000), [downtimesToday]);
+  const activeWorkers = useMemo(() => data.workers.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet)), [data.workers]);
+  const activeOps = useMemo(() => data.ops.filter(o => o.status === 'in_progress' && !o.archived), [data.ops]);
+  const busyWorkers = useMemo(() => new Set(activeOps.flatMap(op => op.workerIds || [])), [activeOps]);
+  const freeWorkers = useMemo(() => activeWorkers.filter(w => !busyWorkers.has(w.id)), [activeWorkers, busyWorkers]);
+  const criticalMaterials = useMemo(() => data.materials.filter(m => m.minStock && m.quantity <= m.minStock), [data.materials]);
+  const activeOrders = useMemo(() => data.orders.filter(o => !o.archived && !o.isParentOrder), [data.orders]);
+  const activeDuels = useMemo(() => (data.duels || []).filter(d => d.status === 'active'), [data.duels]);
+
+  // Заказы с прогрессом
+  const ordersProgress = useMemo(() => activeOrders.map(order => {
+    const ops = data.ops.filter(op => op.orderId === order.id && !op.archived);
+    const done = ops.filter(op => op.status === 'done').length;
+    const total = ops.length;
+    const pct = total > 0 ? Math.round(done / total * 100) : 0;
+    const hasDefect = ops.some(op => op.status === 'defect' || op.status === 'rework');
+    const daysLeft = order.deadline ? Math.ceil((new Date(order.deadline).getTime() - Date.now()) / 86400000) : null;
+    return { ...order, ops, done, total, pct, hasDefect, daysLeft };
+  }).sort((a, b) => (a.daysLeft ?? 999) - (b.daysLeft ?? 999)), [activeOrders, data.ops]);
+
+  // Лидеры дня
+  const todayLeaders = useMemo(() => {
+    const t = new Date().setHours(0,0,0,0);
+    const counts = {};
+    data.ops.filter(op => op.status === 'done' && op.finishedAt >= t).forEach(op => {
+      (op.workerIds || []).forEach(wid => { counts[wid] = (counts[wid] || 0) + 1; });
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([wid, count]) => ({
+      name: data.workers.find(w => w.id === wid)?.name || '?', count
+    }));
+  }, [data.ops, data.workers]);
+
+  const qualityToday = doneToday.length + defectsToday.length > 0 ? Math.round(doneToday.length / (doneToday.length + defectsToday.length) * 100) : 100;
+  const mc = (color) => ({ ...S.card, textAlign: 'center', padding: '12px 8px', marginBottom: 0 });
+
+  const exportToExcel = useCallback(async () => {
+    await ensureCdn('xlsx');
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.orders.map(o => ({ Номер: o.number, Изделие: o.product, Количество: o.qty, Дедлайн: o.deadline, Приоритет: PRIORITY[o.priority]?.label }))), 'Заказы');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.ops.map(op => ({ Заказ: data.orders.find(o => o.id === op.orderId)?.number, Операция: op.name, Статус: op.status, 'План,ч': op.plannedHours, Исполнители: (op.workerIds||[]).map(wid => data.workers.find(w => w.id === wid)?.name).join(', ') }))), 'Операции');
+    XLSX.writeFile(wb, `production_${new Date().toISOString().slice(0,10)}.xlsx`);
+    addToast('Экспорт завершён', 'success');
+  }, [data, addToast]);
+
+  return h('div', { style: { padding: '0 0 24px' } },
+    // Заголовок с часами
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } },
+      h('div', null,
+        h('div', { style: { fontSize: 18, fontWeight: 500 } }, 'Цеховое табло'),
+        h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' }))
+      ),
+      h('div', { style: { textAlign: 'right' } },
+        h('div', { style: { fontSize: 28, fontWeight: 500, fontFamily: 'monospace', color: AM } }, new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+        h('button', { style: gbtn({ fontSize: 10, padding: '3px 8px' }), onClick: exportToExcel }, '📥 Excel')
+      )
+    ),
+
+    // Блок 1: Ключевые метрики дня
+    h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 8, marginBottom: 12 } },
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: GN } }, doneToday.length), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Выполнено')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: AM } }, activeOps.length), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'В работе')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: defectsToday.length > 0 ? RD : GN } }, defectsToday.length), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Брак')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: qualityToday >= 95 ? GN : qualityToday >= 80 ? AM : RD } }, `${qualityToday}%`), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Качество')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: totalDowntimeMin > 60 ? RD : AM } }, `${totalDowntimeMin}м`), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Простои')),
+      h('div', { style: mc() }, h('div', { style: { fontSize: 32, fontWeight: 500, color: freeWorkers.length > 0 ? GN : AM } }, `${busyWorkers.size}/${activeWorkers.length}`), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Загрузка')),
+      h('div', { style: { ...mc(), cursor: 'default', position: 'relative' }, title: onlineUsers.map(u => u.userName).join(', ') || 'Никого нет онлайн' },
+        h('div', { style: { fontSize: 32, fontWeight: 500, color: onlineUsers.length > 0 ? GN : '#ccc' } }, onlineUsers.length),
+        h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Онлайн'),
+        onlineUsers.length > 0 && h('div', { style: { position: 'absolute', bottom: 4, left: 0, right: 0, fontSize: 9, color: 'var(--muted)', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '0 4px' } }, onlineUsers.map(u => u.userName).join(', '))
+      ),
+      // Проверка сроков
+      expiryIssues.length > 0 && h('div', { style: { ...mc(), position: 'relative' }, title: expiryIssues.map(i => `${i.worker.name}: ${i.type === 'licence' ? i.detail : i.type === 'medical' ? 'медосмотр' : 'инструктаж'}`).join(', ') },
+        h('div', { style: { fontSize: 28, fontWeight: 600, color: RD2 } }, '⚠'),
+        h('div', { style: { fontSize: 9, color: RD, textTransform: 'uppercase', fontWeight: 600 } }, 'Сроки'),
+        h('div', { style: { position: 'absolute', top: -8, right: -8, width: 24, height: 24, borderRadius: '50%', background: RD, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600 } }, expiryIssues.length)
+      )
+    ),
+
+    // Блок 2: Алерты (критические)
+    (criticalMaterials.length > 0 || defectOps.length > 0 || ordersProgress.some(o => o.daysLeft !== null && o.daysLeft <= 2 && o.pct < 100)) && h('div', { style: { ...S.card, background: RD3, border: `0.5px solid ${RD}`, marginBottom: 12, padding: 10 } },
+      h('div', { style: { fontSize: 10, color: RD, textTransform: 'uppercase', fontWeight: 500, marginBottom: 6 } }, '⚠ Требует внимания'),
+      defectOps.length > 0 && h('div', { style: { marginBottom: 4 } },
+        h('div', { style: { fontSize: 11, color: RD, fontWeight: 500, marginBottom: 4 } }, `⚠ ${defectOps.length} операций с браком/на переделке:`),
+        defectOps.slice(0, 5).map(op => {
+          const order = data.orders.find(o => o.id === op.orderId);
+          const workers = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name?.split(' ')[0]).filter(Boolean).join(', ');
+          return h('div', { key: op.id,
+            style: { fontSize: 11, color: RD2, padding: '4px 8px', background: 'rgba(220,38,38,0.08)', borderRadius: 4, marginBottom: 3, cursor: 'pointer', display: 'flex', justifyContent: 'space-between' },
+            onClick: () => onTabChange && onTabChange('ops'),
+            title: 'Нажмите чтобы перейти к операциям'
+          },
+            h('span', null, `${order?.number || '?'} — ${op.name}`),
+            h('span', { style: { color: 'var(--muted)', fontSize: 10 } }, op.status === 'rework' ? '🔧 переделка' : '✗ брак', workers ? ` · ${workers}` : '')
+          );
+        }),
+        defectOps.length > 5 && h('div', { style: { fontSize: 10, color: RD, marginTop: 2 } }, `+${defectOps.length - 5} ещё...`)
+      ),
+      criticalMaterials.map(m => h('div', { key: m.id, style: { fontSize: 12, color: RD2, marginBottom: 2 } }, `Материал: ${m.name} — ${m.quantity} ${m.unit} (мин: ${m.minStock})`)),
+      ordersProgress.filter(o => o.daysLeft !== null && o.daysLeft <= 2 && o.pct < 100).map(o => h('div', { key: o.id, style: { fontSize: 12, color: RD2, marginBottom: 2 } }, `Срок: ${o.number} — ${o.daysLeft <= 0 ? 'ПРОСРОЧЕН' : `${o.daysLeft} дн.`} (${o.pct}%)`))
+    ),
+
+    // Блок 3: Кто что делает (живая лента)
+    h('div', { style: { ...S.card, marginBottom: 12, padding: 10 } },
+      h('div', { style: S.sec }, `Сейчас в работе (${activeOps.length})`),
+      activeOps.length === 0
+        ? h('div', { style: { fontSize: 12, color: 'var(--muted)', textAlign: 'center', padding: 8 } }, 'Нет активных операций')
+        : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+            activeOps.map(op => {
+              const order = data.orders.find(o => o.id === op.orderId);
+              const workers = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name?.split(' ')[0]).filter(Boolean);
+              const elapsed = op.startedAt ? fmtDur(now() - op.startedAt) : '—';
+              const isLong = op.plannedHours && op.startedAt && (now() - op.startedAt) > op.plannedHours * 3600000;
+              return h('div', { key: op.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8, background: isLong ? RD3 : 'var(--card-2)', fontSize: 12 } },
+                h('div', { style: { width: 8, height: 8, borderRadius: '50%', background: isLong ? RD : GN, flexShrink: 0 } }),
+                h('span', { style: { fontWeight: 500, minWidth: 100 } }, workers.join(', ') || '—'),
+                h('span', { style: { color: AM, flex: 1 } }, op.name),
+                h('span', { style: { fontSize: 10, color: 'var(--muted)' } }, order?.number),
+                h('span', { style: { fontFamily: 'monospace', fontSize: 11, color: isLong ? RD : '#888' } }, elapsed)
+              );
+            })
+          ),
+      // Свободные рабочие
+      freeWorkers.length > 0 && h('div', { style: { marginTop: 8, paddingTop: 8, borderTop: '0.5px solid rgba(0,0,0,0.06)' } },
+        h('div', { style: { fontSize: 10, color: GN, marginBottom: 4 } }, `Свободны (${freeWorkers.length}):`),
+        h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
+          freeWorkers.map(w => h('span', { key: w.id, style: { padding: '2px 8px', background: GN3, color: GN2, borderRadius: 6, fontSize: 11 } }, w.name.split(' ')[0]))
+        )
+      )
+    ),
+
+    // Блок 4: Прогресс заказов
+    h('div', { style: { ...S.card, marginBottom: 12, padding: 10 } },
+      h('div', { style: S.sec }, `Заказы (${activeOrders.length})`),
+      ordersProgress.length === 0
+        ? h('div', { style: { fontSize: 12, color: 'var(--muted)', textAlign: 'center', padding: 8 } }, 'Нет активных заказов')
+        : ordersProgress.map(o => h('div', { key: o.id, style: { marginBottom: 8 } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 } },
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 } },
+                onOrderClick
+                  ? h('span', { style: { fontWeight: 500, color: AM, cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => onOrderClick(o.id), title: 'Открыть карточку' }, o.number)
+                  : h('span', { style: { fontWeight: 500 } }, o.number),
+                h('span', { style: { color: 'var(--muted)' } }, o.product),
+                o.hasDefect && h('span', { style: { fontSize: 10, color: RD, fontWeight: 500 } }, '⚠'),
+                o.daysLeft !== null && h('span', { style: { fontSize: 10, padding: '1px 6px', borderRadius: 4, background: o.daysLeft <= 0 ? RD3 : o.daysLeft <= 3 ? AM3 : GN3, color: o.daysLeft <= 0 ? RD : o.daysLeft <= 3 ? AM2 : GN2 } }, o.daysLeft <= 0 ? 'просрочен' : `${o.daysLeft}д`)
+              ),
+              h('span', { style: { fontSize: 11, fontWeight: 500, color: o.pct === 100 ? GN : AM } }, `${o.done}/${o.total}`)
+            ),
+            h('div', { style: { height: 6, background: '#eee', borderRadius: 3, overflow: 'hidden' } },
+              h('div', { style: { height: 6, background: o.pct === 100 ? GN : o.hasDefect ? RD : AM, borderRadius: 3, width: `${o.pct}%`, transition: 'width 0.3s' } })
+            )
+          ))
+    ),
+
+    // Блок 5: Лидеры дня + активные дуэли
+    (todayLeaders.length > 0 || activeDuels.length > 0) && h('div', { style: { display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap' } },
+      todayLeaders.length > 0 && h('div', { style: { ...S.card, flex: 1, minWidth: 160, padding: 10, marginBottom: 0 } },
+        h('div', { style: S.sec }, 'Лидеры дня'),
+        todayLeaders.map((l, i) => h('div', { key: i, style: { display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: 12 } },
+          h('span', { style: { fontSize: i < 3 ? 14 : 11, width: 22 } }, ['🥇','🥈','🥉'][i] || `${i+1}.`),
+          h('span', { style: { flex: 1, fontWeight: i === 0 ? 500 : 400 } }, l.name),
+          h('span', { style: { fontWeight: 500, color: AM } }, `${l.count} оп.`)
+        ))
+      ),
+      activeDuels.length > 0 && h('div', { style: { ...S.card, flex: 1, minWidth: 160, padding: 10, marginBottom: 0 } },
+        h('div', { style: S.sec }, `⚔ Дуэли (${activeDuels.length})`),
+        activeDuels.map(d => {
+          const ch = data.ops.filter(op => op.workerIds?.includes(d.challengerId) && op.status === 'done' && op.finishedAt >= d.createdAt).length;
+          const op = data.ops.filter(op => op.workerIds?.includes(d.opponentId) && op.status === 'done' && op.finishedAt >= d.createdAt).length;
+          return h('div', { key: d.id, style: { fontSize: 11, padding: '4px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)' } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between' } },
+              h('span', null, `${d.challengerName.split(' ')[0]} vs ${d.opponentName.split(' ')[0]}`),
+              h('span', { style: { color: AM, fontWeight: 500 } }, `${ch}:${op} / ${d.targetOps}`)
+            )
+          );
+        })
+      )
+    ),
+
+    // Блок 6: Очередь на контроле
+    onCheckOps.length > 0 && h('div', { style: { ...S.card, marginBottom: 12, padding: 10 } },
+      h('div', { style: S.sec }, `На контроле качества (${onCheckOps.length})`),
+      onCheckOps.map(op => {
+        const order = data.orders.find(o => o.id === op.orderId);
+        const workers = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name?.split(' ')[0]).filter(Boolean);
+        return h('div', { key: op.id, style: { display: 'flex', gap: 8, padding: '4px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', fontSize: 12 } },
+          h('span', { style: { fontWeight: 500 } }, op.name),
+          h('span', { style: { color: 'var(--muted)' } }, order?.number),
+          h('span', { style: { color: AM } }, workers.join(', '))
+        );
+      })
+    ),
+
+    // Блок 7: Ожидающие операции (если много)
+    pendingOps.length > 5 && h('div', { style: { ...S.card, marginBottom: 12, padding: 10 } },
+      h('div', { style: S.sec }, `Ожидают запуска (${pendingOps.length})`),
+      h('div', { style: { fontSize: 12, color: 'var(--muted)' } },
+        (data.productionStages || []).map(s => {
+          const count = pendingOps.filter(op => op.name === s.name).length;
+          return count > 0 ? h('span', { key: s.id, style: { display: 'inline-block', padding: '3px 8px', background: 'var(--card-2)', borderRadius: 6, margin: '2px 3px', fontSize: 11 } }, `${s.name}: ${count}`) : null;
+        })
+      )
+    )
+  );
+});
+
+
+
+// ==================== Error Boundary ====================
+// Перехватывает ошибки React-дерева и показывает читаемое сообщение
+// вместо белого экрана
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, info) {
+    console.error('App error:', error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return React.createElement('div', {
+        style: { minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 32, textAlign: 'center', gap: 16 }
+      },
+        React.createElement('div', { style: { fontSize: 48 } }, '⚠️'),
+        React.createElement('div', { style: { fontSize: 20, fontWeight: 500, color: '#1a1a18' } }, 'Что-то пошло не так'),
+        React.createElement('div', { style: { fontSize: 14, color: 'var(--muted)', maxWidth: 400 } }, 'Произошла ошибка в приложении. Данные в Firebase не затронуты — обновите страницу для восстановления работы.'),
+        React.createElement('div', { style: { fontFamily: 'monospace', fontSize: 11, color: '#E24B4A', background: '#FCEBEB', border: '0.5px solid #E24B4A', borderRadius: 8, padding: '8px 16px', maxWidth: 500, wordBreak: 'break-all' } },
+          this.state.error?.message || 'Неизвестная ошибка'
+        ),
+        React.createElement('button', {
+          style: { padding: '10px 28px', background: '#EF9F27', color: '#412402', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500 },
+          onClick: () => { this.setState({ hasError: false, error: null }); window.location.reload(); }
+        }, '🔄 Перезагрузить страницу'),
+        React.createElement('button', {
+          style: { padding: '8px 20px', background: 'transparent', color: 'var(--muted)', border: '0.5px solid rgba(0,0,0,0.2)', borderRadius: 8, cursor: 'pointer', fontSize: 13 },
+          onClick: () => this.setState({ hasError: false, error: null })
+        }, 'Попробовать продолжить без перезагрузки')
+      );
+    }
+    return this.props.children;
+  }
+}
+
+
+
+// ==================== Import1CModal ====================
+// Парсер заявки из 1С (Excel/XLSX)
+// Разделяет строки на: изделие (производство) и комплектующие
+
+const PRODUCT_KEYWORDS = ['котёл', 'котел', 'teplofor', 'теплофор', 'vv2', 'кв-', 'boiler', 'duplex', 'агрегат'];
+const ACCESSORY_MARKERS = ['для котла', 'под котёл', 'под котел', 'к котлу', 'фланец', 'блок автоматики', 'под горелку', 'переходной', 'арматура', 'манометр', 'термометр', 'насос', 'клапан', 'горелка', 'горелку'];
+const isProductRow = (name) => {
+  if (!name) return false;
+  const lower = name.toLowerCase();
+  // Если это явно аксессуар — не изделие
+  if (ACCESSORY_MARKERS.some(m => lower.includes(m))) return false;
+  // Если содержит ключевое слово изделия
+  return PRODUCT_KEYWORDS.some(kw => lower.includes(kw));
+};
+
+// Код позиции в 1С: две кириллические буквы + дефис + цифры.
+// У готовых изделий (котлы) префикс обычно "БП-", у комплектующих — "НФ-".
+// Раньше матчилось только "НФ-", из-за чего код котла не распознавался
+// и количество съезжало (см. фикс ниже).
+const ITEM_CODE_RE = /^[А-Яа-яЁё]{2}-\d+$/;
+
+// Парсим дату вида "04.05.26" или "04.05.2026"
+const parseDate1C = (str) => {
+  if (!str) return '';
+  const s = String(str).trim();
+  const m = s.match(/(\d{2})\.(\d{2})\.(\d{2,4})/);
+  if (!m) return '';
+  const y = m[3].length === 2 ? '20' + m[3] : m[3];
+  return `${y}-${m[2]}-${m[1]}`; // YYYY-MM-DD
+};
+
+// Парсим заголовок "Заказ покупателя № 44/26 НТ от 21 апреля 2026 г."
+const parseOrderHeader = (text) => {
+  const numMatch = text.match(/№\s*([\w\/\-]+)/);
+  const dateMatch = text.match(/от\s+(\d+\s+\w+\s+\d{4})/);
+  return {
+    number: numMatch ? numMatch[1] : '',
+    dateStr: dateMatch ? dateMatch[1] : ''
+  };
+};
+
+const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
+  const [step, setStep] = useState('upload'); // upload | preview | split | done
+  const [parsed, setParsed] = useState(null);  // { orderNumber, customer, deadline, products: [{ product, productCode, productQty, productSpecs, components[] }] }
+  const [isDragging, setIsDragging] = useState(false);
+  const [error, setError] = useState('');
+  const [splitQueue, setSplitQueue] = useState([]);   // id заказов с qty>1, которые надо разделить на подзаказы
+  const [splitIndex, setSplitIndex] = useState(0);
+  const [createdCount, setCreatedCount] = useState(0);
+  const fileInputRef = React.useRef(null);
+
+  const parseExcel = async (arrayBuffer) => {
+    try {
+      await ensureCdn('xlsx');
+      const wb = XLSX.read(arrayBuffer, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+      let orderNumber = '', customer = '', deadline = '';
+      // Один файл 1С может содержать НЕСКОЛЬКО изделий (напр. 2 разных котла),
+      // каждое — со своим набором комплектующих. Строка-изделие открывает новую
+      // группу, все следующие строки-аксессуары до следующего изделия относятся к ней.
+      const products = [];
+      let currentGroup = null;
+
+      rows.forEach(row => {
+        const cells = row.map(c => String(c === null || c === undefined ? '' : c).trim());
+        const fullText = cells.join(' ');
+
+        // Заголовок заказа
+        if (fullText.includes('Заказ покупателя')) {
+          const hdr = parseOrderHeader(fullText);
+          if (hdr.number) orderNumber = hdr.number;
+        }
+
+        // Заказчик — ищем по любой ячейке
+        const custIdx = cells.findIndex(c => c === 'Заказчик:' || c.startsWith('Заказчик:'));
+        if (custIdx >= 0) {
+          const raw = cells.slice(custIdx + 1).join(' ');
+          const m = raw.match(/ООО\s*["«]([^"»,]+)["»]/);
+          customer = m ? `ООО "${m[1].trim()}"` : raw.replace(/ИНН.*/, '').trim().slice(0, 60);
+        }
+
+        // Строки товаров: ищем ячейку с числом 1-99 (порядковый номер позиции)
+        const numIdx = cells.findIndex(c => { const n = parseInt(c); return !isNaN(n) && n > 0 && n < 100 && c === String(n); });
+        if (numIdx >= 0) {
+          // Название = самая длинная строка в строке (надёжнее чем фиксированный индекс)
+          const name = cells.reduce((best, c) => c.length > best.length ? c : best, '');
+          if (!name || name.length < 5) return;
+
+          // Код позиции (БП-XXXXXXX у изделий, НФ-XXXXXXX у комплектующих)
+          const code    = cells.find(c => ITEM_CODE_RE.test(c)) || '';
+          const codeIdx = cells.findIndex(c => ITEM_CODE_RE.test(c));
+
+          // Кол-во — первое число после кода; если код не распознан, сканируем
+          // от порядкового номера позиции (numIdx), а НЕ от начала строки —
+          // иначе можно случайно подхватить сам порядковый номер как количество.
+          let qty = 1;
+          const scanFrom = (codeIdx >= 0 ? codeIdx : numIdx) + 1;
+          for (let i = scanFrom; i < cells.length; i++) {
+            const n = Number(cells[i]);
+            if (!isNaN(n) && n > 0 && n < 10000 && cells[i] !== '') { qty = n; break; }
+          }
+
+          // Единица измерения — ищем 'шт', 'кг', 'м', 'л' и т.д.
+          const unit = cells.find(c => /^(шт|кг|м|л|компл|пара|упак|шт\.)$/i.test(c)) || 'шт';
+
+          // Цена — число > 1000 (не сумма, поэтому берём меньшее из двух крупных чисел)
+          const prices = cells.map(c => Number(c)).filter(n => n > 1000 && !isNaN(n)).sort((a, b) => a - b);
+          const price = prices[0] || 0;
+
+          // Дата срока (общая для всего документа — берём первую найденную)
+          const dateCell = cells.find(c => /^\d{2}\.\d{2}\.\d{2,4}$/.test(c));
+          if (dateCell && !deadline) deadline = parseDate1C(dateCell);
+
+          // Спецификация из скобок
+          const specsMatch = name.match(/\(([^)]{5,})\)/);
+          const specs = specsMatch ? specsMatch[1] : '';
+          const cleanName = name.replace(/\s*\([^)]*\)\s*/g, ' ').trim();
+
+          if (isProductRow(name)) {
+            // Новое изделие — открываем новую группу вместо перезаписи/слияния с предыдущей
+            currentGroup = { product: cleanName, productCode: code, productQty: Math.round(qty), productSpecs: specs, components: [] };
+            products.push(currentGroup);
+          } else if (cleanName.length > 3) {
+            if (!currentGroup) {
+              // Комплектующая встретилась раньше первого изделия — редкий случай,
+              // создаём безымянную группу-заглушку, чтобы не потерять позицию
+              currentGroup = { product: '', productCode: '', productQty: 1, productSpecs: '', components: [] };
+              products.push(currentGroup);
+            }
+            currentGroup.components.push({ id: uid(), name: cleanName, code, qty: Math.round(qty), unit, price, status: 'pending' });
+          }
+        }
+      });
+
+      if (products.length === 0) {
+        setError('Не найдено основное изделие в файле. Убедитесь что файл содержит котёл или изделие Teplofor.');
+        return;
+      }
+
+      setParsed({ orderNumber, customer, deadline, products });
+      setStep('preview');
+      setError('');
+    } catch (e) {
+      setError('Ошибка чтения файла: ' + e.message);
+    }
+  };
+
+  const handleFile = (file) => {
+    if (!file) return;
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!['xlsx', 'xls'].includes(ext)) {
+      setError('Поддерживаются только файлы Excel (.xlsx, .xls)');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = e => parseExcel(e.target.result);
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault(); setIsDragging(false);
+    handleFile(e.dataTransfer.files[0]);
+  };
+
+  // Определяем тип изделия по названию из 1С (общий хелпер для всех изделий документа)
+  const _productTypes = data.settings?.productTypes || [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }];
+  const _detectProductType = (name) => {
+    const lower = (name || '').toLowerCase();
+    // Ищем совпадение по label (нечувствительно к регистру)
+    for (const pt of _productTypes) {
+      const ptLabel = (pt.label || '').toLowerCase();
+      const keywords = ptLabel.split(/[\s,/]+/).filter(w => w.length > 2);
+      if (keywords.some(kw => lower.includes(kw))) return pt.id;
+    }
+    // Запасные ключевые слова для котлов
+    if (lower.includes('котел') || lower.includes('котёл') || lower.includes('boiler') ||
+        lower.includes('duplex') || lower.includes('teplofor') || lower.includes('lex')) {
+      const boilerId = _productTypes.find(p => p.id === 'boiler' || p.label?.toLowerCase().includes('котел'))?.id;
+      if (boilerId) return boilerId;
+    }
+    // Запасные ключевые слова для БМК
+    if (lower.includes('бмк') || lower.includes('bmk') || lower.includes('блочно')) {
+      const bmkId = _productTypes.find(p => p.id === 'bmk' || p.label?.toLowerCase().includes('бмк'))?.id;
+      if (bmkId) return bmkId;
+    }
+    return _productTypes[0]?.id || 'boiler';
+  };
+
+  // Собирает order/ops/deliveries для одного изделия из parsed.products[i]
+  const buildOrderFromProduct = (p, number) => {
+    const orderId = uid();
+    const productType = _detectProductType(p.product);
+    const stages = (data.productionStages || []).filter(s => !s.productType || s.productType === productType);
+
+    const newOrder = {
+      id: orderId,
+      number,
+      product: p.product,
+      productCode: p.productCode,
+      specs: p.productSpecs,
+      qty: p.productQty,
+      customer: parsed.customer,
+      deadline: parsed.deadline,
+      priority: 'medium',
+      status: 'active',
+      shipped: false,
+      archived: false,
+      createdAt: now(),
+      source: '1c_import',
+      productType,
+      boilerType: (() => {
+        const n = (p.product || '').toLowerCase();
+        if (n.includes('v3') || n.includes('трёхходов') || n.includes('трехходов')) return 'v3d';
+        return 'v2d';
+      })(),
+      powerKw: (() => {
+        // Парсим мощность из specs: '300 кВт, 6 бар' → 300
+        const s = p.productSpecs || '';
+        const m = s.match(/([0-9]+[.,]?[0-9]*)\s*кВт/i);
+        return m ? Number(m[1].replace(',','.')) : 0;
+      })(),
+      components: p.components,
+      isParentOrder: p.productQty > 1,
+    };
+
+    // Если qty = 1 — операции создаём сразу (нет смысла делить)
+    const newOps = p.productQty === 1 ? stages.map(stage => ({
+      id: uid(), orderId, name: stage.name, stageId: stage.id, qty: 1,
+      workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
+      archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null,
+      plannedHours: stage.plannedHours || undefined, drawingUrl: stage.drawingUrl || undefined,
+      requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.toLowerCase().includes('опресс'),
+      requiresPressureTest: stage.name.toLowerCase().includes('опресс'),
+    })) : [];
+
+    // Поставки материалов — всегда у родителя
+    const newDeliveries = [];
+    stages.forEach(stage => {
+      (stage.requiredMaterialIds || []).forEach(matId => {
+        const mat = data.materials?.find(m => m.id === matId);
+        if (!mat) return;
+        newDeliveries.push({
+          id: uid(), orderId, materialId: matId, stageName: stage.name,
+          stageId: stage.id, requiredQty: p.productQty,
+          deliveredQty: 0, unit: mat.unit || 'шт',
+          status: 'pending', createdAt: now(),
+          confirmedAt: null, confirmedBy: null, note: ''
+        });
+      });
+    });
+
+    return { order: newOrder, ops: newOps, deliveries: newDeliveries };
+  };
+
+  const handleCreate = async () => {
+    if (!parsed || !parsed.products?.length) return;
+    const baseNumber = parsed.orderNumber || `1С-${Date.now()}`;
+    const multi = parsed.products.length > 1;
+
+    const built = parsed.products.map((p, i) =>
+      buildOrderFromProduct(p, multi ? `${baseNumber}-${i + 1}` : baseNumber)
+    );
+
+    const d = {
+      ...data,
+      orders: [...data.orders, ...built.map(b => b.order)],
+      ops: [...data.ops, ...built.flatMap(b => b.ops)],
+      materialDeliveries: [...(data.materialDeliveries || []), ...built.flatMap(b => b.deliveries)]
+    };
+
+    await DB.save(d);
+    onUpdate(d);
+    setCreatedCount(built.length);
+
+    const queue = built.filter(b => b.order.qty > 1).map(b => b.order.id);
+    if (queue.length > 0) {
+      setSplitQueue(queue);
+      setSplitIndex(0);
+      setStep('split');
+    } else {
+      const totalOps = built.reduce((s, b) => s + b.ops.length, 0);
+      const totalComp = built.reduce((s, b) => s + (b.order.components?.length || 0), 0);
+      const totalDel = built.reduce((s, b) => s + b.deliveries.length, 0);
+      const msg = multi
+        ? [`${built.length} заказа создано`, `${totalOps} операций`, totalComp > 0 ? `${totalComp} комплектующих` : null, totalDel > 0 ? `${totalDel} поставок материалов` : null].filter(Boolean).join(' · ')
+        : [`Заказ ${built[0].order.number} создан`, `${totalOps} операций`, totalComp > 0 ? `${totalComp} комплектующих` : null, totalDel > 0 ? `${totalDel} поставок материалов` : null].filter(Boolean).join(' · ');
+      addToast(`✓ ${msg}`, 'success');
+      setStep('done');
+      setTimeout(onClose, 1500);
+    }
+  };
+
+  // Вызывается когда SubOrderSplitStep завершил разделение текущего заказа
+  // в очереди — переходим к следующему изделию с qty>1 или закрываем модалку
+  const handleSplitStepDone = () => {
+    if (splitIndex + 1 < splitQueue.length) {
+      setSplitIndex(i => i + 1);
+    } else {
+      addToast('✓ Импорт из 1С завершён', 'success');
+      setStep('done');
+      setTimeout(onClose, 1200);
+    }
+  };
+
+  const S2 = {
+    dropzone: {
+      border: `2px dashed ${isDragging ? AM : 'var(--border,#ddd)'}`,
+      borderRadius: 12, padding: 40, textAlign: 'center',
+      background: isDragging ? AM3 : 'var(--card,#faf9f6)',
+      cursor: 'pointer', transition: 'all .2s'
+    },
+    row: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '0.5px solid var(--border-soft,#ede9e2)', fontSize: 13 },
+    lbl: { fontSize: 11, color: 'var(--muted)', marginBottom: 3 }
+  };
+
+  return h('div', {
+    style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 400, padding: 16 }
+  },
+    h('div', { style: { background: 'var(--card-solid,#fff)', borderRadius: 14, padding: 24, width: 'min(600px, 100%)', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 8px 40px rgba(0,0,0,.22)' } },
+
+      // Шапка
+      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 } },
+        h('div', null,
+          h('div', { style: { fontSize: 18, fontWeight: 600 } }, '📥 Импорт заказа из 1С'),
+          h('div', { style: { fontSize: 12, color: 'var(--muted)', marginTop: 2 } }, 'Excel файл · Заказ покупателя')
+        ),
+        h('button', { onClick: onClose, style: { background: 'none', border: 'none', fontSize: 22, color: 'var(--muted)', cursor: 'pointer' } }, '×')
+      ),
+
+      // ШАГ 1: Загрузка файла
+      step === 'upload' && h('div', null,
+        h('div', {
+          style: S2.dropzone,
+          onDragOver: e => { e.preventDefault(); setIsDragging(true); },
+          onDragLeave: () => setIsDragging(false),
+          onDrop: handleDrop,
+          onClick: () => fileInputRef.current?.click()
+        },
+          h('div', { style: { fontSize: 40, marginBottom: 12 } }, '📊'),
+          h('div', { style: { fontSize: 15, fontWeight: 500, marginBottom: 6 } }, 'Перетащите файл сюда'),
+          h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 16 } }, 'или нажмите для выбора'),
+          h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, 'Поддерживается: .xlsx, .xls (Заказ покупателя из 1С)')
+        ),
+        h('input', { ref: fileInputRef, type: 'file', accept: '.xlsx,.xls', style: { display: 'none' }, onChange: e => handleFile(e.target.files[0]) }),
+        error && h('div', { style: { marginTop: 12, padding: '10px 14px', background: RD3, color: RD2, borderRadius: 8, fontSize: 13 } }, `⚠ ${error}`)
+      ),
+
+      // ШАГ 2: Предпросмотр
+      step === 'preview' && parsed && h('div', null,
+
+        // Общие данные документа
+        h('div', { style: { background: 'var(--bg,#f5f1eb)', borderRadius: 10, padding: '14px 16px', marginBottom: 16 } },
+          h('div', { style: { fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 10 } },
+            parsed.products.length > 1 ? `📋 Заказ покупателя · ${parsed.products.length} изделия` : '📋 Заказ покупателя'
+          ),
+          h('div', { style: S2.row },
+            h('span', { style: S2.lbl }, 'Номер документа 1С'),
+            h('span', { style: { fontWeight: 600, color: AM2 } }, parsed.orderNumber || '—')
+          ),
+          h('div', { style: S2.row },
+            h('span', { style: S2.lbl }, 'Заказчик'),
+            h('span', null, parsed.customer || '—')
+          ),
+          h('div', { style: S2.row },
+            h('span', { style: S2.lbl }, 'Срок'),
+            h('span', { style: { fontWeight: 500, color: parsed.deadline ? RD2 : '#888' } }, parsed.deadline || '—')
+          ),
+          parsed.products.length > 1 && h('div', { style: { marginTop: 8, fontSize: 11, color: AM2 } },
+            `⚠ В документе обнаружено несколько изделий — будет создано ${parsed.products.length} отдельных заказа (${parsed.orderNumber || '—'}-1, -2, …)`
+          )
+        ),
+
+        // Блок по каждому изделию
+        parsed.products.map((p, pi) => h('div', { key: pi, style: { border: `0.5px solid ${AM4}`, borderRadius: 10, padding: '14px 16px', marginBottom: 14 } },
+          h('div', { style: { fontSize: 11, color: AM2, textTransform: 'uppercase', marginBottom: 8, fontWeight: 600 } },
+            parsed.products.length > 1 ? `📦 Изделие ${pi + 1} из ${parsed.products.length}` : '📦 Изделие'
+          ),
+          h('div', { style: S2.row },
+            h('span', { style: S2.lbl }, 'Изделие'),
+            h('span', { style: { fontWeight: 500 } }, p.product || '— не распознано —')
+          ),
+          p.productSpecs && h('div', { style: S2.row },
+            h('span', { style: S2.lbl }, 'Характеристики'),
+            h('span', { style: { color: 'var(--fg-muted)', fontSize: 12 } }, p.productSpecs)
+          ),
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, paddingTop: 8, paddingBottom: p.components.length > 0 ? 12 : 0 } },
+            h('div', null, h('div', { style: S2.lbl }, 'Количество'), h('div', { style: { fontWeight: 500 } }, `${p.productQty} шт`)),
+            h('div', null, h('div', { style: S2.lbl }, 'Код изделия'), h('div', { style: { fontWeight: 500, fontFamily: 'monospace', fontSize: 12 } }, p.productCode || '—'))
+          ),
+
+          // Комплектующие этого изделия
+          p.components.length > 0 && h('div', null,
+            h('div', { style: { fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 8 } },
+              `📦 Комплектующие (${p.components.length} поз.) — статус: ожидаются`
+            ),
+            h('div', { style: { border: '0.5px solid var(--border,#ddd)', borderRadius: 8, overflow: 'hidden' } },
+              h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 } },
+                h('thead', null, h('tr', { style: { background: 'var(--bg,#f5f5f2)' } },
+                  ['Наименование', 'Код', 'Кол-во', 'Ед.'].map((t, i) =>
+                    h('th', { key: i, style: { ...S.th, fontSize: 11 } }, t)
+                  )
+                )),
+                h('tbody', null, p.components.map((c, i) =>
+                  h('tr', { key: i },
+                    h('td', { style: S.td }, c.name),
+                    h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 10, color: 'var(--muted)' } }, c.code || '—'),
+                    h('td', { style: { ...S.td, textAlign: 'center' } }, c.qty),
+                    h('td', { style: { ...S.td, color: 'var(--muted)' } }, c.unit)
+                  )
+                ))
+              )
+            )
+          )
+        )),
+
+        // Что будет создано
+        h('div', { style: { padding: '10px 14px', background: GN3, borderRadius: 8, fontSize: 12, color: GN2, marginBottom: 16 } },
+          h('div', { style: { fontWeight: 500, marginBottom: 4 } }, '✓ Будет создано автоматически:'),
+          h('div', null, parsed.products.length > 1 ? `· ${parsed.products.length} заказа` : `· Заказ ${parsed.orderNumber}`),
+          h('div', null, `· операции по каждому заказу (${(data.productionStages || []).length} этапов на изделие)`),
+          parsed.products.some(p => p.components.length > 0) && h('div', null,
+            `· ${parsed.products.reduce((s, p) => s + p.components.length, 0)} комплектующих всего (статус: ожидаются)`),
+          h('div', { style: { marginTop: 4, color: AM2 } }, '⚠ Отгрузка будет заблокирована до получения всех комплектующих')
+        ),
+
+        // Кнопки
+        h('div', { style: { display: 'flex', gap: 8 } },
+          h('button', { style: { ...abtn({ flex: 1 }), fontSize: 14 }, onClick: handleCreate },
+            parsed.products.length > 1 ? `✓ Создать ${parsed.products.length} заказа` : '✓ Создать заказ'),
+          h('button', { style: gbtn({ flex: 0 }), onClick: () => { setStep('upload'); setParsed(null); } }, '← Назад')
+        )
+      ),
+
+      // ШАГ 3: Разделение на подзаказы (по одному заказу из очереди с qty>1)
+      step === 'split' && splitQueue[splitIndex] && h('div', null,
+        splitQueue.length > 1 && h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 10 } },
+          `Разделение заказа ${splitIndex + 1} из ${splitQueue.length}`
+        ),
+        h(SubOrderSplitStep, {
+          data, onUpdate, addToast,
+          onClose: handleSplitStepDone,
+          parentOrderId: splitQueue[splitIndex],
+          parsed: null,
+        })
+      ),
+
+      step === 'done' && h('div', { style: { textAlign: 'center', padding: 32 } },
+        h('div', { style: { fontSize: 48, marginBottom: 12 } }, '✅'),
+        h('div', { style: { fontSize: 16, fontWeight: 500 } }, createdCount > 1 ? `Заказы созданы (${createdCount})!` : 'Заказ создан!')
+      )
+    )
+  );
+});
+
+// ==================== SubOrderSplitStep ====================
+// Шаг разделения родительского заказа (qty>1) на подзаказы
+// Отображается внутри Import1CModal после создания родительского заказа
+const SubOrderSplitStep = memo(({ data, onUpdate, addToast, onClose, parentOrderId, parsed }) => {
+  const parentOrder = data.orders.find(o => o.id === parentOrderId);
+  const qty = parsed?.productQty || parentOrder?.qty || 1;
+  const baseNumber = parentOrder?.number || '';
+  // Берём productType из parentOrder (уже определён при импорте) или fallback
+  const productType = parentOrder?.productType || data.settings?.productTypes?.[0]?.id || 'boiler';
+  const stages = (data.productionStages || []).filter(s => !s.productType || s.productType === productType);
+
+  // Инициализируем подзаказы: номер авто, шильдик пустой
+  const initSubs = () => Array.from({ length: qty }, (_, i) => ({
+    idx: i,
+    number: `${baseNumber}/${i + 1}`,
+    serialNumber: '',
+  }));
+
+  const [subs, setSubs] = useState(initSubs);
+  const [saving, setSaving] = useState(false);
+
+  const updateSub = (idx, field, value) => {
+    setSubs(prev => prev.map(s => s.idx === idx ? { ...s, [field]: value } : s));
+  };
+
+  const handleSplit = async () => {
+    setSaving(true);
+    try {
+      // Создаём подзаказы с операциями
+      const newOrders = [];
+      const newOps = [];
+
+      subs.forEach(sub => {
+        const subId = uid();
+        newOrders.push({
+          id: subId,
+          number: sub.number.trim() || `${baseNumber}/${sub.idx + 1}`,
+          product: parentOrder.product,
+          productCode: parentOrder.productCode,
+          specs: parentOrder.specs,
+          qty: 1,
+          customer: parentOrder.customer,
+          deadline: parentOrder.deadline,
+          priority: parentOrder.priority || 'medium',
+          status: 'active',
+          shipped: false,
+          archived: false,
+          createdAt: now(),
+          source: parentOrder.source,
+          serialNumber: sub.serialNumber.trim() || '',
+          parentOrderId: parentOrderId,  // ← привязка к родителю
+        });
+
+        stages.forEach(stage => {
+          newOps.push({
+            id: uid(), orderId: subId, name: stage.name, stageId: stage.id, qty: 1,
+            workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
+            archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null,
+            plannedHours: stage.plannedHours || undefined, drawingUrl: stage.drawingUrl || undefined,
+            requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.toLowerCase().includes('опресс'),
+            requiresPressureTest: stage.name.toLowerCase().includes('опресс'),
+          });
+        });
+      });
+
+      const d = {
+        ...data,
+        orders: [...data.orders, ...newOrders],
+        ops: [...data.ops, ...newOps],
+      };
+
+      await DB.save(d);
+      onUpdate(d);
+      addToast(`✓ Создано ${newOrders.length} подзаказов · ${newOps.length} операций`, 'success');
+      onClose();
+    } catch(e) {
+      addToast('Ошибка создания подзаказов: ' + e.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Пропуск разделения: раньше заказ оставался "родителем" без единой операции
+  // и без подзаказов (зависал намертво — ни мастер, ни рабочие его не видели).
+  // Теперь при пропуске создаём операции прямо на самом заказе (как для qty=1),
+  // снимаем флаг isParentOrder, чтобы UI не ждал подзаказов, которых не будет.
+  const handleSkip = async () => {
+    setSaving(true);
+    try {
+      const newOps = stages.map(stage => ({
+        id: uid(), orderId: parentOrderId, name: stage.name, stageId: stage.id, qty,
+        workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
+        archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null,
+        plannedHours: stage.plannedHours || undefined, drawingUrl: stage.drawingUrl || undefined,
+        requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.toLowerCase().includes('опресс'),
+        requiresPressureTest: stage.name.toLowerCase().includes('опресс'),
+      }));
+
+      const d = {
+        ...data,
+        orders: data.orders.map(o => o.id === parentOrderId ? { ...o, isParentOrder: false } : o),
+        ops: [...data.ops, ...newOps],
+      };
+
+      await DB.save(d);
+      onUpdate(d);
+      addToast(`Заказ ${baseNumber} создан без разделения · ${newOps.length} операций`, 'info');
+      onClose();
+    } catch (e) {
+      addToast('Ошибка: ' + e.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return h('div', null,
+    h('div', { style: { background: AM3, border: `0.5px solid ${AM4}`, borderRadius: 10, padding: '12px 16px', marginBottom: 16 } },
+      h('div', { style: { fontSize: 13, fontWeight: 600, color: AM2, marginBottom: 4 } }, `📦 Заказ содержит ${qty} изделия`),
+      h('div', { style: { fontSize: 12, color: AM2 } },
+        `Разделите на подзаказы чтобы присвоить каждому изделию номер шильдика и сформировать отдельный паспорт ГИ.`
+      )
+    ),
+
+    h('div', { style: { border: '0.5px solid var(--border,#ddd)', borderRadius: 8, overflow: 'hidden', marginBottom: 16 } },
+      h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', background: 'var(--bg,#f5f5f2)', padding: '8px 12px', fontSize: 11, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em' } },
+        h('span', null, 'Номер подзаказа'),
+        h('span', null, 'Шильдик (номер изделия)')
+      ),
+      subs.map((sub, i) =>
+        h('div', { key: sub.idx, style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, padding: '8px 12px', borderTop: '0.5px solid var(--border-soft,#eee)', alignItems: 'center' } },
+          h('input', {
+            type: 'text',
+            value: sub.number,
+            onChange: e => updateSub(sub.idx, 'number', e.target.value),
+            style: { ...S.inp, fontSize: 13, padding: '6px 10px' },
+            placeholder: `${baseNumber}/${i + 1}`,
+          }),
+          h('input', {
+            type: 'text',
+            value: sub.serialNumber,
+            onChange: e => updateSub(sub.idx, 'serialNumber', e.target.value),
+            style: { ...S.inp, fontSize: 13, padding: '6px 10px', fontFamily: 'monospace' },
+            placeholder: 'напр. КТ-2025-001',
+          })
+        )
+      )
+    ),
+
+    h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 16 } },
+      '💡 Шильдик можно заполнить позже в карточке каждого подзаказа'
+    ),
+
+    h('div', { style: { display: 'flex', gap: 8 } },
+      h('button', {
+        style: { ...abtn({ flex: 2 }), fontSize: 14 },
+        onClick: handleSplit,
+        disabled: saving,
+      }, saving ? '...' : `✓ Создать ${qty} подзаказа`),
+      h('button', {
+        style: gbtn({ flex: 1 }),
+        onClick: handleSkip,
+        disabled: saving,
+      }, saving ? '...' : 'Пропустить')
+    )
+  );
+});
+
+// ==================== OrderComponentsBlock ====================
+// Блок комплектующих в карточке заказа
+const OrderComponentsBlock = memo(({ order, data, onUpdate, userRole }) => {
+  // Защита: components может быть строкой из Firebase
+  let components = order.components || [];
+  if (typeof components === 'string') {
+    try { components = JSON.parse(components); } catch(e) { components = []; }
+  }
+  if (!Array.isArray(components)) components = [];
+  const confirmed = components.filter(c => c.status === 'confirmed').length;
+  const allOk = confirmed === components.length;
+
+  // Нормализация: components может быть строкой из Firebase
+  const parseComps = (raw) => {
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === 'string') { try { const p = JSON.parse(raw); return Array.isArray(p) ? p : []; } catch(e) { return []; } }
+    return [];
+  };
+
+  const confirmComponent = async (compId) => {
+    if (!onUpdate) return;
+    const updated = {
+      ...data,
+      orders: data.orders.map(o => o.id === order.id ? {
+        ...o,
+        components: parseComps(o.components).map(c =>
+          c.id === compId ? { ...c, status: 'confirmed', confirmedAt: now() } : c
+        )
+      } : o)
+    };
+    await DB.save(updated);
+    onUpdate(updated);
+  };
+
+  const unconfirmComponent = async (compId) => {
+    if (!onUpdate) return;
+    const updated = {
+      ...data,
+      orders: data.orders.map(o => o.id === order.id ? {
+        ...o,
+        components: parseComps(o.components).map(c =>
+          c.id === compId ? { ...c, status: 'pending', confirmedAt: null } : c
+        )
+      } : o)
+    };
+    await DB.save(updated);
+    onUpdate(updated);
+  };
+
+  const confirmAll = async () => {
+    if (!onUpdate) return;
+    const ts = now();
+    const updated = {
+      ...data,
+      orders: data.orders.map(o => o.id === order.id ? {
+        ...o,
+        components: parseComps(o.components).map(c =>
+          c.status === 'confirmed' ? c : { ...c, status: 'confirmed', confirmedAt: ts }
+        )
+      } : o)
+    };
+    await DB.save(updated);
+    onUpdate(updated);
+  };
+
+  const unconfirmAll = async () => {
+    if (!onUpdate) return;
+    const updated = {
+      ...data,
+      orders: data.orders.map(o => o.id === order.id ? {
+        ...o,
+        components: parseComps(o.components).map(c => ({ ...c, status: 'pending', confirmedAt: null }))
+      } : o)
+    };
+    await DB.save(updated);
+    onUpdate(updated);
+  };
+
+  return h('div', { style: { padding: '14px 20px', borderBottom: '0.5px solid rgba(0,0,0,0.06)' } },
+    // Заголовок с прогрессом
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 } },
+      h('div', { style: S.sec }, `📦 Комплектующие`),
+      h('span', { style: {
+        padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 500,
+        background: allOk ? GN3 : AM3,
+        color: allOk ? GN2 : AM2
+      }}, allOk ? `✓ Все получены (${components.length})` : `${confirmed} / ${components.length}`)
+    ),
+
+    // Прогресс-бар
+    h('div', { style: { height: 4, background: 'var(--st-pending-bg)', borderRadius: 3, overflow: 'hidden', marginBottom: 12 } },
+      h('div', { style: { height: '100%', width: `${components.length > 0 ? confirmed/components.length*100 : 0}%`, background: allOk ? GN : AM, borderRadius: 3, transition: 'width .3s' } })
+    ),
+
+    // Кнопки управления
+    onUpdate && userRole !== 'worker' && h('div', { style: { display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' } },
+      !allOk && h('button', {
+        onClick: confirmAll,
+        style: { fontSize: 12, padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontWeight: 500,
+          background: GN3, color: GN2, border: `0.5px solid ${GN}` }
+      }, '✓ Подтвердить всё'),
+      allOk && h('button', {
+        onClick: unconfirmAll,
+        style: { fontSize: 12, padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontWeight: 400,
+          background: 'transparent', color: 'var(--muted)', border: '0.5px solid #ddd' }
+      }, '↩ Снять все подтверждения')
+    ),
+
+    // Если не подтверждены — предупреждение
+    !allOk && h('div', { style: { padding: '8px 12px', background: AM3, borderRadius: 8, marginBottom: 10, fontSize: 12, color: AM2, display: 'flex', alignItems: 'center', gap: 8 } },
+      h('span', { style: { fontSize: 16 } }, '⚠️'),
+      'Отгрузка заблокирована до получения всех комплектующих'
+    ),
+
+    // Таблица комплектующих
+    h('div', { className: 'table-responsive' },
+      h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 } },
+        h('thead', null, h('tr', null,
+          ['Наименование', 'Код', 'Кол-во', 'Ед.', 'Статус', ''].map((t, i) =>
+            h('th', { key: i, style: { ...S.th, fontSize: 11 } }, t)
+          )
+        )),
+        h('tbody', null, components.map(comp => {
+          const isConfirmed = comp.status === 'confirmed';
+          return h('tr', { key: comp.id, style: { background: isConfirmed ? GN3 : 'transparent' } },
+            h('td', { style: { ...S.td, fontWeight: 500, color: isConfirmed ? GN2 : 'var(--fg)' } }, comp.name),
+            h('td', { style: { ...S.td, fontFamily: 'monospace', fontSize: 10, color: 'var(--muted)' } }, comp.code || '—'),
+            h('td', { style: { ...S.td, textAlign: 'center' } }, comp.qty),
+            h('td', { style: { ...S.td, color: 'var(--muted)' } }, comp.unit || 'шт'),
+            h('td', { style: S.td },
+              isConfirmed
+                ? h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 10, background: GN3, color: GN2, fontSize: 11, fontWeight: 500 } },
+                    '✓ Получено',
+                    comp.confirmedAt && h('span', { style: { fontSize: 10, opacity: 0.7 } }, new Date(comp.confirmedAt).toLocaleDateString('ru'))
+                  )
+                : h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 10, background: 'var(--st-pending-bg)', color: 'var(--muted)', fontSize: 11 } },
+                    '⏳ Ожидается'
+                  )
+            ),
+            h('td', { style: { ...S.td, textAlign: 'right' } },
+              onUpdate && userRole !== 'worker' && (
+                isConfirmed
+                  ? h('button', { style: gbtn({ fontSize: 10, padding: '3px 8px' }), onClick: () => unconfirmComponent(comp.id) }, '↩ Отменить')
+                  : h('button', { style: abtn({ fontSize: 10, padding: '3px 8px' }), onClick: () => confirmComponent(comp.id) }, '✓ Получено')
+              ),
+              onUpdate && userRole === 'worker' && h('span', {
+                style: { fontSize: 11, padding: '3px 8px', borderRadius: 6,
+                  color: isConfirmed ? GN2 : '#888',
+                  background: isConfirmed ? GN3 : 'transparent' }
+              }, isConfirmed ? '✓ Получено' : '⏳ Ожидается')
+            )
+          );
+        }))
+      )
+    )
+  );
+});
+
+// Вспомогательная функция маршрутного листа (вынесена наружу для переиспользования)
+
+
+async function generateRouteSheet(order, data) {
+  await ensureCdn('pdfmake');
+  await ensureCdn('vfsFonts');
+  const orderOps = (data?.ops || []).filter(op => op.orderId === order.id && !op.archived);
+  const workerName = (id) => (data?.workers || []).find(w => w.id === id)?.name || '—';
+
+  const docDefinition = {
+    content: [
+      // Шапка
+      { columns: [
+        { width: '*', stack: [
+          { text: 'МАРШРУТНЫЙ ЛИСТ', style: 'header' },
+          { text: `Заказ №: ${order.number}`, style: 'subheader' },
+        ]},
+        { width: 'auto', stack: [
+          { text: `Дата выдачи: ${new Date().toLocaleDateString('ru')}`, fontSize: 9, color: 'var(--fg-muted)' },
+          { text: `Страниц: 1`, fontSize: 9, color: 'var(--fg-muted)' },
+        ], alignment: 'right' }
+      ], margin: [0, 0, 0, 8] },
+      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1 }], margin: [0, 0, 0, 10] },
+
+      // Данные изделия
+      { table: { widths: ['25%','25%','25%','25%'], body: [
+        [
+          { text: 'Изделие:', bold: true, fontSize: 9 }, { text: order.product || '—', fontSize: 9, colSpan: 3 }, {}, {}
+        ],
+        [
+          { text: 'Заказчик:', bold: true, fontSize: 9 }, { text: order.customer || '—', fontSize: 9, colSpan: 3 }, {}, {}
+        ],
+        [
+          { text: 'Количество:', bold: true, fontSize: 9 }, { text: `${order.qty || 1} шт`, fontSize: 9 },
+          { text: 'Срок отгрузки:', bold: true, fontSize: 9 }, { text: order.deadline ? new Date(order.deadline).toLocaleDateString('ru') : '—', fontSize: 9 }
+        ],
+      ]}, layout: 'lightHorizontalLines', margin: [0, 0, 0, 16] },
+
+      // Таблица операций
+      { text: 'ТЕХНОЛОГИЧЕСКИЙ МАРШРУТ', style: 'subheader', margin: [0, 0, 0, 6] },
+      { table: {
+        headerRows: 1,
+        widths: ['auto', '*', 'auto', 'auto', 'auto', 60],
+        body: [
+          [
+            { text: '№', bold: true, fontSize: 9, alignment: 'center' },
+            { text: 'Операция', bold: true, fontSize: 9 },
+            { text: 'Исполнитель', bold: true, fontSize: 9 },
+            { text: 'План. время', bold: true, fontSize: 9, alignment: 'center' },
+            { text: 'Факт. время', bold: true, fontSize: 9, alignment: 'center' },
+            { text: 'Подпись / Дата', bold: true, fontSize: 9, alignment: 'center' }
+          ],
+          ...orderOps.map((op, i) => {
+            const actualH = (op.finishedAt && op.startedAt)
+              ? ((op.finishedAt - op.startedAt) / 3600000).toFixed(1) + ' ч'
+              : '';
+            const workers = (op.workerIds || []).map(id => workerName(id)).filter(Boolean).join(', ');
+            const statusMark = op.status === 'done' ? '✓' : op.status === 'defect' ? '✗' : '';
+            return [
+              { text: String(i + 1), fontSize: 9, alignment: 'center' },
+              { text: op.name, fontSize: 9 },
+              { text: workers || '—', fontSize: 8, color: workers ? '#000' : '#aaa' },
+              { text: op.plannedHours ? `${op.plannedHours} ч` : '—', fontSize: 9, alignment: 'center' },
+              { text: actualH, fontSize: 9, alignment: 'center', color: actualH ? '#333' : '#aaa' },
+              { text: statusMark, fontSize: 14, alignment: 'center', color: op.status === 'done' ? '#2d6a2d' : op.status === 'defect' ? '#a32d2d' : '#aaa' }
+            ];
+          })
+        ]
+      }, layout: {
+        hLineWidth: (i) => i === 0 || i === 1 ? 1 : 0.5,
+        vLineWidth: () => 0.5,
+        hLineColor: () => '#ccc',
+        vLineColor: () => '#ccc',
+      }, margin: [0, 0, 0, 20] },
+
+      // Подписи
+      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, color: '#ccc' }], margin: [0, 0, 0, 10] },
+      { columns: [
+        { width: '33%', stack: [
+          { text: 'Выдал мастер:', fontSize: 9, bold: true },
+          { text: '\n\n_________________________', fontSize: 9 },
+          { text: '(подпись / дата)', fontSize: 8, color: 'var(--muted)', margin: [0, 2, 0, 0] }
+        ]},
+        { width: '33%', stack: [
+          { text: 'Принял рабочий:', fontSize: 9, bold: true },
+          { text: '\n\n_________________________', fontSize: 9 },
+          { text: '(подпись / дата)', fontSize: 8, color: 'var(--muted)', margin: [0, 2, 0, 0] }
+        ]},
+        { width: '34%', stack: [
+          { text: 'Принял ОТК:', fontSize: 9, bold: true },
+          { text: '\n\n_________________________', fontSize: 9 },
+          { text: '(подпись / дата)', fontSize: 8, color: 'var(--muted)', margin: [0, 2, 0, 0] }
+        ]}
+      ]},
+    ],
+    styles: {
+      header:    { fontSize: 16, bold: true, margin: [0, 0, 0, 4] },
+      subheader: { fontSize: 11, bold: true, margin: [0, 4, 0, 4], color: 'var(--fg)' }
+    },
+    defaultStyle: { fontSize: 9 },
+    pageMargins: [36, 36, 36, 36]
+  };
+  pdfMake.createPdf(docDefinition).download(`route_${order.number}.pdf`);
+}
+
+// ==================== ShopMasterScreen (Сменный мастер) ====================
+const ShopMasterScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
+  const [tab, setTab] = useState('ops');
+  const { ask: askConfirm, confirmEl } = useConfirm();
+
+  const activeOps = useMemo(() => data.ops.filter(o => o.status === 'in_progress' && !o.archived), [data.ops]);
+  const pendingOps = useMemo(() => data.ops.filter(o => o.status === 'pending' && !o.archived), [data.ops]);
+  const freeWorkers = useMemo(() => {
+    const busy = new Set(activeOps.flatMap(o => o.workerIds || []));
+    return data.workers.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet) && !busy.has(w.id));
+  }, [data.workers, activeOps]);
+  const alerts = useMemo(() => {
+    const res = [];
+    data.ops.filter(o => o.status === 'defect' && !o.archived).forEach(o => {
+      const order = data.orders.find(x => x.id === o.orderId);
+      res.push({ type: 'defect', text: `Брак: ${o.name}${order ? ` · ${order.number}` : ''}`, id: o.id });
+    });
+    activeOps.forEach(o => {
+      if (o.plannedHours && o.startedAt && (now() - o.startedAt) > o.plannedHours * 3600000 * 1.5) {
+        res.push({ type: 'overtime', text: `Превышение времени: ${o.name}`, id: o.id });
+      }
+    });
+    return res;
+  }, [data.ops, activeOps]);
+
+  const TABS = [['ops','Операции'],['orders','Заказы'],['auxops','Доп. работы'],['journal','Журнал'],['notifications','Уведомления']];
+
+  return h('div', null,
+    confirmEl,
+    h(SectionAnalytics, { section: 'production', data }),
+    // Алерты
+    alerts.length > 0 && h('div', { style: { background: RD3, border: `0.5px solid ${RD}`, borderRadius: 10, padding: '8px 12px', marginBottom: 12 } },
+      h('div', { style: { fontSize: 10, color: RD2, fontWeight: 500, textTransform: 'uppercase', marginBottom: 4 } }, '⚠ Требует внимания'),
+      alerts.map((a, i) => h('div', { key: i, style: { fontSize: 12, color: RD2, marginBottom: 2 } }, a.text))
+    ),
+    // Быстрая сводка
+    h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 8, marginBottom: 14 } },
+      h(MC, { v: activeOps.length, l: 'В работе', c: AM }),
+      h(MC, { v: pendingOps.length, l: 'Ожидают', c: '#0277BD' }),
+      h(MC, { v: freeWorkers.length, l: 'Свободны', c: freeWorkers.length > 0 ? GN : '#888' })
+    ),
+    // Вкладки
+    h(TabBar, { tabs: TABS, tab, setTab }),
+    tab === 'ops'           && h(MasterOps,           { data, onUpdate, addToast, onOrderClick }),
+    tab === 'orders'        && h(MasterOrders,         { data, onUpdate, addToast, onOrderClick }),
+    tab === 'auxops'        && h(AuxOpsViewer,         { data, onUpdate, addToast }),
+    tab === 'journal'       && h(MasterJournal,        { data }),
+    tab === 'notifications' && h(MasterNotifications,  { data })
+  );
+});
+
+// ==================== PDOScreen (ПДО) ====================
+const PDOScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
+  const [tab, setTab] = useState('orders');
+  const TABS = [['orders','Заказы'],['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['plan','План'],['reports','Отчёты'],['auxops','Доп. работы'],['journal','Журнал'],['notifications','Уведомления']];
+
+
+
+  return h('div', null,
+    h(SectionAnalytics, { section: 'production', data }),
+    // Сводка
+    // Сводка перенесена в OrdersDashboard внутри MasterOrders
+    // Вкладки
+    h(TabBar, { tabs: TABS, tab, setTab }),
+    tab === 'orders'        && h(MasterOrders,              { data, onUpdate, addToast, onOrderClick }),
+    tab === 'ops'           && h(MasterOps,                 { data, onUpdate, addToast, onOrderClick }),
+    tab === 'recommend'     && h(AssignmentRecommendations, { data, onUpdate, addToast }),
+    tab === 'kanban'        && h(MasterKanban,              { data, onUpdate, addToast }),
+    tab === 'gantt'         && h(GanttChart,                { data }),
+    tab === 'calendar'      && h(ResourceCalendar,          { data, onUpdate, addToast }),
+    tab === 'plan'          && h(MasterTodayPlan,           { data }),
+    tab === 'reports'       && h(ReportsBuilder,            { data }),
+    tab === 'auxops'        && h(AuxOpsViewer,              { data, onUpdate, addToast }),
+    tab === 'journal'       && h(MasterJournal,             { data }),
+    tab === 'notifications' && h(MasterNotifications,       { data })
+  );
+});
+
+// ==================== DirectorScreen (Руководитель) ====================
+const DirectorScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
+  const [tab, setTab] = useState('overview');
+  const TABS = [['overview','Обзор'],['monthly','Отчёт месяца'],['analytics','Аналитика'],['reports','Отчёты'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['auxops','Доп. работы'],['orders','Заказы'],['kanban','Канбан']];
+
+  const period30 = useMemo(() => Date.now() - 30 * 86400000, [data]); // пересчитывается при обновлении данных
+  const doneOps    = useMemo(() => data.ops.filter(o => o.status === 'done'   && o.finishedAt >= period30).length, [data.ops, period30]);
+  const defectOps  = useMemo(() => data.ops.filter(o => o.status === 'defect' && o.finishedAt >= period30).length, [data.ops, period30]);
+  const quality    = doneOps + defectOps > 0 ? Math.round(doneOps / (doneOps + defectOps) * 100) : 100;
+  const overdue    = useMemo(() => data.orders.filter(o => !o.archived && o.deadline && new Date(o.deadline) < new Date()).length, [data.orders]);
+  const recCount   = useMemo(() => (data.reclamations || []).filter(r => r.status !== 'closed').length, [data.reclamations]);
+  const downtime   = useMemo(() => Math.round(data.events.filter(e => e.type === 'downtime' && e.ts >= period30).reduce((s, e) => s + (e.duration || 0), 0) / 3600000), [data.events, period30]);
+
+  // Топ проблем для обзора
+  const topIssues = useMemo(() => {
+    const issues = [];
+    const wmap = {};
+    data.ops.filter(o => o.status === 'defect' && o.finishedAt >= period30).forEach(o => {
+      (o.workerIds||[]).forEach(wid => { wmap[wid] = (wmap[wid]||0)+1; });
+    });
+    const topWorker = Object.entries(wmap).sort((a,b)=>b[1]-a[1])[0];
+    if (topWorker) {
+      const w = data.workers.find(x=>x.id===topWorker[0]);
+      if (w) issues.push({ title:`Брак: ${w.name.split(' ')[0]}`, sub:`${topWorker[1]} случаев за 30 дней`, sev:'high', tab:'analytics' });
+    }
+    // Просроченные заказы
+    if (overdue > 0) issues.push({ title:`Просрочено заказов: ${overdue}`, sub:'требуют немедленного внимания', sev:'critical', tab:'orders' });
+    // Рекламации
+    if (recCount > 0) issues.push({ title:`Рекламации: ${recCount}`, sub:'открытых и в работе', sev: recCount > 3 ? 'high' : 'medium', tab:'reclamations' });
+    return issues;
+  }, [data, overdue, recCount]);
+
+  const sevColor = { critical: RD2, high: AM4, medium: '#888' };
+  const sevBg    = { critical: RD3,  high: AM3,  medium: '#f5f5f2' };
+
+  // Доп. метрики для bento
+  const inProgress  = useMemo(() => data.ops.filter(o => o.status === 'in_progress').length, [data.ops]);
+  const activeOrders = useMemo(() => data.orders.filter(o => !o.archived && !o.shipped).length, [data.orders]);
+  const workerCount  = useMemo(() => data.workers.filter(w => !w.archived).length, [data.workers]);
+
+  return h('div', null,
+    h(SectionAnalytics, { section: 'production', data }),
+
+    // ── Bento grid ──────────────────────────────────────────────────────
+    tab === 'overview' && h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gridTemplateRows:'auto auto', gap:10, marginBottom:16 } },
+
+      // Качество — большая карточка (2×2)
+      h('div', { style:{ gridColumn:'1/3', gridRow:'1/3', background:'var(--card)', border:`0.5px solid ${quality>=95?GN:quality>=85?AM:RD}`, borderRadius:16, padding:'20px 20px 16px', display:'flex', flexDirection:'column', justifyContent:'space-between', cursor:'pointer' }, onClick:()=>setTab('analytics') },
+        h('div', { style:{ fontSize:11, fontWeight:600, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'0.08em' } }, 'Качество продукции'),
+        h('div', { style:{ fontSize:52, fontWeight:600, letterSpacing:'-2px', color: quality>=95?GN:quality>=85?AM:RD, lineHeight:1 } }, `${quality}%`),
+        h('div', { style:{ fontSize:12, color:'var(--muted)' } }, `${doneOps} выполнено · ${defectOps} брака за 30 дней`)
+      ),
+
+      // Просрочено
+      h('div', { style:{ background:'var(--card)', border:`0.5px solid ${overdue>0?RD:'var(--border)'}`, borderRadius:16, padding:'14px 16px', cursor:'pointer', display:'flex', flexDirection:'column', gap:6 }, onClick:()=>setTab('orders') },
+        h('div', { style:{ fontSize:11, fontWeight:600, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'0.08em' } }, 'Просрочено'),
+        h('div', { style:{ fontSize:32, fontWeight:600, color: overdue>0?RD:GN, letterSpacing:'-1px', lineHeight:1 } }, overdue),
+        h('div', { style:{ fontSize:11, color:'var(--muted)' } }, 'заказов')
+      ),
+
+      // В работе
+      h('div', { style:{ background:'var(--card)', border:'0.5px solid var(--border)', borderRadius:16, padding:'14px 16px', display:'flex', flexDirection:'column', gap:6 } },
+        h('div', { style:{ fontSize:11, fontWeight:600, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'0.08em' } }, 'Операций'),
+        h('div', { style:{ fontSize:32, fontWeight:600, color: AM2, letterSpacing:'-1px', lineHeight:1 } }, inProgress),
+        h('div', { style:{ fontSize:11, color:'var(--muted)' } }, 'в работе сейчас')
+      ),
+
+      // Рекламации
+      h('div', { style:{ background: recCount>0?AM3:'var(--card)', border:`0.5px solid ${recCount>0?AM4:'var(--border)'}`, borderRadius:16, padding:'14px 16px', cursor: recCount>0?'pointer':'default', display:'flex', flexDirection:'column', gap:6 }, onClick:()=>recCount>0&&setTab('reclamations') },
+        h('div', { style:{ fontSize:11, fontWeight:600, color: recCount>0?AM2:'var(--muted)', textTransform:'uppercase', letterSpacing:'0.08em' } }, 'Рекламации'),
+        h('div', { style:{ fontSize:32, fontWeight:600, color: recCount>0?AM2:GN, letterSpacing:'-1px', lineHeight:1 } }, recCount),
+        h('div', { style:{ fontSize:11, color: recCount>0?AM2:'var(--muted)' } }, 'открытых')
+      ),
+
+      // Простои
+      h('div', { style:{ gridColumn:'3/5', background: downtime>8?RD3:'var(--card)', border:`0.5px solid ${downtime>8?RD:'var(--border)'}`, borderRadius:16, padding:'14px 16px', display:'flex', alignItems:'center', gap:16 } },
+        h('div', null,
+          h('div', { style:{ fontSize:11, fontWeight:600, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:4 } }, 'Простоев за месяц'),
+          h('div', { style:{ fontSize:28, fontWeight:600, color: downtime>8?RD2:'var(--fg)', letterSpacing:'-1px' } }, `${downtime}ч`)
+        ),
+        h('div', { style:{ flex:1 } }),
+        h('div', { style:{ textAlign:'right' } },
+          h('div', { style:{ fontSize:11, color:'var(--muted)', marginBottom:4 } }, 'Заказов / Сотрудников'),
+          h('div', { style:{ fontSize:16, fontWeight:500, color:'var(--fg)' } }, `${activeOrders} / ${workerCount}`)
+        )
+      )
+    ),
+
+    // Топ проблем под bento (только overview)
+    tab === 'overview' && topIssues.length > 0 && h('div', { style:{ marginBottom:14 } },
+      h('div', { style:{ fontSize:12, fontWeight:600, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:8 } }, 'Требует внимания'),
+      topIssues.map((issue, i) => h('div', { key:i,
+          style:{ background: sevBg[issue.sev], border:`0.5px solid ${sevColor[issue.sev]}`, borderRadius:10, padding:'10px 14px', marginBottom:6, cursor: issue.tab?'pointer':'default', display:'flex', alignItems:'center', justifyContent:'space-between' },
+          onClick: () => issue.tab && setTab(issue.tab)
+        },
+        h('div', null,
+          h('div', { style:{ fontSize:13, fontWeight:500, color: sevColor[issue.sev] } }, issue.title),
+          h('div', { style:{ fontSize:11, color: sevColor[issue.sev], marginTop:2 } }, issue.sub)
+        ),
+        issue.tab && h('span', { style:{ fontSize:18, color: sevColor[issue.sev], opacity:0.6 } }, '›')
+      ))
+    ),
+
+    // Вкладки
+    h(TabBar, { tabs: TABS, tab, setTab }),
+    tab === 'analytics'    && h(AnalyticsDashboard, { data }),
+    tab === 'reports'      && h(ReportsBuilder,     { data }),
+    tab === 'monthly'      && h(MonthlyReport,       { data }),
+    tab === 'kpi'          && h(KPIReport,           { data }),
+    tab === 'reclamations' && h(MasterReclamations,  { data, onUpdate, addToast }),
+    tab === 'auxops'       && h(AuxOpsViewer,        { data, onUpdate, addToast }),
+    tab === 'orders'       && h(MasterOrders,        { data, onUpdate, addToast, onOrderClick }),
+    tab === 'kanban'       && h(MasterKanban,        { data, onUpdate, addToast })
+  );
+});
+
+// ==================== HRScreen (HR / Отдел кадров) ====================
+const HRScreen = memo(({ data, onUpdate, addToast }) => {
+  const [tab, setTab] = useState('workers');
+  const TABS = [
+    ['workers','Сотрудники'],['time','Табель'],
+    ['instructions','Инструктажи ОТ'],['vacations','Отпуска'],
+    ['kpi','KPI / Премии'],['rates','🔧 Расценки'],['payroll','💰 Зарплата'],['reports','Отчёты']
+  ];
+
+  const active = useMemo(() => data.workers.filter(w => !w.archived), [data.workers]);
+
+  // Алерты ОТ
+  const instrAlerts = useMemo(() => {
+    const instructions = data.instructions || [];
+    let expired = 0, expiring = 0;
+    active.forEach(w => {
+      ['workplace','fire','electrical'].forEach(type => {
+        const last = instructions.filter(i => i.workerId === w.id && i.type === type).sort((a,b) => b.dateMs - a.dateMs)[0];
+        if (!last || !last.nextDate) return;
+        const days = Math.ceil((last.nextDate - Date.now()) / 86400000);
+        if (days < 0) expired++;
+        else if (days <= 30) expiring++;
+      });
+    });
+    return { expired, expiring };
+  }, [data.instructions, active]);
+
+  return h('div', null,
+    // SectionAnalytics только на вкладке сотрудников
+    tab === 'workers' && h(SectionAnalytics, { section: 'hr', data }),
+    // Алерт ОТ
+    (instrAlerts.expired > 0 || instrAlerts.expiring > 0) && h('div', { style:{ background: instrAlerts.expired>0 ? '#FCEBEB' : AM3, border:`0.5px solid ${instrAlerts.expired>0 ? RD : AM4}`, borderRadius:8, padding:'8px 12px', marginBottom:12, fontSize:12, color: instrAlerts.expired>0 ? RD2 : AM2, cursor:'pointer' }, onClick:()=>setTab('instructions') },
+      instrAlerts.expired > 0 && `⚠ ${instrAlerts.expired} инструктажей просрочено`,
+      instrAlerts.expired > 0 && instrAlerts.expiring > 0 && ' · ',
+      instrAlerts.expiring > 0 && `${instrAlerts.expiring} истекают в ближайшие 30 дней`,
+      h('span', { style:{ marginLeft:8, textDecoration:'underline' } }, '→ к журналу')
+    ),
+    h(TabBar, { tabs: TABS, tab, setTab }),
+    tab === 'workers'      && h(MasterWorkers,         { data, onUpdate, addToast }),
+    tab === 'time'         && h(MasterTimeTracking,    { data, onUpdate, addToast, onWorkerClick: (wid) => setTab('workers') }),
+    tab === 'instructions' && h(InstructionsTracker,   { data, onUpdate, addToast }),
+    tab === 'vacations'    && h(VacationPlanner,       { data, onUpdate, addToast }),
+    tab === 'kpi'          && h(KPIReport,             { data }),
+    tab === 'rates'        && h(React.Fragment, null,
+      h(PieceworkRatesEditor, { data, onUpdate, addToast }),
+      h(ExtraWorksEditor,     { data, onUpdate, addToast })
+    ),
+    tab === 'payroll'      && h(PayrollExport,          { data }),
+    tab === 'reports'      && h(ReportsBuilder,        { data })
+  );
+});
+
+// ==================== AdminScreen (Администратор) ====================
+const AdminScreen = memo(({ data, onUpdate, addToast }) => {
+  const [tab, setTab] = useState('stages');
+  const TABS = [
+    ['stages','Этапы'],['defectReasons','Причины брака'],['downtimes','Простои'],
+    ['equipment','Оборудование'],['materials','Материалы'],['bom','Спецификации'],
+    ['sections','Участки'],['workers','Сотрудники'],['time','Табель'],['admin','Настройки']
+  ];
+
+  return h('div', null,
+    h('div', { style:{ ...S.card, background: AM3, border:`0.5px solid ${AM4}`, padding:'10px 14px', marginBottom:14 } },
+      h('div', { style:{ fontSize:13, fontWeight:500, color:AM2 } }, '⚙ Администратор — настройка системы'),
+      h('div', { style:{ fontSize:11, color:AM4, marginTop:2 } }, 'Справочники, оборудование, этапы производства, PIN-коды ролей')
+    ),
+    h(TabBar, { tabs: TABS, tab, setTab }),
+    tab === 'stages'        && h(MasterProductionStages, { data, onUpdate, addToast }),
+    tab === 'defectReasons' && h(MasterDefectReasons,    { data, onUpdate, addToast }),
+    tab === 'downtimes'     && h(MasterDowntimes,        { data, onUpdate, addToast }),
+    tab === 'equipment'     && h(MasterEquipment,        { data, onUpdate, addToast }),
+    tab === 'materials'     && h(MasterMaterials,        { data, onUpdate, addToast }),
+    tab === 'bom'           && h(MasterBOM,              { data, onUpdate, addToast }),
+    tab === 'sections'      && h(MasterSections, { data, onUpdate, addToast }),
+    tab === 'workers'       && h(MasterWorkers,          { data, onUpdate, addToast }),
+    tab === 'time'          && h(MasterTimeTracking,     { data, onUpdate, addToast, onWorkerClick: (wid) => setTab('workers') }),
+    tab === 'admin'         && h(MasterAdmin,            { data, onUpdate, addToast })
+  );
+});
+
+
+
+// ==================== App ====================
+// ==================== SalesScreen — менеджер по продажам (только просмотр) ====================
+const SalesScreen = memo(({ data, addToast, onOrderClick }) => {
+  const [search, setSearch]       = useState('');
+  const [filterType, setFilterType] = useState('all');
+  const [sortMode, setSortMode]   = useState('urgency');
+
+  const PRIORITY_LABEL = { critical:'Критический', high:'Высокий', medium:'Средний', low:'Низкий' };
+  const STATUS_COLOR   = { shipped: GN2, done: GN2, active: AM2, waiting: '#888' };
+
+  const orders = useMemo(() => {
+    let list = data.orders.filter(o => !o.archived);
+    if (filterType !== 'all') list = list.filter(o => o.productType === filterType);
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      list = list.filter(o =>
+        (o.number||'').toLowerCase().includes(q) ||
+        (o.product||'').toLowerCase().includes(q) ||
+        (o.customer||'').toLowerCase().includes(q)
+      );
+    }
+    if (sortMode === 'urgency') {
+      const pri = { critical:0, high:1, medium:2, low:3 };
+      list = [...list].sort((a,b) => {
+        const da = a.deadline ? new Date(a.deadline) : new Date('2099-01-01');
+        const db = b.deadline ? new Date(b.deadline) : new Date('2099-01-01');
+        return da - db || (pri[a.priority]??2) - (pri[b.priority]??2);
+      });
+    } else if (sortMode === 'deadline') {
+      list = [...list].sort((a,b) => {
+        const da = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+        const db = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+        return da - db;
+      });
+    }
+    return list;
+  }, [data.orders, search, filterType, sortMode]);
+
+  const productTypes = useMemo(() => {
+    const types = [...new Set(data.orders.filter(o=>o.productType).map(o=>o.productType))];
+    return types;
+  }, [data.orders]);
+
+  const getOrderStatus = (order) => {
+    if (order.shipped)  return { label:'Отгружен', color: GN2, bg: GN3 };
+    const ops = data.ops.filter(o => o.orderId === order.id && !o.archived);
+    if (ops.length === 0) return { label:'Ожидает', color:'var(--muted)', bg:'var(--st-pending-bg)' };
+    const done = ops.filter(o => o.status === 'done').length;
+    if (done === ops.length) return { label:'Выполнен', color: GN2, bg: GN3 };
+    const inProgress = ops.some(o => o.status === 'in_progress');
+    if (inProgress) return { label:'В работе', color: AM2, bg: AM3 };
+    return { label:'Ожидает', color:'var(--muted)', bg:'var(--st-pending-bg)' };
+  };
+
+  const getProgress = (order) => {
+    const ops = data.ops.filter(o => o.orderId === order.id && !o.archived);
+    if (!ops.length) return { done: 0, total: 0, pct: 0 };
+    const done = ops.filter(o => o.status === 'done').length;
+    return { done, total: ops.length, pct: done / ops.length };
+  };
+
+  const getDaysLeft = (deadline) => {
+    if (!deadline) return null;
+    return Math.ceil((new Date(deadline) - Date.now()) / 86400000);
+  };
+
+  // Итоги
+  const stats = useMemo(() => ({
+    total:    data.orders.filter(o => !o.archived).length,
+    shipped:  data.orders.filter(o => !o.archived && o.shipped).length,
+    inWork:   data.orders.filter(o => !o.archived && !o.shipped && data.ops.some(op => op.orderId === o.id && op.status === 'in_progress')).length,
+    overdue:  data.orders.filter(o => !o.archived && !o.shipped && o.deadline && new Date(o.deadline) < new Date()).length,
+  }), [data.orders, data.ops]);
+
+  return h('div', { style: { padding: '0 0 40px' } },
+
+    // KPI плитки
+    h('div', { style: { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10, marginBottom:16, padding:'0 0' } },
+      [
+        { label:'Всего заказов',  val: stats.total,   color:'var(--fg,#222)' },
+        { label:'В работе',       val: stats.inWork,   color: AM2 },
+        { label:'Отгружено',      val: stats.shipped,  color: GN2 },
+        { label:'Просрочено',     val: stats.overdue,  color: RD2 },
+      ].map(({ label, val, color }) =>
+        h('div', { key:label, style: { ...S.card, textAlign:'center', padding:'12px 8px' } },
+          h('div', { style: { fontSize:26, fontWeight:600, color } }, val),
+          h('div', { style: { fontSize:11, color:'var(--muted)', marginTop:2 } }, label)
+        )
+      )
+    ),
+
+    // Поиск + фильтры
+    h('div', { style: { ...S.card, marginBottom:12, padding:'10px 14px', display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' } },
+      h('input', { placeholder:'🔍 Поиск по номеру, изделию, заказчику...', value:search,
+        onChange: e => setSearch(e.target.value),
+        style: { ...S.inp, flex:1, minWidth:200, margin:0 } }),
+      h('select', { value:filterType, onChange:e=>setFilterType(e.target.value),
+        style: { ...S.inp, width:'auto', margin:0, cursor:'pointer' } },
+        h('option', { value:'all' }, 'Все типы'),
+        productTypes.map(t => h('option', { key:t, value:t }, t))
+      ),
+      h('div', { style: { display:'flex', borderRadius:8, overflow:'hidden', border:`0.5px solid var(--border)` } },
+        [['urgency','🔥 По сроку'],['deadline','📅 По дате']].map(([m,l]) =>
+          h('button', { key:m, style: sortMode===m ? abtn({fontSize:11,padding:'6px 12px',borderRadius:0,border:'none'}) : gbtn({fontSize:11,padding:'6px 12px',borderRadius:0,border:'none'}),
+            onClick:()=>setSortMode(m) }, l)
+        )
+      )
+    ),
+
+    // Таблица заказов
+    h('div', { style: S.card },
+      orders.length === 0
+        ? h(EmptyState, { icon:'📋', title:'Заказов не найдено', desc:'Попробуйте изменить фильтры' })
+        : h('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:13 } },
+            h('thead', null,
+              h('tr', null,
+                ['Номер','Изделие','Заказчик','Тип','Кол-во','Срок','Прогресс','Статус'].map(col =>
+                  h('th', { key:col, style:{ textAlign:'left', padding:'8px 10px', fontSize:10,
+                    fontWeight:600, letterSpacing:'0.06em', textTransform:'uppercase',
+                    color:'var(--muted)', borderBottom:`0.5px solid var(--border)` } }, col)
+                )
+              )
+            ),
+            h('tbody', null, orders.map(order => {
+              const status  = getOrderStatus(order);
+              const prog    = getProgress(order);
+              const days    = getDaysLeft(order.deadline);
+              const isLate  = days !== null && days < 0;
+              const isUrgent= days !== null && days <= 3 && days >= 0;
+
+              return h('tr', { key:order.id,
+                style:{ borderBottom:`0.5px solid var(--border-soft)`, cursor:'pointer',
+                  background: isLate ? RD3 : 'transparent' },
+                onClick: () => onOrderClick && onOrderClick(order.id),
+                onMouseEnter: e => e.currentTarget.style.background = isLate ? RD3 : 'var(--bg,#f9f9f7)',
+                onMouseLeave: e => e.currentTarget.style.background = isLate ? RD3 : 'transparent',
+              },
+                h('td', { style:{ padding:'10px 10px', fontWeight:500, color: AM2 } }, order.number),
+                h('td', { style:{ padding:'10px 10px', maxWidth:220 } },
+                  h('div', { style:{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, order.product||'—'),
+                  order.specs && h('div', { style:{ fontSize:11, color:'var(--muted)' } }, order.specs)
+                ),
+                h('td', { style:{ padding:'10px 10px', fontSize:12, color:'var(--muted)', maxWidth:160 } },
+                  h('div', { style:{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, order.customer||'—')
+                ),
+                h('td', { style:{ padding:'10px 10px', fontSize:12, color:'var(--muted)' } }, order.productType||'—'),
+                h('td', { style:{ padding:'10px 10px', textAlign:'center' } }, order.qty||1),
+                h('td', { style:{ padding:'10px 10px', whiteSpace:'nowrap' } },
+                  order.deadline
+                    ? h('div', null,
+                        h('div', { style:{ fontSize:12, fontWeight: isLate||isUrgent ? 600 : 400,
+                          color: isLate ? RD2 : isUrgent ? AM2 : 'var(--fg)' } }, order.deadline),
+                        h('div', { style:{ fontSize:11, color: isLate ? RD2 : isUrgent ? AM2 : 'var(--muted)' } },
+                          isLate ? `просрочен ${Math.abs(days)} дн.` : `осталось ${days} дн.`)
+                      )
+                    : h('span', { style:{ color:'var(--muted)', fontSize:12 } }, '—')
+                ),
+                h('td', { style:{ padding:'10px 10px', minWidth:120 } },
+                  prog.total > 0 && h('div', null,
+                    h('div', { style:{ height:5, background:'#eee', borderRadius:3, overflow:'hidden', marginBottom:3 } },
+                      h('div', { style:{ height:'100%', borderRadius:3, width:`${prog.pct*100}%`,
+                        background: prog.pct>=1 ? GN : prog.pct>=0.5 ? AM : '#378ADD' } })
+                    ),
+                    h('div', { style:{ fontSize:11, color:'var(--muted)' } }, `${prog.done}/${prog.total} оп.`)
+                  )
+                ),
+                h('td', { style:{ padding:'10px 10px' } },
+                  h('span', { style:{ fontSize:11, padding:'3px 10px', borderRadius:10,
+                    background: status.bg, color: status.color, fontWeight:500 } }, status.label)
+                )
+              );
+            }))
+          )
+    )
+  );
+});
+
+
+function App() {
+  const [data, setData] = useState(EMPTY_DATA);
+  const [loading, setLoading] = useState(true);
+  const [synced, setSynced] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [role, setRole] = useState(null);
+  const [greetingKey, setGreetingKey] = React.useState(0); // меняется при каждом входе
+  const [workerId, setWorkerId] = useState(null);
+  const [sectionId, setSectionId] = useState(null);
+  const [initialOpId, setInitialOpId] = useState(null);
+  const [receiveDeliveryId, setReceiveDeliveryId] = useState(null);
+  const [theme, setTheme] = useTheme();
+  const [showChat, setShowChat] = useState(false);
+  const [showWarehouse, setShowWarehouse] = useState(false);
+  const [toasts, setToasts] = useState([]);
+  const [selectedOrderId, setSelectedOrderId] = useState(null);
+  const [selectedWorkerId, setSelectedWorkerId] = useState(null);
+  const savingRef = useRef(false);
+  const [showPalette, setShowPalette] = useState(false);
+
+  // Cmd+K / Ctrl+K открывает палитру
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setShowPalette(v => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  useEffect(() => {
+    // Таймаут 8с: если Firebase не ответил — DB.load() сам вернёт localStorage кеш
+    const loadWithTimeout = Promise.race([
+      DB.load(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+    ]).catch(async e => {
+      console.warn('Firebase timeout/error — загружаем из localStorage кеша');
+      return DB.load(); // DB.load() при офлайне вернёт localStorage кеш
+    });
+
+    loadWithTimeout.then(async d => {
+      if (!d) { setLoading(false); setSynced(false); return; }
+      // П.9: Автоархивация — заказы, все операции которых завершены более 30 дней назад
+      const threshold = now() - 30 * 86400000;
+      let archiveCount = 0;
+      const updated = { ...d, orders: d.orders.map(order => {
+        if (order.archived) return order;
+        const orderOps = d.ops.filter(op => op.orderId === order.id);
+        if (orderOps.length === 0) return order;
+        const allDone = orderOps.every(op => op.status === 'done' || op.status === 'defect');
+        const lastFinished = orderOps.length > 0 ? Math.max(...orderOps.map(op => op.finishedAt || 0)) : 0;
+        if (allDone && lastFinished > 0 && lastFinished < threshold) { archiveCount++; return { ...order, archived: true, autoArchived: true }; }
+        return order;
+      })};
+      if (archiveCount > 0) { await DB.save(updated); console.log(`Автоархивация: ${archiveCount} заказов`); }
+      const _finalD = archiveCount > 0 ? updated : d; setData(_finalD); window.__MES = _finalD;
+      setLoading(false); setSynced(true);
+    }).catch(e => { console.error('DB.load error:', e); setData(EMPTY_DATA); setLoading(false); setSynced(false); });
+    const unsub = DB.onSnapshot(newData => { if (!savingRef.current && !DB._saving) { setData(newData); window.__MES = newData; } });
+    const params = new URLSearchParams(window.location.search);
+    const opId = params.get('opId');
+    if (opId) setInitialOpId(opId);
+    // QR-приёмка материала: ?receive=deliveryId
+    const receiveId = params.get('receive');
+    if (receiveId) setReceiveDeliveryId(receiveId);
+    // QR-бирка заказа: ?order=orderId — открыть карточку заказа
+    const orderId = params.get('order');
+    if (orderId) setSelectedOrderId(orderId);
+    if ("Notification" in window && Notification.permission !== "denied") { Notification.requestPermission().catch(() => {}); }
+
+    // Защита от двух вкладок: при открытии второй вкладки — предупреждение
+    let bc;
+    try {
+      bc = new BroadcastChannel('prod_app_tab');
+      bc.postMessage({ type: 'tab_open', ts: Date.now() });
+      bc.onmessage = (e) => {
+        if (e.data?.type === 'tab_open') {
+          // Другая вкладка открылась — показываем предупреждение
+          addToast('⚠ Приложение открыто в другой вкладке. Работа в двух вкладках может привести к конфликту данных.', 'error');
+        }
+      };
+    } catch(e) { /* BroadcastChannel не поддерживается */ }
+
+    return () => {
+      unsub();
+      if (bc) bc.close();
+    };
+  }, []);
+
+  const save = useCallback((d) => {
+    savingRef.current = true;
+    setData(d);
+    setIsSaving(true);
+    DB.save(d).then(() => {
+      // savingRef остаётся true пока Firebase не подтвердит запись
+      // Сбрасываем с небольшой задержкой чтобы onSnapshot успел обработаться
+      setTimeout(() => {
+        savingRef.current = false;
+        setIsSaving(false);
+      }, 300);
+    });
+  }, []);
+
+  // Мониторинг ошибок сохранения
+  useEffect(() => {
+    const check = setInterval(() => {
+      if (DB._lastError) {
+        const err = DB._lastError;
+        DB._lastError = null;
+        setToasts(prev => [...prev, { id: Date.now(), message: `⚠ Ошибка сохранения: ${err}`, type: 'error' }]);
+      }
+    }, 3000);
+    return () => clearInterval(check);
+  }, []);
+
+  // ==================== ВАРИАНТ А + Б: Уведомления ОТК ====================
+  const prevOnCheckIds = useRef(new Set());
+  useEffect(() => {
+    const currentOnCheck = new Set(data.ops.filter(o => o.status === 'on_check' && !o.archived).map(o => o.id));
+    // Найти новые операции которые только что перешли в on_check
+    const newOps = [...currentOnCheck].filter(id => !prevOnCheckIds.current.has(id));
+    if (newOps.length > 0 && prevOnCheckIds.current.size > 0) { // size > 0 чтобы не срабатывать при первой загрузке
+      newOps.forEach(opId => {
+        const op = data.ops.find(o => o.id === opId);
+        const order = data.orders.find(o => o.id === op?.orderId);
+        const msg = `🔍 На контроль: ${op?.name || '?'} · ${order?.number || '?'}`;
+
+        // А: Звук уведомления
+        try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.frequency.setValueAtTime(880, ctx.currentTime);
+          osc.frequency.setValueAtTime(660, ctx.currentTime + 0.1);
+          gain.gain.setValueAtTime(0.3, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + 0.4);
+        } catch(e) {}
+
+        // А: Toast уведомление в интерфейсе
+        setToasts(prev => [...prev, { id: Date.now() + Math.random(), message: msg, type: 'info' }]);
+
+        // Б: Web Push уведомление (если разрешено)
+        if ('Notification' in window && Notification.permission === 'granted') {
+          try {
+            new Notification('ОТК — Новая операция на контроле', {
+              body: `${op?.name || '?'} · Заказ ${order?.number || '?'}`,
+              icon: '/teploros-production/icon-192.png',
+              badge: '/teploros-production/icon-192.png',
+              tag: `qc-${opId}`,
+              requireInteraction: true // уведомление не исчезает само
+            });
+          } catch(e) {}
+        }
+
+        // Б: Если Push не разрешён — запросить разрешение
+        if ('Notification' in window && Notification.permission === 'default') {
+          Notification.requestPermission().then(p => {
+            if (p === 'granted') addToast('✓ Push-уведомления ОТК включены', 'success');
+          });
+        }
+      });
+    }
+    prevOnCheckIds.current = currentOnCheck;
+  }, [data.ops]);
+
+  const goBack = () => { setRole(null); setWorkerId(null); setSectionId(null); setInitialOpId(null); setShowChat(false); window.history.replaceState({}, '', window.location.pathname); };
+  const addToast = useCallback((message, type = 'info', action = null) => {
+    const id = Date.now() + Math.random();
+    setToasts(prev => [...prev, { id, message, type, action }]);
+  }, []);
+  const removeToast = useCallback(id => setToasts(prev => prev.filter(t => t.id !== id)), []);
+
+  // Сброс PIN через мастер-ключ (вызывается из LoginScreen)
+  const handleResetPin = useCallback(async (targetWorkerId, newPin) => {
+    const d = { ...data, workers: data.workers.map(w => w.id === targetWorkerId ? { ...w, pin: hashPin(newPin) } : w) };
+    await DB.save(d);
+    setData(d);
+  }, [data]);
+
+  // Определяем «настоящую» роль для рендера — chat_master и chat_controller рендерятся как чат
+  const effectiveRole = role === 'chat_master' || role === 'chat_controller' ? 'chat' : role;
+
+  // Ленивая подгрузка office/field бандла (аудит, perf) — см. core.js: BUNDLES/ensureBundleLoaded.
+  // 'chat' не нуждается ни в одном из бандлов — ChatScreen живёт в chat.js, грузится статически.
+  const [bundleReady, setBundleReady] = useState(false);
+  const [bundleError, setBundleError] = useState(null);
+  useEffect(() => {
+    if (!effectiveRole || effectiveRole === 'chat') return;
+    let cancelled = false;
+    setBundleReady(false);
+    setBundleError(null);
+    ensureBundleLoaded(bundleForRole(effectiveRole))
+      .then(() => { if (!cancelled) setBundleReady(true); })
+      .catch(err => { console.error('Bundle load error:', err); if (!cancelled) setBundleError(err.message); });
+    return () => { cancelled = true; };
+  }, [effectiveRole]);
+
+  // Цветовое зонирование по роли — меняем CSS переменные
+  useEffect(() => {
+    const ROLE_THEMES = {
+      worker:      { brand: '#EF9F27', brandInk: '#412402', brandSoft: '#fdf3e0', brandPress: '#d88a17' }, // тёплый янтарь
+      master:      { brand: '#1D6FA4', brandInk: '#0a2a40', brandSoft: '#e6f1fb', brandPress: '#155d8a' }, // синий — контроль
+      shop_master: { brand: '#1D6FA4', brandInk: '#0a2a40', brandSoft: '#e6f1fb', brandPress: '#155d8a' },
+      pdo:         { brand: '#1D6FA4', brandInk: '#0a2a40', brandSoft: '#e6f1fb', brandPress: '#155d8a' },
+      director:    { brand: '#5C4DB1', brandInk: '#1a1040', brandSoft: '#eeedfe', brandPress: '#4a3d9a' }, // фиолетовый — стратегия
+      controller:  { brand: '#1D8A3A', brandInk: '#0a2a14', brandSoft: '#e1f5ee', brandPress: '#166e2e' }, // зелёный — качество
+      warehouse:   { brand: '#0077B6', brandInk: '#001f3f', brandSoft: '#e6f4fb', brandPress: '#005f99' }, // морской — логистика
+      hr:          { brand: '#C2185B', brandInk: '#3f0020', brandSoft: '#fce4ec', brandPress: '#a31545' }, // малиновый — люди
+      sales:       { brand: '#0077B6', brandInk: '#001f3f', brandSoft: '#e6f4fb', brandPress: '#005f99' }, // морской — продажи
+      dashboard:   { brand: '#EF9F27', brandInk: '#412402', brandSoft: '#fdf3e0', brandPress: '#d88a17' },
+    };
+    const el = document.documentElement;
+    // Glass: aurora-оттенок фона по роли (сигнатура дизайна) — см. html[data-role] в index.html.
+    // Пер-ролевые --brand больше не переопределяем: акцент единый из токенов Glass.
+    if (effectiveRole) el.dataset.role = effectiveRole; else delete el.dataset.role;
+    // Слабые устройства: отключаем blur (S.card читает --glass-blur)
+    if ((navigator.deviceMemory && navigator.deviceMemory <= 2) || localStorage.getItem('noblur') === '1') el.dataset.noblur = '1';
+  }, [effectiveRole]);
+
+  // Текущий пользователь для чата
+  const currentUser = useMemo(() => {
+    if (role === 'worker' || role === 'chat') { const w = data.workers.find(w => w.id === workerId); return { id: workerId, name: w?.name || 'Сотрудник', role: 'worker' }; }
+    if (role === 'master' || role === 'chat_master') return { id: 'master', name: 'Начальник цеха', role: 'master' };
+    if (role === 'controller' || role === 'chat_controller') return { id: 'controller', name: 'Контролёр', role: 'controller' };
+    if (role === 'warehouse') return { id: 'warehouse', name: 'Склад', role: 'warehouse' };
+    return { id: 'system', name: 'Система', role: 'system' };
+  }, [role, workerId, data.workers]);
+
+  const [loadingSec, setLoadingSec] = React.useState(0);
+  React.useEffect(() => {
+    if (!loading) { setLoadingSec(0); return; }
+    const t = setInterval(() => setLoadingSec(s => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [loading]);
+
+  if (loading) return h('div', { style: { padding:48, textAlign:'center' } },
+    h('div', { style: { fontSize:28, marginBottom:12 } }, '⏳'),
+    h('div', { style: { fontSize:15, color:'#444', marginBottom:6 } }, 'Загрузка...'),
+    h('div', { style: { fontSize:12, color:'var(--muted)', marginBottom: loadingSec >= 5 ? 20 : 0 } },
+      loadingSec < 5 ? 'Подключение к Firebase...' : `Нет ответа от сервера (${loadingSec}с)`
+    ),
+    loadingSec >= 5 && h('button', {
+      style: { padding:'9px 22px', fontSize:13, borderRadius:8, background:'#f0f0f0', border:'1px solid #ddd', cursor:'pointer', color:'var(--fg-muted)' },
+      onClick: () => { setData(window.__MES || EMPTY_DATA); setLoading(false); }
+    }, '📴 Войти офлайн')
+  );
+
+  // QR-режим
+  if (initialOpId && !role) return h('div', null,
+    h('div', { style: { display:'flex', gap:12, padding:'10px 0', borderBottom:'0.5px solid rgba(0,0,0,0.08)' } },
+      h('button', { style: gbtn({ fontSize:11 }), onClick: goBack }, '← На главную'),
+      h('div', { style: { fontSize:12, color:'var(--muted)' } }, 'QR-операция')
+    ),
+    h(QRScreen, { data, opId: initialOpId, onUpdate: save, addToast }),
+    h('div', null, toasts.map(t => h(Toast, { key: t.id, message: t.message, type: t.type, action: t.action, onClose: () => removeToast(t.id) })))
+  );
+
+  // Экран входа
+  if (!role) return h('div', null,
+    h(LoginScreen, {
+      data,
+      onLogin: (r, wid, sid) => {
+        setRole(r);
+        setWorkerId(wid);
+        setSectionId(sid);
+        // Запускаем presence tracking
+        const userName = wid ? (data?.workers?.find(w => w.id === wid)?.name || r) : r;
+        const presenceId = wid || r;
+        Presence.start(presenceId, userName);
+        setGreetingKey(k => k + 1); // показать приветствие
+        // chat, chat_master, chat_controller — всё это режим чата
+        if (r === 'chat' || r === 'chat_master' || r === 'chat_controller') setShowChat(true);
+      },
+      onResetPin: handleResetPin
+    }),
+    h('div', null, toasts.map(t => h(Toast, { key: t.id, message: t.message, type: t.type, action: t.action, onClose: () => removeToast(t.id) })))
+  );
+
+  // Режим "только чат"
+  if (effectiveRole === 'chat') return h('div', null,
+    h('div', { style: { display:'flex', gap:12, padding:'10px 0', borderBottom:'0.5px solid rgba(0,0,0,0.08)', alignItems:'center' } },
+      h('button', { style: gbtn({ fontSize:11 }), onClick: goBack }, '← Выход'),
+      h('div', { style: { fontSize:12, color:'var(--muted)' } }, `Чат · ${currentUser.name}`)
+    ),
+    h(ChatScreen, { data, onUpdate: save, addToast, currentUser, onBack: goBack }),
+    h('div', null, toasts.map(t => h(Toast, { key: t.id, message: t.message, type: t.type, action: t.action, onClose: () => removeToast(t.id) })))
+  );
+
+  const roleLabel =
+    effectiveRole === 'master'      ? 'Начальник цеха' :
+    effectiveRole === 'controller'  ? 'Контролёр'      :
+    effectiveRole === 'warehouse'   ? 'Склад'           :
+    effectiveRole === 'dashboard'   ? 'Дашборд'         :
+    effectiveRole === 'pdo'         ? 'ПДО'             :
+    effectiveRole === 'director'    ? 'Руководитель'    :
+    effectiveRole === 'hr'          ? 'HR'              :
+    effectiveRole === 'shop_master' ? 'Сменный мастер'  :
+    effectiveRole === 'admin'       ? 'Администратор'   :
+    effectiveRole === 'sales'       ? 'Менеджер'        :
+    currentUser.name;
+
+  return h('div', null,
+    h('div', { className: 'app-header' },
+      h('span', { className: 'app-header-logo' }, '⚡ Теплорос'),
+      h('span', { className: 'app-header-sep' }),
+      h('span', { className: 'app-header-role' }, roleLabel),
+      h('span', { className: 'app-header-spacer' }),
+      h('button', {
+        style: gbtn({ fontSize:11, minHeight:34, padding:'6px 12px', display:'flex', alignItems:'center', gap:5 }),
+        onClick: () => setShowPalette(true),
+        title: 'Поиск (Cmd+K)'
+      }, '🔍 ', h('kbd', { className: 'search-kbd', style: { fontSize:10, opacity:0.6, background:'var(--card-2)', border:'0.5px solid var(--border)', borderRadius:4, padding:'1px 4px' } }, '⌘K')),
+      h('button', { style: gbtn({ fontSize:11, minHeight:34, padding:'6px 12px' }), onClick: goBack }, '← Выход'),
+
+      effectiveRole !== 'dashboard' && (() => {
+        const chatLastRead = Number(localStorage.getItem(`chat_lastRead_${currentUser.id || 'anon'}`)) || 0;
+        const unread = (data.messages || []).filter(m => m.timestamp > chatLastRead && m.senderId !== (currentUser.id || 'system')).length;
+        // 🔴 Бейдж для @упоминаний — красный если есть новые упоминания текущего пользователя
+        const myMentions = (data.messages || []).filter(m => m.mentions?.includes(currentUser.id) && m.timestamp > chatLastRead).length;
+        return h('button', { style: showChat ? abtn({ fontSize:11 }) : gbtn({ fontSize:11, position: 'relative' }), onClick: () => setShowChat(!showChat) },
+          showChat ? '💬 Чат (скрыть)' : '💬 Чат',
+          !showChat && myMentions > 0 && h('span', { style: { position: 'absolute', top: -8, right: -8, background: '#E24B4A', color: '#fff', borderRadius: '50%', width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600, border: '2px solid var(--card)' } }, '!'),
+          !showChat && unread > 0 && myMentions === 0 && h('span', { style: { position: 'absolute', top: -4, right: -4, background: RD, color: '#fff', borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 500 } }, unread > 9 ? '9+' : unread)
+        );
+      })(),
+      h('div', { style: { marginLeft:'auto', fontSize:10, display:'flex', alignItems:'center', gap:8 } },
+        h('div', { style: { display:'flex', borderRadius:8, overflow:'hidden', border:'0.5px solid var(--border)', flexShrink:0 } },
+          [
+            { val:'light', icon:'☀️', title:'Светлая' },
+            { val:'system', icon:'⚙', title:'Системная' },
+            { val:'dark',  icon:'🌙', title:'Тёмная'   },
+          ].map(({ val, icon, title }) =>
+            h('button', {
+              key: val,
+              title,
+              onClick: () => setTheme(val),
+              style: {
+                padding:'4px 8px', fontSize:13, minHeight:'auto',
+                border:'none', borderRadius:0,
+                background: theme === val ? 'var(--border)' : 'transparent',
+                color: theme === val ? 'var(--fg)' : 'var(--muted)',
+                cursor:'pointer', lineHeight:1,
+              }
+            }, icon)
+          )
+        ),
+        isSaving && h('div', { style: { display:'flex', alignItems:'center', gap:4, color: AM4, fontWeight:500 } },
+          h('span', { style: {
+            width: 8, height: 8, borderRadius: '50%', background: AM,
+            display: 'inline-block', animation: 'pulse 1s ease-in-out infinite'
+          }}),
+          'Сохранение...'
+        ),
+        h('div', { style: { display:'flex', alignItems:'center', gap:4, color: synced ? GN : '#888' } },
+          h('span', { style: { width:6, height:6, borderRadius:'50%', background: synced ? GN : '#ccc', display:'inline-block' } }),
+          synced ? 'Firebase' : 'Оффлайн'
+        ),
+        DB._sizeWarning && h('div', { style: { display:'flex', alignItems:'center', gap:3, color: AM4, fontSize: 9 } },
+          `💾 ${DB._sizeWarning} КБ`
+        ),
+        !synced && localStorage.getItem(QUEUE_KEY) && h('div', { style: { display:'flex', alignItems:'center', gap:3, color: AM4, fontSize: 9, fontWeight:500 } },
+          '📤 Офлайн-очередь'
+        )
+      )
+    ),
+    h(GreetingBanner, { key: greetingKey, role: effectiveRole, name: currentUser.name, data, workerId }),
+    showChat
+      ? h(ChatScreen, { data, onUpdate: save, addToast, currentUser, onBack: () => setShowChat(false) })
+      : !bundleReady
+        // Модуль для этой роли ещё грузится (первый вход в сессии) — короткая пауза,
+        // дальше бандл закеширован Service Worker'ом и подгружается мгновенно.
+        ? h('div', { style: { display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'60px 20px', gap:10, color:'var(--muted)', fontSize:13 } },
+            bundleError
+              ? h('div', { style: { color: '#c33', textAlign:'center' } }, '⚠ Не удалось загрузить модуль: ' + bundleError + '. Проверьте соединение и обновите страницу.')
+              : h(React.Fragment, null, h('div', { style: { fontSize: 24 } }, '⏳'), 'Загрузка модуля…')
+          )
+        : h('div', null,
+          effectiveRole === 'master'      && h(MasterScreen,   { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId, role: 'master' }),
+          effectiveRole === 'pdo'         && h(PDOScreen,       { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }),
+          effectiveRole === 'director'    && h(DirectorScreen,  { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }),
+          effectiveRole === 'hr'          && h(HRScreen,        { data, onUpdate: save, addToast, onWorkerClick: setSelectedWorkerId }),
+          effectiveRole === 'shop_master' && h(ShopMasterScreen,{ data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }),
+          effectiveRole === 'admin'       && h(AdminScreen,     { data, onUpdate: save, addToast }),
+          effectiveRole === 'controller'  && h(ControllerScreen, { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }),
+          effectiveRole === 'worker' && workerId && h(WorkerScreen, { data, workerId, sectionId, onUpdate: save, initialOpId: null, addToast }),
+          effectiveRole === 'warehouse' && h(WarehouseScreen, { data, onUpdate: save, addToast, currentUserId: workerId }),
+          effectiveRole === 'sales'      && h(SalesScreen,     { data, addToast, onOrderClick: setSelectedOrderId }),
+          effectiveRole === 'dashboard' && h(Dashboard, { data, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId })
+        ),
+    selectedOrderId && h(OrderCardModal, { orderId: selectedOrderId, data, onUpdate: save, onClose: () => setSelectedOrderId(null), canEdit: true, userRole: effectiveRole, onEditMaterials: (id) => { setSelectedOrderId(null); } }),
+    // 🌍 Глобальная карточка сотрудника — открывается из любого места системы
+    selectedWorkerId && (() => {
+      const worker = data.workers.find(w => w.id === selectedWorkerId);
+      return worker ? h(WorkerCardModal, { worker, data, onClose: () => setSelectedWorkerId(null) }) : null;
+    })(),
+    receiveDeliveryId && h(ReceiveDeliveryScreen, {
+      deliveryId: receiveDeliveryId,
+      data, onUpdate,
+      currentUserId: workerId,
+      addToast,
+      onClose: () => { setReceiveDeliveryId(null); window.history.replaceState({}, '', window.location.pathname); }
+    }),
+    showPalette && h(CommandPalette, {
+      data,
+      onClose: () => setShowPalette(false),
+      onNavigate: (result) => {
+        addToast(`${result.title} · ${result.sub}`, 'info');
+        setShowPalette(false);
+      }
+    }),
+    h('div', { 'aria-live': 'polite' }, toasts.map(t => h(Toast, { key: t.id, message: t.message, type: t.type, action: t.action, onClose: () => removeToast(t.id) }))),
+    h(SaveStatusBar)
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  React.createElement(ErrorBoundary, null, React.createElement(App))
+);
+
+// PWA: Service Worker registration with auto-update
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      console.log('SW registered:', reg.scope);
+      // Проверка обновлений каждые 30 минут
+      setInterval(() => reg.update(), 30 * 60 * 1000);
+      // Примечание: баннер "Доступна новая версия" убран по просьбе пользователя.
+      // На фактическое поведение это не влияет — sw.js уже вызывает self.skipWaiting()
+      // и clients.claim() безусловно, так что новый SW и так забирает все открытые
+      // вкладки и вызывает controllerchange → reload ниже; баннер лишь дублировал
+      // это уведомлением, которое не успевало ни на что повлиять.
+    }).catch(err => console.log('SW registration failed:', err));
+  });
+  // Перезагрузка после активации нового SW
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!refreshing) { refreshing = true; window.location.reload(); }
+  });
+}
