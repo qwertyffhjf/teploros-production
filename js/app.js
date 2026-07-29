@@ -86,29 +86,32 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
 
   const settings = data.settings || EMPTY_DATA.settings;
 
-  // ─── Apple-inspired tokens (локальные, чтобы не плодить глобальный CSS) ───
+  // ─── Токены из глобальной дизайн-системы приложения (var(--*) из index.html) ───
+  // Раньше здесь были свои orange-токены + фото котла на фоне — экран входа
+  // визуально не совпадал с остальным приложением. Теперь используем те же
+  // CSS-переменные, что и Dashboard/Мастер/Склад: indigo-акцент, aurora-фон.
   const T = {
-    bg:        '#f5f5f7',
-    canvas:    'rgba(255,255,255,0.12)',
-    ink:       '#ffffff',
-    inkMuted:  'rgba(255,255,255,0.72)',
-    fine:      'rgba(255,255,255,0.55)',
-    hairline:  'rgba(255,255,255,0.22)',
-    brand:     '#EF9F27',
-    brandInk:  '#412402',
-    brandSoft: '#fdf3e0',
-    danger:    '#d6342f',
-    info:      '#0066cc',
-    success:   '#1d8a3a',
+    bg:        'var(--bg)',
+    canvas:    'var(--card)',
+    ink:       'var(--fg)',
+    inkMuted:  'var(--fg-muted)',
+    fine:      'var(--muted)',
+    hairline:  'var(--border)',
+    brand:     'var(--brand)',
+    brandInk:  'var(--brand-ink)',
+    brandSoft: 'var(--brand-soft)',
+    danger:    'var(--status-danger)',
+    info:      'var(--status-info)',
+    success:   'var(--status-success)',
     fontDisp:  '"SF Pro Display", "Inter", system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
     fontText:  '"SF Pro Text", "Inter", system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
   };
 
-  // ─── Стили (вместо S.inp / abtn / gbtn — единый Apple-словарь) ───
+  // ─── Стили экрана входа — согласованы с общей "стеклянной" системой ───
   const stylesL = {
     page: {
       minHeight: '100vh',
-      background: `linear-gradient(rgba(0,0,0,0.68), rgba(0,0,0,0.72)), url('./78878.webp') center/cover no-repeat fixed`,
+      background: 'transparent', // aurora уже рисуется глобально в body::before
       fontFamily: T.fontText,
       color: T.ink,
       display: 'flex', flexDirection: 'column', alignItems: 'center',
@@ -131,14 +134,12 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
       fontSize: 12, fontWeight: 600, color: T.fine,
       letterSpacing: '0.12em', textTransform: 'uppercase',
       marginBottom: 12, textAlign: 'center',
-      textShadow: '0 1px 4px rgba(0,0,0,0.8)',
     },
     h1: {
       fontFamily: T.fontDisp,
       fontSize: 40, fontWeight: 600, lineHeight: 1.1,
       letterSpacing: '-0.6px',
       color: T.ink, margin: 0, textAlign: 'center',
-      textShadow: '0 1px 8px rgba(0,0,0,0.6)',
     },
     sub: {
       marginTop: 8, fontSize: 17, color: T.inkMuted,
@@ -163,10 +164,10 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
       padding: '9px 18px',
       minHeight: 36,
       borderRadius: 9999,
-      border: active ? 'none' : `1px solid ${T.hairline}`,
-      background: active ? T.brand : 'rgba(255,255,255,0.15)',
-      color: active ? T.brandInk : '#ffffff',
-      backdropFilter: 'blur(8px)',
+      border: active ? 'none' : `1px solid var(--card-stroke)`,
+      background: active ? T.brand : 'var(--card)',
+      color: active ? T.brandInk : T.ink,
+      backdropFilter: 'var(--glass-blur)',
       fontFamily: T.fontText,
       fontSize: 14, fontWeight: active ? 600 : 500,
       letterSpacing: '-0.224px',
@@ -185,20 +186,20 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
     pinShell: { position: 'relative', display: 'inline-block' },
     pinInput: {
       width: 240, height: 56,
-      background: 'rgba(255,255,255,0.15)',
-      border: `1px solid rgba(255,255,255,0.3)`,
-      borderRadius: 12,
-      backdropFilter: 'blur(8px)',
+      background: 'var(--card)',
+      border: `1px solid var(--card-stroke)`,
+      borderRadius: 'var(--r-md)',
+      backdropFilter: 'var(--glass-blur)',
       padding: '0 48px 0 18px',
       fontFamily: T.fontDisp,
       fontSize: 22, letterSpacing: '0.42em', textAlign: 'center',
-      color: '#ffffff',
+      color: T.ink,
       outline: 'none',
       transition: 'border-color 120ms, box-shadow 120ms',
     },
     pinInputFocus: {
       borderColor: T.brand,
-      boxShadow: `0 0 0 3px rgba(239,159,39,0.18)`,
+      boxShadow: `0 0 0 3px var(--brand-soft)`,
     },
     pinEye: {
       position: 'absolute', right: 8, top: '50%',
@@ -550,7 +551,7 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
         style: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999, padding: 20 },
         onClick: e => { if (e.target === e.currentTarget) { setOfferPasskey(false); onLogin(offerPasskey.role, offerPasskey.workerId, offerPasskey.sectionId); } }
       },
-        h('div', { style: { position: 'relative', background: '#1c1c1e', borderRadius: 18, padding: 28, maxWidth: 320, width: '100%', textAlign: 'center' } },
+        h('div', { style: { position: 'relative', background: 'var(--card-solid)', border: '1px solid var(--card-stroke)', boxShadow: 'var(--card-shadow)', borderRadius: 'var(--r-lg)', padding: 28, maxWidth: 320, width: '100%', textAlign: 'center' } },
           h('div', { style: { fontSize: 40, marginBottom: 12 } }, '🔐'),
           h('div', { style: { fontSize: 17, fontWeight: 600, color: '#fff', marginBottom: 8 } }, 'Войти быстрее'),
           h('div', { style: { fontSize: 14, color: 'rgba(255,255,255,0.65)', marginBottom: 24, lineHeight: 1.5 } }, 'Зарегистрировать Face ID или отпечаток для быстрого входа на этом телефоне?'),
