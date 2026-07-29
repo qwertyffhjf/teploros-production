@@ -53,83 +53,133 @@
       --fs-xs: 11px; --fs-sm: 12px; --fs-base: 14px; --fs-md: 15px; --fs-lg: 17px;
       --fw-normal: 400; --fw-medium: 500;
 
-      /* — Radii (Apple ladder: 0 / 5 / 8 / 11 / 18 / pill) — */
-      --r-sm: 8px; --r-md: 11px; --r-lg: 18px; --r-xl: 18px;
+      /* — Radii (Glass: мягче) — */
+      --r-sm: 10px; --r-md: 14px; --r-lg: 18px; --r-xl: 22px;
 
-      /* — Semantic color tokens (AM/GN/RD/BL → CSS vars) — */
-      --c-am:    #EF9F27;  --c-am2: #412402;  --c-am3: #FAEEDA;  --c-am4: #BA7517;
-      --c-gn:    #1D9E75;  --c-gn2: #04342C;  --c-gn3: #E1F5EE;
-      --c-rd:    #E24B4A;  --c-rd2: #501313;  --c-rd3: #FCEBEB;
-      --c-bl:    #378ADD;
+      /* ═══ GLASS · тёмная тема (первичная) ═══ */
+      --bg:          #0B0E1A;
+      --fg:          #EDF0F8;
+      --fg-muted:    #B7BED2;
+      --muted:       #98A0B8;
+      --card:        rgba(255,255,255,0.07);
+      --card-2:      rgba(255,255,255,0.045);
+      --card-solid:  #151928;             /* непрозрачная поверхность: модалы, меню */
+      --card-stroke: rgba(255,255,255,0.16);
+      --card-shadow: 0 12px 40px rgba(4,8,24,0.35);
+      --border:      rgba(255,255,255,0.16);
+      --border-soft: rgba(255,255,255,0.09);
+      --hairline:    rgba(255,255,255,0.12);
+      --glass-blur:  blur(18px) saturate(160%);
+      --th-bg:       rgba(16,20,34,0.82); /* sticky-шапки таблиц поверх стекла */
+      --inp-bg:      rgba(255,255,255,0.08);
 
-      /* — Brand — */
-      --brand:        #EF9F27;   /* Action Color (replaces Apple blue) */
-      --brand-press:  #d88a17;
-      --brand-ink:    #412402;
-      --brand-soft:   #fdf3e0;
+      /* — Aurora (оттенок меняется по роли через html[data-role]) — */
+      --au1: rgba(96,88,255,0.34);
+      --au2: rgba(0,180,216,0.26);
+      --au3: rgba(255,90,140,0.18);
 
-      /* — Status (calibrated to feel Apple-quiet, not bright) — */
-      --status-danger:  #d6342f;
-      --status-warning: #c97a05;
-      --status-info:    #0066cc;
-      --status-success: #1d8a3a;
+      /* — Акцент и кнопки — */
+      --brand:          #7C8CFF;
+      --brand-press:    #6A79E8;
+      --brand-ink:      #0B0E1A;
+      --brand-soft:     rgba(124,140,255,0.16);
+      --btn-accent:     linear-gradient(90deg,#9BE8FF,#7C8CFF);
+      --btn-accent-ink: #0B0E1A;
+      --btn-accent-glow:0 6px 22px rgba(124,140,255,0.35);
+      --btn-ghost-bg:   rgba(255,255,255,0.05);
 
-      /* — Surfaces / theme tokens (light by default) — */
-      --bg:          #f5f5f7;          /* parchment */
-      --fg:          #1d1d1f;          /* ink */
-      --fg-muted:    #6e6e73;
-      --card:        #ffffff;          /* canvas */
-      --card-2:      #fafafc;          /* pearl */
-      --border:      rgba(0,0,0,0.10);
-      --border-soft: rgba(0,0,0,0.06);
-      --hairline:    #e0e0e0;
-      --muted:       #7a7a7a;
+      /* — Семантика (AM=акцент, GN=успех, RD=тревога, BL=инфо) — */
+      --c-am: #8FA0FF;  --c-am2: #C7CEFF;  --c-am3: rgba(124,140,255,0.16);  --c-am4: rgba(150,165,255,0.45);
+      --c-gn: #5FE3B3;  --c-gn2: #B9F2DE;  --c-gn3: rgba(95,227,179,0.14);
+      --c-rd: #FF6B7A;  --c-rd2: #FFC2C9;  --c-rd3: rgba(255,107,122,0.16);
+      --c-bl: #6CB8FF;
 
-      /* — Frosted chrome — */
-      --chrome-bg:     rgba(245,245,247,0.80);
-      --chrome-blur:   saturate(180%) blur(20px);
+      /* — Статусы (капсулы Badge) — */
+      --st-pending-bg:#B7BED21A; --st-pending-cl:#B7BED2; --st-pending-br:rgba(255,255,255,0.20);
+      --st-run-bg:rgba(108,140,255,0.20); --st-run-cl:#B9C8FF; --st-run-br:rgba(140,160,255,0.40);
+      --st-chk-bg:rgba(190,140,255,0.18); --st-chk-cl:#DCC4FF; --st-chk-br:rgba(200,160,255,0.36);
+      --st-ok-bg:rgba(107,232,192,0.16);  --st-ok-cl:#A9F0DA;  --st-ok-br:rgba(120,235,200,0.32);
+      --st-al-bg:rgba(255,92,110,0.20);   --st-al-cl:#FFB3BC;  --st-al-br:rgba(255,120,140,0.42);
+      --st-warn-bg:rgba(255,190,90,0.18); --st-warn-cl:#FFDCA3; --st-warn-br:rgba(255,200,110,0.36);
 
-      /* — Motion — */
+      --status-danger:  #FF6B7A;
+      --status-warning: #F2B75C;
+      --status-info:    #6CB8FF;
+      --status-success: #5FE3B3;
+
+      --chrome-bg:   rgba(14,18,32,0.72);
+      --chrome-blur: saturate(180%) blur(20px);
       --ease: cubic-bezier(0.4, 0, 0.2, 1);
     }
-    /* — System dark — */
-    @media (prefers-color-scheme: dark) {
-      :root:not([data-theme="light"]) {
-        --bg:          #1a1a18;
-        --fg:          #ffffff;
-        --fg-muted:    #cccccc;
-        --card:        #272729;
-        --card-2:      #2a2a2c;
-        --border:      rgba(255,255,255,0.14);
-        --border-soft: rgba(255,255,255,0.08);
-        --hairline:    rgba(255,255,255,0.10);
-        --muted:       #98989d;
-        --chrome-bg:   rgba(39,39,41,0.78);
-        /* dark mode цвета */
-        --c-am:    #EF9F27;  --c-am2: #FAC775;  --c-am3: #3D2800;  --c-am4: #EF9F27;
-        --c-gn:    #1D9E75;  --c-gn2: #9FE1CB;  --c-gn3: #0A2E22;
-        --c-rd:    #F09595;  --c-rd2: #F7C1C1;  --c-rd3: #2D1010;
-        --c-bl:    #85B7EB;
+    /* ═══ GLASS · светлая тема (цех, яркий свет) ═══ */
+    @media (prefers-color-scheme: light) {
+      :root:not([data-theme="dark"]) {
+        --bg:          #ECEFF9;
+        --fg:          #171B2E;
+        --fg-muted:    #4B5470;
+        --muted:       #626B8A;
+        --card:        rgba(255,255,255,0.62);
+        --card-2:      rgba(255,255,255,0.48);
+        --card-solid:  #ffffff;
+        --card-stroke: rgba(118,130,180,0.30);
+        --card-shadow: 0 10px 34px rgba(70,84,140,0.16);
+        --border:      rgba(60,72,120,0.20);
+        --border-soft: rgba(60,72,120,0.11);
+        --hairline:    rgba(60,72,120,0.16);
+        --glass-blur:  blur(16px) saturate(140%);
+        --th-bg:       rgba(255,255,255,0.88);
+        --inp-bg:      rgba(255,255,255,0.78);
+        --au1: rgba(96,88,255,0.16);
+        --au2: rgba(0,180,216,0.13);
+        --au3: rgba(255,90,140,0.10);
+        --brand: #5A6BE8; --brand-press:#4A5AD0; --brand-ink:#ffffff; --brand-soft: rgba(108,124,255,0.14);
+        --btn-accent: linear-gradient(90deg,#6FA8FF,#7C6CFF);
+        --btn-accent-ink:#ffffff;
+        --btn-accent-glow:0 6px 20px rgba(108,124,255,0.30);
+        --btn-ghost-bg: rgba(255,255,255,0.55);
+        --c-am: #5A6BE8;  --c-am2: #323E9E;  --c-am3: rgba(108,124,255,0.14);  --c-am4: rgba(108,124,255,0.45);
+        --c-gn: #0FA878;  --c-gn2: #0A5C43;  --c-gn3: rgba(15,168,120,0.14);
+        --c-rd: #E14B5A;  --c-rd2: #8C1F2B;  --c-rd3: rgba(225,75,90,0.12);
+        --c-bl: #2E7CD6;
+        --st-pending-bg:rgba(98,107,138,0.12); --st-pending-cl:#4B5470; --st-pending-br:rgba(98,107,138,0.30);
+        --st-run-bg:rgba(90,107,232,0.14); --st-run-cl:#323E9E; --st-run-br:rgba(90,107,232,0.40);
+        --st-chk-bg:rgba(150,100,220,0.14); --st-chk-cl:#5B3A99; --st-chk-br:rgba(150,100,220,0.38);
+        --st-ok-bg:rgba(15,168,120,0.13);  --st-ok-cl:#0A5C43;  --st-ok-br:rgba(15,168,120,0.36);
+        --st-al-bg:rgba(225,75,90,0.12);   --st-al-cl:#8C1F2B;  --st-al-br:rgba(225,75,90,0.40);
+        --st-warn-bg:rgba(230,160,50,0.15); --st-warn-cl:#7A5410; --st-warn-br:rgba(230,160,50,0.42);
+        --status-danger:#D6342F; --status-warning:#B57206; --status-info:#2E7CD6; --status-success:#0FA878;
+        --chrome-bg: rgba(240,243,252,0.72);
       }
     }
-    /* — Forced themes — */
-    [data-theme="dark"] {
-      --bg: #1a1a18; --fg: #ffffff; --fg-muted: #cccccc;
-      --card: #272729; --card-2: #2a2a2c;
-      --border: rgba(255,255,255,0.14); --border-soft: rgba(255,255,255,0.08);
-      --hairline: rgba(255,255,255,0.10); --muted: #98989d;
-      --chrome-bg: rgba(39,39,41,0.78);
-    }
+    /* — Forced themes (переключатель в настройках) — */
+    [data-theme="dark"] { /* значения совпадают с :root — тёмная и есть база */ }
     [data-theme="light"] {
-      --bg: #f5f5f7; --fg: #1d1d1f; --fg-muted: #6e6e73;
-      --card: #ffffff; --card-2: #fafafc;
-      --border: rgba(0,0,0,0.10); --border-soft: rgba(0,0,0,0.06);
-      --hairline: #e0e0e0; --muted: #7a7a7a;
-      --chrome-bg: rgba(245,245,247,0.80);
+      --bg:#ECEFF9; --fg:#171B2E; --fg-muted:#4B5470; --muted:#626B8A;
+      --card:rgba(255,255,255,0.62); --card-2:rgba(255,255,255,0.48); --card-solid:#ffffff;
+      --card-stroke:rgba(118,130,180,0.30); --card-shadow:0 10px 34px rgba(70,84,140,0.16);
+      --border:rgba(60,72,120,0.20); --border-soft:rgba(60,72,120,0.11); --hairline:rgba(60,72,120,0.16);
+      --glass-blur:blur(16px) saturate(140%); --th-bg:rgba(255,255,255,0.88); --inp-bg:rgba(255,255,255,0.78);
+      --au1:rgba(96,88,255,0.16); --au2:rgba(0,180,216,0.13); --au3:rgba(255,90,140,0.10);
+      --brand:#5A6BE8; --brand-press:#4A5AD0; --brand-ink:#ffffff; --brand-soft:rgba(108,124,255,0.14);
+      --btn-accent:linear-gradient(90deg,#6FA8FF,#7C6CFF); --btn-accent-ink:#ffffff;
+      --btn-accent-glow:0 6px 20px rgba(108,124,255,0.30); --btn-ghost-bg:rgba(255,255,255,0.55);
+      --c-am:#5A6BE8; --c-am2:#323E9E; --c-am3:rgba(108,124,255,0.14); --c-am4:rgba(108,124,255,0.45);
+      --c-gn:#0FA878; --c-gn2:#0A5C43; --c-gn3:rgba(15,168,120,0.14);
+      --c-rd:#E14B5A; --c-rd2:#8C1F2B; --c-rd3:rgba(225,75,90,0.12);
+      --c-bl:#2E7CD6;
+      --st-pending-bg:rgba(98,107,138,0.12); --st-pending-cl:#4B5470; --st-pending-br:rgba(98,107,138,0.30);
+      --st-run-bg:rgba(90,107,232,0.14); --st-run-cl:#323E9E; --st-run-br:rgba(90,107,232,0.40);
+      --st-chk-bg:rgba(150,100,220,0.14); --st-chk-cl:#5B3A99; --st-chk-br:rgba(150,100,220,0.38);
+      --st-ok-bg:rgba(15,168,120,0.13); --st-ok-cl:#0A5C43; --st-ok-br:rgba(15,168,120,0.36);
+      --st-al-bg:rgba(225,75,90,0.12); --st-al-cl:#8C1F2B; --st-al-br:rgba(225,75,90,0.40);
+      --st-warn-bg:rgba(230,160,50,0.15); --st-warn-cl:#7A5410; --st-warn-br:rgba(230,160,50,0.42);
+      --status-danger:#D6342F; --status-warning:#B57206; --status-info:#2E7CD6; --status-success:#0FA878;
+      --chrome-bg:rgba(240,243,252,0.72);
     }
 
     /* ─── Base ──────────────────────────────────────────────────────────── */
-    html, body { background: var(--bg); }
+    html { background: var(--bg); }
+    body { background: transparent; } /* aurora рисуется в body::before */
     body {
       margin: 0; padding: 16px;
       font-family: "SF Pro Text", "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -506,16 +556,18 @@
 
     /* ─── Pill TabBar ───────────────────────────────────────────────────── */
     .tab-pill-wrap {
-      display: flex; gap: 3px; padding: 3px;
-      background: var(--card-2);
-      border: 0.5px solid var(--border-soft);
-      border-radius: 12px;
+      display: flex; gap: 3px; padding: 4px;
+      background: var(--card);
+      border: 1px solid var(--card-stroke);
+      border-radius: 999px;
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
       overflow-x: auto; scrollbar-width: none;
       margin-bottom: 16px;
     }
     .tab-pill-wrap::-webkit-scrollbar { display: none; }
     .tab-pill {
-      flex-shrink: 0; padding: 7px 14px; border-radius: 9px;
+      flex-shrink: 0; padding: 7px 15px; border-radius: 999px;
       font-size: 13px; font-weight: 500; border: none;
       background: transparent; color: var(--fg-muted);
       cursor: pointer; min-height: 34px; letter-spacing: -0.2px;
@@ -524,8 +576,8 @@
     }
     .tab-pill:active { transform: scale(0.94); }
     .tab-pill.active {
-      background: var(--card); color: var(--fg);
-      box-shadow: 0 1px 3px rgba(0,0,0,0.10), 0 0 0 0.5px var(--border);
+      background: rgba(255,255,255,0.16); color: var(--fg); font-weight: 600;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.22);
     }
 
     /* ─── Status badge micro-animation ─────────────────────────────────── */
@@ -571,7 +623,7 @@
       text-transform: uppercase; letter-spacing: 0.07em;
       color: var(--muted);
       border-bottom: 0.5px solid var(--border-soft);
-      background: var(--card);
+      background: var(--th-bg, var(--card));
       white-space: nowrap;
     }
     .tp-table td {
@@ -628,6 +680,30 @@
       color: var(--fg); border-top: 1px solid var(--border);
     }
 
+
+    /* ═══ GLASS · aurora-фон (сигнатура: оттенок зависит от роли) ═══ */
+    body::before {
+      content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+      background:
+        radial-gradient(560px 420px at 16% 6%,  var(--au1), transparent 62%),
+        radial-gradient(640px 460px at 88% 16%, var(--au2), transparent 62%),
+        radial-gradient(720px 540px at 55% 108%, var(--au3), transparent 62%),
+        var(--bg);
+    }
+    :root[data-role="controller"], :root[data-role="quality"] { --au1: rgba(150,90,255,0.34); --au2: rgba(210,80,200,0.22); --au3: rgba(90,140,255,0.16); }
+    :root[data-role="warehouse"] { --au1: rgba(0,190,190,0.30); --au2: rgba(60,150,255,0.22); --au3: rgba(0,220,160,0.14); }
+    :root[data-role="hr"]        { --au1: rgba(255,90,150,0.28); --au2: rgba(180,90,255,0.22); --au3: rgba(255,140,90,0.14); }
+    :root[data-role="worker"]    { --au1: rgba(0,180,216,0.30); --au2: rgba(95,227,179,0.20); --au3: rgba(96,88,255,0.16); }
+    :root[data-role="director"], :root[data-role="pdo"] { --au1: rgba(96,88,255,0.36); --au2: rgba(124,60,255,0.24); --au3: rgba(0,180,216,0.16); }
+    @media (prefers-reduced-motion: no-preference) {
+      body::before { transition: background 600ms var(--ease); }
+    }
+    /* Слабые устройства: отключение blur одним свойством (S.card читает --glass-blur) */
+    :root[data-noblur] { --glass-blur: none; }
+
+    /* Модалы и меню — непрозрачная поверхность поверх стекла */
+    .modal-animated { background: var(--card-solid) !important; border: 1px solid var(--card-stroke); }
+
   </style>
 </head>
 <body>
@@ -659,11 +735,11 @@
 </script>
 
 <!-- Core: константы, DB, утилиты, общие компоненты, загрузчик office/field бандлов -->
-<script src="js/core.js?v=20260727c"></script>
+<script src="js/core.js?v=20260728a"></script>
 <!-- Shared: QR, PDF, LoadForecast, WorkerCardModal, MasterOnboarding -->
-<script defer src="js/shared.js?v=20260727c"></script>
+<script defer src="js/shared.js?v=20260728a"></script>
 <!-- Чат — общий для всех ролей, поэтому грузится статически -->
-<script defer src="js/chat.js?v=20260727c"></script>
+<script defer src="js/chat.js?v=20260728a"></script>
 <!--
   Ленивая подгрузка по роли (аудит, perf) — вместо статических тегов ниже.
   qms.js, analytics.js, timesheet.js, auxops.js, reference.js, quality.js, hr.js,
@@ -673,6 +749,6 @@
   так как master.js/hr.js/analytics.js и т.д. им никогда не нужны.
 -->
 <!-- Приложение: App, Login, Dashboard, роутинг, PWA -->
-<script defer src="js/app.js?v=20260727c"></script>
+<script defer src="js/app.js?v=20260728a"></script>
 </body>
 </html>
