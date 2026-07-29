@@ -186,17 +186,17 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
   }, [activeCell, setCellVal]);
 
   const cellStyle = (val) => {
-    if (!val) return { bg: '#f8f8f5', cl: '#bbb', lbl: '·' };
+    if (!val) return { bg: 'var(--card-2)', cl: '#bbb', lbl: '·' };
     if (val.code === 'Б')  return { bg: '#FCEBEB', cl: '#791F1F', lbl: 'Б' };
     if (val.code === 'ОТ') return { bg: '#E6F1FB', cl: '#0C447C', lbl: 'ОТ' };
     if (val.code === 'ОЗ') return { bg: '#FFF3E0', cl: '#E65100', lbl: 'ОЗ' };
-    if (val.code === 'К')  return { bg: '#E8F5E9', cl: '#2E7D32', lbl: 'К' };
+    if (val.code === 'К')  return { bg: 'var(--st-ok-bg)', cl: '#2E7D32', lbl: 'К' };
     if (val.code === 'НН') return { bg: '#F1EFE8', cl: '#888',   lbl: 'НН' };
     if (val.code === 'У')  return { bg: '#E0E0E0', cl: '#444',   lbl: 'У' };
     if (val.code === 'СД') return { bg: '#EDE7F6', cl: '#4527A0', lbl: 'СД' };
     if (val.h >= 8) return { bg: GN3, cl: GN2, lbl: val.h };
     if (val.h > 0)  return { bg: AM3, cl: AM2, lbl: val.h };
-    return { bg: '#f8f8f5', cl: '#bbb', lbl: '·' };
+    return { bg: 'var(--card-2)', cl: '#bbb', lbl: '·' };
   };
 
   const exportXlsx = useCallback(() => {
@@ -368,13 +368,13 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
         ['#FCEBEB', '#791F1F', 'Б — больничный'],
         ['#E6F1FB', '#0C447C', 'ОТ — очередной отпуск'],
         ['#FFF3E0', '#E65100', 'ОЗ — отпуск за свой счёт'],
-        ['#E8F5E9', '#2E7D32', 'К — командировка'],
+        ['var(--st-ok-bg)', '#2E7D32', 'К — командировка'],
         ['#F1EFE8', '#888',    'НН — неявка невыясненная'],
         ['#E0E0E0', '#444',    'У — уволен'],
         ['#EDE7F6', '#4527A0', 'СД — сдельная оплата'],
         ['rgba(226,75,74,0.08)', 'rgba(226,75,74,0.5)', 'В — выходной/праздник'],
       ].map(([bg, cl, l]) =>
-        h('div', { key:l, style:{ display:'flex', alignItems:'center', gap:4, fontSize:11, color:'#555' } },
+        h('div', { key:l, style:{ display:'flex', alignItems:'center', gap:4, fontSize:11, color:'var(--fg-muted)' } },
           h('div', { style:{ width:12, height:12, background:bg, borderRadius:2, border:`0.5px solid ${cl}`, flexShrink:0 } }),
           l
         )
@@ -386,15 +386,15 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
       h('div', { style:{ ...S.card, padding:0, overflow:'auto', maxHeight:'65vh' } },
         h('table', { style:{ borderCollapse:'collapse', width:'100%', fontSize:11 } },
           h('thead', null, h('tr', null,
-            h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'#f8f8f5', minWidth:160, textAlign:'left', padding:'6px 10px' } }, 'Сотрудник'),
+            h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'var(--card-2)', minWidth:160, textAlign:'left', padding:'6px 10px' } }, 'Сотрудник'),
             days.map(d => {
               const dow = new Date(viewYear, viewMonth, d).getDay();
               const isWe = !isWorkday(viewYear, viewMonth, d, data.settings);
-              return h('th', { key:d, style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:32, color: isWe ? RD : undefined } },
+              return h('th', { key:d, style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'var(--card-2)', minWidth:32, color: isWe ? RD : undefined } },
                 d, h('br'), h('span', { style:{ fontSize:9, fontWeight:400 } }, DOW[dow])
               );
             }),
-            h('th', { style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:48 } }, 'Итого')
+            h('th', { style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'var(--card-2)', minWidth:48 } }, 'Итого')
           )),
           h('tbody', null,
             showWorkers.map(w => {
@@ -469,19 +469,19 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
                     }, weLbl)
                   );
                 }),
-                h('td', { style:{ ...S.td, fontWeight:500, background:'#f8f8f5', padding:'4px 6px' } }, totH > 0 ? `${Math.round(totH*10)/10}ч` : '')
+                h('td', { style:{ ...S.td, fontWeight:500, background:'var(--card-2)', padding:'4px 6px' } }, totH > 0 ? `${Math.round(totH*10)/10}ч` : '')
               );
             }),
             // Итоговая строка — всегда показывается
             h('tr', null,
-              h('td', { style:{ ...S.td, position:'sticky', left:0, background:'#f8f8f5', fontWeight:500, fontSize:10, color:'#888', padding:'4px 10px' } }, 'Итого чел·ч'),
+              h('td', { style:{ ...S.td, position:'sticky', left:0, background:'var(--card-2)', fontWeight:500, fontSize:10, color:'var(--muted)', padding:'4px 10px' } }, 'Итого чел·ч'),
               days.map(d => {
                 let sum = 0;
                 showWorkers.forEach(w => { const v = getCellVal(w.id, d); if (v?.h) sum += v.h; });
                 const isWe = !isWorkday(viewYear, viewMonth, d, data.settings);
-                return h('td', { key:d, style:{ ...S.td, background: isWe ? 'rgba(226,75,74,0.04)' : '#f8f8f5', fontSize:10, fontWeight:500, color: sum > 0 ? AM2 : '#888' } }, sum > 0 ? Math.round(sum*10)/10 : '');
+                return h('td', { key:d, style:{ ...S.td, background: isWe ? 'rgba(226,75,74,0.04)' : 'var(--card-2)', fontSize:10, fontWeight:500, color: sum > 0 ? AM2 : '#888' } }, sum > 0 ? Math.round(sum*10)/10 : '');
               }),
-              h('td', { style:{ ...S.td, background:'#f8f8f5', fontWeight:500, fontSize:10, color:AM2, padding:'4px 6px' } }, (() => {
+              h('td', { style:{ ...S.td, background:'var(--card-2)', fontWeight:500, fontSize:10, color:AM2, padding:'4px 6px' } }, (() => {
                 let total = 0;
                 days.forEach(d => showWorkers.forEach(w => { const v = getCellVal(w.id, d); if (v?.h) total += v.h; }));
                 return total > 0 ? `${Math.round(total*10)/10}ч` : '';
@@ -494,9 +494,9 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
 
       // Попап ввода
       activeCell && h('div', {
-        style:{ position:'absolute', top:40, left:'50%', transform:'translateX(-50%)', background:'#fff', border:`1.5px solid ${AM}`, borderRadius:12, padding:14, zIndex:50, width:260, boxShadow:'0 4px 20px rgba(0,0,0,0.15)' }
+        style:{ position:'absolute', top:40, left:'50%', transform:'translateX(-50%)', background:'var(--card-solid,#fff)', border:`1.5px solid ${AM}`, borderRadius:12, padding:14, zIndex:50, width:260, boxShadow:'0 4px 20px rgba(0,0,0,0.15)' }
       },
-        h('div', { style:{ fontSize:11, color:'#888', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6, display:'flex', alignItems:'center', gap:6 } },
+        h('div', { style:{ fontSize:11, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6, display:'flex', alignItems:'center', gap:6 } },
           `${workerName} · ${activeCell.day} ${MONTHS_RU[viewMonth].toLowerCase()}`,
           (() => { const dow = new Date(viewYear, viewMonth, activeCell.day).getDay(); return (dow===0||dow===6) ? h('span', { style:{ background:'#FCEBEB', color:RD2, fontSize:10, padding:'1px 6px', borderRadius:4 } }, 'выходной') : null; })()
         ),
@@ -515,13 +515,13 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
             }
           }, `${v}ч`))
         ),
-        h('div', { style:{ fontSize:11, color:'#888', marginBottom:6 } }, 'Отсутствие / особые случаи:'),
+        h('div', { style:{ fontSize:11, color:'var(--muted)', marginBottom:6 } }, 'Отсутствие / особые случаи:'),
         h('div', { style:{ display:'flex', flexDirection:'column', gap:4, marginBottom:10 } },
           CODES.map(code => h('button', { key:code,
-            style:{ padding:'5px 10px', borderRadius:6, fontSize:11, fontWeight:400, cursor:'pointer', background:'#f5f5f2', color:'#333', border:'0.5px solid rgba(0,0,0,0.1)', textAlign:'left' },
+            style:{ padding:'5px 10px', borderRadius:6, fontSize:11, fontWeight:400, cursor:'pointer', background:'#f5f5f2', color:'var(--fg)', border:'0.5px solid rgba(0,0,0,0.1)', textAlign:'left' },
             onClick: () => setCode(code)
           }, CODE_LABELS[code])),
-          h('button', { style:{ padding:'5px 10px', borderRadius:6, fontSize:11, cursor:'pointer', background:'none', color:'#aaa', border:'0.5px solid rgba(0,0,0,0.08)', textAlign:'left' }, onClick: () => setCode('') }, '× очистить ячейку')
+          h('button', { style:{ padding:'5px 10px', borderRadius:6, fontSize:11, cursor:'pointer', background:'none', color:'var(--muted)', border:'0.5px solid rgba(0,0,0,0.08)', textAlign:'left' }, onClick: () => setCode('') }, '× очистить ячейку')
         ),
         h('div', { style:{ display:'flex', gap:6 } },
           h('button', { style: abtn({ flex:1, fontSize:13 }), onClick: saveCell }, 'Сохранить'),
