@@ -348,6 +348,26 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
   const [hasPasskeys] = useState(() => getSavedPasskeys().length > 0);
   const [offerPasskey, setOfferPasskey] = useState(false);
 
+  // iOS Safari fix: block body scroll when modal is open
+  React.useEffect(() => {
+    if (offerPasskey) {
+      const scrollY = window.scrollY;
+      document.body.style.position = 'fixed';
+      document.body.style.top = `-${scrollY}px`;
+      document.body.style.left = '0';
+      document.body.style.right = '0';
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.position = '';
+        document.body.style.top = '';
+        document.body.style.left = '';
+        document.body.style.right = '';
+        document.body.style.overflow = '';
+        window.scrollTo(0, scrollY);
+      };
+    }
+  }, [offerPasskey]);
+
   const handleLogin = async () => {
     setLoginError('');
     if (role === 'dashboard') { onLogin('dashboard', null, null); return; }
@@ -524,25 +544,31 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
       onClick: async () => { const ok = await loginWithPasskey(); if (!ok) addToast?.('Биометрия не прошла', 'error'); }
     }, '🔐 Войти по Face ID / отпечатку'),
 
-    // Модал: предложение зарегистрировать биометрию
-    offerPasskey && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 } },
-      h('div', { style: { background: '#1c1c1e', borderRadius: 18, padding: 28, maxWidth: 320, width: '100%', textAlign: 'center' } },
-        h('div', { style: { fontSize: 40, marginBottom: 12 } }, '🔐'),
-        h('div', { style: { fontSize: 17, fontWeight: 600, color: '#fff', marginBottom: 8 } }, 'Войти быстрее'),
-        h('div', { style: { fontSize: 14, color: 'rgba(255,255,255,0.65)', marginBottom: 24, lineHeight: 1.5 } }, 'Зарегистрировать Face ID или отпечаток для быстрого входа на этом телефоне?'),
-        h('button', {
-          style: { ...stylesL.primary, width: '100%', marginBottom: 10 },
-          onClick: async () => {
-            const ok = await registerPasskey(offerPasskey);
-            setOfferPasskey(false);
-            onLogin(offerPasskey.role, offerPasskey.workerId, offerPasskey.sectionId);
-          }
-        }, 'Настроить биометрию'),
-        h('button', {
-          style: { width: '100%', padding: '12px', background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.5)', fontSize: 14, cursor: 'pointer', borderRadius: 12 },
-          onClick: () => { setOfferPasskey(false); onLogin(offerPasskey.role, offerPasskey.workerId, offerPasskey.sectionId); }
-        }, 'Пропустить')
-      )
+    // Модал: предложение зарегистрировать биометрию (через portal для iOS Safari)
+    offerPasskey && ReactDOM.createPortal(
+      h('div', {
+        style: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999, padding: 20 },
+        onClick: e => { if (e.target === e.currentTarget) { setOfferPasskey(false); onLogin(offerPasskey.role, offerPasskey.workerId, offerPasskey.sectionId); } }
+      },
+        h('div', { style: { position: 'relative', background: '#1c1c1e', borderRadius: 18, padding: 28, maxWidth: 320, width: '100%', textAlign: 'center' } },
+          h('div', { style: { fontSize: 40, marginBottom: 12 } }, '🔐'),
+          h('div', { style: { fontSize: 17, fontWeight: 600, color: '#fff', marginBottom: 8 } }, 'Войти быстрее'),
+          h('div', { style: { fontSize: 14, color: 'rgba(255,255,255,0.65)', marginBottom: 24, lineHeight: 1.5 } }, 'Зарегистрировать Face ID или отпечаток для быстрого входа на этом телефоне?'),
+          h('button', {
+            style: { ...stylesL.primary, width: '100%', marginBottom: 10 },
+            onClick: async () => {
+              const ok = await registerPasskey(offerPasskey);
+              setOfferPasskey(false);
+              onLogin(offerPasskey.role, offerPasskey.workerId, offerPasskey.sectionId);
+            }
+          }, 'Настроить биометрию'),
+          h('button', {
+            style: { width: '100%', padding: '12px', background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.5)', fontSize: 14, cursor: 'pointer', borderRadius: 12 },
+            onClick: () => { setOfferPasskey(false); onLogin(offerPasskey.role, offerPasskey.workerId, offerPasskey.sectionId); }
+          }, 'Пропустить')
+        )
+      ),
+      document.body
     ),
 
     // Submit
