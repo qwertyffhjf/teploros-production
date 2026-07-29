@@ -285,22 +285,22 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
           h('input', { style: { ...S.inp, minWidth:150, flex:1 }, placeholder:'✉ Email', value: form.email, onChange: e => setForm(p => ({ ...p, email: e.target.value })) }),
           h('input', { style: { ...S.inp, minWidth:200, flex:2 }, placeholder:'🆘 Экстренный контакт (имя, телефон)', value: form.emergencyContact, onChange: e => setForm(p => ({ ...p, emergencyContact: e.target.value })) })
         ),
-        h('div', { style: { fontSize:11, color:'#888', marginBottom:6, fontWeight:500, textTransform:'uppercase' } }, 'Кадровые даты'),
+        h('div', { style: { fontSize:11, color:'var(--muted)', marginBottom:6, fontWeight:500, textTransform:'uppercase' } }, 'Кадровые даты'),
         h('div', { style: { display:'flex', gap:8, flexWrap:'wrap', marginBottom:10 } },
           h('div', null,
-            h('div', { style: { fontSize:10, color:'#888', marginBottom:3 } }, 'Дата приёма на работу'),
+            h('div', { style: { fontSize:10, color:'var(--muted)', marginBottom:3 } }, 'Дата приёма на работу'),
             h('input', { type:'date', style: S.inp, value: form.hireDate, onChange: e => setForm(p => ({ ...p, hireDate: e.target.value })) })
           ),
           h('div', null,
-            h('div', { style: { fontSize:10, color:'#888', marginBottom:3 } }, 'Последний медосмотр'),
+            h('div', { style: { fontSize:10, color:'var(--muted)', marginBottom:3 } }, 'Последний медосмотр'),
             h('input', { type:'date', style: S.inp, value: form.medicalExamDate, onChange: e => setForm(p => ({ ...p, medicalExamDate: e.target.value })) })
           ),
           h('div', null,
-            h('div', { style: { fontSize:10, color:'#888', marginBottom:3 } }, 'Следующий медосмотр'),
+            h('div', { style: { fontSize:10, color:'var(--muted)', marginBottom:3 } }, 'Следующий медосмотр'),
             h('input', { type:'date', style: S.inp, value: form.medicalExamNextDate, onChange: e => setForm(p => ({ ...p, medicalExamNextDate: e.target.value })) })
           )
         ),
-        h('div', { style: { fontSize:11, color:'#888', marginBottom:6, fontWeight:500, textTransform:'uppercase' } }, 'Удостоверения и допуски'),
+        h('div', { style: { fontSize:11, color:'var(--muted)', marginBottom:6, fontWeight:500, textTransform:'uppercase' } }, 'Удостоверения и допуски'),
         h('div', { style: { display:'flex', gap:6, flexWrap:'wrap', marginBottom:8 } },
           ['Сварщик (НАКС)', 'Стропальщик', 'Электробезопасность II', 'Электробезопасность III', 'Работы на высоте', 'Газоопасные работы'].map(lic =>
             h('button', { key: lic, type:'button',
@@ -317,7 +317,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
         ),
         (form.licences||[]).length > 0 && h('div', { style: { display:'flex', gap:8, flexWrap:'wrap', marginBottom:8 } },
           form.licences.map(lic =>
-            h('div', { key: lic.name, style: { display:'flex', alignItems:'center', gap:6, padding:'4px 8px', background:'#f8f8f5', borderRadius:6 } },
+            h('div', { key: lic.name, style: { display:'flex', alignItems:'center', gap:6, padding:'4px 8px', background:'var(--card-2)', borderRadius:6 } },
               h('span', { style: { fontSize:11, color:AM2 } }, lic.name),
               h('input', { type:'date', style: { ...S.inp, width:140, fontSize:11 }, title:'Дата истечения допуска',
                 value: lic.expiryDate||'',
@@ -330,7 +330,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
 
       // === Вкладка: Оплата ===
       formTab === 'pay' && h('div', null,
-        h('div', { style: { fontSize:11, color:'#888', marginBottom:8, fontWeight:500, textTransform:'uppercase' } }, 'Тип оплаты'),
+        h('div', { style: { fontSize:11, color:'var(--muted)', marginBottom:8, fontWeight:500, textTransform:'uppercase' } }, 'Тип оплаты'),
         h('div', { style: { display:'flex', gap:8, marginBottom:14 } },
           ['hourly', 'piecework'].map(type =>
             h('button', { key: type, type:'button',
@@ -343,30 +343,30 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
           )
         ),
         h('div', { style: { marginBottom:12 } },
-          h('div', { style: { fontSize:11, color:'#888', marginBottom:4 } }, form.payType === 'piecework' ? 'Ставка почасовая (при выводе на почасовую), руб/час' : 'Ставка, руб/час'),
+          h('div', { style: { fontSize:11, color:'var(--muted)', marginBottom:4 } }, form.payType === 'piecework' ? 'Ставка почасовая (при выводе на почасовую), руб/час' : 'Ставка, руб/час'),
           h('div', { style: { display:'flex', gap:8, alignItems:'center' } },
             h('input', { type:'number', min:0, style: { ...S.inp, width:150 }, placeholder:'например 300',
               value: form.hourlyRate || '', onChange: e => setForm(p => ({ ...p, hourlyRate: parseFloat(e.target.value) || '' })) }),
-            h('span', { style: { fontSize:12, color:'#888' } }, 'руб/час')
+            h('span', { style: { fontSize:12, color:'var(--muted)' } }, 'руб/час')
           )
         ),
         form.payType === 'piecework' && h('div', { style: { marginBottom:12 } },
-          h('div', { style: { fontSize:11, color:'#888', marginBottom:4 } }, 'Расценка за изделие, руб/шт'),
+          h('div', { style: { fontSize:11, color:'var(--muted)', marginBottom:4 } }, 'Расценка за изделие, руб/шт'),
           h('div', { style: { display:'flex', gap:8, alignItems:'center' } },
             h('input', { type:'number', min:0, style: { ...S.inp, width:150 }, placeholder:'например 5000',
               value: form.pieceRate || '', onChange: e => setForm(p => ({ ...p, pieceRate: parseFloat(e.target.value) || '' })) }),
-            h('span', { style: { fontSize:12, color:'#888' } }, 'руб/изделие')
+            h('span', { style: { fontSize:12, color:'var(--muted)' } }, 'руб/изделие')
           ),
-          h('div', { style: { fontSize:11, color:'#aaa', marginTop:6 } }, 'Считается по количеству отгруженных изделий в которых участвовал рабочий')
+          h('div', { style: { fontSize:11, color:'var(--muted)', marginTop:6 } }, 'Считается по количеству отгруженных изделий в которых участвовал рабочий')
         ),
-        !form.payType && h('div', { style: { fontSize:13, color:'#aaa', padding:'20px', textAlign:'center' } }, 'Выберите тип оплаты выше')
+        !form.payType && h('div', { style: { fontSize:13, color:'var(--muted)', padding:'20px', textAlign:'center' } }, 'Выберите тип оплаты выше')
       ),
 
       // === Вкладка: Компетенции ===
       formTab === 'competences' && h('div', null,
         h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 } },
-          h('div', { style: { fontSize:11, color:'#888' } }, 'Нажмите для выбора уровня'),
-          h('div', { style: { display:'flex', gap:6, fontSize:10, color:'#888' } },
+          h('div', { style: { fontSize:11, color:'var(--muted)' } }, 'Нажмите для выбора уровня'),
+          h('div', { style: { display:'flex', gap:6, fontSize:10, color:'var(--muted)' } },
             h('span', { style: { padding:'1px 6px', background:'#FFF8E1', color:'#F57F17', borderRadius:4 } }, 'Нов.'),
             h('span', { style: { padding:'1px 6px', background:AM3, color:AM2, borderRadius:4 } }, 'Ком.'),
             h('span', { style: { padding:'1px 6px', background:GN3, color:GN2, borderRadius:4 } }, 'Эксп.')
@@ -420,7 +420,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
     confirmEl,
     cardWorker && h(WorkerCardModal, { worker: cardWorker, data, onClose: () => setCardWorker(null) }),
     thanksModal && h('div', { role:'dialog','aria-modal':'true','aria-label':'Отправить благодарность', style: { position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:200 } },
-      h('div', { style: { background:'#fff',borderRadius:12,padding:24,width:'min(320px, calc(100vw - 32px))' } },
+      h('div', { style: { background:'var(--card-solid,#fff)',borderRadius:12,padding:24,width:'min(320px, calc(100vw - 32px))' } },
         h('div', { style: { fontSize:16, fontWeight:500, marginBottom:16 } }, `Благодарность для ${thanksModal.name}`),
         h('textarea', { style: { ...S.inp, width:'100%', marginBottom:16 }, rows:3, placeholder:'Комментарий (необязательно)', value: thanksNote, onChange: e => setThanksNote(e.target.value) }),
         h('div', { style: { display:'flex', gap:8, justifyContent:'flex-end' } },
@@ -570,23 +570,23 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
                         h('span', { style: { display:'inline-block', padding:'1px 8px', fontSize:10, borderRadius:8, background:AM3, color:AM2, fontWeight:500 } }, `Ур. ${w.level} · ${getLevelTitle(w.level)}`),
                         h('button', { style: gbtn({ fontSize:11, padding:'2px 6px' }), 'aria-label': `Поблагодарить ${w.name}`, onClick: () => setThanksModal({ id: w.id, name: w.name }) }, '👏')
                       ),
-                      h('div', { style: { fontSize:12, color:'#888' } }, [w.position, w.grade ? `${w.grade} разр.` : null, w.tabNumber ? `Таб. ${w.tabNumber}` : null, w.sectionName].filter(Boolean).join(' · ') || '—')
+                      h('div', { style: { fontSize:12, color:'var(--muted)' } }, [w.position, w.grade ? `${w.grade} разр.` : null, w.tabNumber ? `Таб. ${w.tabNumber}` : null, w.sectionName].filter(Boolean).join(' · ') || '—')
                     ),
                     h('div', { style: { display:'flex', gap:6, alignItems:'center' } },
                       h('span', { style: { display:'inline-block', padding:'3px 10px', fontSize:10, borderRadius:8, fontWeight:500, background: displayStatus.bg, color: displayStatus.cl, border:'0.5px solid '+displayStatus.br } }, displayStatus.label),
-                      w.checkinTime && h('span', { style: { fontSize:11, color:'#888' } }, `с ${w.checkinTime}`)
+                      w.checkinTime && h('span', { style: { fontSize:11, color:'var(--muted)' } }, `с ${w.checkinTime}`)
                     )
                   ),
                   h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom:10 } },
-                    h('div', { style: { fontSize:11, color:'#888', whiteSpace:'nowrap' } }, `${w.allTimeDone} оп.`),
+                    h('div', { style: { fontSize:11, color:'var(--muted)', whiteSpace:'nowrap' } }, `${w.allTimeDone} оп.`),
                     h('div', { style: { flex:1, height:5, background:'#eee', borderRadius:3, overflow:'hidden' } }, h('div', { style: { width: `${w.levelProgress*100}%`, height:5, background:AM, borderRadius:3 } })),
-                    h('div', { style: { fontSize:10, color:'#888', whiteSpace:'nowrap' } }, `→ Ур. ${w.level+1}`)
+                    h('div', { style: { fontSize:10, color:'var(--muted)', whiteSpace:'nowrap' } }, `→ Ур. ${w.level+1}`)
                   ),
                   h('div', { style: { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, marginBottom:10 } },
-                    h('div', { style: { textAlign:'center', padding:'6px 4px', background:'#f8f8f5', borderRadius:8 } }, h('div', { style: { fontSize:16, fontWeight:500, color:GN } }, w.opsDone), h('div', { style: { fontSize:10, color:'#888' } }, 'выполн.')),
-                    h('div', { style: { textAlign:'center', padding:'6px 4px', background:'#f8f8f5', borderRadius:8 } }, h('div', { style: { fontSize:16, fontWeight:500, color:AM } }, w.avgTime ? fmtDur(w.avgTime) : '—'), h('div', { style: { fontSize:10, color:'#888' } }, 'ср. время')),
-                    h('div', { style: { textAlign:'center', padding:'6px 4px', background:'#f8f8f5', borderRadius:8 } }, h('div', { style: { fontSize:16, fontWeight:500, color: w.defectRate > 5 ? RD : GN } }, `${w.defectRate.toFixed(1)}%`), h('div', { style: { fontSize:10, color:'#888' } }, 'брак')),
-                    h('div', { style: { textAlign:'center', padding:'6px 4px', background:'#f8f8f5', borderRadius:8 } }, h('div', { style: { fontSize:16, fontWeight:500, color:BL } }, w.opsActive), h('div', { style: { fontSize:10, color:'#888' } }, 'в работе'))
+                    h('div', { style: { textAlign:'center', padding:'6px 4px', background:'var(--card-2)', borderRadius:8 } }, h('div', { style: { fontSize:16, fontWeight:500, color:GN } }, w.opsDone), h('div', { style: { fontSize:10, color:'var(--muted)' } }, 'выполн.')),
+                    h('div', { style: { textAlign:'center', padding:'6px 4px', background:'var(--card-2)', borderRadius:8 } }, h('div', { style: { fontSize:16, fontWeight:500, color:AM } }, w.avgTime ? fmtDur(w.avgTime) : '—'), h('div', { style: { fontSize:10, color:'var(--muted)' } }, 'ср. время')),
+                    h('div', { style: { textAlign:'center', padding:'6px 4px', background:'var(--card-2)', borderRadius:8 } }, h('div', { style: { fontSize:16, fontWeight:500, color: w.defectRate > 5 ? RD : GN } }, `${w.defectRate.toFixed(1)}%`), h('div', { style: { fontSize:10, color:'var(--muted)' } }, 'брак')),
+                    h('div', { style: { textAlign:'center', padding:'6px 4px', background:'var(--card-2)', borderRadius:8 } }, h('div', { style: { fontSize:16, fontWeight:500, color:BL } }, w.opsActive), h('div', { style: { fontSize:10, color:'var(--muted)' } }, 'в работе'))
                   ),
                   // Часы из табеля за текущий месяц
                   (() => {
@@ -603,16 +603,16 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
                     ) : null;
                   })(),
                   w.achievements && w.achievements.length > 0 && h('div', { style: { marginBottom:8 } },
-                    h('div', { style: { fontSize:10, color:'#888', marginBottom:4 } }, `Достижения (${w.achievements.length})`),
-                    h('div', { style: { display:'flex', gap:4, flexWrap:'wrap' } }, w.achievements.slice(0,6).map(achId => { const a = ACHIEVEMENTS[achId]; return a ? h('span', { key: achId, title: `${a.title}: ${a.desc}`, style: { padding:'2px 8px', fontSize:11, background:'#f8f8f5', borderRadius:8, cursor:'default' } }, `${a.icon} ${a.title}`) : null; }), w.achievements.length > 6 && h('span', { style: { fontSize:11, color:'#888', padding:'2px 4px' } }, `+${w.achievements.length-6}`))
+                    h('div', { style: { fontSize:10, color:'var(--muted)', marginBottom:4 } }, `Достижения (${w.achievements.length})`),
+                    h('div', { style: { display:'flex', gap:4, flexWrap:'wrap' } }, w.achievements.slice(0,6).map(achId => { const a = ACHIEVEMENTS[achId]; return a ? h('span', { key: achId, title: `${a.title}: ${a.desc}`, style: { padding:'2px 8px', fontSize:11, background:'var(--card-2)', borderRadius:8, cursor:'default' } }, `${a.icon} ${a.title}`) : null; }), w.achievements.length > 6 && h('span', { style: { fontSize:11, color:'var(--muted)', padding:'2px 4px' } }, `+${w.achievements.length-6}`))
                   ),
                   w.competences && w.competences.length > 0 && h('div', { style: { marginBottom:8 } },
-                    h('div', { style: { fontSize:10, color:'#888', marginBottom:4 } }, 'Допуск к операциям'),
+                    h('div', { style: { fontSize:10, color:'var(--muted)', marginBottom:4 } }, 'Допуск к операциям'),
                     h('div', { style: { display:'flex', gap:4, flexWrap:'wrap' } }, w.competences.map(c => h('span', { key: c, style: { padding:'2px 8px', fontSize:10, background:AM3, color:AM2, borderRadius:8 } }, c)))
                   ),
                   // Контакты и кадровые данные
-                  (w.phone || w.email || w.hireDate || w.dismissedAt || w.emergencyContact) && h('div', { style: { marginBottom: 8, padding: '6px 10px', background: '#f8f8f5', borderRadius: 6, fontSize: 11 } },
-                    h('div', { style: { display: 'flex', gap: 12, flexWrap: 'wrap', color: '#555' } },
+                  (w.phone || w.email || w.hireDate || w.dismissedAt || w.emergencyContact) && h('div', { style: { marginBottom: 8, padding: '6px 10px', background: 'var(--card-2)', borderRadius: 6, fontSize: 11 } },
+                    h('div', { style: { display: 'flex', gap: 12, flexWrap: 'wrap', color: 'var(--fg-muted)' } },
                       w.phone && h('a', { href: `tel:${w.phone}`, style: { color: AM2, textDecoration: 'none' } }, `📞 ${w.phone}`),
                       w.email && h('a', { href: `mailto:${w.email}`, style: { color: AM2, textDecoration: 'none' } }, `✉ ${w.email}`),
                       w.hireDate && h('span', null, `📅 Принят: ${new Date(w.hireDate).toLocaleDateString('ru')}`),
@@ -643,11 +643,11 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
                     !w.archived
                       ? h('div', { style: { display: 'flex', gap: 4, marginLeft: 'auto' } },
                           h('button', { style: rbtn({ fontSize:11, padding:'4px 8px' }), onClick: () => del(w.id) }, '📦 Архив'),
-                          h('button', { style: { ...rbtn({ fontSize:11, padding:'4px 8px' }), background: '#fff', color: RD, borderColor: RD }, onClick: () => permanentDelete(w.id) }, '🗑')
+                          h('button', { style: { ...rbtn({ fontSize:11, padding:'4px 8px' }), background: 'var(--card-solid,#fff)', color: RD, borderColor: RD }, onClick: () => permanentDelete(w.id) }, '🗑')
                         )
                       : h('div', { style: { display: 'flex', gap: 4, marginLeft: 'auto' } },
                           h('button', { style: { ...gbtn({ fontSize:11, padding:'4px 8px' }), color: GN2, borderColor: GN }, onClick: () => restoreWorker(w.id) }, '↩ Восстановить'),
-                          h('button', { style: { ...rbtn({ fontSize:11, padding:'4px 8px' }), background: '#fff', color: RD, borderColor: RD }, onClick: () => permanentDelete(w.id) }, '🗑 Удалить')
+                          h('button', { style: { ...rbtn({ fontSize:11, padding:'4px 8px' }), background: 'var(--card-solid,#fff)', color: RD, borderColor: RD }, onClick: () => permanentDelete(w.id) }, '🗑 Удалить')
                         )
                   )
                 )
@@ -657,7 +657,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
       // Пагинатор HR
       filtered.length > HR_PAGE_SIZE && h('div', { style: { display:'flex', gap:8, justifyContent:'center', alignItems:'center', padding:'12px 0', marginTop:4 } },
         h('button', { style: gbtn({ fontSize:12, padding:'6px 14px', opacity: hrPage===1?0.4:1 }), disabled: hrPage===1, onClick:()=>setHrPage(p=>Math.max(1,p-1)) }, '← Пред'),
-        h('span', { style: { fontSize:12, color:'#888' } }, `${hrPage} / ${Math.ceil(filtered.length/HR_PAGE_SIZE)} · ${filtered.length} сотр.`),
+        h('span', { style: { fontSize:12, color:'var(--muted)' } }, `${hrPage} / ${Math.ceil(filtered.length/HR_PAGE_SIZE)} · ${filtered.length} сотр.`),
         h('button', { style: gbtn({ fontSize:12, padding:'6px 14px', opacity: hrPage>=Math.ceil(filtered.length/HR_PAGE_SIZE)?0.4:1 }), disabled: hrPage>=Math.ceil(filtered.length/HR_PAGE_SIZE), onClick:()=>setHrPage(p=>p+1) }, 'След →')
       )
     ) : h('div', null,
@@ -675,31 +675,31 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
             );
           })
         ),
-        h('div', { style: { display: 'flex', gap: 12, marginTop: 8, fontSize: 10, color: '#888' } },
+        h('div', { style: { display: 'flex', gap: 12, marginTop: 8, fontSize: 10, color: 'var(--muted)' } },
           h('span', null, '🔴 0 чел — критично'), h('span', null, '🟡 1-2 чел — риск'), h('span', null, '🟢 3+ чел — норма')
         )
       ),
       // Легенда уровней — ВВЕРХУ
       h('div', { style: { display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap', fontSize: 11 } },
-        h('span', { style: { fontWeight: 500, color: '#666', marginRight: 4 } }, 'Уровни:'),
+        h('span', { style: { fontWeight: 500, color: 'var(--fg-muted)', marginRight: 4 } }, 'Уровни:'),
         h('span', { style: { padding: '2px 8px', borderRadius: 4, background: '#f5f5f2', color: '#ccc', fontSize: 11 } }, '— нет допуска'),
         h('span', { style: { padding: '2px 8px', borderRadius: 4, background: '#FFF8E1', color: '#F57F17', fontSize: 11 } }, 'Нов. — новичок'),
         h('span', { style: { padding: '2px 8px', borderRadius: 4, background: AM3, color: AM2, fontSize: 11 } }, 'Ком. — компетентен'),
         h('span', { style: { padding: '2px 8px', borderRadius: 4, background: GN3, color: GN2, fontSize: 11 } }, 'Эксп. — эксперт'),
-        h('span', { style: { color: '#aaa', fontSize: 10, alignSelf: 'center' } }, '· Нажмите ячейку для переключения')
+        h('span', { style: { color: 'var(--muted)', fontSize: 10, alignSelf: 'center' } }, '· Нажмите ячейку для переключения')
       ),
       // Матрица с уровнями
       h('div', { style: { ...S.card, padding: 0, overflowX: 'auto', overflowY: 'auto', maxHeight: '70vh', WebkitOverflowScrolling: 'touch' } }, h('table', { style: { borderCollapse:'collapse', minWidth: 560, fontSize:12 } },
         h('thead', null, h('tr', null,
-          h('th', { style: { ...S.th, position: 'sticky', top: 0, left: 0, zIndex: 3, background: '#f8f8f5', minWidth: 160, boxShadow: '2px 0 4px rgba(0,0,0,0.06)' }, scope: 'col' }, 'Сотрудник'),
+          h('th', { style: { ...S.th, position: 'sticky', top: 0, left: 0, zIndex: 3, background: 'var(--card-2)', minWidth: 160, boxShadow: '2px 0 4px rgba(0,0,0,0.06)' }, scope: 'col' }, 'Сотрудник'),
           stagesForMatrix.map(s => {
             const count = competenceCoverage[s.name] ?? 0;
             const color = count === 0 ? RD : count <= 2 ? AM : GN;
-            return h('th', { key: s.id, style: { ...S.th, borderBottom: `3px solid ${color}`, position: 'sticky', top: 0, zIndex: 2, background: '#f8f8f5', whiteSpace: 'nowrap', minWidth: 90 } }, s.name);
+            return h('th', { key: s.id, style: { ...S.th, borderBottom: `3px solid ${color}`, position: 'sticky', top: 0, zIndex: 2, background: 'var(--card-2)', whiteSpace: 'nowrap', minWidth: 90 } }, s.name);
           })
         )),
         h('tbody', null, data.workers.filter(w => !w.archived).map(w => h('tr', { key: w.id },
-          h('td', { style: { ...S.td, fontWeight:500, position: 'sticky', left: 0, zIndex: 1, background: '#fff', boxShadow: '2px 0 4px rgba(0,0,0,0.06)', minWidth: 160 } }, w.name),
+          h('td', { style: { ...S.td, fontWeight:500, position: 'sticky', left: 0, zIndex: 1, background: 'var(--card-solid,#fff)', boxShadow: '2px 0 4px rgba(0,0,0,0.06)', minWidth: 160 } }, w.name),
           stagesForMatrix.map(s => {
             const level = (w.competenceLevels || {})[s.name] || 0;
             const has = (w.competences || []).includes(s.name);
@@ -857,12 +857,12 @@ const InstructionsTracker = memo(({ data, onUpdate, addToast }) => {
     h('div', { style:{ ...S.card, padding:0, overflowX:'auto', overflowY:'auto', maxHeight:'60vh', WebkitOverflowScrolling:'touch' } },
       h('table', { style:{ borderCollapse:'collapse', fontSize:11, minWidth: 560 } },
         h('thead', null, h('tr', null,
-          h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'#f8f8f5', minWidth:160, textAlign:'left', padding:'6px 10px', boxShadow: '2px 0 4px rgba(0,0,0,0.06)' } }, 'Сотрудник'),
-          INSTRUCTION_TYPES.map(t => h('th', { key:t.id, style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'#f8f8f5', minWidth:90, fontSize:10 } }, t.label))
+          h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'var(--card-2)', minWidth:160, textAlign:'left', padding:'6px 10px', boxShadow: '2px 0 4px rgba(0,0,0,0.06)' } }, 'Сотрудник'),
+          INSTRUCTION_TYPES.map(t => h('th', { key:t.id, style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'var(--card-2)', minWidth:90, fontSize:10 } }, t.label))
         )),
         h('tbody', null, shown.slice(0, 50).map(({ worker: w, byType }) =>
           h('tr', { key:w.id },
-            h('td', { style:{ ...S.td, position:'sticky', left:0, background:'#fff', zIndex:1, padding:'6px 10px', fontWeight:500, boxShadow:'2px 0 4px rgba(0,0,0,0.04)' } }, w.name),
+            h('td', { style:{ ...S.td, position:'sticky', left:0, background:'var(--card-solid,#fff)', zIndex:1, padding:'6px 10px', fontWeight:500, boxShadow:'2px 0 4px rgba(0,0,0,0.04)' } }, w.name),
             INSTRUCTION_TYPES.map(t => {
               const instr = byType[t.id];
               const st = instr ? getStatus(instr) : 'none';
@@ -884,10 +884,10 @@ const InstructionsTracker = memo(({ data, onUpdate, addToast }) => {
     // Последние записи с пагинацией
     instructions.length > 0 && h('div', { style:{ marginTop:14 } },
       h('div', { style:{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 } },
-        h('div', { style:{ fontSize:12, fontWeight:500, color:'#888' } }, `Последние записи (${instructions.length})`),
+        h('div', { style:{ fontSize:12, fontWeight:500, color:'var(--muted)' } }, `Последние записи (${instructions.length})`),
         instructions.length > RECENT_PAGE_SIZE && h('div', { style:{ display:'flex', gap:4, alignItems:'center' } },
           h('button', { style: gbtn({ padding:'3px 10px', fontSize:11, minHeight:28 }), disabled: recentPage === 0, onClick: () => setRecentPage(p => p - 1) }, '‹'),
-          h('span', { style:{ fontSize:11, color:'#888' } }, `${recentPage+1} / ${Math.ceil(instructions.length / RECENT_PAGE_SIZE)}`),
+          h('span', { style:{ fontSize:11, color:'var(--muted)' } }, `${recentPage+1} / ${Math.ceil(instructions.length / RECENT_PAGE_SIZE)}`),
           h('button', { style: gbtn({ padding:'3px 10px', fontSize:11, minHeight:28 }), disabled: (recentPage+1)*RECENT_PAGE_SIZE >= instructions.length, onClick: () => setRecentPage(p => p + 1) }, '›')
         )
       ),
@@ -900,9 +900,9 @@ const InstructionsTracker = memo(({ data, onUpdate, addToast }) => {
         return h('div', { key:instr.id, style:{ display:'flex', alignItems:'center', gap:8, padding:'6px 0', borderBottom:'0.5px solid rgba(0,0,0,0.06)' } },
           h('div', { style:{ flex:1, fontSize:12 } },
             h('span', { style:{ fontWeight:500 } }, w?.name || '—'),
-            h('span', { style:{ color:'#888', margin:'0 6px' } }, '·'),
+            h('span', { style:{ color:'var(--muted)', margin:'0 6px' } }, '·'),
             t?.label || instr.type,
-            h('span', { style:{ color:'#888', marginLeft:6, fontSize:11 } }, instr.date)
+            h('span', { style:{ color:'var(--muted)', marginLeft:6, fontSize:11 } }, instr.date)
           ),
           st !== 'ok' && h('span', { style:{ fontSize:10, padding:'1px 6px', borderRadius:4, background: st==='expired'?'#FCEBEB':AM3, color: st==='expired'?RD2:AM2 } }, st==='expired'?'Просрочен':'Истекает'),
           h('button', { style:{ background:'none', border:'none', color:'#ccc', cursor:'pointer', fontSize:14 }, onClick:() => del(instr.id) }, '×')
@@ -1155,11 +1155,11 @@ const MonthlyReport = memo(({ data }) => {
 
     report.normsAlert.length > 0 && h('div', { style:S.card },
       h('div', { style:S.sec }, 'Накопленные нормы времени'),
-      h('div', { style:{ fontSize:11, color:'#888', marginBottom:8 } }, 'Средний фактический результат — используйте для планирования'),
+      h('div', { style:{ fontSize:11, color:'var(--muted)', marginBottom:8 } }, 'Средний фактический результат — используйте для планирования'),
       report.normsAlert.map((n,i) => h('div', { key:i, style:{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:'0.5px solid rgba(0,0,0,0.05)' } },
         h('div', { style:{ flex:1, fontSize:12 } }, n.name),
         h('div', { style:{ fontSize:12, fontWeight:500, color:AM2 } }, `${n.avgH}ч`),
-        h('div', { style:{ fontSize:11, color:'#888' } }, `(${n.samples} выборок)`)
+        h('div', { style:{ fontSize:11, color:'var(--muted)' } }, `(${n.samples} выборок)`)
       ))
     )
   );
@@ -1243,16 +1243,16 @@ const VacationTimeline = memo(({ data }) => {
         }}))
       ),
       h('div', { style: { display: 'flex', justifyContent: 'space-between', marginTop: 2 } },
-        MONTHS.map(m => h('span', { key: m, style: { fontSize: 8, color: '#aaa', flex: 1, textAlign: 'center' } }, m))
+        MONTHS.map(m => h('span', { key: m, style: { fontSize: 8, color: 'var(--muted)', flex: 1, textAlign: 'center' } }, m))
       )
     ),
     // Таймлайн
     vacations.length === 0
-      ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888', padding: 24 } }, 'Нет запланированных отпусков в ' + year + ' году')
+      ? h('div', { style: { ...S.card, textAlign: 'center', color: 'var(--muted)', padding: 24 } }, 'Нет запланированных отпусков в ' + year + ' году')
       : h('div', { style: { ...S.card, padding: 0, overflowX: 'auto' } },
           // Заголовок месяцев
-          h('div', { style: { display: 'flex', borderBottom: '0.5px solid rgba(0,0,0,0.08)', position: 'sticky', top: 0, background: '#fff', zIndex: 2 } },
-            h('div', { style: { width: 140, flexShrink: 0, padding: '8px 10px', fontSize: 10, color: '#888', fontWeight: 500 } }, 'Сотрудник'),
+          h('div', { style: { display: 'flex', borderBottom: '0.5px solid rgba(0,0,0,0.08)', position: 'sticky', top: 0, background: 'var(--card-solid,#fff)', zIndex: 2 } },
+            h('div', { style: { width: 140, flexShrink: 0, padding: '8px 10px', fontSize: 10, color: 'var(--muted)', fontWeight: 500 } }, 'Сотрудник'),
             h('div', { style: { flex: 1, display: 'flex', minWidth: 600 } },
               MONTHS.map((m, i) => {
                 const isNow = today.getFullYear() === year && today.getMonth() === i;
@@ -1299,7 +1299,7 @@ const VacationTimeline = memo(({ data }) => {
             );
           }),
           // Легенда
-          h('div', { style: { display: 'flex', borderTop: '0.5px solid rgba(0,0,0,0.08)', padding: '8px 10px', gap: 16, fontSize: 11, color: '#888' } },
+          h('div', { style: { display: 'flex', borderTop: '0.5px solid rgba(0,0,0,0.08)', padding: '8px 10px', gap: 16, fontSize: 11, color: 'var(--muted)' } },
             h('span', { style: { display: 'flex', alignItems: 'center', gap: 4 } }, h('div', { style: { width: 12, height: 12, background: '#378ADD', borderRadius: 3, opacity: 0.85 } }), 'Утверждён'),
             h('span', { style: { display: 'flex', alignItems: 'center', gap: 4 } }, h('div', { style: { width: 12, height: 12, background: AM, borderRadius: 3, opacity: 0.5 } }), 'Не утверждён'),
             h('span', { style: { display: 'flex', alignItems: 'center', gap: 4 } }, h('div', { style: { width: 12, height: 12, background: RD, borderRadius: 3, border: '1px solid ' + RD2 } }), 'Пересечение')
@@ -1508,7 +1508,7 @@ const ToolIssueManager = memo(({ data, onUpdate, addToast }) => {
     // Модал возврата
     returnModal && h('div', { style:{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:200,
       display:'flex', alignItems:'center', justifyContent:'center', padding:16 } },
-      h('div', { style:{ background:'var(--card,#fff)', borderRadius:12, padding:20, width:'100%', maxWidth:400,
+      h('div', { style:{ background:'var(--card-solid,#fff)', borderRadius:12, padding:20, width:'100%', maxWidth:400,
         border:'0.5px solid var(--border)' } },
         h('div', { style:{ fontWeight:600, fontSize:15, marginBottom:12 } }, 'Приём инструмента'),
         returnEntry && h('div', { style:{ padding:'8px 12px', background: AM3, borderRadius:8, marginBottom:12, fontSize:13 } },
@@ -1797,7 +1797,7 @@ const PayrollExport = memo(({ data }) => {
           { key: 'position', label: 'Должность', sortable: false,
             render: r => h('span', { style:{ color:'var(--muted)', fontSize:12 } }, r.w.position||'—') },
           { key: 'payType', label: 'Тип', sortValue: r => r.payType,
-            render: r => h('span', { style:{ fontSize:10, padding:'2px 7px', borderRadius:8, background: r.payType==='hourly' ? AM3 : r.payType==='mixed' ? '#e8f4ff' : GN3, color: r.payType==='hourly' ? AM2 : r.payType==='mixed' ? '#1a6fb5' : GN2, border:`0.5px solid ${r.payType==='hourly' ? AM4 : r.payType==='mixed' ? '#a8d0f0' : GN}` } },
+            render: r => h('span', { style:{ fontSize:10, padding:'2px 7px', borderRadius:8, background: r.payType==='hourly' ? AM3 : r.payType==='mixed' ? 'var(--st-run-bg)' : GN3, color: r.payType==='hourly' ? AM2 : r.payType==='mixed' ? 'var(--st-run-cl)' : GN2, border:`0.5px solid ${r.payType==='hourly' ? AM4 : r.payType==='mixed' ? 'var(--st-run-br)' : GN}` } },
               r.payType==='hourly' ? '⏱ Часовая' : r.payType==='mixed' ? '⚡ Смешанная' : '🔧 Сдельная') },
           { key: 'rate', label: 'Ставка', sortable: false,
             render: r => h('span', { style:{ fontSize:12, color:'var(--muted)' } },
@@ -1819,7 +1819,7 @@ const PayrollExport = memo(({ data }) => {
                 `📋 Начисления за месяц (${pieceCount} операций на ${byOrder.length} заказе${byOrder.length === 1 ? '' : (byOrder.length < 5 ? 'ах' : 'ах')})`
               ),
               (byOrder || []).map(g =>
-                h('div', { key: g.order.id, style: { marginBottom: 10, padding: '8px 12px', background: 'var(--card, #fff)', border: '0.5px solid var(--border-soft)', borderRadius: 6 } },
+                h('div', { key: g.order.id, style: { marginBottom: 10, padding: '8px 12px', background: 'var(--card-solid, #fff)', border: '0.5px solid var(--border-soft)', borderRadius: 6 } },
                   h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 } },
                     h('div', null,
                       h('b', { style: { fontSize: 13 } }, `Заказ ${g.order.number || '—'}`),
