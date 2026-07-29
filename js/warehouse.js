@@ -166,7 +166,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId, readOnly 
   return h('div', null,
     // Фильтр статусов
     h('div', { style: { ...S.card, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 } },
-      h('span', { style: { fontSize: 12, color: '#888' } }, 'Показать:'),
+      h('span', { style: { fontSize: 12, color: 'var(--muted)' } }, 'Показать:'),
       [
         { id: 'pending', label: `⏳ Ожидаемые (${pendingCount})` },
         { id: 'confirmed', label: '✓ Подтверждённые' },
@@ -191,7 +191,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId, readOnly 
                  { l: 'Получено', v: deliveries.filter(d=>d.status==='confirmed').length, c: GN2 },
                 ].map((s,i) => h('div', { key:i, style:{ textAlign:'center' } },
                   h('div', { style:{ fontSize:20, fontWeight:500, color:s.c } }, s.v),
-                  h('div', { style:{ fontSize:10, color:'#888', textTransform:'uppercase' } }, s.l)
+                  h('div', { style:{ fontSize:10, color:'var(--muted)', textTransform:'uppercase' } }, s.l)
                 ))
               ),
               h('button', { style: gbtn({ fontSize:11, padding:'4px 10px' }), onClick: () => setShowAnalytics(v=>!v) },
@@ -200,7 +200,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId, readOnly 
             showAnalytics && h('div', { style:{ overflowX:'auto', marginTop:8 } },
               h('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:12 } },
                 h('thead', null, h('tr', null, ['Материал','Нужно','Получено','Позиций'].map((t,i) =>
-                  h('th', { key:i, style:{ padding:'5px 8px', textAlign: i>0?'center':'left', color:'#888', fontWeight:500, borderBottom:'0.5px solid var(--border)', fontSize:11 } }, t)))),
+                  h('th', { key:i, style:{ padding:'5px 8px', textAlign: i>0?'center':'left', color:'var(--muted)', fontWeight:500, borderBottom:'0.5px solid var(--border)', fontSize:11 } }, t)))),
                 h('tbody', null,
                   Object.values(deliveries.reduce((acc, d) => {
                     const mat = data.materials.find(m => m.id === d.materialId);
@@ -217,7 +217,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId, readOnly 
                     h('td', { style:{ padding:'5px 8px', textAlign:'center', color: r.del>=r.req?GN2:AM2, fontWeight:500 } }, r.del+' '+r.unit),
                     h('td', { style:{ padding:'5px 8px', textAlign:'center' } },
                       h('span', { style:{ padding:'2px 8px', borderRadius:10, fontSize:10, fontWeight:500,
-                        background: r.done===r.total?GN3:r.del>0?AM3:'#f0ede8',
+                        background: r.done===r.total?GN3:r.del>0?AM3:'var(--st-pending-bg)',
                         color: r.done===r.total?GN2:r.del>0?AM2:'#888' } }, r.done+'/'+r.total))
                   ))
                 )
@@ -246,7 +246,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId, readOnly 
                     h('span', { style:{ fontSize:14 } }, isExpanded?'▼':'▶'),
                     h('div', null,
                       h('div', { style:{ fontSize:14, fontWeight:500 } }, 'Заказ №'+(order?.number||orderId)),
-                      h('div', { style:{ fontSize:12, color:'#888', marginTop:1 } },
+                      h('div', { style:{ fontSize:12, color:'var(--muted)', marginTop:1 } },
                         (order?.product||'')+(order?.customer?' · '+order.customer:''))
                     )
                   ),
@@ -254,7 +254,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId, readOnly 
                     h('span', { style:{ fontSize:12, color:allDone?GN2:AM2, fontWeight:500 } },
                       doneCount+'/'+items.length+' получено'),
                     h('span', { style:{ padding:'2px 8px', borderRadius:10, fontSize:11, fontWeight:500,
-                      background:allDone?GN3:hasPartial?AM3:'#f0ede8',
+                      background:allDone?GN3:hasPartial?AM3:'var(--st-pending-bg)',
                       color:allDone?GN2:hasPartial?AM2:'#888' } },
                       allDone?'✓ Всё':hasPartial?'⚡ Частично':'⏳ Ожидаем')
                   )
@@ -272,7 +272,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId, readOnly 
               h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 } },
                 h('div', { style: { flex: 1 } },
                   h('div', { style: { fontSize: 14, fontWeight: 500, marginBottom: 3 } }, mat?.name || del.materialId),
-                  h('div', { style: { fontSize: 12, color: '#888', marginBottom: 6 } },
+                  h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 6 } },
                     `Заказ: `, h('span', { style: { color: AM2, fontWeight: 500, cursor: order ? 'pointer' : 'default', textDecoration: order ? 'underline' : 'none', textDecorationStyle: 'dotted' }, onClick: () => order && setViewOrderId(order.id) }, order?.number || del.orderId),
                     ` · Этап: ${del.stageName}`
                   ),
@@ -280,15 +280,15 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId, readOnly 
                     h('span', null, `Нужно: `, h('b', null, `${del.requiredQty} ${del.unit}`)),
                     del.deliveredQty > 0 && h('span', { style: { color: isPartial ? AM2 : GN2 } }, `Поступило: `, h('b', null, `${del.deliveredQty} ${del.unit}`))
                   ),
-                  del.confirmedAt && h('div', { style: { fontSize: 11, color: '#aaa', marginTop: 4 } },
+                  del.confirmedAt && h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 4 } },
                     `Подтверждено: ${new Date(del.confirmedAt).toLocaleString('ru')}`
                   ),
-                  del.note && h('div', { style: { fontSize: 11, color: '#666', marginTop: 3, fontStyle: 'italic' } }, del.note)
+                  del.note && h('div', { style: { fontSize: 11, color: 'var(--fg-muted)', marginTop: 3, fontStyle: 'italic' } }, del.note)
                 ),
                 h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 } },
                   h('span', { style: {
                     padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 500, textAlign: 'center',
-                    background: isDone ? GN3 : isPartial ? AM3 : '#f0ede8',
+                    background: isDone ? GN3 : isPartial ? AM3 : 'var(--st-pending-bg)',
                     color: isDone ? GN2 : isPartial ? AM2 : '#888'
                   }}, isDone ? '✓ Поставлено' : isPartial ? '⚡ Частично' : '⏳ Ожидаем'),
                   !isDone && !readOnly && h('button', { style: abtn({ fontSize: 12 }), onClick: () => { navigator.vibrate?.([30]); openConfirm(del); } }, '📥 Подтвердить'),
@@ -309,7 +309,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId, readOnly 
     },
       h('div', { style: { background: '#faf9f6', borderRadius: 12, padding: 24, width: 'min(420px, calc(100vw - 32px))' } },
         h('div', { style: { fontSize: 16, fontWeight: 500, marginBottom: 4 } }, '📦 Подтвердить поставку'),
-        h('div', { style: { fontSize: 13, color: '#888', marginBottom: 20 } },
+        h('div', { style: { fontSize: 13, color: 'var(--muted)', marginBottom: 20 } },
           data.materials.find(m => m.id === confirmModal.materialId)?.name || confirmModal.materialId,
           ` · Заказ `,
           data.orders.find(o => o.id === confirmModal.orderId)?.number || confirmModal.orderId
@@ -318,7 +318,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId, readOnly 
         h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 } },
           h('div', null,
             h('label', { style: S.lbl }, 'Требуется'),
-            h('div', { style: { ...S.inp, background: '#f5f5f2', color: '#888', cursor: 'default' } },
+            h('div', { style: { ...S.inp, background: '#f5f5f2', color: 'var(--muted)', cursor: 'default' } },
               `${confirmModal.requiredQty} ${confirmModal.unit}`
             )
           ),
@@ -631,19 +631,19 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
 
   // ── Рендер ──
   return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 300, overflowY: 'auto', padding: '16px 8px' }, onClick: e => e.target === e.currentTarget && onClose() },
-    h('div', { style: { background: '#fff', borderRadius: 14, width: 'min(700px,100%)', boxShadow: '0 8px 40px rgba(0,0,0,0.2)' } },
+    h('div', { style: { background: 'var(--card-solid,#fff)', borderRadius: 14, width: 'min(700px,100%)', boxShadow: '0 8px 40px rgba(0,0,0,0.2)' } },
 
       // Шапка
       h('div', { style: { padding: '18px 20px 14px', borderBottom: '0.5px solid rgba(0,0,0,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
         h('div', null,
           h('div', { style: { fontSize: 16, fontWeight: 600 } }, '📤 Импорт материалов'),
-          h('div', { style: { fontSize: 11, color: '#888', marginTop: 2 } },
+          h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 2 } },
             step === 'upload' ? 'Шаг 1 из 3 — Выберите способ ввода' :
             step === 'map'    ? 'Шаг 2 из 3 — Настройте колонки' :
                                 'Шаг 3 из 3 — Проверьте данные и подтвердите'
           )
         ),
-        h('button', { onClick: onClose, style: { background: 'none', border: 'none', fontSize: 22, color: '#aaa', cursor: 'pointer' } }, '×')
+        h('button', { onClick: onClose, style: { background: 'none', border: 'none', fontSize: 22, color: 'var(--muted)', cursor: 'pointer' } }, '×')
       ),
 
       h('div', { style: { padding: '16px 20px 20px' } },
@@ -678,14 +678,14 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
             },
               h('div', { style: { fontSize: 32 } }, dragOver ? '⬇️' : '📂'),
               h('div', { style: { fontSize: 14, fontWeight: 500, color: AM2 } }, dragOver ? 'Отпустите файл' : 'Нажмите или перетащите файл'),
-              h('div', { style: { fontSize: 11, color: '#888', textAlign: 'center' } }, '.xlsx, .xls, .csv · Накладные из 1С определяются автоматически'),
+              h('div', { style: { fontSize: 11, color: 'var(--muted)', textAlign: 'center' } }, '.xlsx, .xls, .csv · Накладные из 1С определяются автоматически'),
               h('input', { type: 'file', accept: '.xlsx,.xls,.csv', style: { display: 'none' }, onChange: handleFile })
             )
           ),
 
           // ── Метод: Вставка ──
           inputMethod === 'paste' && h('div', null,
-            h('div', { style: { fontSize: 12, color: '#666', marginBottom: 10, padding: '10px 12px', background: '#f0f9ff', borderRadius: 8, borderLeft: `3px solid ${BL}`, lineHeight: 1.6 } },
+            h('div', { style: { fontSize: 12, color: 'var(--fg-muted)', marginBottom: 10, padding: '10px 12px', background: '#f0f9ff', borderRadius: 8, borderLeft: `3px solid ${BL}`, lineHeight: 1.6 } },
               h('div', { style: { fontWeight: 500, marginBottom: 3 } }, '1. Выделите ячейки в Excel или Google Sheets'),
               h('div', null, '2. Скопируйте (Ctrl+C / Cmd+C)'),
               h('div', null, '3. Кликните в поле ниже и нажмите Ctrl+V')
@@ -693,22 +693,22 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
             h('div', {
               onPaste: handlePaste,
               tabIndex: 0,
-              style: { border: `2px dashed ${BL}`, borderRadius: 10, padding: '28px 20px', textAlign: 'center', cursor: 'text', background: '#f8fbff', outline: 'none', fontSize: 14, color: '#888', lineHeight: 1.7 },
+              style: { border: `2px dashed ${BL}`, borderRadius: 10, padding: '28px 20px', textAlign: 'center', cursor: 'text', background: '#f8fbff', outline: 'none', fontSize: 14, color: 'var(--muted)', lineHeight: 1.7 },
             },
               h('div', { style: { fontSize: 28, marginBottom: 8 } }, '📋'),
-              h('div', { style: { fontWeight: 500, color: '#555' } }, 'Кликните сюда и нажмите Ctrl+V'),
+              h('div', { style: { fontWeight: 500, color: 'var(--fg-muted)' } }, 'Кликните сюда и нажмите Ctrl+V'),
               h('div', { style: { fontSize: 11, marginTop: 4 } }, 'Заголовки — необязательны. Достаточно двух столбцов: название и количество.')
             )
           ),
 
           // ── Метод: Grid-редактор ──
           inputMethod === 'grid' && h('div', null,
-            h('div', { style: { fontSize: 12, color: '#666', marginBottom: 10 } }, 'Введите данные вручную. Поля «Ед.» и «Цена» — необязательны.'),
+            h('div', { style: { fontSize: 12, color: 'var(--fg-muted)', marginBottom: 10 } }, 'Введите данные вручную. Поля «Ед.» и «Цена» — необязательны.'),
             h('div', { className: 'table-responsive' },
               h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 13 } },
                 h('thead', null, h('tr', null,
                   ['Наименование *', 'Кол-во *', 'Ед.', 'Цена ₽', ''].map((t, i) =>
-                    h('th', { key: i, style: { ...S.th, background: '#f8f8f5' } }, t)
+                    h('th', { key: i, style: { ...S.th, background: 'var(--card-2)' } }, t)
                   )
                 )),
                 h('tbody', null,
@@ -748,7 +748,7 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
               h('div', { style: { fontSize: 11, color: GN2, opacity: 0.8 } }, `Найдено ${rawRows.length} позиций. Реквизиты накладной заполнены из файла.`)
             )
           ),
-          !is1C && h('div', { style: { fontSize: 12, color: '#666', marginBottom: 14, padding: '10px 12px', background: '#f0f9ff', borderRadius: 8, borderLeft: `3px solid ${BL}` } },
+          !is1C && h('div', { style: { fontSize: 12, color: 'var(--fg-muted)', marginBottom: 14, padding: '10px 12px', background: '#f0f9ff', borderRadius: 8, borderLeft: `3px solid ${BL}` } },
             `Найдено ${rawRows.length} строк, ${headers.length} колонок. Проверьте автоопределение.`
           ),
           h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 } },
@@ -768,7 +768,7 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
           rawRows.length > 0 && h('div', null,
             h('div', { style: S.sec }, `Первые строки (${Math.min(rawRows.length, 4)} из ${rawRows.length})`),
             h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 11 } },
-              h('thead', null, h('tr', null, headers.slice(0, 5).map(h2 => h('th', { key: h2, style: { ...S.th, background: colMap.name === h2 ? AM3 : colMap.qty === h2 ? GN3 : '#f8f8f5' } }, h2)))),
+              h('thead', null, h('tr', null, headers.slice(0, 5).map(h2 => h('th', { key: h2, style: { ...S.th, background: colMap.name === h2 ? AM3 : colMap.qty === h2 ? GN3 : 'var(--card-2)' } }, h2)))),
               h('tbody', null, rawRows.slice(0, 4).map((r, i) => h('tr', { key: i },
                 headers.slice(0, 5).map(h2 => h('td', { key: h2, style: { ...S.td, background: colMap.name === h2 ? '#fffbf0' : colMap.qty === h2 ? '#f0fff8' : 'transparent' } },
                   (r[h2] ?? '').toString()))
@@ -826,21 +826,21 @@ const MaterialImportModal = memo(({ data, onClose, onUpdate, addToast, defaultMo
             h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 } },
               h('thead', null, h('tr', null,
                 ['Из файла', 'Сопоставлен с', 'Тип', mode === 'receipt' ? 'Приход' : 'Остаток станет', 'Цена'].map((t, i) =>
-                  h('th', { key: i, style: { ...S.th, position: 'sticky', top: 0, background: '#f8f8f5' } }, t)
+                  h('th', { key: i, style: { ...S.th, position: 'sticky', top: 0, background: 'var(--card-2)' } }, t)
                 )
               )),
               h('tbody', null, preview.map((row, i) => {
                 const rs = rowStyle(row.matchType);
                 return h('tr', { key: i, style: { background: i % 2 === 0 ? 'transparent' : '#fafafa' } },
                   h('td', { style: S.td }, row.name, row.matchType === 'fuzzy' && h('div', { style: { fontSize: 10, color: AM2, marginTop: 1 } }, '⚠ проверьте совпадение')),
-                  h('td', { style: S.td }, row.matchType === 'new' ? h('span', { style: { color: '#888', fontSize: 11 } }, '— создать новую —') : row.match.name),
+                  h('td', { style: S.td }, row.matchType === 'new' ? h('span', { style: { color: 'var(--muted)', fontSize: 11 } }, '— создать новую —') : row.match.name),
                   h('td', { style: S.td }, h('span', { style: { padding: '2px 7px', borderRadius: 6, fontSize: 10, fontWeight: 500, background: rs.bg, color: rs.cl } }, rs.label)),
                   h('td', { style: { ...S.td, fontFamily: 'monospace', fontWeight: 500 } },
                     mode === 'receipt'
                       ? (row.match && row.matchType !== 'new' ? `${row.match.quantity} + ${row.qty} = ${row.match.quantity + row.qty}` : `0 + ${row.qty} = ${row.qty}`)
                       : row.qty
                   ),
-                  h('td', { style: { ...S.td, color: '#888' } }, row.price ? `${row.price}₽` : '—')
+                  h('td', { style: { ...S.td, color: 'var(--muted)' } }, row.price ? `${row.price}₽` : '—')
                 );
               }))
             )
@@ -1084,7 +1084,7 @@ ${riskLines}`;
           )
         )
       ),
-      h('span', { style: { fontSize: 12, color: '#888' } }, expanded ? '▲' : '▼')
+      h('span', { style: { fontSize: 12, color: 'var(--muted)' } }, expanded ? '▲' : '▼')
     ),
 
     expanded && h('div', { style: { marginTop: 12 } },
@@ -1397,9 +1397,9 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnl
           h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
             h('div', null,
               h('div', { style: { fontSize: 13, fontWeight: 500 } }, req.senderName),
-              h('div', { style: { fontSize: 12, color: '#666' } }, req.text),
+              h('div', { style: { fontSize: 12, color: 'var(--fg-muted)' } }, req.text),
               req.opName && h('div', { style: { fontSize: 11, color: AM } }, `${req.orderNumber || ''} → ${req.opName}`),
-              h('div', { style: { fontSize: 10, color: '#888' } }, new Date(req.ts).toLocaleString())
+              h('div', { style: { fontSize: 10, color: 'var(--muted)' } }, new Date(req.ts).toLocaleString())
             ),
             h('button', { style: abtn({ fontSize: 12, padding: '8px 16px' }), onClick: () => fulfillRequest(req.id) }, '✓ Выдано')
           )
@@ -1439,7 +1439,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnl
         });
 
         const ST = {
-          pending:  { label: 'Ожидается', color: '#888',    bg: 'rgba(0,0,0,0.05)'      },
+          pending:  { label: 'Ожидается', color: 'var(--muted)',    bg: 'rgba(0,0,0,0.05)'      },
           ordered:  { label: 'Заказано',  color: '#185FA5', bg: 'rgba(24,95,165,0.1)'  },
           partial:  { label: 'Частично',  color: '#BA7517', bg: 'rgba(239,159,39,0.12)' },
           received: { label: 'Получено',  color: '#0F6E56', bg: 'rgba(15,110,86,0.1)'  },
@@ -1465,7 +1465,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnl
             receiveShowAnalytics && h('div', { style:{ overflowX:'auto', marginTop:8 } },
               h('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:12 } },
                 h('thead', null, h('tr', null, ['Наименование','Кол-во','Получено','Статус'].map((t,i) =>
-                  h('th', { key:i, style:{ padding:'5px 8px', textAlign:i>1?'center':'left', color:'#888', fontWeight:500, borderBottom:'0.5px solid var(--border)', fontSize:11 } }, t)))),
+                  h('th', { key:i, style:{ padding:'5px 8px', textAlign:i>1?'center':'left', color:'var(--muted)', fontWeight:500, borderBottom:'0.5px solid var(--border)', fontSize:11 } }, t)))),
                 h('tbody', null,
                   Object.values(allItems.reduce((acc, x) => {
                     const k = x.item.name;
@@ -1496,7 +1496,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnl
             h('button', { style: receiveFilter === 'all' ? abtn({ fontSize: 12, padding: '5px 14px' }) : gbtn({ fontSize: 12, padding: '5px 14px' }), onClick: () => setReceiveFilter('all') }, 'Все позиции')
           ),
 
-          needsLoading && h('div', { style: { textAlign: 'center', padding: 24, color: '#888' } }, '⏳ Загрузка заявок…'),
+          needsLoading && h('div', { style: { textAlign: 'center', padding: 24, color: 'var(--muted)' } }, '⏳ Загрузка заявок…'),
 
           !needsLoading && Object.keys(byOrder).length === 0 && h('div', { style: S.card },
             h(EmptyState, { icon: '✓', title: receiveFilter === 'pending' ? 'Все позиции получены' : 'Нет заявок на материалы', desc: 'Технолог должен создать заявку в карточке заказа', compact: true })
@@ -1719,7 +1719,7 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnl
             h('td', { style: S.td }, h('span', { style: { padding: '2px 8px', fontSize: 10, borderRadius: 6, background: m.type === 'in' ? GN3 : RD3, color: m.type === 'in' ? GN2 : RD2 } }, m.type === 'in' ? '📥 Приход' : '📤 Расход')),
             h('td', { style: S.td }, m.materialName),
             h('td', { style: { ...S.td, fontWeight: 500, color: m.type === 'in' ? GN : RD } }, `${m.type === 'in' ? '+' : '-'}${m.qty} ${m.unit}`),
-            h('td', { style: { ...S.td, fontSize: 11, color: '#888' } }, m.context)
+            h('td', { style: { ...S.td, fontSize: 11, color: 'var(--muted)' } }, m.context)
           )))
         )))
     ),
