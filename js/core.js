@@ -20,20 +20,21 @@ const RD  = _cv('--c-rd',  '#E24B4A'), RD2 = _cv('--c-rd2', '#501313'), RD3 = _c
 const BL  = _cv('--c-bl',  '#378ADD');
 
 const PRIORITY = {
-  low: { label: 'Низкий', color: '#888' },
+  low: { label: 'Низкий', color: 'var(--muted)' },
   medium: { label: 'Средний', color: BL },
   high: { label: 'Высокий', color: AM },
   critical: { label: 'Критический', color: RD }
 };
 
 const STATUS = {
-  pending: { label: 'Ожидает', bg: '#f0ede8', cl: '#666', br: '#ccc' },
-  in_progress: { label: 'В работе', bg: '#FAEEDA', cl: AM2, br: AM4, cls: 'badge-in-progress' },
-  on_check: { label: 'На контроле', bg: '#E1F5FE', cl: '#0277BD', br: '#4FC3F7' },
-  done: { label: 'Выполнено', bg: GN3, cl: GN2, br: GN, cls: 'op-done' },
-  defect: { label: 'Брак', bg: RD3, cl: RD2, br: RD },
-  rework: { label: 'Переделка', bg: '#FAEEDA', cl: AM2, br: AM4 },
-  shipped: { label: 'Отгружен', bg: '#E8F5E9', cl: '#1B5E20', br: '#4CAF50' },
+  // Glass: статусы читают CSS-токены → корректны в обеих темах и меняются на лету
+  pending:     { label: 'Ожидает',     bg: 'var(--st-pending-bg)', cl: 'var(--st-pending-cl)', br: 'var(--st-pending-br)' },
+  in_progress: { label: 'В работе',    bg: 'var(--st-run-bg)',     cl: 'var(--st-run-cl)',     br: 'var(--st-run-br)', cls: 'badge-in-progress' },
+  on_check:    { label: 'На контроле', bg: 'var(--st-chk-bg)',     cl: 'var(--st-chk-cl)',     br: 'var(--st-chk-br)' },
+  done:        { label: 'Выполнено',   bg: 'var(--st-ok-bg)',      cl: 'var(--st-ok-cl)',      br: 'var(--st-ok-br)', cls: 'op-done' },
+  defect:      { label: 'Брак',        bg: 'var(--st-al-bg)',      cl: 'var(--st-al-cl)',      br: 'var(--st-al-br)' },
+  rework:      { label: 'Переделка',   bg: 'var(--st-warn-bg)',    cl: 'var(--st-warn-cl)',    br: 'var(--st-warn-br)' },
+  shipped:     { label: 'Отгружен',    bg: 'var(--st-ok-bg)',      cl: 'var(--st-ok-cl)',      br: 'var(--st-ok-br)' },
 };
 
 const OPERATION_STAGES = [
@@ -45,7 +46,7 @@ const OPERATION_STAGES = [
 
 const WORKER_STATUS = {
   working: { label: 'На смене', bg: GN3, cl: GN2, br: GN },
-  absent: { label: 'Отсутствует', bg: '#f0ede8', cl: '#666', br: '#ccc' },
+  absent: { label: 'Отсутствует', bg: 'var(--st-pending-bg)', cl: '#666', br: '#ccc' },
   sick: { label: 'Больничный', bg: RD3, cl: RD2, br: RD },
   vacation: { label: 'Отпуск', bg: '#E6F1FB', cl: '#042C53', br: BL }
 };
@@ -1023,13 +1024,13 @@ const ReceiveDeliveryScreen = memo(({ deliveryId, data, onUpdate, currentUserId,
   return h('div', {
     style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300, padding: 16 }
   },
-    h('div', { className: 'modal-animated', style: { background: '#fff', borderRadius: 16, padding: 28, width: 'min(400px, 100%)', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' } },
+    h('div', { className: 'modal-animated', style: { background: 'var(--card-solid,#fff)', borderRadius: 16, padding: 28, width: 'min(400px, 100%)', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' } },
 
       !delivery
         ? h('div', { style: { textAlign: 'center', padding: 24 } },
             h('div', { style: { fontSize: 40, marginBottom: 12 } }, '❌'),
             h('div', { style: { fontSize: 16, fontWeight: 500, color: RD2, marginBottom: 8 } }, 'Поставка не найдена'),
-            h('div', { style: { fontSize: 13, color: '#888', marginBottom: 20 } }, `ID: ${deliveryId}`),
+            h('div', { style: { fontSize: 13, color: 'var(--muted)', marginBottom: 20 } }, `ID: ${deliveryId}`),
             h('button', { style: gbtn({ width: '100%' }), onClick: onClose }, 'Закрыть')
           )
 
@@ -1037,8 +1038,8 @@ const ReceiveDeliveryScreen = memo(({ deliveryId, data, onUpdate, currentUserId,
           ? h('div', { style: { textAlign: 'center', padding: 24 } },
               h('div', { style: { fontSize: 40, marginBottom: 12 } }, '✅'),
               h('div', { style: { fontSize: 16, fontWeight: 500, color: GN2, marginBottom: 8 } }, 'Поставка уже подтверждена'),
-              h('div', { style: { fontSize: 13, color: '#888', marginBottom: 4 } }, mat?.name),
-              h('div', { style: { fontSize: 13, color: '#888', marginBottom: 20 } }, `Заказ: ${order?.number || delivery.orderId}`),
+              h('div', { style: { fontSize: 13, color: 'var(--muted)', marginBottom: 4 } }, mat?.name),
+              h('div', { style: { fontSize: 13, color: 'var(--muted)', marginBottom: 20 } }, `Заказ: ${order?.number || delivery.orderId}`),
               h('button', { style: gbtn({ width: '100%' }), onClick: onClose }, 'Закрыть')
             )
 
@@ -1054,16 +1055,16 @@ const ReceiveDeliveryScreen = memo(({ deliveryId, data, onUpdate, currentUserId,
               h('div', { style: { background: '#f5f1eb', borderRadius: 10, padding: '14px 16px', marginBottom: 20 } },
                 h('div', { style: { fontSize: 15, fontWeight: 500, color: '#1a1a1a', marginBottom: 6 } }, mat?.name || delivery.materialId),
                 h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 13 } },
-                  h('div', null, h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'Заказ'), h('div', { style: { fontWeight: 500, color: AM2 } }, order?.number || delivery.orderId)),
-                  h('div', null, h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'Этап'), h('div', { style: { fontWeight: 500 } }, delivery.stageName)),
-                  h('div', null, h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'Требуется'), h('div', { style: { fontWeight: 500, color: RD2 } }, `${delivery.requiredQty} ${delivery.unit}`)),
-                  delivery.deliveredQty > 0 && h('div', null, h('div', { style: { fontSize: 10, color: '#888', textTransform: 'uppercase' } }, 'Уже принято'), h('div', { style: { fontWeight: 500, color: GN2 } }, `${delivery.deliveredQty} ${delivery.unit}`))
+                  h('div', null, h('div', { style: { fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Заказ'), h('div', { style: { fontWeight: 500, color: AM2 } }, order?.number || delivery.orderId)),
+                  h('div', null, h('div', { style: { fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Этап'), h('div', { style: { fontWeight: 500 } }, delivery.stageName)),
+                  h('div', null, h('div', { style: { fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Требуется'), h('div', { style: { fontWeight: 500, color: RD2 } }, `${delivery.requiredQty} ${delivery.unit}`)),
+                  delivery.deliveredQty > 0 && h('div', null, h('div', { style: { fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Уже принято'), h('div', { style: { fontWeight: 500, color: GN2 } }, `${delivery.deliveredQty} ${delivery.unit}`))
                 )
               ),
 
               // Ввод количества
               h('div', { style: { marginBottom: 14 } },
-                h('label', { style: { fontSize: 12, color: '#666', display: 'block', marginBottom: 6 } }, `Принято фактически (${delivery.unit})`),
+                h('label', { style: { fontSize: 12, color: 'var(--fg-muted)', display: 'block', marginBottom: 6 } }, `Принято фактически (${delivery.unit})`),
                 h('input', {
                   type: 'number', min: 0, autoFocus: true,
                   style: { width: '100%', padding: '12px 14px', fontSize: 18, fontWeight: 500, border: `2px solid ${AM}`, borderRadius: 8, outline: 'none', textAlign: 'center' },
@@ -1074,7 +1075,7 @@ const ReceiveDeliveryScreen = memo(({ deliveryId, data, onUpdate, currentUserId,
 
               // Примечание
               h('div', { style: { marginBottom: 20 } },
-                h('label', { style: { fontSize: 12, color: '#666', display: 'block', marginBottom: 6 } }, 'Примечание (накладная, поставщик)'),
+                h('label', { style: { fontSize: 12, color: 'var(--fg-muted)', display: 'block', marginBottom: 6 } }, 'Примечание (накладная, поставщик)'),
                 h('input', {
                   type: 'text', placeholder: 'Например: Накл. №123, ООО Металлснаб',
                   style: { width: '100%', padding: '10px 14px', fontSize: 13, border: '1px solid #ddd', borderRadius: 8, outline: 'none' },
@@ -1869,16 +1870,17 @@ const migrateData = (d) => {
 
 // ==================== Стили и кнопки ====================
 const S = {
-  card: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 12, padding: 16, marginBottom: 12 },
+  // Glass: полупрозрачная карточка + blur из токена --glass-blur (html[data-noblur] отключает)
+  card: { background: 'var(--card)', border: '1px solid var(--card-stroke, var(--border))', borderRadius: 16, padding: 16, marginBottom: 12, backdropFilter: 'var(--glass-blur, none)', WebkitBackdropFilter: 'var(--glass-blur, none)', boxShadow: 'var(--card-shadow, none)' },
   th: { textAlign: 'left', padding: '8px 10px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--muted)', borderBottom: '0.5px solid var(--border-soft)', fontWeight: 500, minHeight: 40 },
   td: { padding: '10px 10px', fontSize: 13, borderBottom: '0.5px solid var(--border-soft)', color: 'var(--fg)', verticalAlign: 'middle', minHeight: 40 },
-  inp: { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '10px 12px', fontSize: 16, outline: 'none', minHeight: 44 },
+  inp: { background: 'var(--inp-bg, var(--card))', border: '1px solid var(--card-stroke, var(--border))', borderRadius: 10, padding: '10px 12px', fontSize: 16, outline: 'none', minHeight: 44, color: 'var(--fg)' },
   lbl: { fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6, display: 'block', fontWeight: 500 },
   sec: { fontSize: 12, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12, fontWeight: 600 }
 };
-const abtn = (e) => ({ padding: '10px 16px', background: AM, color: 'var(--brand-ink, #412402)', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e }); // color: brand-ink вместо AM2 — AM2 в dark-теме светлый и терял контраст на оранжевом (аудит 4.4)
-const gbtn = (e) => ({ padding: '10px 16px', background: 'transparent', color: 'var(--fg)', border: '0.5px solid var(--border)', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e });
-const rbtn = (e) => ({ padding: '10px 16px', background: RD3, color: RD2, border: `0.5px solid ${RD}`, borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e });
+const abtn = (e) => ({ padding: '10px 16px', background: 'var(--btn-accent, ' + AM + ')', color: 'var(--btn-accent-ink, #0B0E1A)', border: 'none', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 600, minHeight: 44, boxShadow: 'var(--btn-accent-glow, none)', ...e }); // Glass: градиентный акцент из токена
+const gbtn = (e) => ({ padding: '10px 16px', background: 'var(--btn-ghost-bg, transparent)', color: 'var(--fg)', border: '1px solid var(--card-stroke, var(--border))', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e });
+const rbtn = (e) => ({ padding: '10px 16px', background: 'var(--st-al-bg, ' + RD3 + ')', color: 'var(--st-al-cl, ' + RD2 + ')', border: '1px solid var(--st-al-br, ' + RD + ')', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e });
 
 // ==================== useConfirm (заменяет все confirm()) ====================
 const useConfirm = () => {
@@ -1891,9 +1893,9 @@ const useConfirm = () => {
     role: 'dialog', 'aria-modal': 'true',
     style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 400, padding: 16 }
   },
-    h('div', { className: 'modal-animated', style: { background: '#fff', borderRadius: 12, padding: 24, width: 'min(360px,100%)', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' } },
+    h('div', { className: 'modal-animated', style: { background: 'var(--card-solid, #fff)', color: 'var(--fg)', borderRadius: 16, padding: 24, width: 'min(360px,100%)', boxShadow: '0 8px 32px rgba(0,0,0,0.28)' } },
       h('div', { style: { fontSize: 15, fontWeight: 500, marginBottom: cfg.detail ? 6 : 20, lineHeight: 1.4 } }, cfg.msg),
-      cfg.detail && h('div', { style: { fontSize: 12, color: '#888', marginBottom: 20, lineHeight: 1.5 } }, cfg.detail),
+      cfg.detail && h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 20, lineHeight: 1.5 } }, cfg.detail),
       h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
         h('button', { style: gbtn({ minWidth: 80 }), onClick: () => answer(false) }, 'Отмена'),
         h('button', { style: cfg.danger ? rbtn({ minWidth: 80 }) : abtn({ minWidth: 80 }), onClick: () => answer(true) }, 'Подтвердить')
@@ -1905,7 +1907,7 @@ const useConfirm = () => {
 
 const Badge = memo(({ st }) => {
   const s = STATUS[st] || STATUS.pending;
-  return h('span', { style: { display: 'inline-block', padding: '2px 8px', fontSize: 10, borderRadius: 8, fontWeight: 500, background: s.bg, color: s.cl, border: `0.5px solid ${s.br}` } }, s.label);
+  return h('span', { style: { display: 'inline-block', padding: '3px 11px', fontSize: 10.5, borderRadius: 999, fontWeight: 600, letterSpacing: '0.01em', background: s.bg, color: s.cl, border: `1px solid ${s.br}`, whiteSpace: 'nowrap' } }, s.label);
 });
 
 const Toast = memo(({ message, onClose, type = 'info', action = null }) => {
@@ -2655,7 +2657,7 @@ const AchievementPopup = memo(({ achievement, onClose, workerName }) => {
       onClick: onClose,
       style: {
         position: 'relative', zIndex: 1,
-        background: '#fff',
+        background: 'var(--card-solid,#fff)',
         borderRadius: 20,
         padding: '28px 32px',
         textAlign: 'center',
@@ -2703,7 +2705,7 @@ const AchievementPopup = memo(({ achievement, onClose, workerName }) => {
       // Описание
       h('div', {
         style: {
-          fontSize: 13, color: '#666', lineHeight: 1.5,
+          fontSize: 13, color: 'var(--fg-muted)', lineHeight: 1.5,
           marginBottom: 16,
           animation: visible ? '_tpFadeIn 0.3s ease-out 0.4s both' : 'none',
         }
@@ -2981,7 +2983,7 @@ const AppSkeleton = memo(() => {
   const SkelCard = ({ children, delay = 0, mt = 0 }) =>
     React.createElement('div', {
       style: {
-        background: 'var(--card, #fff)',
+        background: 'var(--card-solid, #fff)',
         border: '0.5px solid var(--border, rgba(0,0,0,0.1))',
         borderRadius: 12,
         padding: 16,
@@ -3101,7 +3103,7 @@ const MC = memo(({ v, l, c, onClick, fs }) => {
     onMouseLeave: onClick ? (e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = ''; } : undefined,
   },
     h('div', { style: { fontSize: fs || 24, fontWeight: 500, color: c || 'inherit', fontVariantNumeric: isNum ? 'tabular-nums' : 'normal' } }, display),
-    h('div', { style: { fontSize: 9, color: '#888', textTransform: 'uppercase', marginTop: 2 } }, l)
+    h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', marginTop: 2 } }, l)
   );
 });
 
@@ -3394,7 +3396,7 @@ const BackupButton = memo(({ data, style }) => {
   };
   return h('button', { type: 'button', onClick: exportJson,
     style: { background: 'transparent', border: '0.5px solid rgba(0,0,0,0.15)', borderRadius: 8,
-      padding: '8px 14px', fontSize: 13, cursor: 'pointer', color: '#555', ...style }
+      padding: '8px 14px', fontSize: 13, cursor: 'pointer', color: 'var(--fg-muted)', ...style }
   }, '💾 Резервная копия');
 });
 
@@ -3425,7 +3427,7 @@ const RestoreButton = memo(({ onRestore, style }) => {
     h('input', { ref: inputRef, type: 'file', accept: '.json,application/json', onChange: handleFile, style: { display: 'none' } }),
     h('button', { type: 'button', onClick: () => inputRef.current?.click(),
       style: { background: 'transparent', border: '0.5px solid rgba(0,0,0,0.15)', borderRadius: 8,
-        padding: '8px 14px', fontSize: 13, cursor: 'pointer', color: '#555', ...style }
+        padding: '8px 14px', fontSize: 13, cursor: 'pointer', color: 'var(--fg-muted)', ...style }
     }, '📥 Загрузить из файла')
   );
 });
