@@ -132,10 +132,10 @@ const AuxOpsViewer = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
           const ms = (data.auxStats || {})[m];
           if (!ms) return null;
           const topCat = Object.entries(ms.byCategory || {}).sort((a, b) => b[1].count - a[1].count)[0];
-          return h('div', { key: m, style: { flex: '1 1 120px', minWidth: 120, background: '#f8f8f5', borderRadius: 8, padding: '6px 10px', fontSize: 11 } },
+          return h('div', { key: m, style: { flex: '1 1 120px', minWidth: 120, background: 'var(--card-2)', borderRadius: 8, padding: '6px 10px', fontSize: 11 } },
             h('div', { style: { fontWeight: 500, color: AM2, marginBottom: 2 } }, trend.labels[i]),
             h('div', null, `${ms.total} работ · ${Math.round(ms.totalMs / 3600000 * 10) / 10}ч`),
-            topCat && h('div', { style: { color: '#888', marginTop: 2 } }, `${AUX_CAT_LABELS[topCat[0]]?.split(' ')[0] || topCat[0]}: ${topCat[1].count}`)
+            topCat && h('div', { style: { color: 'var(--muted)', marginTop: 2 } }, `${AUX_CAT_LABELS[topCat[0]]?.split(' ')[0] || topCat[0]}: ${topCat[1].count}`)
           );
         })
       )
@@ -147,7 +147,7 @@ const AuxOpsViewer = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
         h('div', { key: cat, style: { display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', fontSize: 13 } },
           h('span', null, AUX_CAT_LABELS[cat] || cat),
           h('div', { style: { display: 'flex', gap: 12, alignItems: 'center' } },
-            stats.avgByCat[cat] && h('span', { style: { fontSize: 11, color: '#888' } }, '~' + stats.avgByCat[cat] + ' мин'),
+            stats.avgByCat[cat] && h('span', { style: { fontSize: 11, color: 'var(--muted)' } }, '~' + stats.avgByCat[cat] + ' мин'),
             h('span', { style: { fontWeight: 500, color: AM } }, cnt)
           )
         )
@@ -165,7 +165,7 @@ const AuxOpsViewer = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
     ),
     // Таблица
     auxOps.length === 0
-      ? h('div', { style: { ...S.card, textAlign: 'center', color: '#888', padding: 24 } }, `Нет доп. работ за ${period} дней`)
+      ? h('div', { style: { ...S.card, textAlign: 'center', color: 'var(--muted)', padding: 24 } }, `Нет доп. работ за ${period} дней`)
       : h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
           h('thead', null, h('tr', null, ['Дата', 'Категория', 'Работа', 'Сотрудник', 'Заказ', 'Статус', 'Время'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
           h('tbody', null, auxOps.slice(0, 50).map(op => {
