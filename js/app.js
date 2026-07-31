@@ -73,6 +73,39 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
     () => (data?.ops || []).filter(o => o.status === 'on_check' && !o.archived).length,
     [data]
   );
+
+  // ─── Показатели для левой панели (настраиваются в админке: settings.loginWidgets) ───
+  const [onlineNow, setOnlineNow] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    Presence.getOnline().then(list => { if (alive) setOnlineNow(list.length); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const widgetValues = useMemo(() => {
+    const ops = data?.ops || [];
+    const orders = (data?.orders || []).filter(o => !o.archived && !o.isParentOrder);
+    const workers = data?.workers || [];
+    const todayStart = new Date().setHours(0, 0, 0, 0);
+    const activeOps = ops.filter(o => o.status === 'in_progress' && !o.archived);
+    const busyWorkerIds = new Set(activeOps.flatMap(op => op.workerIds || []));
+    const onShift = workers.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet));
+    const deadlines = orders.map(o => o.deadline ? Math.ceil((new Date(o.deadline).getTime() - Date.now()) / 86400000) : null).filter(d => d !== null);
+    const downtimeToday = (data?.events || []).filter(e => e.type === 'downtime' && e.ts >= todayStart)
+      .reduce((s, e) => s + (e.duration || 0), 0);
+    return {
+      activeOrders:      orders.length,
+      onCheck:           onCheckCount,
+      doneToday:         ops.filter(o => o.status === 'done' && o.finishedAt >= todayStart).length,
+      defectsToday:      ops.filter(o => o.status === 'defect' && o.finishedAt >= todayStart).length,
+      freeWorkers:       onShift.filter(w => !busyWorkerIds.has(w.id)).length,
+      criticalMaterials: (data?.materials || []).filter(m => m.minStock && m.quantity <= m.minStock).length,
+      downtimeToday:     Math.round(downtimeToday / 60000),
+      nearestDeadline:   deadlines.length ? Math.min(...deadlines) : null,
+      onlineNow,
+    };
+  }, [data, onCheckCount, onlineNow]);
+
   const [role, setRole] = useState('worker');
   const [pin, setPin] = useState('');
   const [showPin, setShowPin] = useState(false);
@@ -236,7 +269,37 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
       height: 1, background: T.hairline,
       margin: '36px 0 24px',
     },
-    leadersWrap: { width: '100%', maxWidth: 720 },
+    leadersWrap: { width: '100%', maxWidth: 720, margin: '0 auto' },
+
+    // ─── Левая панель: бренд + показатели смены ───
+    leftBrand: { display: 'flex', alignItems: 'center', gap: 10 },
+    leftEyebrow: {
+      fontSize: 12, fontWeight: 600, color: T.fine,
+      letterSpacing: '0.1em', textTransform: 'uppercase',
+      marginTop: 18,
+    },
+    widgetsCol: { display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 300 },
+    widgetCard: {
+      background: T.canvas, border: `1px solid ${T.hairline}`,
+      borderRadius: 12, padding: '14px 16px',
+    },
+    widgetNum: { fontFamily: T.fontDisp, fontSize: 24, fontWeight: 700, color: T.ink, lineHeight: 1.2 },
+    widgetLbl: { fontSize: 12, color: T.fine, marginTop: 2 },
+    leftFooter: { fontSize: 13, color: T.fine, maxWidth: 300, lineHeight: 1.5 },
+
+    // ─── Правая панель: компактная карточка входа ───
+    rightCard: { width: '100%', maxWidth: 340, display: 'flex', flexDirection: 'column', alignItems: 'center' },
+    rightH1: {
+      fontFamily: T.fontDisp, fontSize: 28, fontWeight: 600,
+      letterSpacing: '-0.4px', color: T.ink, margin: '0 0 4px', textAlign: 'center',
+    },
+    rightSub: { fontSize: 14, color: T.inkMuted, textAlign: 'center', marginBottom: 24 },
+    tilesRow: { display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginBottom: 8, width: '100%' },
+    otherRoleLink: {
+      background: 'none', border: 'none', padding: 0, marginBottom: 20,
+      color: T.fine, fontSize: 13, textDecoration: 'underline', textUnderlineOffset: 3,
+      cursor: 'pointer',
+    },
     resetWrap: {
       width: '100%', maxWidth: 380,
       display: 'flex', flexDirection: 'column', gap: 14,
@@ -255,6 +318,7 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
       fontFamily: T.fontText, fontSize: 15, color: T.ink,
       outline: 'none', letterSpacing: '-0.224px',
     },
+
     fieldCenter: {
       textAlign: 'center', fontSize: 22, letterSpacing: '0.32em',
       fontFamily: T.fontDisp,
@@ -411,8 +475,14 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
     director:    'PIN руководителя',
     hr:          'PIN HR',
     admin:       'PIN администратора',
+    sales:       'PIN менеджера',
     chat:        'Любой PIN для чата',
     dashboard:   '',
+    // Свёрнутые роли (контролёр, склад, менеджер, ПДО, начальник цеха,
+    // руководитель, HR, администратор) больше не выводятся отдельными
+    // кнопками — resolvePin() и так определяет роль по самому PIN,
+    // кнопка на это никогда не влияла. Единое поле упрощает экран.
+    other:       'PIN контролёра, склада, ПДО, руководителя, HR, администратора и т.д.',
   };
 
   // SVG-глаз (без emoji)
@@ -465,85 +535,119 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
     )
   );
 
-  // ─── Group definitions (без emoji, чистые лейблы) ───
-  const groupProduction = [
+  // ─── Видимые кнопки ролей: только те, у кого разное поведение или высокая
+  // частота использования на общем терминале. Остальные (контролёр, склад,
+  // менеджер, ПДО, начальник цеха, руководитель, HR, администратор) сворачиваем
+  // в один пункт «Другая роль» — resolvePin() и так определяет, кто это, по PIN.
+  const primaryRoles = [
     ['worker',      'Сотрудник'],
     ['shop_master', 'Сменный мастер'],
-    ['controller',  'Контролёр',    onCheckCount > 0 ? onCheckCount : null],
-    ['warehouse',   'Склад'],
-    ['sales',       'Менеджер'],
+    ['dashboard',   'Дашборд'],
+    ['chat',        'Чат'],
   ];
-  const groupManagement = [
-    ['pdo',      'ПДО'],
-    ['master',   'Начальник цеха'],
-    ['director', 'Руководитель'],
-    ['hr',       'HR'],
-    ['admin',    'Администратор'],
-  ];
-  const groupView = [
-    ['dashboard', 'Дашборд'],
-    ['chat',      'Чат'],
-  ];
+  const isOtherRole = !primaryRoles.some(([r]) => r === role);
 
-  const renderRow = (items) => h('div', { style: stylesL.rolesRow },
-    items.map(([r, label, badge]) => h('button', {
+  const renderTiles = () => h('div', { style: stylesL.tilesRow },
+    primaryRoles.map(([r, label]) => h('button', {
       key: r,
       style: stylesL.chip(role === r),
       onClick: () => { setRole(r); setLoginError(''); setPin(''); },
       onMouseDown: (e) => { e.currentTarget.style.transform = 'scale(0.95)'; },
       onMouseUp:   (e) => { e.currentTarget.style.transform = ''; },
       onMouseLeave:(e) => { e.currentTarget.style.transform = ''; },
-    }, label, badge ? h('span', { style: stylesL.chipDot, title: `${badge} на проверке` }) : null))
+    }, label))
   );
 
-  // ─── Main view ───
+
+
+  // ─── Main view: сплит-раскладка (метрики смены слева, вход справа) ───
   return h('div', { style: stylesL.page },
-    // Brand
-    h('div', { style: stylesL.brand },
-      h('div', { style: stylesL.brandMark }, 't'),
-      h('div', { style: stylesL.brandWord }, settings.welcomeTitle || 'teploros')
-    ),
+    h('div', { className: 'login-split' },
 
-    // Title
-    h('div', { style: stylesL.eyebrow }, settings.welcomeLabel || 'Производственный учёт · НТ'),
-    h('h1', { style: stylesL.h1 }, 'Вход в систему'),
-    h('div', { style: stylesL.sub }, settings.welcomeSubtitle ? settings.welcomeSubtitle : 'Выберите свою роль и введите PIN-код.'),
-
-    // Roles
-    h('div', { style: stylesL.rolesWrap },
-      renderRow(groupProduction),
-      renderRow(groupManagement),
-      renderRow(groupView),
-    ),
-
-    // PIN field / dashboard hint
-    role !== 'dashboard'
-      ? h('div', { style: stylesL.pinBlock },
-          h('div', { style: stylesL.pinShell },
-            h('input', {
-              type: showPin ? 'text' : 'password', inputMode: 'numeric', autoFocus: true,
-              style: stylesL.pinInput,
-              placeholder: '••••', value: pin, maxLength: 8,
-              onChange:  e => setPin(e.target.value),
-              onKeyDown: e => e.key === 'Enter' && handleLogin(),
-              onFocus:   e => Object.assign(e.target.style, stylesL.pinInputFocus),
-              onBlur:    e => { e.target.style.borderColor = T.hairline; e.target.style.boxShadow = 'none'; },
-            }),
-            h('button', { type: 'button', style: stylesL.pinEye,
-              'aria-label': showPin ? 'Скрыть PIN' : 'Показать PIN',
-              onClick: () => setShowPin(v => !v) }, EyeIcon(!showPin))
+      // Левая панель: бренд + живые показатели смены
+      h('div', { className: 'login-split-left' },
+        h('div', null,
+          h('div', { style: stylesL.leftBrand },
+            h('div', { style: stylesL.brandMark }, 't'),
+            h('div', { style: stylesL.brandWord }, settings.welcomeTitle || 'teploros')
           ),
-          h('div', { style: stylesL.pinHint }, roleHints[role] || 'Введите PIN-код')
+          h('div', { style: stylesL.leftEyebrow }, settings.welcomeLabel || 'Производственный учёт · НТ')
+        ),
+
+        h('div', { style: stylesL.widgetsCol },
+          (settings.loginWidgets && settings.loginWidgets.length ? settings.loginWidgets : ['activeOrders', 'onCheck', 'freeWorkers'])
+            .slice(0, 3)
+            .map(id => {
+              const meta = LOGIN_WIDGETS.find(w => w.id === id);
+              if (!meta) return null;
+              const val = widgetValues[id];
+              const shown = id === 'nearestDeadline'
+                ? (val === null ? '—' : val)
+                : (val ?? 0);
+              return h('div', { key: id, style: stylesL.widgetCard },
+                h('div', { style: stylesL.widgetNum }, shown),
+                h('div', { style: stylesL.widgetLbl }, meta.label)
+              );
+            })
+        ),
+
+        h('div', { style: stylesL.leftFooter }, settings.welcomeSubtitle || 'надежная техника')
+      ),
+
+      // Правая панель: карточка входа
+      h('div', { className: 'login-split-right' },
+        h('div', { style: stylesL.rightCard },
+          h('div', { style: stylesL.rightH1 }, 'Вход в систему'),
+          h('div', { style: stylesL.rightSub }, 'Выберите роль и введите PIN'),
+
+          renderTiles(),
+          h('button', {
+            style: stylesL.otherRoleLink,
+            onClick: () => { setRole('other'); setLoginError(''); setPin(''); },
+          }, isOtherRole ? 'Другая роль ✓' : 'Другая роль (контролёр, склад, ПДО и т.д.)'),
+
+          // PIN field / dashboard hint
+          role !== 'dashboard'
+            ? h('div', { style: stylesL.pinBlock },
+                h('div', { style: stylesL.pinShell },
+                  h('input', {
+                    type: showPin ? 'text' : 'password', inputMode: 'numeric', autoFocus: true,
+                    style: stylesL.pinInput,
+                    placeholder: '••••', value: pin, maxLength: 8,
+                    onChange:  e => setPin(e.target.value),
+                    onKeyDown: e => e.key === 'Enter' && handleLogin(),
+                    onFocus:   e => Object.assign(e.target.style, stylesL.pinInputFocus),
+                    onBlur:    e => { e.target.style.borderColor = T.hairline; e.target.style.boxShadow = 'none'; },
+                  }),
+                  h('button', { type: 'button', style: stylesL.pinEye,
+                    'aria-label': showPin ? 'Скрыть PIN' : 'Показать PIN',
+                    onClick: () => setShowPin(v => !v) }, EyeIcon(!showPin))
+                ),
+                h('div', { style: stylesL.pinHint }, roleHints[role] || 'Введите PIN-код')
+              )
+            : h('div', { style: stylesL.pinHint }, 'Открытый просмотр без PIN'),
+
+          loginError && h('div', { role: 'alert', style: stylesL.err }, loginError),
+
+          // Face ID / Passkey кнопка (только телефон + есть сохранённые)
+          hasPasskeys && isPhone() && h('button', {
+            style: { ...stylesL.primary, width: '100%', background: T.canvas, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 },
+            onClick: async () => { const ok = await loginWithPasskey(); if (!ok) setLoginError('Биометрия не прошла'); }
+          }, '🔐 Войти по Face ID / отпечатку'),
+
+          // Submit
+          h('button', {
+            style: { ...stylesL.primary, width: '100%' }, onClick: handleLogin,
+            onMouseDown:  e => { e.currentTarget.style.transform = 'scale(0.95)'; },
+            onMouseUp:    e => { e.currentTarget.style.transform = ''; },
+            onMouseLeave: e => { e.currentTarget.style.transform = ''; },
+          }, 'Войти'),
+
+          // Reset link
+          h('button', { style: stylesL.link, onClick: () => setResetMode(true) }, 'Сбросить PIN мастер-ключом')
         )
-      : h('div', { style: stylesL.pinHint }, 'Открытый просмотр без PIN'),
-
-    loginError && h('div', { role: 'alert', style: stylesL.err }, loginError),
-
-    // Face ID / Passkey кнопка (только телефон + есть сохранённые)
-    hasPasskeys && isPhone() && h('button', {
-      style: { ...stylesL.primary, background: 'rgba(255,255,255,0.15)', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 },
-      onClick: async () => { const ok = await loginWithPasskey(); if (!ok) addToast?.('Биометрия не прошла', 'error'); }
-    }, '🔐 Войти по Face ID / отпечатку'),
+      )
+    ),
 
     // Модал: предложение зарегистрировать биометрию (через portal для iOS Safari)
     offerPasskey && ReactDOM.createPortal(
@@ -572,21 +676,12 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
       document.body
     ),
 
-    // Submit
-    h('button', {
-      style: stylesL.primary, onClick: handleLogin,
-      onMouseDown:  e => { e.currentTarget.style.transform = 'scale(0.95)'; },
-      onMouseUp:    e => { e.currentTarget.style.transform = ''; },
-      onMouseLeave: e => { e.currentTarget.style.transform = ''; },
-    }, 'Войти'),
-
-    // Reset link
-    h('button', { style: stylesL.link, onClick: () => setResetMode(true) }, 'Сбросить PIN мастер-ключом'),
-
-    // Divider + leaderboard
-    h('div', { style: stylesL.divider }),
-    h('div', { style: stylesL.leadersWrap },
-      h(Leaderboard, { data })
+    // Лидерборд смены
+    h('div', { style: { padding: '0 20px 60px' } },
+      h('div', { style: stylesL.divider }),
+      h('div', { style: stylesL.leadersWrap },
+        h(Leaderboard, { data })
+      )
     )
   );
 };
