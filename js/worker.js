@@ -269,7 +269,7 @@ const WorkerOutputChart = memo(({ workerId, data }) => {
         { v: `${chartData.avgPerDay}`,                    l: 'в среднем/день', c: AM2 },
         chartData.totalDefect > 0 && { v: chartData.totalDefect, l: 'брак', c: RD2 },
       ].filter(Boolean).map(({ v, l, c }) =>
-        h('div', { key:l, style:{ background:'var(--bg2,#f8f8f5)', borderRadius:8, padding:'6px 10px', textAlign:'center', minWidth:64 } },
+        h('div', { key:l, style:{ background:'var(--card-2)', borderRadius:8, padding:'6px 10px', textAlign:'center', minWidth:64 } },
           h('div', { style:{ fontSize:17, fontWeight:500, color: c } }, v),
           h('div', { style:{ fontSize:10, color:'var(--muted)', marginTop:1 } }, l)
         )
@@ -621,7 +621,7 @@ const WorkerOpsHistoryBlock = memo(({ workerId, data }) => {
         { v: summary.inProgress, l: 'В работе',   c: AM2     },
         { v: summary.defect,     l: 'Брак',       c: RD2     },
       ].map(({ v, l, c }) =>
-        h('div', { key: l, style:{ background: 'var(--bg2,#f8f8f5)', borderRadius:8, padding:'8px 6px', textAlign:'center' } },
+        h('div', { key: l, style:{ background: 'var(--card-2)', borderRadius:8, padding:'8px 6px', textAlign:'center' } },
           h('div', { style:{ fontSize:18, fontWeight:500, color: c } }, v),
           h('div', { style:{ fontSize:10, color:'var(--muted)', marginTop:1 } }, l)
         )
@@ -657,7 +657,7 @@ const WorkerOpsHistoryBlock = memo(({ workerId, data }) => {
       : h('div', { style:{ display:'flex', flexDirection:'column', gap:4 } },
           filtered.map(({ op, order, durMin, ts }) => {
             const st = STATUS[op.status] || STATUS.pending;
-            return h('div', { key:op.id, className:'card-appear', style:{ padding:'9px 10px', borderRadius:9, background:'var(--bg2,#f8f8f5)', border:'0.5px solid rgba(0,0,0,0.06)' } },
+            return h('div', { key:op.id, className:'card-appear', style:{ padding:'9px 10px', borderRadius:9, background:'var(--card-2)', border:'0.5px solid rgba(0,0,0,0.06)' } },
               // Строка 1: название операции + статус
               h('div', { style:{ display:'flex', alignItems:'center', gap:6, marginBottom:5 } },
                 h('span', { className:'op-card-title', style:{ flex:1, fontWeight:500, color:'var(--fg,#222)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, op.name),
@@ -869,14 +869,17 @@ const WorkerHoursBlock = memo(({ workerId, data }) => {
     return { grid, totH: Math.round(totH * 10) / 10, totDays, totOps };
   }, [workerId, viewYear, viewMonth, data]);
 
+  // Раньше эти цвета были захардкожены под светлую тему (те же '#FCEBEB' и
+  // т.п., что и в общем табеле) — в тёмном режиме ячейки не менялись и
+  // выглядели светлыми пятнами. Теперь берём те же живые --st-* токены.
   const cellBg = (type) => ({
-    'full':'#E1F5EE', 'ops':'#FAEEDA', 'half':'#E6F1FB',
-    'sick':'#FCEBEB', 'vac':'#E6F1FB', 'abs':'#f5f5f2', 'we':''
+    'full':GN3, 'ops':AM3, 'half':'var(--st-run-bg)',
+    'sick':'var(--st-al-bg)', 'vac':'var(--st-run-bg)', 'abs':'var(--st-pending-bg)', 'we':''
   }[type] || '');
   const cellCl = (type) => ({
-    'full':GN2, 'ops':AM2, 'half':'#0C447C',
-    'sick':RD2, 'vac':'#042C53', 'abs':'#ccc', 'we':'#ddd'
-  }[type] || '#888');
+    'full':GN2, 'ops':AM2, 'half':'var(--st-run-cl)',
+    'sick':RD2, 'vac':'var(--st-run-cl)', 'abs':'var(--st-pending-cl)', 'we':'var(--muted)'
+  }[type] || 'var(--muted)');
 
   return h('div', { style: { ...S.card, marginBottom: 16 } },
     // Заголовок
