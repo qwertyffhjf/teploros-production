@@ -348,7 +348,36 @@ const getAssignmentRecommendations = (data) => {
 };
 
 // ==================== Утилиты ====================
-const uid = () => Math.random().toString(36).slice(2, 8).toUpperCase();
+// Генератор ID: используем crypto.randomUUID (современные браузеры) с fallback на UUID-подобный формат
+// КРИТИЧНЫЕ ИЗМЕНЕНИЯ (Итерация 1.1):
+//   - Старый uid() выдавал 6 символов base-36 (~2.18B вариантов) → коллизии при 6k+ записей
+//   - Новый uid() выдаёт 36 символов UUID → 2^128 ≈ 3.4×10^38 вариантов → коллизии практически невозможны
+const uid = (() => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    // Современные браузеры (Chrome 92+, Firefox 76+, Safari 15.1+)
+    return () => crypto.randomUUID();
+  }
+  // Fallback: UUID v4-подобный формат вручную (для старых браузеров/мобильных)
+  // Формат: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx (где x = random, y = random с битом версии)
+  return () => {
+    const segments = [];
+    // Создаём 16 случайных байтов
+    const bytes = new Uint8Array(16);
+    for (let i = 0; i < 16; i++) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+    // UUID v4: установить version bits (4) в позиции 7, variant bits (2) в позиции 9
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10
+    // Форматируем как строку xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    for (let i = 0; i < 16; i++) {
+      const hex = bytes[i].toString(16).padStart(2, '0');
+      if (i === 4 || i === 6 || i === 8 || i === 10) segments.push('-');
+      segments.push(hex);
+    }
+    return segments.join('');
+  };
+})();
 const now = () => Date.now();
 // Вынесена общая функция смены
 const getCurrentShift = () => {
@@ -386,9 +415,9 @@ const pinMatch = (input, stored) => {
 };
 
 // ==================== Firebase ====================
-// ⚠️ SECURITY: Перед использованием в production примени Security Rules!
+// ⚠️ SECURITY: ВНИМАНИЕ — применены Firebase Security Rules (Итерация 1.2)
 // Смотри FIREBASE_SECURITY_RULES.txt в корне проекта.
-// Сейчас БД открыта — любой может читать/писать. После Rules будет закрыто.
+// Доступ ограничен только аутентифицированными пользователями (Anonymous Auth).
 
 // Защита: если Firebase CDN не загрузился (сеть недоступна) — не крашим весь core.js.
 // Приложение запустится в офлайн-режиме из кэша Service Worker.
@@ -403,6 +432,31 @@ firebase.initializeApp({
   messagingSenderId: "151146225873",
   appId: "1:151146225873:web:f37d7ce9f9859dcb5de5f0"
 });
+
+// ── Инициализация Firebase Auth (Anonymous) — Итерация 1.2 ────
+// Каждый пользователь автоматически входит анонимно. Это позволяет применить
+// Security Rules `allow read, write: if request.auth != null`.
+// В будущем (Этап 2-3): будут использованы PIN-токены или SMS-верификация.
+if (typeof firebase !== 'undefined') {
+  const auth = firebase.auth();
+  // Ждём инициализации auth состояния
+  auth.onAuthStateChanged((user) => {
+    if (!user) {
+      // Нет пользователя — входим анонимно
+      auth.signInAnonymously().catch((err) => {
+        console.warn('[Firebase Auth] Anonymous login failed:', err.code, err.message);
+        // Не блокируем загрузку — работаем из кэша
+      });
+    } else {
+      // Пользователь авторизован (анонимно или будущим методом)
+      console.log('[Firebase Auth] Logged in as', user.uid.slice(0, 8) + '...');
+    }
+  });
+  // Обработка ошибок auth
+  auth.onAuthStateChanged(null, (err) => {
+    if (err) console.warn('[Firebase Auth] Error:', err);
+  });
+}
 }
 const firestore = typeof firebase !== 'undefined' ? firebase.firestore() : null;
 const DOC_REF    = firestore ? firestore.collection('app').doc('production_v14') : null;
@@ -1923,6 +1977,70 @@ const S = {
 const abtn = (e) => ({ padding: '10px 16px', background: 'var(--btn-accent, ' + AM + ')', color: 'var(--btn-accent-ink, #0B0E1A)', border: 'none', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 600, minHeight: 44, boxShadow: 'var(--btn-accent-glow, none)', ...e }); // Glass: градиентный акцент из токена
 const gbtn = (e) => ({ padding: '10px 16px', background: 'var(--btn-ghost-bg, transparent)', color: 'var(--fg)', border: '1px solid var(--card-stroke, var(--border))', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e });
 const rbtn = (e) => ({ padding: '10px 16px', background: 'var(--st-al-bg, ' + RD3 + ')', color: 'var(--st-al-cl, ' + RD2 + ')', border: '1px solid var(--st-al-br, ' + RD + ')', borderRadius: 12, cursor: 'pointer', fontSize: 14, fontWeight: 500, minHeight: 44, ...e });
+
+// ==================== ErrorBoundary (Итерация 1.3) ====================
+// Ловит исключения при рендере и показывает fallback вместо белого экрана.
+// Использование: h(ErrorBoundary, { name: 'WorkerScreen' }, h(WorkerScreen, props))
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null, errorInfo: null };
+    // История последних 10 ошибок в window (для диагностики)
+    if (!window._tpErrorLog) window._tpErrorLog = [];
+  }
+  
+  static getDerivedStateFromError(error) {
+    return { hasError: true };
+  }
+  
+  componentDidCatch(error, errorInfo) {
+    this.setState({ error, errorInfo });
+    console.error(`[ErrorBoundary: ${this.props.name}]`, error, errorInfo);
+    // Логируем в историю (последние 10)
+    window._tpErrorLog.unshift({ 
+      name: this.props.name || 'unknown', 
+      message: error.toString(), 
+      stack: error.stack, 
+      ts: Date.now() 
+    });
+    if (window._tpErrorLog.length > 10) window._tpErrorLog.pop();
+  }
+  
+  handleReset = () => {
+    this.setState({ hasError: false, error: null, errorInfo: null });
+  };
+  
+  render() {
+    if (this.state.hasError) {
+      return h('div', {
+        style: {
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          minHeight: '100vh', padding: 24, background: 'var(--bg)', color: 'var(--fg)', textAlign: 'center'
+        }
+      },
+        h('div', { style: { fontSize: 48, marginBottom: 16 } }, '⚠️'),
+        h('div', { style: { fontSize: 18, fontWeight: 500, marginBottom: 8 } }, 'Произошла ошибка'),
+        h('div', { style: { fontSize: 13, color: 'var(--muted)', marginBottom: 20, maxWidth: 400, lineHeight: 1.6 } },
+          `В модуле "${this.props.name || 'система'}" произошла критическая ошибка. `,
+          'Попробуйте перезагрузить страницу или очистить кеш браузера.'
+        ),
+        this.state.error && h('div', { 
+          style: { 
+            background: 'rgba(0,0,0,0.2)', borderRadius: 8, padding: 12, marginBottom: 16, 
+            maxWidth: 500, fontSize: 11, fontFamily: 'monospace', color: 'var(--muted)', 
+            textAlign: 'left', overflowX: 'auto', lineHeight: 1.4 
+          } 
+        }, this.state.error.toString()),
+        h('div', { style: { display: 'flex', gap: 8, justifyContent: 'center' } },
+          h('button', { style: abtn(), onClick: this.handleReset }, '↻ Повторить'),
+          h('button', { style: gbtn(), onClick: () => window.location.reload() }, '↻ Перезагрузить страницу')
+        )
+      );
+    }
+    
+    return this.props.children;
+  }
+}
 
 // ==================== useConfirm (заменяет все confirm()) ====================
 const useConfirm = () => {
