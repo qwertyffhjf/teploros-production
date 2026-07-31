@@ -39,6 +39,8 @@
   <!-- Firebase SDK локально — не зависит от gstatic.com -->
   <script src="js/vendor/firebase-app-compat.js"></script>
   <script src="js/vendor/firebase-firestore-compat.js"></script>
+  <!-- Итерация 1.2: Firebase Auth SDK для Anonymous Auth -->
+  <script src="js/vendor/firebase-auth-compat.js"></script>
 
   <style>
     /* ════════════════════════════════════════════════════════════════════════
@@ -768,11 +770,11 @@
 </script>
 
 <!-- Core: константы, DB, утилиты, общие компоненты, загрузчик office/field бандлов -->
-<script src="js/core.js?v=20260805"></script>
+<script src="js/core.js?v=20260806"></script>
 <!-- Shared: QR, PDF, LoadForecast, WorkerCardModal, MasterOnboarding -->
-<script defer src="js/shared.js?v=20260805"></script>
+<script defer src="js/shared.js?v=20260806"></script>
 <!-- Чат — общий для всех ролей, поэтому грузится статически -->
-<script defer src="js/chat.js?v=20260805"></script>
+<script defer src="js/chat.js?v=20260806"></script>
 <!--
   Ленивая подгрузка по роли (аудит, perf) — вместо статических тегов ниже.
   qms.js, analytics.js, timesheet.js, auxops.js, reference.js, quality.js, hr.js,
@@ -782,6 +784,6 @@
   так как master.js/hr.js/analytics.js и т.д. им никогда не нужны.
 -->
 <!-- Приложение: App, Login, Dashboard, роутинг, PWA -->
-<script defer src="js/app.js?v=20260805"></script>
+<script defer src="js/app.js?v=20260806"></script>
 </body>
 </html>
