@@ -8,16 +8,18 @@ window._pwaPrompt = null;
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); window._pwaPrompt = e; });
 
 // ==================== Константы ====================
-// Цветовые токены — читаем из CSS переменных для dark mode совместимости
-// Fallback значения оставляем для SSR/Node контекстов
-const _cv = (v, fb) => typeof getComputedStyle !== 'undefined'
-  ? (getComputedStyle(document.documentElement).getPropertyValue(v).trim() || fb)
-  : fb;
-const AM  = _cv('--c-am',  '#EF9F27'), AM2 = _cv('--c-am2', '#412402');
-const AM3 = _cv('--c-am3', '#FAEEDA'), AM4 = _cv('--c-am4', '#BA7517');
-const GN  = _cv('--c-gn',  '#1D9E75'), GN2 = _cv('--c-gn2', '#04342C'), GN3 = _cv('--c-gn3', '#E1F5EE');
-const RD  = _cv('--c-rd',  '#E24B4A'), RD2 = _cv('--c-rd2', '#501313'), RD3 = _cv('--c-rd3', '#FCEBEB');
-const BL  = _cv('--c-bl',  '#378ADD');
+// Цветовые токены — раньше читались через getComputedStyle() ОДИН РАЗ при
+// загрузке core.js и замораживались в const. При переключении темы (☀️/🌙 в
+// шапке, useTheme) меняется только CSS data-theme — чистый CSS (var(--x))
+// подхватывает это мгновенно, а эти застывшие JS-константы — нет, отсюда
+// нечитаемые цвета после смены режима без перезагрузки страницы.
+// Теперь это просто строки var(--токен, fallback) — браузер резолвит их
+// живьём на каждой отрисовке, никакого JS-кеширования цвета больше нет.
+const AM  = 'var(--c-am,  #EF9F27)', AM2 = 'var(--c-am2, #412402)';
+const AM3 = 'var(--c-am3, #FAEEDA)', AM4 = 'var(--c-am4, #BA7517)';
+const GN  = 'var(--c-gn,  #1D9E75)', GN2 = 'var(--c-gn2, #04342C)', GN3 = 'var(--c-gn3, #E1F5EE)';
+const RD  = 'var(--c-rd,  #E24B4A)', RD2 = 'var(--c-rd2, #501313)', RD3 = 'var(--c-rd3, #FCEBEB)';
+const BL  = 'var(--c-bl,  #378ADD)';
 
 const PRIORITY = {
   low: { label: 'Низкий', color: 'var(--muted)' },
@@ -470,9 +472,25 @@ const EMPTY_DATA = {
     welcomeLabel: 'Производственный учёт · НТ',
     labelWidth: 50,    // ширина этикетки мм
     labelHeight: 35,    // высота этикетки мм
+    loginWidgets: ['activeOrders', 'onCheck', 'freeWorkers'], // показатели смены на экране входа (см. LOGIN_WIDGETS)
     productTypes: [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }]
   }
 };
+
+// Каталог показателей для левой панели экрана входа (LoginScreen) —
+// админ выбирает до 3 штук в разделе "Экран входа" (reference.js).
+// id должен совпадать с ключом, который вычисляет LoginScreen в app.js.
+const LOGIN_WIDGETS = [
+  { id: 'activeOrders',     label: 'Заказов в работе' },
+  { id: 'onCheck',          label: 'На контроле ОТК' },
+  { id: 'doneToday',        label: 'Выполнено сегодня' },
+  { id: 'defectsToday',     label: 'Брак/переделка сегодня' },
+  { id: 'freeWorkers',      label: 'Свободные сотрудники' },
+  { id: 'criticalMaterials',label: 'Критичные остатки материалов' },
+  { id: 'downtimeToday',    label: 'Простои сегодня, мин' },
+  { id: 'nearestDeadline',  label: 'Ближайший дедлайн, дн' },
+  { id: 'onlineNow',        label: 'Сейчас онлайн' },
+];
 
 const CACHE_KEY    = 'prod_app_v14_cache';
 const WH_CACHE_KEY = 'prod_wh_v1_cache';   // Кэш склада
