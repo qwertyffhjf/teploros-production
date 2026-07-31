@@ -211,9 +211,23 @@
       min-height: 100vh; width: 100%;
     }
     .login-split-left {
+      position: relative; overflow: hidden;
       display: flex; flex-direction: column; justify-content: space-between;
       padding: 40px 36px; border-right: 1px solid var(--border);
     }
+    /* Собственное усиленное свечение под левую панель — независимо от
+       общей aurora (она в светлой теме почти прозрачная: 10-16% альфа,
+       и на фоне широкой сплошной панели читалась как плоское пятно). */
+    .login-split-left::before {
+      content: ''; position: absolute; z-index: 0; pointer-events: none;
+      top: -30%; left: -30%; width: 160%; height: 160%;
+      background:
+        radial-gradient(circle at 25% 15%, var(--au1) 0%, transparent 42%),
+        radial-gradient(circle at 85% 70%, var(--au2) 0%, transparent 45%);
+      filter: blur(30px) saturate(160%);
+      opacity: 1.6;
+    }
+    .login-split-left > * { position: relative; z-index: 1; }
     .login-split-right {
       display: flex; flex-direction: column; justify-content: center; align-items: center;
       padding: 40px 24px;
@@ -754,11 +768,11 @@
 </script>
 
 <!-- Core: константы, DB, утилиты, общие компоненты, загрузчик office/field бандлов -->
-<script src="js/core.js?v=20260803"></script>
+<script src="js/core.js?v=20260804"></script>
 <!-- Shared: QR, PDF, LoadForecast, WorkerCardModal, MasterOnboarding -->
-<script defer src="js/shared.js?v=20260803"></script>
+<script defer src="js/shared.js?v=20260804"></script>
 <!-- Чат — общий для всех ролей, поэтому грузится статически -->
-<script defer src="js/chat.js?v=20260803"></script>
+<script defer src="js/chat.js?v=20260804"></script>
 <!--
   Ленивая подгрузка по роли (аудит, perf) — вместо статических тегов ниже.
   qms.js, analytics.js, timesheet.js, auxops.js, reference.js, quality.js, hr.js,
@@ -768,6 +782,6 @@
   так как master.js/hr.js/analytics.js и т.д. им никогда не нужны.
 -->
 <!-- Приложение: App, Login, Dashboard, роутинг, PWA -->
-<script defer src="js/app.js?v=20260803"></script>
+<script defer src="js/app.js?v=20260804"></script>
 </body>
 </html>
