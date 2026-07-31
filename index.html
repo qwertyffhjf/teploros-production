@@ -205,6 +205,25 @@
       h3, .h3 { font-size: 14px; }
     }
 
+    /* ─── Экран входа: сплит-раскладка (метрики слева / вход справа) ─────── */
+    .login-split {
+      display: grid; grid-template-columns: 1fr 1.1fr;
+      min-height: 100vh; width: 100%;
+    }
+    .login-split-left {
+      display: flex; flex-direction: column; justify-content: space-between;
+      padding: 40px 36px; border-right: 1px solid var(--border);
+    }
+    .login-split-right {
+      display: flex; flex-direction: column; justify-content: center; align-items: center;
+      padding: 40px 24px;
+    }
+    @media (max-width: 760px) {
+      .login-split { grid-template-columns: 1fr; }
+      .login-split-left { border-right: none; border-bottom: 1px solid var(--border); padding: 28px 24px; }
+      .login-split-right { padding: 32px 20px 64px; }
+    }
+
     /* ─── Inputs ────────────────────────────────────────────────────────── */
     input, select, textarea, button { font-family: inherit; }
     input, select, textarea {
@@ -735,11 +754,11 @@
 </script>
 
 <!-- Core: константы, DB, утилиты, общие компоненты, загрузчик office/field бандлов -->
-<script src="js/core.js?v=20260731"></script>
+<script src="js/core.js?v=20260802"></script>
 <!-- Shared: QR, PDF, LoadForecast, WorkerCardModal, MasterOnboarding -->
-<script defer src="js/shared.js?v=20260731"></script>
+<script defer src="js/shared.js?v=20260802"></script>
 <!-- Чат — общий для всех ролей, поэтому грузится статически -->
-<script defer src="js/chat.js?v=20260731"></script>
+<script defer src="js/chat.js?v=20260802"></script>
 <!--
   Ленивая подгрузка по роли (аудит, perf) — вместо статических тегов ниже.
   qms.js, analytics.js, timesheet.js, auxops.js, reference.js, quality.js, hr.js,
@@ -749,6 +768,6 @@
   так как master.js/hr.js/analytics.js и т.д. им никогда не нужны.
 -->
 <!-- Приложение: App, Login, Dashboard, роутинг, PWA -->
-<script defer src="js/app.js?v=20260731"></script>
+<script defer src="js/app.js?v=20260802"></script>
 </body>
 </html>
