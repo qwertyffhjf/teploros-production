@@ -1167,41 +1167,8 @@ const Dashboard = memo(({ data, addToast, onOrderClick }) => {
 // ==================== Error Boundary ====================
 // Перехватывает ошибки React-дерева и показывает читаемое сообщение
 // вместо белого экрана
-class ErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-  static getDerivedStateFromError(error) {
-    return { hasError: true, error };
-  }
-  componentDidCatch(error, info) {
-    console.error('App error:', error, info);
-  }
-  render() {
-    if (this.state.hasError) {
-      return React.createElement('div', {
-        style: { minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 32, textAlign: 'center', gap: 16 }
-      },
-        React.createElement('div', { style: { fontSize: 48 } }, '⚠️'),
-        React.createElement('div', { style: { fontSize: 20, fontWeight: 500, color: '#1a1a18' } }, 'Что-то пошло не так'),
-        React.createElement('div', { style: { fontSize: 14, color: 'var(--muted)', maxWidth: 400 } }, 'Произошла ошибка в приложении. Данные в Firebase не затронуты — обновите страницу для восстановления работы.'),
-        React.createElement('div', { style: { fontFamily: 'monospace', fontSize: 11, color: '#E24B4A', background: '#FCEBEB', border: '0.5px solid #E24B4A', borderRadius: 8, padding: '8px 16px', maxWidth: 500, wordBreak: 'break-all' } },
-          this.state.error?.message || 'Неизвестная ошибка'
-        ),
-        React.createElement('button', {
-          style: { padding: '10px 28px', background: '#EF9F27', color: '#412402', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500 },
-          onClick: () => { this.setState({ hasError: false, error: null }); window.location.reload(); }
-        }, '🔄 Перезагрузить страницу'),
-        React.createElement('button', {
-          style: { padding: '8px 20px', background: 'transparent', color: 'var(--muted)', border: '0.5px solid rgba(0,0,0,0.2)', borderRadius: 8, cursor: 'pointer', fontSize: 13 },
-          onClick: () => this.setState({ hasError: false, error: null })
-        }, 'Попробовать продолжить без перезагрузки')
-      );
-    }
-    return this.props.children;
-  }
-}
+// ErrorBoundary перенесён в core.js (Итерация 1.3)
+// Используется определение из core.js
 
 
 
