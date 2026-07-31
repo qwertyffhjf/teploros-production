@@ -480,16 +480,19 @@ const EMPTY_DATA = {
 // Каталог показателей для левой панели экрана входа (LoginScreen) —
 // админ выбирает до 3 штук в разделе "Экран входа" (reference.js).
 // id должен совпадать с ключом, который вычисляет LoginScreen в app.js.
+// icon/tone — для визуального веса карточки (см. виджеты в HR/Master —
+// иконка + цветовой акцент вместо голого числа на белом фоне).
+// tone: 'brand' | 'ok' | 'warn' | 'al' | 'chk' | 'run' — совпадает с --st-* токенами.
 const LOGIN_WIDGETS = [
-  { id: 'activeOrders',     label: 'Заказов в работе' },
-  { id: 'onCheck',          label: 'На контроле ОТК' },
-  { id: 'doneToday',        label: 'Выполнено сегодня' },
-  { id: 'defectsToday',     label: 'Брак/переделка сегодня' },
-  { id: 'freeWorkers',      label: 'Свободные сотрудники' },
-  { id: 'criticalMaterials',label: 'Критичные остатки материалов' },
-  { id: 'downtimeToday',    label: 'Простои сегодня, мин' },
-  { id: 'nearestDeadline',  label: 'Ближайший дедлайн, дн' },
-  { id: 'onlineNow',        label: 'Сейчас онлайн' },
+  { id: 'activeOrders',      label: 'Заказов в работе',            icon: '📦', tone: 'run'   },
+  { id: 'onCheck',           label: 'На контроле ОТК',              icon: '🔍', tone: 'chk'   },
+  { id: 'doneToday',         label: 'Выполнено сегодня',            icon: '✅', tone: 'ok'    },
+  { id: 'defectsToday',      label: 'Брак/переделка сегодня',       icon: '⚠️', tone: 'al'    },
+  { id: 'freeWorkers',       label: 'Свободные сотрудники',         icon: '👷', tone: 'ok'    },
+  { id: 'criticalMaterials', label: 'Критичные остатки материалов', icon: '📉', tone: 'warn'  },
+  { id: 'downtimeToday',     label: 'Простои сегодня, мин',         icon: '⏱️', tone: 'warn'  },
+  { id: 'nearestDeadline',   label: 'Ближайший дедлайн, дн',        icon: '📅', tone: 'al'    },
+  { id: 'onlineNow',         label: 'Сейчас онлайн',                icon: '🟢', tone: 'brand' },
 ];
 
 const CACHE_KEY    = 'prod_app_v14_cache';
