@@ -1709,6 +1709,14 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
   const [welcomeLabel, setWelcomeLabel] = useState(settings.welcomeLabel || 'Производственный учёт · НТ');
   const [labelWidth, setLabelWidth] = useState(settings.labelWidth || 50);
   const [labelHeight, setLabelHeight] = useState(settings.labelHeight || 35);
+  const [loginWidgets, setLoginWidgets] = useState(settings.loginWidgets || ['activeOrders', 'onCheck', 'freeWorkers']);
+  const toggleLoginWidget = (id) => {
+    setLoginWidgets(prev => {
+      if (prev.includes(id)) return prev.filter(x => x !== id);
+      if (prev.length >= 3) { addToast('Можно выбрать не больше 3 показателей', 'info'); return prev; }
+      return [...prev, id];
+    });
+  };
   const [editPins, setEditPins] = useState({});
 
   const savePins = useCallback(async () => {
@@ -1754,9 +1762,9 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
   }, [data, settings, masterPin, controllerPin, warehousePin, pdoPin, directorPin, hrPin, shopMasterPin, adminPin, masterKey, onUpdate, addToast]);
 
   const saveWelcome = useCallback(async () => {
-    const d = { ...data, settings: { ...settings, welcomeTitle: welcomeTitle.trim(), welcomeSubtitle: welcomeSubtitle.trim(), welcomeLabel: welcomeLabel.trim(), labelWidth: parseInt(labelWidth) || 50, labelHeight: parseInt(labelHeight) || 35 } };
+    const d = { ...data, settings: { ...settings, welcomeTitle: welcomeTitle.trim(), welcomeSubtitle: welcomeSubtitle.trim(), welcomeLabel: welcomeLabel.trim(), labelWidth: parseInt(labelWidth) || 50, labelHeight: parseInt(labelHeight) || 35, loginWidgets } };
     onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast('Текст главной страницы обновлён', 'success');
-  }, [data, settings, welcomeTitle, welcomeSubtitle, welcomeLabel, onUpdate, addToast]);
+  }, [data, settings, welcomeTitle, welcomeSubtitle, welcomeLabel, labelWidth, labelHeight, loginWidgets, onUpdate, addToast]);
 
   const genRandomPin = useCallback(async (workerId) => {
     let pin;
@@ -1924,6 +1932,22 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         h('div', { style: { fontSize:24, fontWeight:700, color:AM } }, welcomeTitle),
         h('div', { style: { fontSize:12, color:'var(--muted)', letterSpacing:'0.15em', textTransform:'uppercase' } }, welcomeSubtitle),
         h('div', { style: { fontSize:10, color:AM4, textTransform:'uppercase', letterSpacing:'0.15em', marginTop:8 } }, welcomeLabel)
+      ),
+      h('div', { style: { marginBottom: 12 } },
+        h('label', { style: S.lbl }, `Показатели смены на экране входа (${loginWidgets.length}/3)`),
+        h('div', { style: { display:'flex', flexWrap:'wrap', gap:8, marginTop:6 } },
+          LOGIN_WIDGETS.map(w => h('button', {
+            key: w.id, type: 'button',
+            onClick: () => toggleLoginWidget(w.id),
+            style: {
+              padding: '7px 12px', borderRadius: 999, fontSize: 12.5, cursor: 'pointer',
+              border: `1px solid ${loginWidgets.includes(w.id) ? AM : 'var(--border)'}`,
+              background: loginWidgets.includes(w.id) ? AM3 : 'var(--card)',
+              color: loginWidgets.includes(w.id) ? AM : 'var(--fg)',
+              fontWeight: loginWidgets.includes(w.id) ? 600 : 400,
+            }
+          }, w.label))
+        )
       ),
       h('button', { style: abtn(), onClick: saveWelcome }, 'Сохранить текст')
     ),
