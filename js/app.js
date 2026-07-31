@@ -2132,13 +2132,13 @@ const ShopMasterScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       h(MC, { v: pendingOps.length, l: 'Ожидают', c: '#0277BD' }),
       h(MC, { v: freeWorkers.length, l: 'Свободны', c: freeWorkers.length > 0 ? GN : '#888' })
     ),
-    // Вкладки
+    // Вкладки (Итерация 1.3: обёрнуты в ErrorBoundary)
     h(TabBar, { tabs: TABS, tab, setTab }),
-    tab === 'ops'           && h(MasterOps,           { data, onUpdate, addToast, onOrderClick }),
-    tab === 'orders'        && h(MasterOrders,         { data, onUpdate, addToast, onOrderClick }),
-    tab === 'auxops'        && h(AuxOpsViewer,         { data, onUpdate, addToast }),
-    tab === 'journal'       && h(MasterJournal,        { data }),
-    tab === 'notifications' && h(MasterNotifications,  { data })
+    tab === 'ops'           && h(ErrorBoundary, { name: 'MasterOps' }, h(MasterOps,           { data, onUpdate, addToast, onOrderClick })),
+    tab === 'orders'        && h(ErrorBoundary, { name: 'MasterOrders' }, h(MasterOrders,         { data, onUpdate, addToast, onOrderClick })),
+    tab === 'auxops'        && h(ErrorBoundary, { name: 'AuxOpsViewer' }, h(AuxOpsViewer,         { data, onUpdate, addToast })),
+    tab === 'journal'       && h(ErrorBoundary, { name: 'MasterJournal' }, h(MasterJournal,        { data })),
+    tab === 'notifications' && h(ErrorBoundary, { name: 'MasterNotifications' }, h(MasterNotifications,  { data }))
   );
 });
 
@@ -2153,19 +2153,19 @@ const PDOScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     h(SectionAnalytics, { section: 'production', data }),
     // Сводка
     // Сводка перенесена в OrdersDashboard внутри MasterOrders
-    // Вкладки
+    // Вкладки (Итерация 1.3: обёрнуты в ErrorBoundary)
     h(TabBar, { tabs: TABS, tab, setTab }),
-    tab === 'orders'        && h(MasterOrders,              { data, onUpdate, addToast, onOrderClick }),
-    tab === 'ops'           && h(MasterOps,                 { data, onUpdate, addToast, onOrderClick }),
-    tab === 'recommend'     && h(AssignmentRecommendations, { data, onUpdate, addToast }),
-    tab === 'kanban'        && h(MasterKanban,              { data, onUpdate, addToast }),
-    tab === 'gantt'         && h(GanttChart,                { data }),
-    tab === 'calendar'      && h(ResourceCalendar,          { data, onUpdate, addToast }),
-    tab === 'plan'          && h(MasterTodayPlan,           { data }),
-    tab === 'reports'       && h(ReportsBuilder,            { data }),
-    tab === 'auxops'        && h(AuxOpsViewer,              { data, onUpdate, addToast }),
-    tab === 'journal'       && h(MasterJournal,             { data }),
-    tab === 'notifications' && h(MasterNotifications,       { data })
+    tab === 'orders'        && h(ErrorBoundary, { name: 'MasterOrders' }, h(MasterOrders,              { data, onUpdate, addToast, onOrderClick })),
+    tab === 'ops'           && h(ErrorBoundary, { name: 'MasterOps' }, h(MasterOps,                 { data, onUpdate, addToast, onOrderClick })),
+    tab === 'recommend'     && h(ErrorBoundary, { name: 'AssignmentRecommendations' }, h(AssignmentRecommendations, { data, onUpdate, addToast })),
+    tab === 'kanban'        && h(ErrorBoundary, { name: 'MasterKanban' }, h(MasterKanban,              { data, onUpdate, addToast })),
+    tab === 'gantt'         && h(ErrorBoundary, { name: 'GanttChart' }, h(GanttChart,                { data })),
+    tab === 'calendar'      && h(ErrorBoundary, { name: 'ResourceCalendar' }, h(ResourceCalendar,          { data, onUpdate, addToast })),
+    tab === 'plan'          && h(ErrorBoundary, { name: 'MasterTodayPlan' }, h(MasterTodayPlan,           { data })),
+    tab === 'reports'       && h(ErrorBoundary, { name: 'ReportsBuilder' }, h(ReportsBuilder,            { data })),
+    tab === 'auxops'        && h(ErrorBoundary, { name: 'AuxOpsViewer' }, h(AuxOpsViewer,              { data, onUpdate, addToast })),
+    tab === 'journal'       && h(ErrorBoundary, { name: 'MasterJournal' }, h(MasterJournal,             { data })),
+    tab === 'notifications' && h(ErrorBoundary, { name: 'MasterNotifications' }, h(MasterNotifications,       { data }))
   );
 });
 
@@ -2807,24 +2807,26 @@ function App() {
     h('div', null, toasts.map(t => h(Toast, { key: t.id, message: t.message, type: t.type, action: t.action, onClose: () => removeToast(t.id) })))
   );
 
-  // Экран входа
+  // Экран входа (Итерация 1.3: обёрнут в ErrorBoundary)
   if (!role) return h('div', null,
-    h(LoginScreen, {
-      data,
-      onLogin: (r, wid, sid) => {
-        setRole(r);
-        setWorkerId(wid);
-        setSectionId(sid);
-        // Запускаем presence tracking
-        const userName = wid ? (data?.workers?.find(w => w.id === wid)?.name || r) : r;
-        const presenceId = wid || r;
-        Presence.start(presenceId, userName);
-        setGreetingKey(k => k + 1); // показать приветствие
-        // chat, chat_master, chat_controller — всё это режим чата
-        if (r === 'chat' || r === 'chat_master' || r === 'chat_controller') setShowChat(true);
-      },
-      onResetPin: handleResetPin
-    }),
+    h(ErrorBoundary, { name: 'LoginScreen' },
+      h(LoginScreen, {
+        data,
+        onLogin: (r, wid, sid) => {
+          setRole(r);
+          setWorkerId(wid);
+          setSectionId(sid);
+          // Запускаем presence tracking
+          const userName = wid ? (data?.workers?.find(w => w.id === wid)?.name || r) : r;
+          const presenceId = wid || r;
+          Presence.start(presenceId, userName);
+          setGreetingKey(k => k + 1); // показать приветствие
+          // chat, chat_master, chat_controller — всё это режим чата
+          if (r === 'chat' || r === 'chat_master' || r === 'chat_controller') setShowChat(true);
+        },
+        onResetPin: handleResetPin
+      })
+    ),
     h('div', null, toasts.map(t => h(Toast, { key: t.id, message: t.message, type: t.type, action: t.action, onClose: () => removeToast(t.id) })))
   );
 
@@ -2930,14 +2932,15 @@ function App() {
           effectiveRole === 'master'      && h(MasterScreen,   { data, onUpdate: save, addToast, sectionId, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId, role: 'master' }),
           effectiveRole === 'pdo'         && h(PDOScreen,       { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }),
           effectiveRole === 'director'    && h(DirectorScreen,  { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }),
-          effectiveRole === 'hr'          && h(HRScreen,        { data, onUpdate: save, addToast, onWorkerClick: setSelectedWorkerId }),
-          effectiveRole === 'shop_master' && h(ShopMasterScreen,{ data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }),
-          effectiveRole === 'admin'       && h(AdminScreen,     { data, onUpdate: save, addToast }),
-          effectiveRole === 'controller'  && h(ControllerScreen, { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }),
-          effectiveRole === 'worker' && workerId && h(WorkerScreen, { data, workerId, sectionId, onUpdate: save, initialOpId: null, addToast }),
-          effectiveRole === 'warehouse' && h(WarehouseScreen, { data, onUpdate: save, addToast, currentUserId: workerId }),
-          effectiveRole === 'sales'      && h(SalesScreen,     { data, addToast, onOrderClick: setSelectedOrderId }),
-          effectiveRole === 'dashboard' && h(Dashboard, { data, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId })
+          // Итерация 1.3: обёрнуты в ErrorBoundary
+          effectiveRole === 'hr'          && h(ErrorBoundary, { name: 'HRScreen' }, h(HRScreen,        { data, onUpdate: save, addToast, onWorkerClick: setSelectedWorkerId })),
+          effectiveRole === 'shop_master' && h(ErrorBoundary, { name: 'ShopMasterScreen' }, h(ShopMasterScreen,{ data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId })),
+          effectiveRole === 'admin'       && h(ErrorBoundary, { name: 'AdminScreen' }, h(AdminScreen,     { data, onUpdate: save, addToast })),
+          effectiveRole === 'controller'  && h(ErrorBoundary, { name: 'ControllerScreen' }, h(ControllerScreen, { data, onUpdate: save, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId })),
+          effectiveRole === 'worker' && workerId && h(ErrorBoundary, { name: 'WorkerScreen' }, h(WorkerScreen, { data, workerId, sectionId, onUpdate: save, initialOpId: null, addToast })),
+          effectiveRole === 'warehouse' && h(ErrorBoundary, { name: 'WarehouseScreen' }, h(WarehouseScreen, { data, onUpdate: save, addToast, currentUserId: workerId })),
+          effectiveRole === 'sales'      && h(ErrorBoundary, { name: 'SalesScreen' }, h(SalesScreen,     { data, addToast, onOrderClick: setSelectedOrderId })),
+          effectiveRole === 'dashboard' && h(ErrorBoundary, { name: 'Dashboard' }, h(Dashboard, { data, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }))
         ),
     selectedOrderId && h(OrderCardModal, { orderId: selectedOrderId, data, onUpdate: save, onClose: () => setSelectedOrderId(null), canEdit: true, userRole: effectiveRole, onEditMaterials: (id) => { setSelectedOrderId(null); } }),
     // 🌍 Глобальная карточка сотрудника — открывается из любого места системы
