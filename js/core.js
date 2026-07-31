@@ -433,13 +433,28 @@ firebase.initializeApp({
   appId: "1:151146225873:web:f37d7ce9f9859dcb5de5f0"
 });
 
-// ── Инициализация Firebase Auth (Anonymous) — Итерация 1.2 ────
+// ── Инициализация Firebase Auth (Anonymous) — Итерация 1.2 (с ожиданием загрузки) ────
 // Каждый пользователь автоматически входит анонимно. Это позволяет применить
 // Security Rules `allow read, write: if request.auth != null`.
 // В будущем (Этап 2-3): будут использованы PIN-токены или SMS-верификация.
-if (typeof firebase !== 'undefined') {
+// 
+// ВАЖНО: firebase.auth может загружаться асинхронно с CDN, поэтому ждём его инициализации.
+const initializeFirebaseAuth = () => {
+  if (typeof firebase === 'undefined') {
+    // Firebase не загрузился — попробуем позже
+    setTimeout(initializeFirebaseAuth, 500);
+    return;
+  }
+  
+  if (typeof firebase.auth !== 'function') {
+    // firebase.auth ещё не готов (CDN загружается) — ждём
+    console.log('[Firebase Auth] Waiting for Auth SDK to load...');
+    setTimeout(initializeFirebaseAuth, 500);
+    return;
+  }
+  
+  // firebase.auth уже готов
   const auth = firebase.auth();
-  // Ждём инициализации auth состояния
   auth.onAuthStateChanged((user) => {
     if (!user) {
       // Нет пользователя — входим анонимно
@@ -456,7 +471,10 @@ if (typeof firebase !== 'undefined') {
   auth.onAuthStateChanged(null, (err) => {
     if (err) console.warn('[Firebase Auth] Error:', err);
   });
-}
+};
+
+// Запустить инициализацию сразу (функция сама будет ждать если нужно)
+initializeFirebaseAuth();
 }
 const firestore = typeof firebase !== 'undefined' ? firebase.firestore() : null;
 const DOC_REF    = firestore ? firestore.collection('app').doc('production_v14') : null;
@@ -3750,3 +3768,11 @@ const buildFinishUpdate = (data, op, workerId, params = {}) => {
 const normStr = (s) => s.toString().toLowerCase().trim()
   .replace(/\s+/g, ' ').replace(/[-–—_]/g, ' ')
   .replace(/ё/g, 'е').replace(/[().,;]/g, '');
+
+// ==================== Экспорт глобальных компонентов (Итерация 1.3) ====================
+// ErrorBoundary и другие компоненты должны быть доступны из других скриптов (app.js и т.д.)
+// явно регистрируем их в window объекте
+if (typeof window !== 'undefined') {
+  window.ErrorBoundary = ErrorBoundary;
+  console.log('[Core] ErrorBoundary registered as window.ErrorBoundary');
+}
