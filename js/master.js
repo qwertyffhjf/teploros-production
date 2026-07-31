@@ -1714,7 +1714,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
                 h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
                   // Прогресс-бар операций
                   h('div', { style: { display: 'flex', alignItems: 'center', gap: 5 } },
-                    h('div', { style: { flex: 1, height: 5, background: 'var(--bg2,#f0ede8)', borderRadius: 3, overflow: 'hidden', minWidth: 48 } },
+                    h('div', { style: { flex: 1, height: 5, background: 'var(--card-2)', borderRadius: 3, overflow: 'hidden', minWidth: 48 } },
                       h('div', { style: {
                         height: '100%', borderRadius: 3,
                         width: `${opsForProgress.length > 0 ? Math.round((done / opsForProgress.length) * 100) : 0}%`,
