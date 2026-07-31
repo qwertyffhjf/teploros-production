@@ -438,42 +438,45 @@ firebase.initializeApp({
 // Security Rules `allow read, write: if request.auth != null`.
 // В будущем (Этап 2-3): будут использованы PIN-токены или SMS-верификация.
 // 
-// ВАЖНО: firebase.auth может загружаться асинхронно с CDN, поэтому ждём его инициализации.
+// ВАЖНО: firebase.auth может загружаться асинхронно с CDN. Ждём его до 10 секунд.
+// Если не загрузился — приложение всё равно работает (auth опционален пока Rules не строгие).
+let _authInitAttempts = 0;
+const MAX_AUTH_ATTEMPTS = 20; // 20 × 500мс = 10 секунд максимум
 const initializeFirebaseAuth = () => {
   if (typeof firebase === 'undefined') {
-    // Firebase не загрузился — попробуем позже
-    setTimeout(initializeFirebaseAuth, 500);
+    // Firebase core не загрузился вообще — auth не нужен
     return;
   }
   
   if (typeof firebase.auth !== 'function') {
     // firebase.auth ещё не готов (CDN загружается) — ждём
-    console.log('[Firebase Auth] Waiting for Auth SDK to load...');
+    _authInitAttempts++;
+    if (_authInitAttempts >= MAX_AUTH_ATTEMPTS) {
+      console.warn('[Firebase Auth] Auth SDK не загрузился за 10 сек — работаем без auth. ' +
+                   'Приложение функционирует, но Security Rules требуют auth. ' +
+                   'Проверьте подключение firebase-auth-compat.js.');
+      return; // Прекращаем попытки, приложение работает дальше
+    }
     setTimeout(initializeFirebaseAuth, 500);
     return;
   }
   
-  // firebase.auth уже готов
+  // firebase.auth готов — инициализируем
   const auth = firebase.auth();
   auth.onAuthStateChanged((user) => {
     if (!user) {
       // Нет пользователя — входим анонимно
       auth.signInAnonymously().catch((err) => {
         console.warn('[Firebase Auth] Anonymous login failed:', err.code, err.message);
-        // Не блокируем загрузку — работаем из кэша
+        // Не блокируем — приложение работает из кэша
       });
     } else {
-      // Пользователь авторизован (анонимно или будущим методом)
       console.log('[Firebase Auth] Logged in as', user.uid.slice(0, 8) + '...');
     }
   });
-  // Обработка ошибок auth
-  auth.onAuthStateChanged(null, (err) => {
-    if (err) console.warn('[Firebase Auth] Error:', err);
-  });
 };
 
-// Запустить инициализацию сразу (функция сама будет ждать если нужно)
+// Запустить инициализацию (функция сама ждёт если нужно, но не дольше 10 сек)
 initializeFirebaseAuth();
 }
 const firestore = typeof firebase !== 'undefined' ? firebase.firestore() : null;
