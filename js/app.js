@@ -2512,6 +2512,37 @@ const SalesScreen = memo(({ data, addToast, onOrderClick }) => {
 });
 
 
+// ==================== QRScreenLoader (Итерация 1: фикс QR без загруженного master.js) ====================
+// QRScreen живёт в master.js (ленивый office-бандл). При открытии по QR-ссылке (?opId=...)
+// роль ещё не выбрана, поэтому бандл не загружен. Этот компонент подгружает его и рендерит QRScreen.
+const QRScreenLoader = memo((props) => {
+  const [ready, setReady] = useState(typeof QRScreen !== 'undefined');
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (typeof QRScreen !== 'undefined') { setReady(true); return; }
+    let cancelled = false;
+    // office-бандл содержит master.js с QRScreen
+    ensureBundleLoaded('office')
+      .then(() => { if (!cancelled) setReady(true); })
+      .catch(err => { console.error('QR bundle load error:', err); if (!cancelled) setError(err.message); });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (error) return h('div', { style: { padding: 24, textAlign: 'center', color: 'var(--muted)' } },
+    h('div', { style: { fontSize: 32, marginBottom: 12 } }, '⚠️'),
+    h('div', { style: { fontSize: 14 } }, 'Не удалось загрузить QR-модуль'),
+    h('div', { style: { fontSize: 12, marginTop: 8, opacity: 0.7 } }, error)
+  );
+
+  if (!ready || typeof QRScreen === 'undefined') return h('div', { style: { padding: 40, textAlign: 'center', color: 'var(--muted)' } },
+    h('div', { style: { fontSize: 14 } }, 'Загрузка QR-операции…')
+  );
+
+  return h(QRScreen, props);
+});
+
+
 function App() {
   const [data, setData] = useState(EMPTY_DATA);
   const [loading, setLoading] = useState(true);
@@ -2770,7 +2801,10 @@ function App() {
       h('button', { style: gbtn({ fontSize:11 }), onClick: goBack }, '← На главную'),
       h('div', { style: { fontSize:12, color:'var(--muted)' } }, 'QR-операция')
     ),
-    h(QRScreen, { data, opId: initialOpId, onUpdate: save, addToast }),
+    // QRScreen живёт в master.js (ленивый бандл). Если ещё не загружен — грузим и показываем спиннер.
+    typeof QRScreen !== 'undefined'
+      ? h(QRScreen, { data, opId: initialOpId, onUpdate: save, addToast })
+      : h(QRScreenLoader, { data, opId: initialOpId, onUpdate: save, addToast }),
     h('div', null, toasts.map(t => h(Toast, { key: t.id, message: t.message, type: t.type, action: t.action, onClose: () => removeToast(t.id) })))
   );
 
