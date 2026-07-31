@@ -154,13 +154,14 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
       display: 'flex', alignItems: 'center', gap: 10, marginBottom: 48,
     },
     brandMark: {
-      width: 32, height: 32, borderRadius: 8,
+      width: 34, height: 34, borderRadius: 9,
       background: T.brand, color: T.brandInk,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       fontFamily: T.fontDisp, fontWeight: 700, fontSize: 17, letterSpacing: '-0.4px',
+      boxShadow: '0 4px 16px var(--brand-soft)',
     },
     brandWord: {
-      fontFamily: T.fontDisp, fontSize: 17, fontWeight: 600,
+      fontFamily: T.fontDisp, fontSize: 18, fontWeight: 700,
       color: T.ink, letterSpacing: '-0.3px',
     },
     eyebrow: {
@@ -278,13 +279,21 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
       letterSpacing: '0.1em', textTransform: 'uppercase',
       marginTop: 18,
     },
-    widgetsCol: { display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 300 },
+    widgetsCol: { display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 300 },
     widgetCard: {
+      display: 'flex', alignItems: 'center', gap: 12,
       background: T.canvas, border: `1px solid ${T.hairline}`,
-      borderRadius: 12, padding: '14px 16px',
+      borderRadius: 'var(--r-md)', padding: '12px 14px',
+      backdropFilter: 'var(--glass-blur)',
+      boxShadow: 'var(--card-shadow)',
     },
-    widgetNum: { fontFamily: T.fontDisp, fontSize: 24, fontWeight: 700, color: T.ink, lineHeight: 1.2 },
-    widgetLbl: { fontSize: 12, color: T.fine, marginTop: 2 },
+    widgetIcon: {
+      flexShrink: 0, width: 38, height: 38, borderRadius: 10,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: 18,
+    },
+    widgetNum: { fontFamily: T.fontDisp, fontSize: 22, fontWeight: 700, lineHeight: 1.15 },
+    widgetLbl: { fontSize: 12, color: T.fine, marginTop: 1 },
     leftFooter: { fontSize: 13, color: T.fine, maxWidth: 300, lineHeight: 1.5 },
 
     // ─── Правая панель: компактная карточка входа ───
@@ -540,22 +549,33 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
   // менеджер, ПДО, начальник цеха, руководитель, HR, администратор) сворачиваем
   // в один пункт «Другая роль» — resolvePin() и так определяет, кто это, по PIN.
   const primaryRoles = [
-    ['worker',      'Сотрудник'],
-    ['shop_master', 'Сменный мастер'],
-    ['dashboard',   'Дашборд'],
-    ['chat',        'Чат'],
+    ['worker',      '👷', 'Сотрудник'],
+    ['shop_master', '🛠️', 'Сменный мастер'],
+    ['dashboard',   '📊', 'Дашборд'],
+    ['chat',        '💬', 'Чат'],
   ];
   const isOtherRole = !primaryRoles.some(([r]) => r === role);
 
+  // ─── Цвет виджета по семантическому tone (совпадает с --st-* токенами) ───
+  // Для тревожных метрик — если значение 0, красим нейтрально/ок (не тревожим
+  // зря), а не в alert-цвет "на всякий случай".
+  const widgetTone = (meta, val) => {
+    const neutralWhenZero = ['onCheck', 'defectsToday', 'criticalMaterials', 'downtimeToday'];
+    if (neutralWhenZero.includes(meta.id) && !val) return 'ok';
+    return meta.tone;
+  };
+  const TONE_BG = { brand: 'var(--brand-soft)', ok: 'var(--st-ok-bg)', warn: 'var(--st-warn-bg)', al: 'var(--st-al-bg)', chk: 'var(--st-chk-bg)', run: 'var(--st-run-bg)' };
+  const TONE_CL = { brand: T.brand,             ok: 'var(--st-ok-cl)', warn: 'var(--st-warn-cl)', al: 'var(--st-al-cl)', chk: 'var(--st-chk-cl)', run: 'var(--st-run-cl)' };
+
   const renderTiles = () => h('div', { style: stylesL.tilesRow },
-    primaryRoles.map(([r, label]) => h('button', {
+    primaryRoles.map(([r, icon, label]) => h('button', {
       key: r,
       style: stylesL.chip(role === r),
       onClick: () => { setRole(r); setLoginError(''); setPin(''); },
       onMouseDown: (e) => { e.currentTarget.style.transform = 'scale(0.95)'; },
       onMouseUp:   (e) => { e.currentTarget.style.transform = ''; },
       onMouseLeave:(e) => { e.currentTarget.style.transform = ''; },
-    }, label))
+    }, icon + ' ' + label))
   );
 
 
@@ -584,9 +604,13 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
               const shown = id === 'nearestDeadline'
                 ? (val === null ? '—' : val)
                 : (val ?? 0);
+              const tone = widgetTone(meta, val);
               return h('div', { key: id, style: stylesL.widgetCard },
-                h('div', { style: stylesL.widgetNum }, shown),
-                h('div', { style: stylesL.widgetLbl }, meta.label)
+                h('div', { style: { ...stylesL.widgetIcon, background: TONE_BG[tone] } }, meta.icon),
+                h('div', null,
+                  h('div', { style: { ...stylesL.widgetNum, color: TONE_CL[tone] } }, shown),
+                  h('div', { style: stylesL.widgetLbl }, meta.label)
+                )
               );
             })
         ),
