@@ -1199,6 +1199,95 @@ const ReceiveDeliveryScreen = memo(({ deliveryId, data, onUpdate, currentUserId,
   );
 });
 
+// ==================== Merge-хелперы (Итерация 2.2) ====================
+// Вынесены из DB.save() наружу, чтобы их мог переиспользовать и DB._flushQueue()
+// при разгрузке офлайн-очереди. Раньше merge-логика жила только внутри save(),
+// а _flushQueue() писал через .set() БЕЗ merge — то есть при разгрузке очереди
+// затирал целиком любые правки, сделанные другими, пока клиент был офлайн.
+
+// Трёхстороннее слияние массива объектов по ключу id.
+// remote — что сейчас на сервере, local — что хотим записать, base — снапшот на
+// момент последней синхронизации (DB._baseData). Поле изменено локально
+// (отличается от base) → берём локальное; не менялось → берём серверное.
+// Объект удалён локально (есть в base, нет в local) → не реанимируем.
+// Объект удалён на сервере (есть в base, нет в remote) → не реанимируем.
+// Без base → fallback на object-level объединение (не хуже старого поведения).
+const _mergeArrayById = (remote, local, key, base) => {
+  if (!base) {
+    const remoteMap = new Map((remote || []).map(item => [item[key], item]));
+    (local || []).forEach(item => remoteMap.set(item[key], item));
+    return [...remoteMap.values()];
+  }
+  const remoteMap = new Map((remote || []).map(i => [i[key], i]));
+  const baseMap   = new Map((base   || []).map(i => [i[key], i]));
+  const result = new Map(remoteMap);
+  (local || []).forEach(localItem => {
+    const id = localItem[key];
+    const remoteItem = remoteMap.get(id);
+    const baseItem = baseMap.get(id);
+    if (!remoteItem) {
+      if (baseItem) return; // удалено на сервере — не реанимируем
+      result.set(id, localItem); // новый локальный объект
+      return;
+    }
+    if (!baseItem) {
+      result.set(id, localItem); // нет базы для этого id — берём наше целиком
+      return;
+    }
+    const mergedItem = { ...remoteItem };
+    const allKeys = new Set([...Object.keys(localItem), ...Object.keys(baseItem)]);
+    allKeys.forEach(k => {
+      if (JSON.stringify(localItem[k]) !== JSON.stringify(baseItem[k])) mergedItem[k] = localItem[k];
+    });
+    result.set(id, mergedItem);
+  });
+  const localIds = new Set((local || []).map(i => i[key]));
+  baseMap.forEach((_, id) => { if (!localIds.has(id)) result.delete(id); });
+  return [...result.values()];
+};
+
+// Глубокий мердж табеля timesheet[месяц][workerId][день] — без потери чужих записей.
+const _mergeTimesheet = (remote, local) => {
+  const out = { ...(remote || {}) };
+  Object.keys(local || {}).forEach(month => {
+    out[month] = { ...(out[month] || {}) };
+    Object.keys(local[month] || {}).forEach(workerId => {
+      out[month][workerId] = { ...(out[month][workerId] || {}), ...(local[month][workerId] || {}) };
+    });
+  });
+  return out;
+};
+
+// Конкатенация + дедупликация по id, сортировка по времени (events, messages).
+const _mergeEvents = (remote, local) => {
+  const ids = new Set((local || []).map(e => e.id));
+  return [...(local || []), ...(remote || []).filter(e => !ids.has(e.id))].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+};
+
+// Полное слияние объекта toSave с remoteData/remoteWh относительно base (DB._baseData).
+// Мутирует и возвращает toSave. Используется и в save() (при конфликте версий),
+// и в _flushQueue() (при разгрузке офлайн-очереди).
+const _mergeFullState = (toSave, remoteData, remoteWh, base) => {
+  base = base || {};
+  remoteData = remoteData || {};
+  remoteWh = remoteWh || {};
+  toSave.orders  = _mergeArrayById(remoteData.orders,  toSave.orders,  'id', base.orders);
+  toSave.ops     = _mergeArrayById(remoteData.ops,     toSave.ops,     'id', base.ops);
+  toSave.workers = _mergeArrayById(remoteData.workers, toSave.workers, 'id', base.workers);
+  toSave.materials             = _mergeArrayById(remoteWh.materials,             toSave.materials,             'id', base.materials);
+  toSave.materialConsumptions  = _mergeArrayById(remoteWh.materialConsumptions,  toSave.materialConsumptions,  'id', base.materialConsumptions);
+  toSave.materialReservations  = _mergeArrayById(remoteWh.materialReservations,  toSave.materialReservations,  'id', base.materialReservations);
+  toSave.materialDeliveries    = _mergeArrayById(remoteWh.materialDeliveries,    toSave.materialDeliveries,    'id', base.materialDeliveries);
+  toSave.equipment             = _mergeArrayById(remoteWh.equipment,             toSave.equipment,             'id', base.equipment);
+  toSave.reclamations = _mergeArrayById(remoteData.reclamations, toSave.reclamations, 'id', base.reclamations);
+  toSave.duels        = _mergeArrayById(remoteData.duels,        toSave.duels,        'id', base.duels);
+  toSave.timesheet = _mergeTimesheet(remoteData.timesheet, toSave.timesheet);
+  toSave.settings = { ...(remoteData.settings || {}), ...(toSave.settings || {}) };
+  toSave.events = _mergeEvents(remoteData.events, toSave.events).slice(-2000);
+  toSave.messages = _mergeEvents(remoteData.messages, toSave.messages).slice(-200);
+  return toSave;
+};
+
 const DB = {
   _saveTimer:   null,
   _saveResolve: null,   // resolve-функция текущего pending save Promise
@@ -1217,6 +1306,15 @@ const DB = {
   // Без базы (например сразу после холодного старта в офлайне) merge падает обратно на
   // старое object-level поведение — это безопасный fallback, не хуже, чем было раньше.
   _baseData: null,
+  // Итерация 2.1: буфер для snapshot, пришедшего во время активного save().
+  // Хранит функцию-применитель последнего входящего snapshot; дренируется
+  // по таймеру, как только _saving спадёт. См. onSnapshot ниже.
+  _pendingSnapshot: null,
+  _pendingSnapshotDrainer: null,
+  // Итерация 2.3: последний toSave, ожидающий записи в debounce-окне.
+  // Используется beforeunload-хуком, чтобы не потерять правки при закрытии
+  // вкладки до срабатывания debounce-таймера. Очищается после успешной записи.
+  _pendingSave: null,
 
   // ── Загрузка ──────────────────────────────────────────────────────────────
   async load() {
@@ -1494,6 +1592,10 @@ const DB = {
       if (DB._saveTimer) clearTimeout(DB._saveTimer);
       if (DB._saveResolve) { DB._saveResolve(); DB._saveResolve = null; }
 
+      // Итерация 2.3: запоминаем что нужно записать — beforeunload-хук
+      // сможет дослать это синхронно, если вкладку закроют до debounce.
+      DB._pendingSave = { toSave, newVersion };
+
       return new Promise((resolve) => {
         DB._saveResolve = resolve;
         DB._saveTimer = setTimeout(async () => {
@@ -1506,6 +1608,7 @@ const DB = {
             // пользователю — снаружи выглядит как «не сохраняет данные»,
             // хотя по факту каждое изменение тихо копится в localStorage.
             DB._enqueue(toSave);
+            DB._pendingSave = null; // Итерация 2.3: уже в очереди — beforeunload не нужен
             DB._lastError = 'Нет соединения с сервером — изменения сохранены только на этом устройстве и будут отправлены при восстановлении сети';
             resolve({ ...toSave, _version: newVersion });
             setTimeout(() => { DB._saving = false; }, 500);
@@ -1532,92 +1635,15 @@ const DB = {
                       remoteWh = typeof whSnap.data().payload === 'string' ? JSON.parse(whSnap.data().payload) : whSnap.data();
                     }
                   } catch(e) { remoteWh = {}; }
-                  // ── Field-level merge (аудит) ──────────────────────────────────────
-                  // СТАРОЕ поведение: при совпадении id локальный объект целиком перезаписывал
-                  // удалённый — если мастер поменял priority, а ОТК тем временем поменял status
-                  // ТОГО ЖЕ заказа, чей save() долетел вторым — правки первого тихо терялись.
-                  // Плюс отдельный баг: если remote успел удалить объект (напр. hardDeleteOrders),
-                  // а у нас в памяти была стухшая локальная копия — старый merge её РЕАНИМИРОВАЛ,
-                  // потому что просто брал объединение id из обоих массивов.
+                  // ── Field-level merge (аудит + Итерация 2.2) ────────────────────────
+                  // Логика вынесена в _mergeFullState / _mergeArrayById (см. выше по файлу),
+                  // чтобы её мог переиспользовать и _flushQueue() при разгрузке офлайн-очереди.
                   //
-                  // НОВОЕ: сравниваем каждое поле объекта с «базой» (DB._baseData — снапшот на
-                  // момент, когда локальная сессия последний раз была синхронизирована). Поле
-                  // расходится с базой → значит его поменяли именно мы → берём наше значение.
-                  // Поле не менялось локально → берём значение с сервера (могло обновиться там).
-                  // Объект есть в базе, но исчез из local → значит удалили локально → не
-                  // возвращаем его, даже если он ещё жив на сервере. Объект есть в базе, но исчез
-                  // из remote → значит удалили на сервере → не реанимируем.
-                  //
-                  // Без базы для конкретного массива (напр. холодный старт в офлайне) —
-                  // fallback на старое object-level поведение, само по себе не хуже, чем было.
-                  const mergeArrayById = (remote, local, key, base) => {
-                    if (!base) {
-                      // Fallback — как было раньше, без диффа по полям.
-                      const remoteMap = new Map((remote || []).map(item => [item[key], item]));
-                      (local || []).forEach(item => remoteMap.set(item[key], item));
-                      return [...remoteMap.values()];
-                    }
-                    const remoteMap = new Map((remote || []).map(i => [i[key], i]));
-                    const baseMap   = new Map((base   || []).map(i => [i[key], i]));
-                    const result = new Map(remoteMap);
-                    (local || []).forEach(localItem => {
-                      const id = localItem[key];
-                      const remoteItem = remoteMap.get(id);
-                      const baseItem = baseMap.get(id);
-                      if (!remoteItem) {
-                        if (baseItem) return; // удалено на сервере — не реанимируем
-                        result.set(id, localItem); // новый локальный объект
-                        return;
-                      }
-                      if (!baseItem) {
-                        result.set(id, localItem); // нет базы для этого id — берём наше целиком
-                        return;
-                      }
-                      const mergedItem = { ...remoteItem };
-                      const allKeys = new Set([...Object.keys(localItem), ...Object.keys(baseItem)]);
-                      allKeys.forEach(k => {
-                        if (JSON.stringify(localItem[k]) !== JSON.stringify(baseItem[k])) mergedItem[k] = localItem[k];
-                      });
-                      result.set(id, mergedItem);
-                    });
-                    const localIds = new Set((local || []).map(i => i[key]));
-                    baseMap.forEach((_, id) => { if (!localIds.has(id)) result.delete(id); });
-                    return [...result.values()];
-                  };
-                  const base = DB._baseData || {};
-                  toSave.orders = mergeArrayById(remoteData.orders, toSave.orders, 'id', base.orders);
-                  toSave.ops = mergeArrayById(remoteData.ops, toSave.ops, 'id', base.ops);
-                  toSave.workers = mergeArrayById(remoteData.workers, toSave.workers, 'id', base.workers);
-                  // ⚠ Складские поля — сравниваем с remoteWh (warehouse_v1), а не с remoteData (production_v14)
-                  toSave.materials             = mergeArrayById(remoteWh.materials,             toSave.materials,             'id', base.materials);
-                  toSave.materialConsumptions  = mergeArrayById(remoteWh.materialConsumptions,  toSave.materialConsumptions,  'id', base.materialConsumptions);
-                  toSave.materialReservations  = mergeArrayById(remoteWh.materialReservations,  toSave.materialReservations,  'id', base.materialReservations);
-                  toSave.materialDeliveries    = mergeArrayById(remoteWh.materialDeliveries,    toSave.materialDeliveries,    'id', base.materialDeliveries);
-                  toSave.equipment             = mergeArrayById(remoteWh.equipment,             toSave.equipment,             'id', base.equipment);
-                  // ⚠ Раньше эти поля НЕ мержились и просто перезатирались при конфликте — отсюда пропажи табеля/рекламаций.
-                  toSave.reclamations = mergeArrayById(remoteData.reclamations, toSave.reclamations, 'id', base.reclamations);
-                  toSave.duels        = mergeArrayById(remoteData.duels,        toSave.duels,        'id', base.duels);
-                  // Табель — вложенная структура timesheet[месяц][workerId][день]: глубокий мердж по дням, без потери чужих записей
-                  const mergeTimesheet = (remote, local) => {
-                    const out = { ...(remote || {}) };
-                    Object.keys(local || {}).forEach(month => {
-                      out[month] = { ...(out[month] || {}) };
-                      Object.keys(local[month] || {}).forEach(workerId => {
-                        out[month][workerId] = { ...(out[month][workerId] || {}), ...(local[month][workerId] || {}) };
-                      });
-                    });
-                    return out;
-                  };
-                  toSave.timesheet = mergeTimesheet(remoteData.timesheet, toSave.timesheet);
-                  // Настройки (PIN-коды и т.д.) — поле за полем: меняли здесь → наше значение, не меняли → берём удалённое
-                  toSave.settings = { ...(remoteData.settings || {}), ...(toSave.settings || {}) };
-                  // Events, messages — конкатенируем и дедуплицируем
-                  const mergeEvents = (remote, local) => {
-                    const ids = new Set((local || []).map(e => e.id));
-                    return [...(local || []), ...(remote || []).filter(e => !ids.has(e.id))].sort((a, b) => (a.ts || 0) - (b.ts || 0));
-                  };
-                  toSave.events = mergeEvents(remoteData.events, toSave.events).slice(-2000);
-                  toSave.messages = mergeEvents(remoteData.messages, toSave.messages).slice(-200);
+                  // Суть: сравниваем каждое поле объекта с «базой» (DB._baseData — снапшот на
+                  // момент последней синхронизации). Поле расходится с базой → поменяли мы →
+                  // берём наше. Не менялось локально → берём серверное. Удалено локально или
+                  // на сервере → не реанимируем. Без базы → fallback на object-level слияние.
+                  _mergeFullState(toSave, remoteData, remoteWh, DB._baseData || {});
                   DB._lastError = '⚠ Данные объединены с изменениями другого пользователя.';
                 } catch(mergeErr) {
                   console.warn('Merge failed, using last-write-wins:', mergeErr);
@@ -1657,6 +1683,7 @@ const DB = {
             DB._version = newVersion;
             localStorage.setItem(VERSION_KEY, String(newVersion));
             DB._online = true;
+            DB._pendingSave = null; // Итерация 2.3: записано — beforeunload больше не нужен
             DB._clearQueue();
             // toSave только что успешно записан (смёрженный или нет) — это и есть новое
             // согласованное состояние. Следующий save() в этой же сессии должен сравнивать
@@ -1687,6 +1714,7 @@ const DB = {
             DB._lastError = e.message;
             DB._online = false;
             DB._enqueue(toSave);
+            DB._pendingSave = null; // Итерация 2.3: ушло в очередь
           }
           resolve({ ...toSave, _version: newVersion });
           setTimeout(() => { DB._saving = false; }, 500);
@@ -1713,14 +1741,63 @@ const DB = {
       if (!data) return;
       const age = Date.now() - ts;
       console.log(`Офлайн-очередь: отправляем данные (${Math.round(age/60000)} мин назад)...`);
-      await DOC_REF.set({
-        payload:   JSON.stringify(data),
-        _version:  Date.now(),
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      });
+
+      // ── Итерация 2.2: merge вместо перезаписи ──────────────────────────────
+      // СТАРОЕ поведение: DOC_REF.set(...) писал весь документ целиком снапшотом
+      // из очереди. Если пока клиент был офлайн, другой пользователь успел
+      // сохраниться — при разгрузке очереди его правки затирались полностью.
+      //
+      // НОВОЕ: читаем текущее состояние production_v14 + warehouse_v1 с сервера,
+      // мержим наши офлайн-правки поверх (относительно DB._baseData) и только
+      // потом пишем. Чужие правки, сделанные за время офлайна, сохраняются.
+      let toFlush = { ...data };
+      try {
+        const [mainSnap, whSnap] = await Promise.all([
+          DOC_REF.get().catch(() => null),
+          WH_DOC_REF.get().catch(() => null)
+        ]);
+        if (mainSnap && mainSnap.exists) {
+          let remoteData = {};
+          try { remoteData = typeof mainSnap.data().payload === 'string' ? JSON.parse(mainSnap.data().payload) : mainSnap.data(); } catch(e) {}
+          let remoteWh = {};
+          if (whSnap && whSnap.exists) {
+            try { remoteWh = typeof whSnap.data().payload === 'string' ? JSON.parse(whSnap.data().payload) : whSnap.data(); } catch(e) {}
+          }
+          // Мержим офлайн-правки поверх актуального серверного состояния
+          _mergeFullState(toFlush, remoteData, remoteWh, DB._baseData || {});
+        }
+      } catch(mergeErr) {
+        // Если чтение/мердж не удались — пишем как есть (last-write-wins), лучше чем потерять правки
+        console.warn('Flush merge failed, writing queue as-is:', mergeErr);
+      }
+
+      // Разделяем на production_v14 / warehouse_v1 как в обычном save()
+      const whData = {};
+      const mainData = { ...toFlush };
+      WH_FIELDS.forEach(f => { if (mainData[f] !== undefined) { whData[f] = mainData[f]; delete mainData[f]; } });
+
+      const newVersion = Date.now();
+      const flushPromises = [
+        DOC_REF.set({
+          payload:   JSON.stringify(mainData),
+          _version:  newVersion,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        })
+      ];
+      if (Object.keys(whData).length > 0) {
+        flushPromises.push(WH_DOC_REF.set({
+          payload:   JSON.stringify(whData),
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }));
+      }
+      await Promise.all(flushPromises);
+
+      DB._version = newVersion;
+      try { localStorage.setItem(VERSION_KEY, String(newVersion)); } catch(e) {}
+      DB._baseData = toFlush; // разгруженное состояние — новая база для слияния
       DB._clearQueue();
       DB._online = true;
-      console.log('Офлайн-очередь отправлена успешно');
+      console.log('Офлайн-очередь отправлена успешно (с merge)');
     } catch(e) {
       // Firebase всё ещё недоступен — очередь остаётся
       DB._online = false;
@@ -1802,11 +1879,33 @@ const DB = {
       callback(migrated);
     };
 
+    // ── Итерация 2.1: Буферизация snapshot при активном сохранении ──────────
+    // СТАРОЕ поведение: пока DB._saving === true, входящий snapshot просто
+    // отбрасывался (return). Если другой пользователь сохранил данные ровно в
+    // это окно (от начала save() до +500мс после записи), его обновление
+    // терялось — экран не обновлялся до следующего внешнего изменения.
+    //
+    // НОВОЕ: если идёт сохранение, запоминаем последний snapshot в буфере
+    // (раздельно для main и warehouse — чтобы не потерять один из двух) и
+    // применяем сразу после снятия блокировки. Так чужие правки не теряются.
+    // Регистрируем «дренаж» буфера один раз — он проверяет _pendingSnapshot и
+    // применяет его, когда _saving спадёт.
+    if (!DB._pendingSnapshotDrainer) {
+      DB._pendingSnapshotDrainer = setInterval(() => {
+        if (!DB._saving && DB._pendingSnapshot) {
+          const buf = DB._pendingSnapshot;
+          DB._pendingSnapshot = null;
+          try { if (buf.main) buf.main(); } catch(e) { console.warn('pendingSnapshot main drain failed:', e); }
+          try { if (buf.wh)   buf.wh();   } catch(e) { console.warn('pendingSnapshot wh drain failed:', e); }
+        }
+      }, 200);
+    }
+
     const unsubMain = DOC_REF.onSnapshot(
       snap => {
         DB._online = true;
-        if (DB._saving) return; // Блокируем входящие пока сами сохраняем
-        if (snap.exists) {
+        if (!snap.exists) return;
+        const apply = () => {
           try {
             lastMain = typeof snap.data().payload === 'string'
               ? JSON.parse(snap.data().payload)
@@ -1815,15 +1914,22 @@ const DB = {
             console.error('onSnapshot main: JSON.parse failed', e);
           }
           merge();
+        };
+        if (DB._saving) {
+          // Буферизуем в слот main — применим после снятия блокировки
+          if (!DB._pendingSnapshot) DB._pendingSnapshot = {};
+          DB._pendingSnapshot.main = apply;
+          return;
         }
+        apply();
       },
       err => { DB._online = false; console.warn('Snapshot error:', err); }
     );
 
     const unsubWh = WH_DOC_REF.onSnapshot(
       snap => {
-        if (DB._saving) return;
-        if (snap.exists) {
+        if (!snap.exists) return;
+        const apply = () => {
           try {
             lastWh = typeof snap.data().payload === 'string'
               ? JSON.parse(snap.data().payload)
@@ -1832,7 +1938,14 @@ const DB = {
             console.error('onSnapshot wh: JSON.parse failed', e);
           }
           merge();
+        };
+        if (DB._saving) {
+          // Буферизуем в слот wh — применим после снятия блокировки
+          if (!DB._pendingSnapshot) DB._pendingSnapshot = {};
+          DB._pendingSnapshot.wh = apply;
+          return;
         }
+        apply();
       },
       err => console.warn('WH Snapshot error:', err)
     );
@@ -1869,6 +1982,29 @@ const DB = {
 if (typeof window !== 'undefined' && DOC_REF) {
   window.addEventListener('online', () => { DB._flushQueue(); });
   setInterval(() => { if (!DB._online) DB._flushQueue(); }, 60000);
+
+  // ── Итерация 2.3: страховка от потери правок при закрытии вкладки ──────────
+  // Если пользователь закрывает вкладку, пока debounce-таймер (800мс) ещё не
+  // сработал, save() не успевает записать в Firestore. Надёжно достучаться до
+  // Firestore из unload-обработчика нельзя (нужен auth-токен и PATCH, которые
+  // sendBeacon не умеет, а async-fetch браузер обрывает). Поэтому мы гарантируем
+  // хотя бы то, что достижимо синхронно: кладём ожидающие правки в офлайн-очередь
+  // localStorage. При следующем открытии страницы DB.load() → _flushQueue()
+  // дошлёт их в Firestore с полным merge (Итерация 2.2). Так правки не теряются,
+  // а корректность обеспечивает обычный merge-путь при следующей загрузке.
+  const flushPendingOnUnload = () => {
+    if (!DB._pendingSave) return;
+    try {
+      const { toSave } = DB._pendingSave;
+      // Пишем в ту же офлайн-очередь, что и обычный офлайн-путь. _flushQueue()
+      // при следующем старте прочитает её, смёржит с сервером и запишет.
+      DB._enqueue(toSave);
+    } catch(e) {
+      // Ошибки в unload некритичны
+    }
+  };
+  window.addEventListener('beforeunload', flushPendingOnUnload);
+  window.addEventListener('pagehide', flushPendingOnUnload); // iOS Safari — надёжнее beforeunload
 }
 
 // Миграция workerId → workerIds (используется при загрузке, снапшоте)
