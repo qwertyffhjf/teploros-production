@@ -186,17 +186,21 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
   }, [activeCell, setCellVal]);
 
   const cellStyle = (val) => {
-    if (!val) return { bg: 'var(--card-2)', cl: '#bbb', lbl: '·' };
-    if (val.code === 'Б')  return { bg: '#FCEBEB', cl: '#791F1F', lbl: 'Б' };
-    if (val.code === 'ОТ') return { bg: '#E6F1FB', cl: '#0C447C', lbl: 'ОТ' };
-    if (val.code === 'ОЗ') return { bg: '#FFF3E0', cl: '#E65100', lbl: 'ОЗ' };
-    if (val.code === 'К')  return { bg: 'var(--st-ok-bg)', cl: '#2E7D32', lbl: 'К' };
-    if (val.code === 'НН') return { bg: '#F1EFE8', cl: '#888',   lbl: 'НН' };
-    if (val.code === 'У')  return { bg: '#E0E0E0', cl: '#444',   lbl: 'У' };
-    if (val.code === 'СД') return { bg: '#EDE7F6', cl: '#4527A0', lbl: 'СД' };
+    // Раньше здесь были захардкоженные светлые hex — всегда одинаковые
+    // независимо от темы, из-за чего в тёмном режиме ячейки выглядели
+    // как светлые пятна на тёмном фоне. Теперь используются семантические
+    // --st-* токены, которые уже определены отдельно для light/dark.
+    if (!val) return { bg: 'var(--card-2)', cl: 'var(--muted)', lbl: '·' };
+    if (val.code === 'Б')  return { bg: 'var(--st-al-bg)',    cl: 'var(--st-al-cl)',    lbl: 'Б' };
+    if (val.code === 'ОТ') return { bg: 'var(--st-run-bg)',   cl: 'var(--st-run-cl)',   lbl: 'ОТ' };
+    if (val.code === 'ОЗ') return { bg: 'var(--st-warn-bg)',  cl: 'var(--st-warn-cl)',  lbl: 'ОЗ' };
+    if (val.code === 'К')  return { bg: 'var(--st-ok-bg)',    cl: 'var(--st-ok-cl)',    lbl: 'К' };
+    if (val.code === 'НН') return { bg: 'var(--st-pending-bg)', cl: 'var(--st-pending-cl)', lbl: 'НН' };
+    if (val.code === 'У')  return { bg: 'var(--card-2)',      cl: 'var(--muted)',       lbl: 'У' };
+    if (val.code === 'СД') return { bg: 'var(--st-chk-bg)',   cl: 'var(--st-chk-cl)',   lbl: 'СД' };
     if (val.h >= 8) return { bg: GN3, cl: GN2, lbl: val.h };
     if (val.h > 0)  return { bg: AM3, cl: AM2, lbl: val.h };
-    return { bg: 'var(--card-2)', cl: '#bbb', lbl: '·' };
+    return { bg: 'var(--card-2)', cl: 'var(--muted)', lbl: '·' };
   };
 
   const exportXlsx = useCallback(() => {
@@ -363,16 +367,16 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
     // Легенда
     h('div', { style: { display:'flex', gap:8, flexWrap:'wrap', marginBottom:10, alignItems:'center' } },
       [
-        [GN3,  GN2,      '8ч — норма явки'],
-        [AM3,  AM2,      '< 8ч — неполный день'],
-        ['#FCEBEB', '#791F1F', 'Б — больничный'],
-        ['#E6F1FB', '#0C447C', 'ОТ — очередной отпуск'],
-        ['#FFF3E0', '#E65100', 'ОЗ — отпуск за свой счёт'],
-        ['var(--st-ok-bg)', '#2E7D32', 'К — командировка'],
-        ['#F1EFE8', '#888',    'НН — неявка невыясненная'],
-        ['#E0E0E0', '#444',    'У — уволен'],
-        ['#EDE7F6', '#4527A0', 'СД — сдельная оплата'],
-        ['rgba(226,75,74,0.08)', 'rgba(226,75,74,0.5)', 'В — выходной/праздник'],
+        [GN3, GN2, '8ч — норма явки'],
+        [AM3, AM2, '< 8ч — неполный день'],
+        ['var(--st-al-bg)',      'var(--st-al-cl)',      'Б — больничный'],
+        ['var(--st-run-bg)',     'var(--st-run-cl)',     'ОТ — очередной отпуск'],
+        ['var(--st-warn-bg)',    'var(--st-warn-cl)',    'ОЗ — отпуск за свой счёт'],
+        ['var(--st-ok-bg)',      'var(--st-ok-cl)',      'К — командировка'],
+        ['var(--st-pending-bg)', 'var(--st-pending-cl)', 'НН — неявка невыясненная'],
+        ['var(--card-2)',        'var(--muted)',         'У — уволен'],
+        ['var(--st-chk-bg)',     'var(--st-chk-cl)',     'СД — сдельная оплата'],
+        ['rgba(226,75,74,0.08)', 'rgba(226,75,74,0.5)',  'В — выходной/праздник'],
       ].map(([bg, cl, l]) =>
         h('div', { key:l, style:{ display:'flex', alignItems:'center', gap:4, fontSize:11, color:'var(--fg-muted)' } },
           h('div', { style:{ width:12, height:12, background:bg, borderRadius:2, border:`0.5px solid ${cl}`, flexShrink:0 } }),
@@ -386,15 +390,15 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
       h('div', { style:{ ...S.card, padding:0, overflow:'auto', maxHeight:'65vh' } },
         h('table', { style:{ borderCollapse:'collapse', width:'100%', fontSize:11 } },
           h('thead', null, h('tr', null,
-            h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'var(--card-2)', minWidth:160, textAlign:'left', padding:'6px 10px' } }, 'Сотрудник'),
+            h('th', { style:{ ...S.th, position:'sticky', top:0, left:0, zIndex:3, background:'var(--th-bg)', minWidth:160, textAlign:'left', padding:'6px 10px' } }, 'Сотрудник'),
             days.map(d => {
               const dow = new Date(viewYear, viewMonth, d).getDay();
               const isWe = !isWorkday(viewYear, viewMonth, d, data.settings);
-              return h('th', { key:d, style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'var(--card-2)', minWidth:32, color: isWe ? RD : undefined } },
+              return h('th', { key:d, style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'var(--th-bg)', minWidth:32, color: isWe ? RD : undefined } },
                 d, h('br'), h('span', { style:{ fontSize:9, fontWeight:400 } }, DOW[dow])
               );
             }),
-            h('th', { style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'var(--card-2)', minWidth:48 } }, 'Итого')
+            h('th', { style:{ ...S.th, position:'sticky', top:0, zIndex:2, background:'var(--th-bg)', minWidth:48 } }, 'Итого')
           )),
           h('tbody', null,
             showWorkers.map(w => {
@@ -446,10 +450,10 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
               const expiryIssues = checkExpiry();
               const hasIssues = expiryIssues.length > 0;
               return h('tr', { key:w.id },
-                h('td', { style:{ ...S.td, position:'sticky', left:0, zIndex:1, background: hasIssues ? RD3 : '#fff', boxShadow:'2px 0 4px rgba(0,0,0,0.04)', padding:'6px 10px', fontWeight:500, color: hasIssues ? RD2 : (isDismissed ? '#999' : undefined) } },
-                  h(WN, { worker: w, onWorkerClick, style: { color: hasIssues ? RD2 : (isDismissed ? '#999' : undefined), fontWeight: hasIssues ? 600 : 500 } }),
+                h('td', { style:{ ...S.td, position:'sticky', left:0, zIndex:1, background: hasIssues ? RD3 : 'var(--th-bg)', boxShadow:'2px 0 4px rgba(0,0,0,0.15)', padding:'6px 10px', fontWeight:500, color: hasIssues ? RD2 : (isDismissed ? 'var(--muted)' : undefined) } },
+                  h(WN, { worker: w, onWorkerClick, style: { color: hasIssues ? RD2 : (isDismissed ? 'var(--muted)' : undefined), fontWeight: hasIssues ? 600 : 500 } }),
                   hasIssues && h('span', { style: { fontSize: 8, marginLeft: 4, color: RD2, fontWeight: 600 } }, '⚠'),
-                  isDismissed && h('span', { style: { fontSize: 9, color: isDismissed && !hasIssues ? '#999' : RD2, marginLeft: 4 } }, '(ув.)')
+                  isDismissed && h('span', { style: { fontSize: 9, color: isDismissed && !hasIssues ? 'var(--muted)' : RD2, marginLeft: 4 } }, '(ув.)')
                 ),
                 days.map(d => {
                   const isWe = !isWorkday(viewYear, viewMonth, d, data.settings);
@@ -474,7 +478,7 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
             }),
             // Итоговая строка — всегда показывается
             h('tr', null,
-              h('td', { style:{ ...S.td, position:'sticky', left:0, background:'var(--card-2)', fontWeight:500, fontSize:10, color:'var(--muted)', padding:'4px 10px' } }, 'Итого чел·ч'),
+              h('td', { style:{ ...S.td, position:'sticky', left:0, background:'var(--th-bg)', fontWeight:500, fontSize:10, color:'var(--muted)', padding:'4px 10px' } }, 'Итого чел·ч'),
               days.map(d => {
                 let sum = 0;
                 showWorkers.forEach(w => { const v = getCellVal(w.id, d); if (v?.h) sum += v.h; });
