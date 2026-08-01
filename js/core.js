@@ -521,21 +521,18 @@ const initializeFirebaseAuth = () => {
 initializeFirebaseAuth();
 }
 const firestore = typeof firebase !== 'undefined' ? firebase.firestore() : null;
-// ── ONLINE-ONLY: отключаем локальную персистентность Firestore ──────────────
-// В compat SDK офлайн-персистентность (IndexedDB) не включается без явного
-// enablePersistence(), но на всякий случай форсируем настройки, чтобы данные
-// всегда шли из сети, а не из локального кэша SDK. Если сеть недоступна,
-// операции чтения/записи будут отклоняться — это и нужно для online-only.
+// ── ONLINE-ONLY режим ───────────────────────────────────────────────────────
+// Локальная персистентность Firestore (IndexedDB) в compat SDK не включается
+// без явного enablePersistence() — а мы его не вызываем. Дополнительно online-
+// only обеспечивается тем, что onSnapshot игнорирует снапшоты fromCache, а
+// DB.load/save не используют localStorage-кэш данных. Настройки SDK НЕ трогаем:
+// вызов firestore.settings() вызывал предупреждение "overriding the original
+// host" и не был нужен для online-only.
 if (firestore) {
+  // Чистим любую IndexedDB-персистентность, оставшуюся от прежних версий,
+  // где мог вызываться enablePersistence. Молча — если БД занята, не критично.
   try {
-    firestore.settings({ ignoreUndefinedProperties: true });
-  } catch(e) { /* settings можно задать только один раз до первого использования */ }
-  // Явно очищаем любую IndexedDB-персистентность Firestore, если она осталась
-  // от прежних версий (где мог вызываться enablePersistence).
-  try {
-    if (firestore.clearPersistence) {
-      firestore.clearPersistence().catch(() => {}); // молча — если БД занята, не критично
-    }
+    if (firestore.clearPersistence) firestore.clearPersistence().catch(() => {});
   } catch(e) {}
 }
 const DOC_REF    = firestore ? firestore.collection('app').doc('production_v14') : null;
