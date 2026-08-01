@@ -538,6 +538,7 @@ if (firestore) {
 const DOC_REF    = firestore ? firestore.collection('app').doc('production_v14') : null;
 const WH_DOC_REF = firestore ? firestore.collection('app').doc('warehouse_v1') : null;   // Склад — отдельный документ
 const TS_DOC_REF = firestore ? firestore.collection('app').doc('timesheet_v1') : null;  // Табель — отдельный документ (Итерация 6.2)
+const EV_DOC_REF = firestore ? firestore.collection('app').doc('events_v1') : null;    // События — отдельный документ (Итерация 6.1)
 const PRESENCE_REF = firestore ? firestore.collection('presence') : null;
 const BACKUP_REF = firestore ? firestore.collection('app_backups') : null; // Реальные снапшоты для восстановления (не метаданные)
 
@@ -545,6 +546,8 @@ const BACKUP_REF = firestore ? firestore.collection('app_backups') : null; // Р
 const WH_FIELDS = ['materials','bomTemplates','materialConsumptions','materialReservations','materialDeliveries','equipment'];
 // Поля которые живут в timesheet_v1 (не в production_v14) — Итерация 6.2
 const TS_FIELDS = ['timesheet'];
+// Поля которые живут в events_v1 (не в production_v14) — Итерация 6.1
+const EV_FIELDS = ['events'];
 
 // ==================== Presence (онлайн пользователи) ====================
 const Presence = {
@@ -1322,14 +1325,15 @@ const _mergeEvents = (remote, local) => {
   return [...(local || []), ...(remote || []).filter(e => !ids.has(e.id))].sort((a, b) => (a.ts || 0) - (b.ts || 0));
 };
 
-// Полное слияние объекта toSave с remoteData/remoteWh/remoteTs относительно base (DB._baseData).
+// Полное слияние объекта toSave с remoteData/remoteWh/remoteTs/remoteEv относительно base (DB._baseData).
 // Мутирует и возвращает toSave. Используется и в save() (при конфликте версий),
 // и в _flushQueue() (при разгрузке офлайн-очереди).
-const _mergeFullState = (toSave, remoteData, remoteWh, remoteTs, base) => {
+const _mergeFullState = (toSave, remoteData, remoteWh, remoteTs, remoteEv, base) => {
   base = base || {};
   remoteData = remoteData || {};
   remoteWh = remoteWh || {};
   remoteTs = remoteTs || {};
+  remoteEv = remoteEv || {};
   toSave.orders  = _mergeArrayById(remoteData.orders,  toSave.orders,  'id', base.orders);
   toSave.ops     = _mergeArrayById(remoteData.ops,     toSave.ops,     'id', base.ops);
   toSave.workers = _mergeArrayById(remoteData.workers, toSave.workers, 'id', base.workers);
@@ -1340,12 +1344,13 @@ const _mergeFullState = (toSave, remoteData, remoteWh, remoteTs, base) => {
   toSave.equipment             = _mergeArrayById(remoteWh.equipment,             toSave.equipment,             'id', base.equipment);
   toSave.reclamations = _mergeArrayById(remoteData.reclamations, toSave.reclamations, 'id', base.reclamations);
   toSave.duels        = _mergeArrayById(remoteData.duels,        toSave.duels,        'id', base.duels);
-  // Итерация 6.2: табель берётся из remoteTs (timesheet_v1), с fallback на remoteData
-  // для обратной совместимости (до первого сохранения табель может быть ещё в production_v14)
+  // Итерация 6.2: табель из remoteTs (timesheet_v1), fallback на remoteData
   const remoteTimesheet = remoteTs.timesheet || remoteData.timesheet;
   toSave.timesheet = _mergeTimesheet(remoteTimesheet, toSave.timesheet);
   toSave.settings = { ...(remoteData.settings || {}), ...(toSave.settings || {}) };
-  toSave.events = _mergeEvents(remoteData.events, toSave.events).slice(-2000);
+  // Итерация 6.1: события из remoteEv (events_v1), fallback на remoteData
+  const remoteEvents = remoteEv.events || remoteData.events;
+  toSave.events = _mergeEvents(remoteEvents, toSave.events).slice(-2000);
   toSave.messages = _mergeEvents(remoteData.messages, toSave.messages).slice(-200);
   return toSave;
 };
@@ -1398,12 +1403,13 @@ const DB = {
 
     // Загружаем все документы параллельно — если сети нет, DOC_REF.get()
     // отклонится, и мы уйдём в catch → бросаем OFFLINE-ошибку.
-    let snap, whSnap, tsSnap;
+    let snap, whSnap, tsSnap, evSnap;
     try {
-      [snap, whSnap, tsSnap] = await Promise.all([
+      [snap, whSnap, tsSnap, evSnap] = await Promise.all([
         DOC_REF.get(),
         WH_DOC_REF.get(),
-        TS_DOC_REF ? TS_DOC_REF.get() : Promise.resolve(null)
+        TS_DOC_REF ? TS_DOC_REF.get() : Promise.resolve(null),
+        EV_DOC_REF ? EV_DOC_REF.get() : Promise.resolve(null)
       ]);
     } catch(e) {
       console.warn('Firebase load failed (offline):', e);
@@ -1439,6 +1445,16 @@ const DB = {
             : tsSnap.data();
         } catch(e) { console.error('DB.load ts JSON.parse failed', e); tsParsed = {}; }
         TS_FIELDS.forEach(f => { if (tsParsed[f] !== undefined) parsed[f] = tsParsed[f]; });
+      }
+      // Итерация 6.1: подмешиваем события из отдельного документа
+      if (evSnap && evSnap.exists) {
+        let evParsed;
+        try {
+          evParsed = typeof evSnap.data().payload === 'string'
+            ? JSON.parse(evSnap.data().payload)
+            : evSnap.data();
+        } catch(e) { console.error('DB.load ev JSON.parse failed', e); evParsed = {}; }
+        EV_FIELDS.forEach(f => { if (evParsed[f] !== undefined) parsed[f] = evParsed[f]; });
       }
       DB._version = snap.data().updatedAt?.toMillis?.() || snap.data()._version || Date.now();
       DB._online = true;
@@ -1696,6 +1712,14 @@ const DB = {
                       remoteTs = typeof tsSnap.data().payload === 'string' ? JSON.parse(tsSnap.data().payload) : tsSnap.data();
                     }
                   } catch(e) { remoteTs = {}; }
+                  // Итерация 6.1: события живут в events_v1 — забираем для merge
+                  let remoteEv = {};
+                  try {
+                    const evSnap = EV_DOC_REF ? await EV_DOC_REF.get().catch(() => null) : null;
+                    if (evSnap && evSnap.exists) {
+                      remoteEv = typeof evSnap.data().payload === 'string' ? JSON.parse(evSnap.data().payload) : evSnap.data();
+                    }
+                  } catch(e) { remoteEv = {}; }
                   // ── Field-level merge (аудит + Итерация 2.2) ────────────────────────
                   // Логика вынесена в _mergeFullState / _mergeArrayById (см. выше по файлу),
                   // чтобы её мог переиспользовать и _flushQueue() при разгрузке офлайн-очереди.
@@ -1704,7 +1728,7 @@ const DB = {
                   // момент последней синхронизации). Поле расходится с базой → поменяли мы →
                   // берём наше. Не менялось локально → берём серверное. Удалено локально или
                   // на сервере → не реанимируем. Без базы → fallback на object-level слияние.
-                  _mergeFullState(toSave, remoteData, remoteWh, remoteTs, DB._baseData || {});
+                  _mergeFullState(toSave, remoteData, remoteWh, remoteTs, remoteEv, DB._baseData || {});
                   DB._lastError = '⚠ Данные объединены с изменениями другого пользователя.';
                 } catch(mergeErr) {
                   console.warn('Merge failed, using last-write-wins:', mergeErr);
@@ -1712,9 +1736,10 @@ const DB = {
                 }
               }
             }
-            // Разделяем данные: складские → warehouse_v1, табель → timesheet_v1, остальное → production_v14
+            // Разделяем данные: складские → warehouse_v1, табель → timesheet_v1, события → events_v1, остальное → production_v14
             const whData = {};
             const tsData = {};
+            const evData = {};
             const mainData = { ...toSave };
             WH_FIELDS.forEach(f => {
               if (mainData[f] !== undefined) {
@@ -1726,6 +1751,13 @@ const DB = {
             TS_FIELDS.forEach(f => {
               if (mainData[f] !== undefined) {
                 tsData[f] = mainData[f];
+                delete mainData[f];
+              }
+            });
+            // Итерация 6.1: события → отдельный документ
+            EV_FIELDS.forEach(f => {
+              if (mainData[f] !== undefined) {
+                evData[f] = mainData[f];
                 delete mainData[f];
               }
             });
@@ -1753,6 +1785,15 @@ const DB = {
               savePromises.push(
                 TS_DOC_REF.set({
                   payload:   JSON.stringify(tsData),
+                  updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                })
+              );
+            }
+            // Итерация 6.1: события → отдельный документ
+            if (EV_DOC_REF && Object.keys(evData).length > 0) {
+              savePromises.push(
+                EV_DOC_REF.set({
+                  payload:   JSON.stringify(evData),
                   updatedAt: firebase.firestore.FieldValue.serverTimestamp()
                 })
               );
@@ -1842,24 +1883,28 @@ const DB = {
       if (cur && cur.exists) {
         const curWh = await WH_DOC_REF.get().catch(() => null);
         const curTs = TS_DOC_REF ? await TS_DOC_REF.get().catch(() => null) : null;
+        const curEv = EV_DOC_REF ? await EV_DOC_REF.get().catch(() => null) : null;
         const curMain = typeof cur.data().payload === 'string' ? JSON.parse(cur.data().payload) : cur.data();
         const curWhData = curWh && curWh.exists ? (typeof curWh.data().payload === 'string' ? JSON.parse(curWh.data().payload) : curWh.data()) : {};
         const curTsData = curTs && curTs.exists ? (typeof curTs.data().payload === 'string' ? JSON.parse(curTs.data().payload) : curTs.data()) : {};
+        const curEvData = curEv && curEv.exists ? (typeof curEv.data().payload === 'string' ? JSON.parse(curEv.data().payload) : curEv.data()) : {};
         const preRestoreTs = Date.now();
         await BACKUP_REF.doc(String(preRestoreTs)).set({
-          payload: JSON.stringify({ ...curMain, ...curWhData, ...curTsData }),
+          payload: JSON.stringify({ ...curMain, ...curWhData, ...curTsData, ...curEvData }),
           ts: preRestoreTs,
           note: 'авто-снимок перед восстановлением',
           createdAt: firebase.firestore.FieldValue.serverTimestamp()
         }).catch(() => {});
       }
 
-      // Разделяем восстанавливаемые данные на production_v14 / warehouse_v1 / timesheet_v1 как при обычном save
+      // Разделяем восстанавливаемые данные на production_v14 / warehouse_v1 / timesheet_v1 / events_v1
       const whData = {};
       const tsData = {};
+      const evData = {};
       const mainData = { ...restored };
       WH_FIELDS.forEach(f => { if (mainData[f] !== undefined) { whData[f] = mainData[f]; delete mainData[f]; } });
       TS_FIELDS.forEach(f => { if (mainData[f] !== undefined) { tsData[f] = mainData[f]; delete mainData[f]; } });
+      EV_FIELDS.forEach(f => { if (mainData[f] !== undefined) { evData[f] = mainData[f]; delete mainData[f]; } });
 
       const newVersion = Date.now();
       await Promise.all([
@@ -1869,6 +1914,9 @@ const DB = {
           : Promise.resolve(),
         TS_DOC_REF && Object.keys(tsData).length > 0
           ? TS_DOC_REF.set({ payload: JSON.stringify(tsData), updatedAt: firebase.firestore.FieldValue.serverTimestamp() })
+          : Promise.resolve(),
+        EV_DOC_REF && Object.keys(evData).length > 0
+          ? EV_DOC_REF.set({ payload: JSON.stringify(evData), updatedAt: firebase.firestore.FieldValue.serverTimestamp() })
           : Promise.resolve()
       ]);
       DB._version = newVersion;
@@ -1886,6 +1934,7 @@ const DB = {
     let lastMain = null;
     let lastWh   = null;
     let lastTs   = null;  // Итерация 6.2: табель
+    let lastEv   = null;  // Итерация 6.1: события
 
     const merge = () => {
       if (!lastMain) return;
@@ -1893,6 +1942,8 @@ const DB = {
       if (lastWh) WH_FIELDS.forEach(f => { if (lastWh[f] !== undefined) merged[f] = lastWh[f]; });
       // Итерация 6.2: табель из отдельного документа (приоритет над тем что может быть в main)
       if (lastTs) TS_FIELDS.forEach(f => { if (lastTs[f] !== undefined) merged[f] = lastTs[f]; });
+      // Итерация 6.1: события из отдельного документа
+      if (lastEv) EV_FIELDS.forEach(f => { if (lastEv[f] !== undefined) merged[f] = lastEv[f]; });
       const migrated = migrateData(merged);
       // Это принятое (не заблокированное _saving) обновление становится новой базой
       // для будущего трёхстороннего слияния — см. DB._baseData.
@@ -1912,6 +1963,7 @@ const DB = {
           try { if (buf.main) buf.main(); } catch(e) { console.warn('pendingSnapshot main drain failed:', e); }
           try { if (buf.wh)   buf.wh();   } catch(e) { console.warn('pendingSnapshot wh drain failed:', e); }
           try { if (buf.ts)   buf.ts();   } catch(e) { console.warn('pendingSnapshot ts drain failed:', e); }
+          try { if (buf.ev)   buf.ev();   } catch(e) { console.warn('pendingSnapshot ev drain failed:', e); }
         }
       }, 200);
     }
@@ -1996,8 +2048,34 @@ const DB = {
       err => console.warn('TS Snapshot error:', err)
     ) : null;
 
+    // Итерация 6.1: слушаем события отдельно
+    const unsubEv = EV_DOC_REF ? EV_DOC_REF.onSnapshot(
+      { includeMetadataChanges: true },
+      snap => {
+        if (snap.metadata.fromCache) return;
+        if (!snap.exists) return;
+        const apply = () => {
+          try {
+            lastEv = typeof snap.data().payload === 'string'
+              ? JSON.parse(snap.data().payload)
+              : snap.data();
+          } catch(e) {
+            console.error('onSnapshot ev: JSON.parse failed', e);
+          }
+          merge();
+        };
+        if (DB._saving) {
+          if (!DB._pendingSnapshot) DB._pendingSnapshot = {};
+          DB._pendingSnapshot.ev = apply;
+          return;
+        }
+        apply();
+      },
+      err => console.warn('EV Snapshot error:', err)
+    ) : null;
+
     // Возвращаем функцию отписки от всех
-    return () => { unsubMain(); unsubWh(); if (unsubTs) unsubTs(); };
+    return () => { unsubMain(); unsubWh(); if (unsubTs) unsubTs(); if (unsubEv) unsubEv(); };
   },
 
   // ── Загрузка архива ───────────────────────────────────────────────────────
