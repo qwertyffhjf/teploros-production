@@ -496,8 +496,8 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
                   const { bg, cl, lbl } = cellStyle(val);
                   if (val?.h) totH += val.h;
                   const isActive = activeCell?.workerId === w.id && activeCell?.day === d;
-                  const weBg = isAfterDismissal ? '#E0E0E0' : (val ? bg : 'transparent');
-                  const weCl = isAfterDismissal ? '#444' : (val ? cl : '#ddd');
+                  const weBg = isAfterDismissal ? 'var(--card-2)' : (val ? bg : 'transparent');
+                  const weCl = isAfterDismissal ? 'var(--muted)' : (val ? cl : 'var(--muted)');
                   const weLbl = isAfterDismissal ? 'У' : (val ? lbl : '·');
                   return h('td', { key:d, style:{ ...S.td, padding:2, background: isWe && !val && !isAfterDismissal ? 'rgba(226,75,74,0.04)' : undefined } },
                     h('span', {
@@ -517,7 +517,7 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
                 let sum = 0;
                 showWorkers.forEach(w => { const v = getCellVal(w.id, d); if (v?.h) sum += v.h; });
                 const isWe = !isWorkday(viewYear, viewMonth, d, data.settings);
-                return h('td', { key:d, style:{ ...S.td, background: isWe ? 'rgba(226,75,74,0.04)' : 'var(--card-2)', fontSize:10, fontWeight:500, color: sum > 0 ? AM2 : '#888' } }, sum > 0 ? Math.round(sum*10)/10 : '');
+                return h('td', { key:d, style:{ ...S.td, background: isWe ? 'rgba(226,75,74,0.04)' : 'var(--card-2)', fontSize:10, fontWeight:500, color: sum > 0 ? AM2 : 'var(--muted)' } }, sum > 0 ? Math.round(sum*10)/10 : '');
               }),
               h('td', { style:{ ...S.td, background:'var(--card-2)', fontWeight:500, fontSize:10, color:AM2, padding:'4px 6px' } }, (() => {
                 let total = 0;
@@ -536,7 +536,7 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
       },
         h('div', { style:{ fontSize:11, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6, display:'flex', alignItems:'center', gap:6 } },
           `${workerName} · ${activeCell.day} ${MONTHS_RU[viewMonth].toLowerCase()}`,
-          (() => { const dow = new Date(viewYear, viewMonth, activeCell.day).getDay(); return (dow===0||dow===6) ? h('span', { style:{ background:'#FCEBEB', color:RD2, fontSize:10, padding:'1px 6px', borderRadius:4 } }, 'выходной') : null; })()
+          (() => { const dow = new Date(viewYear, viewMonth, activeCell.day).getDay(); return (dow===0||dow===6) ? h('span', { style:{ background: RD3, color:RD2, fontSize:10, padding:'1px 6px', borderRadius:4 } }, 'выходной') : null; })()
         ),
         h('input', { ref: inputRef, type:'number', min:0, max:24, step:0.5,
           style:{ ...S.inp, fontSize:22, fontWeight:500, textAlign:'center', marginBottom:8 },
@@ -556,10 +556,10 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
         h('div', { style:{ fontSize:11, color:'var(--muted)', marginBottom:6 } }, 'Отсутствие / особые случаи:'),
         h('div', { style:{ display:'flex', flexDirection:'column', gap:4, marginBottom:10 } },
           CODES.map(code => h('button', { key:code,
-            style:{ padding:'5px 10px', borderRadius:6, fontSize:11, fontWeight:400, cursor:'pointer', background:'#f5f5f2', color:'var(--fg)', border:'0.5px solid rgba(0,0,0,0.1)', textAlign:'left' },
+            style:{ padding:'5px 10px', borderRadius:6, fontSize:11, fontWeight:400, cursor:'pointer', background:'var(--card-2)', color:'var(--fg)', border:'0.5px solid var(--border)', textAlign:'left' },
             onClick: () => setCode(code)
           }, CODE_LABELS[code])),
-          h('button', { style:{ padding:'5px 10px', borderRadius:6, fontSize:11, cursor:'pointer', background:'none', color:'var(--muted)', border:'0.5px solid rgba(0,0,0,0.08)', textAlign:'left' }, onClick: () => setCode('') }, '× очистить ячейку')
+          h('button', { style:{ padding:'5px 10px', borderRadius:6, fontSize:11, cursor:'pointer', background:'none', color:'var(--muted)', border:'0.5px solid var(--border)', textAlign:'left' }, onClick: () => setCode('') }, '× очистить ячейку')
         ),
         h('div', { style:{ display:'flex', gap:6 } },
           h('button', { style: abtn({ flex:1, fontSize:13 }), onClick: saveCell }, 'Сохранить'),
