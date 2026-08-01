@@ -460,10 +460,10 @@ const pinMatch = (input, stored) => {
 // Смотри FIREBASE_SECURITY_RULES.txt в корне проекта.
 // Доступ ограничен только аутентифицированными пользователями (Anonymous Auth).
 
-// Защита: если Firebase CDN не загрузился (сеть недоступна) — не крашим весь core.js.
-// Приложение запустится в офлайн-режиме из кэша Service Worker.
+// Защита: если Firebase CDN не загрузился — не крашим весь core.js. DOC_REF
+// останется null, DB.load() бросит OFFLINE-ошибку, App покажет блокирующий экран.
 if (typeof firebase === 'undefined') {
-  console.warn('Firebase CDN не загрузился — работаем из кэша');
+  console.warn('Firebase CDN не загрузился — приложение покажет экран «Нет соединения»');
 } else {
 firebase.initializeApp({
   apiKey: "AIzaSyAR4Hvt4I80tbQKI2HLTKM8rbLSas2QFDw",
@@ -521,6 +521,23 @@ const initializeFirebaseAuth = () => {
 initializeFirebaseAuth();
 }
 const firestore = typeof firebase !== 'undefined' ? firebase.firestore() : null;
+// ── ONLINE-ONLY: отключаем локальную персистентность Firestore ──────────────
+// В compat SDK офлайн-персистентность (IndexedDB) не включается без явного
+// enablePersistence(), но на всякий случай форсируем настройки, чтобы данные
+// всегда шли из сети, а не из локального кэша SDK. Если сеть недоступна,
+// операции чтения/записи будут отклоняться — это и нужно для online-only.
+if (firestore) {
+  try {
+    firestore.settings({ ignoreUndefinedProperties: true });
+  } catch(e) { /* settings можно задать только один раз до первого использования */ }
+  // Явно очищаем любую IndexedDB-персистентность Firestore, если она осталась
+  // от прежних версий (где мог вызываться enablePersistence).
+  try {
+    if (firestore.clearPersistence) {
+      firestore.clearPersistence().catch(() => {}); // молча — если БД занята, не критично
+    }
+  } catch(e) {}
+}
 const DOC_REF    = firestore ? firestore.collection('app').doc('production_v14') : null;
 const WH_DOC_REF = firestore ? firestore.collection('app').doc('warehouse_v1') : null;   // Склад — отдельный документ
 const PRESENCE_REF = firestore ? firestore.collection('presence') : null;
@@ -1360,86 +1377,61 @@ const DB = {
   // ── Загрузка ──────────────────────────────────────────────────────────────
   async load() {
     cleanStaleLocalStorageKeys();
-    await DB._flushQueue();
 
-    // Если Firebase не загрузился (CDN недоступен) — сразу идём в кэш
+    // ── ONLINE-ONLY режим ──────────────────────────────────────────────────
+    // Приложение работает ТОЛЬКО при живом соединении с Firestore. Причина:
+    // офлайн-режим приводил к потере данных — устройство, поработавшее из кэша,
+    // при возврате сети выгружало устаревшее состояние и затирало правки других
+    // пользователей. Убрав офлайн-загрузку, мы гарантируем, что данные всегда
+    // читаются из облака напрямую и не могут устареть.
+    //
+    // Если Firebase недоступен — НЕ отдаём кэш, а бросаем ошибку. App покажет
+    // блокирующий экран «Нет соединения» до восстановления сети.
     if (!DOC_REF) {
-      console.warn('Firebase недоступен — загружаем из кэша');
-      try {
-        const cached = localStorage.getItem(CACHE_KEY);
-        if (cached) {
-          const { data: cacheData } = JSON.parse(cached);
-          return { ...EMPTY_DATA, ...cacheData };
-        }
-      } catch(e) {}
-      return EMPTY_DATA;
+      DB._online = false;
+      throw new Error('OFFLINE: Firebase недоступен (CDN не загрузился)');
     }
 
+    // Загружаем оба документа параллельно — если сети нет, DOC_REF.get()
+    // отклонится, и мы уйдём в catch → бросаем OFFLINE-ошибку.
+    let snap, whSnap;
     try {
-      // Загружаем оба документа параллельно
-      const [snap, whSnap] = await Promise.all([
+      [snap, whSnap] = await Promise.all([
         DOC_REF.get(),
         WH_DOC_REF.get()
       ]);
-      if (snap.exists) {
-        let parsed;
-        try {
-          parsed = typeof snap.data().payload === 'string'
-            ? JSON.parse(snap.data().payload)
-            : snap.data();
-        } catch(e) { console.error('DB.load main JSON.parse failed', e); parsed = {}; }
-        // Подмешиваем данные склада
-        if (whSnap.exists) {
-          let whParsed;
-          try {
-            whParsed = typeof whSnap.data().payload === 'string'
-              ? JSON.parse(whSnap.data().payload)
-              : whSnap.data();
-          } catch(e) { console.error('DB.load wh JSON.parse failed', e); whParsed = {}; }
-          WH_FIELDS.forEach(f => { if (whParsed[f] !== undefined) parsed[f] = whParsed[f]; });
-          try { localStorage.setItem(WH_CACHE_KEY, JSON.stringify({ data: whParsed, savedAt: Date.now() })); } catch(e) {}
-        }
-        DB._version = snap.data().updatedAt?.toMillis?.() || snap.data()._version || Date.now();
-        DB._online = true;
-        try {
-          localStorage.setItem(CACHE_KEY, JSON.stringify({ data: parsed, savedAt: Date.now() }));
-          localStorage.setItem(VERSION_KEY, String(DB._version));
-        } catch(e) {
-          localStorage.removeItem(CACHE_KEY);
-          try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data: parsed, savedAt: Date.now() })); } catch(e2) {}
-        }
-        const loaded = migrateData({ ...EMPTY_DATA, ...parsed });
-        DB._baseData = loaded;
-        return loaded;
-      }
     } catch(e) {
-      console.warn('Firebase load failed, using cache:', e);
+      console.warn('Firebase load failed (offline):', e);
       DB._online = false;
+      throw new Error('OFFLINE: нет соединения с сервером');
     }
-    // Firebase недоступен — объединяем оба кэша
-    try {
-      const raw = localStorage.getItem(CACHE_KEY);
-      if (raw) {
-        const cached = JSON.parse(raw);
-        let cacheData = cached.data || cached;
-        // Подмешиваем кэш склада
+
+    if (snap.exists) {
+      let parsed;
+      try {
+        parsed = typeof snap.data().payload === 'string'
+          ? JSON.parse(snap.data().payload)
+          : snap.data();
+      } catch(e) { console.error('DB.load main JSON.parse failed', e); parsed = {}; }
+      // Подмешиваем данные склада
+      if (whSnap.exists) {
+        let whParsed;
         try {
-          const whRaw = localStorage.getItem(WH_CACHE_KEY);
-          if (whRaw) {
-            const whCached = JSON.parse(whRaw);
-            const whData = whCached.data || whCached;
-            WH_FIELDS.forEach(f => { if (whData[f] !== undefined) cacheData[f] = whData[f]; });
-          }
-        } catch(e) {}
-        const savedAt = cached.savedAt || 0;
-        const age = Date.now() - savedAt;
-        if (age > CACHE_TTL) {
-          console.warn('Cache TTL expired (' + Math.round(age/3600000) + 'h old)');
-          localStorage.removeItem(CACHE_KEY);
-        }
-        return { ...EMPTY_DATA, ...cacheData };
+          whParsed = typeof whSnap.data().payload === 'string'
+            ? JSON.parse(whSnap.data().payload)
+            : whSnap.data();
+        } catch(e) { console.error('DB.load wh JSON.parse failed', e); whParsed = {}; }
+        WH_FIELDS.forEach(f => { if (whParsed[f] !== undefined) parsed[f] = whParsed[f]; });
       }
-    } catch(e) {}
+      DB._version = snap.data().updatedAt?.toMillis?.() || snap.data()._version || Date.now();
+      DB._online = true;
+      try { localStorage.setItem(VERSION_KEY, String(DB._version)); } catch(e) {}
+      const loaded = migrateData({ ...EMPTY_DATA, ...parsed });
+      DB._baseData = loaded;
+      return loaded;
+    }
+    // Документ не существует (первый запуск на пустой базе) — но сеть есть.
+    DB._online = true;
     return EMPTY_DATA;
   },
 
@@ -1628,14 +1620,11 @@ const DB = {
         DB._sizeWarning = null;
       }
 
-      // Обновляем кэш немедленно.
-      // Итерация 3.3: если toSave не менялся после первой сериализации (pruned=false),
-      // переиспользуем payload вместо повторного JSON.stringify(toSave) — экономит
-      // одну полную сериализацию ~500КБ данных на каждом сохранении.
+      // Online-only: НЕ пишем данные в localStorage-кэш. Раньше кэш служил для
+      // офлайн-загрузки, но офлайн-режим убран (см. DB.load). Держим только
+      // номер версии для optimistic locking. payload/pruned больше не нужны для кэша.
       const newVersion = Date.now();
       try {
-        const dataJson = pruned ? JSON.stringify(toSave) : payload;
-        localStorage.setItem(CACHE_KEY,   '{"data":' + dataJson + ',"savedAt":' + Date.now() + '}');
         localStorage.setItem(VERSION_KEY, String(newVersion));
       } catch(e) {}
 
@@ -1644,26 +1633,21 @@ const DB = {
       if (DB._saveTimer) clearTimeout(DB._saveTimer);
       if (DB._saveResolve) { DB._saveResolve(); DB._saveResolve = null; }
 
-      // Итерация 2.3: запоминаем что нужно записать — beforeunload-хук
-      // сможет дослать это синхронно, если вкладку закроют до debounce.
-      DB._pendingSave = { toSave, newVersion };
+      // Online-only: убрана запись в beforeunload-очередь. При офлайне сохранять
+      // некуда — приложение покажет блокирующий экран.
 
-      return new Promise((resolve) => {
+      return new Promise((resolve, reject) => {
         DB._saveResolve = resolve;
         DB._saveTimer = setTimeout(async () => {
           DB._saveResolve = null;
           if (!DB._online) {
-            // РАНЬШЕ: этот путь молча ставил данные в очередь и резолвил
-            // промис как успех — DB._lastError выставлялся только в catch()
-            // ПЕРВОЙ неудачной попытки. Все следующие сохранения, пока флаг
-            // DB._online=false, проходили здесь и ничего не сообщали
-            // пользователю — снаружи выглядит как «не сохраняет данные»,
-            // хотя по факту каждое изменение тихо копится в localStorage.
-            DB._enqueue(toSave);
-            DB._pendingSave = null; // Итерация 2.3: уже в очереди — beforeunload не нужен
-            DB._lastError = 'Нет соединения с сервером — изменения сохранены только на этом устройстве и будут отправлены при восстановлении сети';
-            resolve({ ...toSave, _version: newVersion });
-            setTimeout(() => { DB._saving = false; }, 500);
+            // ONLINE-ONLY: нет сети — НЕ сохраняем в очередь (это был источник
+            // затирания чужих правок при возврате сети). Сообщаем об ошибке,
+            // ничего не пишем локально. Блокирующий экран в App не даст
+            // пользователю продолжать вносить изменения без сети.
+            DB._lastError = 'Нет соединения с сервером. Изменения НЕ сохранены — дождитесь восстановления сети.';
+            DB._saving = false;
+            reject(new Error('OFFLINE: сохранение невозможно без сети'));
             return;
           }
           try {
@@ -1763,10 +1747,14 @@ const DB = {
             }
           } catch(e) {
             console.error('Firebase save error:', e);
-            DB._lastError = e.message;
+            DB._lastError = 'Ошибка сохранения: ' + e.message + '. Изменения НЕ сохранены.';
             DB._online = false;
-            DB._enqueue(toSave);
-            DB._pendingSave = null; // Итерация 2.3: ушло в очередь
+            // ONLINE-ONLY: не кладём в очередь — при ошибке записи сообщаем и
+            // отклоняем промис. Данные не теряются: они остались в UI-стейте,
+            // пользователь увидит блокирующий экран и повторит после сети.
+            DB._saving = false;
+            reject(new Error('SAVE_FAILED: ' + e.message));
+            return;
           }
           resolve({ ...toSave, _version: newVersion });
           setTimeout(() => { DB._saving = false; }, 500);
@@ -1775,86 +1763,15 @@ const DB = {
     } catch(e) { console.error(e); DB._lastError = e.message; DB._saving = false; }
   },
 
-  // ── Офлайн-очередь ────────────────────────────────────────────────────────
-  _enqueue(data) {
-    try {
-      localStorage.setItem(QUEUE_KEY, JSON.stringify({ data, ts: Date.now() }));
-      console.log('Сохранено в офлайн-очередь');
-    } catch(e) {}
-  },
-  _clearQueue() {
-    try { localStorage.removeItem(QUEUE_KEY); } catch(e) {}
-  },
-  async _flushQueue() {
-    try {
-      const raw = localStorage.getItem(QUEUE_KEY);
-      if (!raw) return;
-      const { data, ts } = JSON.parse(raw);
-      if (!data) return;
-      const age = Date.now() - ts;
-      console.log(`Офлайн-очередь: отправляем данные (${Math.round(age/60000)} мин назад)...`);
-
-      // ── Итерация 2.2: merge вместо перезаписи ──────────────────────────────
-      // СТАРОЕ поведение: DOC_REF.set(...) писал весь документ целиком снапшотом
-      // из очереди. Если пока клиент был офлайн, другой пользователь успел
-      // сохраниться — при разгрузке очереди его правки затирались полностью.
-      //
-      // НОВОЕ: читаем текущее состояние production_v14 + warehouse_v1 с сервера,
-      // мержим наши офлайн-правки поверх (относительно DB._baseData) и только
-      // потом пишем. Чужие правки, сделанные за время офлайна, сохраняются.
-      let toFlush = { ...data };
-      try {
-        const [mainSnap, whSnap] = await Promise.all([
-          DOC_REF.get().catch(() => null),
-          WH_DOC_REF.get().catch(() => null)
-        ]);
-        if (mainSnap && mainSnap.exists) {
-          let remoteData = {};
-          try { remoteData = typeof mainSnap.data().payload === 'string' ? JSON.parse(mainSnap.data().payload) : mainSnap.data(); } catch(e) {}
-          let remoteWh = {};
-          if (whSnap && whSnap.exists) {
-            try { remoteWh = typeof whSnap.data().payload === 'string' ? JSON.parse(whSnap.data().payload) : whSnap.data(); } catch(e) {}
-          }
-          // Мержим офлайн-правки поверх актуального серверного состояния
-          _mergeFullState(toFlush, remoteData, remoteWh, DB._baseData || {});
-        }
-      } catch(mergeErr) {
-        // Если чтение/мердж не удались — пишем как есть (last-write-wins), лучше чем потерять правки
-        console.warn('Flush merge failed, writing queue as-is:', mergeErr);
-      }
-
-      // Разделяем на production_v14 / warehouse_v1 как в обычном save()
-      const whData = {};
-      const mainData = { ...toFlush };
-      WH_FIELDS.forEach(f => { if (mainData[f] !== undefined) { whData[f] = mainData[f]; delete mainData[f]; } });
-
-      const newVersion = Date.now();
-      const flushPromises = [
-        DOC_REF.set({
-          payload:   JSON.stringify(mainData),
-          _version:  newVersion,
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        })
-      ];
-      if (Object.keys(whData).length > 0) {
-        flushPromises.push(WH_DOC_REF.set({
-          payload:   JSON.stringify(whData),
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }));
-      }
-      await Promise.all(flushPromises);
-
-      DB._version = newVersion;
-      try { localStorage.setItem(VERSION_KEY, String(newVersion)); } catch(e) {}
-      DB._baseData = toFlush; // разгруженное состояние — новая база для слияния
-      DB._clearQueue();
-      DB._online = true;
-      console.log('Офлайн-очередь отправлена успешно (с merge)');
-    } catch(e) {
-      // Firebase всё ещё недоступен — очередь остаётся
-      DB._online = false;
-    }
-  },
+  // ── Офлайн-очередь УБРАНА (online-only режим) ──────────────────────────────
+  // Раньше эти методы копили данные в localStorage при офлайне и выгружали при
+  // возврате сети — это и был источник затирания чужих правок. Теперь приложение
+  // работает только онлайн, очередь не нужна. Методы оставлены как no-op, чтобы
+  // случайные вызовы из старого кода не падали. Заодно чистим любую очередь,
+  // оставшуюся в localStorage от предыдущих версий.
+  _enqueue(data) { /* online-only: no-op */ },
+  _clearQueue() { try { localStorage.removeItem(QUEUE_KEY); } catch(e) {} },
+  async _flushQueue() { /* online-only: no-op */ },
 
   // 📜 История: получить список последних 10 сохранений (метаданные — для UI-журнала действий)
   getSaveHistory() {
@@ -1954,7 +1871,12 @@ const DB = {
     }
 
     const unsubMain = DOC_REF.onSnapshot(
+      { includeMetadataChanges: true },
       snap => {
+        // ONLINE-ONLY: снапшот из локального кэша SDK (fromCache=true) означает,
+        // что мы читаем НЕ актуальные данные с сервера. Игнорируем такие снапшоты
+        // и помечаем офлайн — App покажет блокирующий экран.
+        if (snap.metadata.fromCache) { DB._online = false; return; }
         DB._online = true;
         if (!snap.exists) return;
         const apply = () => {
@@ -1979,7 +1901,9 @@ const DB = {
     );
 
     const unsubWh = WH_DOC_REF.onSnapshot(
+      { includeMetadataChanges: true },
       snap => {
+        if (snap.metadata.fromCache) return; // ONLINE-ONLY: игнорируем кэш SDK
         if (!snap.exists) return;
         const apply = () => {
           try {
@@ -2022,41 +1946,23 @@ const DB = {
   }
 };
 
-// ── Разгрузка офлайн-очереди в фоне ─────────────────────────────────────────
-// Раньше DB._flushQueue() вызывался ТОЛЬКО один раз в начале DB.load() — то
-// есть только при загрузке страницы. Если сеть пропадала и восстанавливалась
-// в течение того же открытого сеанса (частый случай на общем терминале в
-// цеху, который никто не перезагружает), очередь просто зависала в
-// localStorage до следующей перезагрузки, а DB._online оставался false —
-// каждое новое сохранение молча уходило в очередь без единого предупреждения.
-// Теперь пробуем разгрузить очередь и при событии 'online', и раз в минуту
-// на всякий случай (событие 'online' не всегда надёжно в мобильных браузерах).
+// ── Мониторинг сети (online-only режим) ─────────────────────────────────────
+// Офлайн-очередь и её разгрузка убраны. Вместо этого следим за статусом сети,
+// чтобы App мог показать/убрать блокирующий экран «Нет соединения».
 if (typeof window !== 'undefined' && DOC_REF) {
-  window.addEventListener('online', () => { DB._flushQueue(); });
-  setInterval(() => { if (!DB._online) DB._flushQueue(); }, 60000);
+  // Чистим любую очередь, оставшуюся в localStorage от старых версий приложения.
+  try { localStorage.removeItem(QUEUE_KEY); } catch(e) {}
+  try { localStorage.removeItem(CACHE_KEY); } catch(e) {}
+  try { localStorage.removeItem(WH_CACHE_KEY); } catch(e) {}
 
-  // ── Итерация 2.3: страховка от потери правок при закрытии вкладки ──────────
-  // Если пользователь закрывает вкладку, пока debounce-таймер (800мс) ещё не
-  // сработал, save() не успевает записать в Firestore. Надёжно достучаться до
-  // Firestore из unload-обработчика нельзя (нужен auth-токен и PATCH, которые
-  // sendBeacon не умеет, а async-fetch браузер обрывает). Поэтому мы гарантируем
-  // хотя бы то, что достижимо синхронно: кладём ожидающие правки в офлайн-очередь
-  // localStorage. При следующем открытии страницы DB.load() → _flushQueue()
-  // дошлёт их в Firestore с полным merge (Итерация 2.2). Так правки не теряются,
-  // а корректность обеспечивает обычный merge-путь при следующей загрузке.
-  const flushPendingOnUnload = () => {
-    if (!DB._pendingSave) return;
-    try {
-      const { toSave } = DB._pendingSave;
-      // Пишем в ту же офлайн-очередь, что и обычный офлайн-путь. _flushQueue()
-      // при следующем старте прочитает её, смёржит с сервером и запишет.
-      DB._enqueue(toSave);
-    } catch(e) {
-      // Ошибки в unload некритичны
-    }
-  };
-  window.addEventListener('beforeunload', flushPendingOnUnload);
-  window.addEventListener('pagehide', flushPendingOnUnload); // iOS Safari — надёжнее beforeunload
+  // Браузерные события сети — быстрый сигнал для UI. Реальный статус
+  // подтверждается успехом/провалом Firestore-операций (DB._online).
+  window.addEventListener('offline', () => { DB._online = false; });
+  window.addEventListener('online', () => {
+    // Сеть вернулась на уровне ОС — пробуем лёгкий пинг Firestore, чтобы
+    // подтвердить реальную доступность и снять блокирующий экран.
+    DOC_REF.get().then(() => { DB._online = true; }).catch(() => { DB._online = false; });
+  });
 }
 
 // Миграция workerId → workerIds (используется при загрузке, снапшоте)
