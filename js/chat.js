@@ -379,8 +379,10 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
     // Каталог сотрудников
     showPeople && h('div', { style: { ...S.card, marginTop: 8, padding: 10, maxHeight: 300, overflowY: 'auto' } },
       h('div', { style: S.sec }, 'Сотрудники производства'),
+      // Итерация 3.1: dayBucket вместо Date.now() (стабильно в течение суток),
+      // зависимость сужена до data.ops/data.events/data.workers.
       useMemo(() => data.workers.filter(w => !w.archived).map(w => {
-        const s = calcWorkerStats(w.id, data, Date.now());
+        const s = calcWorkerStats(w.id, data, Math.floor(Date.now() / 86400000) * 86400000);
         const lvl = getWorkerLevel(s.doneCount);
         return h('div', { key: w.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)', cursor: 'pointer' }, onClick: () => { setViewProfileId(w.id); setShowPeople(false); } },
           h('div', { style: { width: 32, height: 32, borderRadius: '50%', background: AM3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 500, color: AM2, position: 'relative' } },
@@ -396,7 +398,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
           ),
           w.id !== myId && h('button', { style: gbtn({ fontSize: 10, padding: '3px 8px' }), onClick: (e) => { e.stopPropagation(); sendThanks(w.id); setShowPeople(false); } }, '🤝')
         );
-      }), [data, myId, showPeople])
+      }), [data.ops, data.events, data.workers, myId, showPeople])
     ),
 
     // Просмотр профиля сотрудника
