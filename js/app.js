@@ -2555,6 +2555,9 @@ function App() {
   const [data, setData] = useState(EMPTY_DATA);
   const [loading, setLoading] = useState(true);
   const [synced, setSynced] = useState(false);
+  // Online-only: блокирующий экран «Нет соединения». true = сеть недоступна,
+  // работа заблокирована до восстановления.
+  const [offlineBlock, setOfflineBlock] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [role, setRole] = useState(null);
   const [greetingKey, setGreetingKey] = React.useState(0); // меняется при каждом входе
@@ -2584,34 +2587,50 @@ function App() {
   }, []);
 
   useEffect(() => {
-    // Таймаут 8с: если Firebase не ответил — DB.load() сам вернёт localStorage кеш
-    const loadWithTimeout = Promise.race([
-      DB.load(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
-    ]).catch(async e => {
-      console.warn('Firebase timeout/error — загружаем из localStorage кеша');
-      return DB.load(); // DB.load() при офлайне вернёт localStorage кеш
-    });
+    // ── ONLINE-ONLY загрузка ────────────────────────────────────────────────
+    // При ошибке/таймауте НЕ загружаем кэш (его больше нет). Показываем
+    // блокирующий экран «Нет соединения» и автоматически повторяем попытку.
+    let cancelled = false;
 
-    loadWithTimeout.then(async d => {
-      if (!d) { setLoading(false); setSynced(false); return; }
-      // П.9: Автоархивация — заказы, все операции которых завершены более 30 дней назад
-      const threshold = now() - 30 * 86400000;
-      let archiveCount = 0;
-      const updated = { ...d, orders: d.orders.map(order => {
-        if (order.archived) return order;
-        const orderOps = d.ops.filter(op => op.orderId === order.id);
-        if (orderOps.length === 0) return order;
-        const allDone = orderOps.every(op => op.status === 'done' || op.status === 'defect');
-        const lastFinished = orderOps.length > 0 ? Math.max(...orderOps.map(op => op.finishedAt || 0)) : 0;
-        if (allDone && lastFinished > 0 && lastFinished < threshold) { archiveCount++; return { ...order, archived: true, autoArchived: true }; }
-        return order;
-      })};
-      if (archiveCount > 0) { await DB.save(updated); console.log(`Автоархивация: ${archiveCount} заказов`); }
-      const _finalD = archiveCount > 0 ? updated : d; setData(_finalD); window.__MES = _finalD;
-      setLoading(false); setSynced(true);
-    }).catch(e => { console.error('DB.load error:', e); setData(EMPTY_DATA); setLoading(false); setSynced(false); });
-    const unsub = DB.onSnapshot(newData => { if (!savingRef.current && !DB._saving) { setData(newData); window.__MES = newData; } });
+    const attemptLoad = () => {
+      const loadWithTimeout = Promise.race([
+        DB.load(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+      ]);
+
+      loadWithTimeout.then(async d => {
+        if (cancelled) return;
+        if (!d) { setLoading(false); setSynced(false); return; }
+        // Автоархивация — заказы, все операции которых завершены более 30 дней назад
+        const threshold = now() - 30 * 86400000;
+        let archiveCount = 0;
+        const updated = { ...d, orders: d.orders.map(order => {
+          if (order.archived) return order;
+          const orderOps = d.ops.filter(op => op.orderId === order.id);
+          if (orderOps.length === 0) return order;
+          const allDone = orderOps.every(op => op.status === 'done' || op.status === 'defect');
+          const lastFinished = orderOps.length > 0 ? Math.max(...orderOps.map(op => op.finishedAt || 0)) : 0;
+          if (allDone && lastFinished > 0 && lastFinished < threshold) { archiveCount++; return { ...order, archived: true, autoArchived: true }; }
+          return order;
+        })};
+        if (archiveCount > 0) { try { await DB.save(updated); console.log(`Автоархивация: ${archiveCount} заказов`); } catch(e) { /* архивация не критична */ } }
+        const _finalD = archiveCount > 0 ? updated : d; setData(_finalD); window.__MES = _finalD;
+        setLoading(false); setSynced(true); setOfflineBlock(false);
+      }).catch(e => {
+        if (cancelled) return;
+        // ONLINE-ONLY: нет сети — показываем блокирующий экран, НЕ кэш.
+        console.warn('Нет соединения с сервером:', e.message);
+        setLoading(false);
+        setSynced(false);
+        setOfflineBlock(true);
+        // Авто-повтор через 3 секунды, пока сеть не вернётся
+        setTimeout(() => { if (!cancelled) attemptLoad(); }, 3000);
+      });
+    };
+
+    attemptLoad();
+
+    const unsub = DB.onSnapshot(newData => { if (!savingRef.current && !DB._saving) { setData(newData); window.__MES = newData; setOfflineBlock(false); } });
     const params = new URLSearchParams(window.location.search);
     const opId = params.get('opId');
     if (opId) setInitialOpId(opId);
@@ -2637,6 +2656,7 @@ function App() {
     } catch(e) { /* BroadcastChannel не поддерживается */ }
 
     return () => {
+      cancelled = true; // останавливаем авто-повтор загрузки
       unsub();
       if (bc) bc.close();
     };
@@ -2653,6 +2673,14 @@ function App() {
         savingRef.current = false;
         setIsSaving(false);
       }, 300);
+    }).catch(e => {
+      // ONLINE-ONLY: сохранение не удалось (нет сети). Показываем блокирующий
+      // экран. Данные остались в UI-стейте (setData уже применён), поэтому при
+      // возврате сети пользователь сможет повторить действие.
+      savingRef.current = false;
+      setIsSaving(false);
+      setOfflineBlock(true);
+      console.warn('Сохранение не удалось (офлайн):', e.message);
     });
   }, []);
 
@@ -2794,13 +2822,32 @@ function App() {
   if (loading) return h('div', { style: { padding:48, textAlign:'center' } },
     h('div', { style: { fontSize:28, marginBottom:12 } }, '⏳'),
     h('div', { style: { fontSize:15, color:'#444', marginBottom:6 } }, 'Загрузка...'),
-    h('div', { style: { fontSize:12, color:'var(--muted)', marginBottom: loadingSec >= 5 ? 20 : 0 } },
-      loadingSec < 5 ? 'Подключение к Firebase...' : `Нет ответа от сервера (${loadingSec}с)`
+    h('div', { style: { fontSize:12, color:'var(--muted)' } },
+      loadingSec < 5 ? 'Подключение к серверу...' : `Нет ответа от сервера (${loadingSec}с)`
+    )
+  );
+
+  // ── ONLINE-ONLY: блокирующий экран «Нет соединения» ───────────────────────
+  // Показывается, когда сеть недоступна. Работа заблокирована до восстановления.
+  // Экран сам исчезнет, как только соединение вернётся (авто-повтор в useEffect
+  // + onSnapshot сбрасывают offlineBlock). Данные не теряются: приложение просто
+  // не даёт вносить изменения, которые некуда сохранить.
+  if (offlineBlock) return h('div', { style: { position:'fixed', inset:0, background:'var(--bg)', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:32, textAlign:'center', zIndex:100000 } },
+    h('div', { style: { fontSize:56, marginBottom:20 } }, '📡'),
+    h('div', { style: { fontSize:20, fontWeight:600, color:'var(--fg)', marginBottom:10 } }, 'Нет соединения с сервером'),
+    h('div', { style: { fontSize:14, color:'var(--muted)', maxWidth:420, lineHeight:1.6, marginBottom:24 } },
+      'Приложение работает только при подключении к интернету. ',
+      'Это защищает данные от потери — все изменения сохраняются в общую базу мгновенно. ',
+      'Как только сеть восстановится, работа продолжится автоматически.'
     ),
-    loadingSec >= 5 && h('button', {
-      style: { padding:'9px 22px', fontSize:13, borderRadius:8, background:'#f0f0f0', border:'1px solid #ddd', cursor:'pointer', color:'var(--fg-muted)' },
-      onClick: () => { setData(window.__MES || EMPTY_DATA); setLoading(false); }
-    }, '📴 Войти офлайн')
+    h('div', { style: { display:'flex', alignItems:'center', gap:8, fontSize:13, color:'var(--muted)' } },
+      h('div', { style: { width:8, height:8, borderRadius:'50%', background:'var(--st-warn-cl, #d88a17)', animation:'pulse 1.5s infinite' } }),
+      'Ожидание соединения…'
+    ),
+    h('button', {
+      style: { marginTop:24, padding:'10px 24px', fontSize:14, borderRadius:10, background:'var(--brand, #4f46e5)', color:'#fff', border:'none', cursor:'pointer', fontWeight:500 },
+      onClick: () => window.location.reload()
+    }, '↻ Проверить соединение')
   );
 
   // QR-режим
@@ -2916,13 +2963,10 @@ function App() {
         ),
         h('div', { style: { display:'flex', alignItems:'center', gap:4, color: synced ? GN : '#888' } },
           h('span', { style: { width:6, height:6, borderRadius:'50%', background: synced ? GN : '#ccc', display:'inline-block' } }),
-          synced ? 'Firebase' : 'Оффлайн'
+          synced ? 'Онлайн' : 'Нет сети'
         ),
         DB._sizeWarning && h('div', { style: { display:'flex', alignItems:'center', gap:3, color: AM4, fontSize: 9 } },
           `💾 ${DB._sizeWarning} КБ`
-        ),
-        !synced && localStorage.getItem(QUEUE_KEY) && h('div', { style: { display:'flex', alignItems:'center', gap:3, color: AM4, fontSize: 9, fontWeight:500 } },
-          '📤 Офлайн-очередь'
         )
       )
     ),
