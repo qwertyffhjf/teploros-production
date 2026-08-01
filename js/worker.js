@@ -1185,28 +1185,21 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
       addToast(`Операция "${op.name}" завершена`, 'info');
     }
 
-    // Сохраняем в Firebase — или в IndexedDB если нет сети
+    // ONLINE-ONLY: сохраняем ТОЛЬКО в Firebase. При офлайне — откат изменений
+    // и явное сообщение. Раньше операция уходила в IndexedDB-очередь и при
+    // возврате сети выгружалась целиком, затирая правки других. Теперь этого нет.
     if (DB._online !== false) {
-      DB.save(final).catch(async err => {
-        console.warn('[doFinish] Firebase недоступен, сохраняем офлайн:', err.message);
-        const queued = await OfflineQueue.enqueue(final, `Операция "${op.name}"`);
-        if (queued) {
-          addToast('📴 Нет сети — сохранено офлайн. Отправим при восстановлении.', 'info', { ttl: 6000 });
-        } else {
-          onUpdate(prevData); // крайний случай — откат
-          addToast('Ошибка сохранения — данные не записаны', 'error');
-          vibrateAction('error');
-        }
+      DB.save(final).catch(err => {
+        console.warn('[doFinish] Нет сети — откат:', err.message);
+        onUpdate(prevData); // откат: данные не сохранены
+        addToast('📡 Нет соединения — операция не сохранена. Дождитесь сети и повторите.', 'error', { ttl: 7000 });
+        vibrateAction('error');
       });
     } else {
-      // Сразу в офлайн-очередь без попытки Firebase
-      const queued = await OfflineQueue.enqueue(final, `Операция "${op.name}"`);
-      if (queued) {
-        addToast('📴 Нет сети — сохранено офлайн. Отправим при восстановлении.', 'info', { ttl: 6000 });
-      } else {
-        onUpdate(prevData);
-        addToast('Ошибка сохранения', 'error');
-      }
+      // Сеть заведомо недоступна — не пытаемся, сразу откат
+      onUpdate(prevData);
+      addToast('📡 Нет соединения — операция не сохранена. Дождитесь сети и повторите.', 'error', { ttl: 7000 });
+      vibrateAction('error');
     }
     // Push-уведомление ОТК
     if (status === 'on_check' && 'serviceWorker' in navigator) {
@@ -1470,43 +1463,24 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
   const [syncing, setSyncing] = useState(false);
 
   // Проверяем очередь при старте
+  // ONLINE-ONLY: офлайн-очередь операций убрана. Раньше при возврате сети
+  // накопленные операции выгружались целиком и затирали правки других. Теперь
+  // мы НЕ выгружаем очередь. Если от старых версий остались застрявшие записи —
+  // очищаем их без отправки (данные в них устарели и могли бы затереть чужое).
   useEffect(() => {
-    OfflineQueue.count().then(n => setOfflineCount(n)).catch(() => {});
+    OfflineQueue.count().then(n => {
+      if (n > 0) {
+        console.warn(`[OfflineQueue] Очищаем ${n} устаревших офлайн-записей (online-only режим)`);
+        OfflineQueue.clear?.().catch(() => {});
+      }
+      setOfflineCount(0);
+    }).catch(() => {});
   }, []);
 
-  // При восстановлении сети — автоматически flush
-  useEffect(() => {
-    const handleOnline = async () => {
-      const count = await OfflineQueue.count().catch(() => 0);
-      if (count === 0) return;
-      setSyncing(true);
-      addToast(`🔄 Сеть восстановлена — отправляем ${count} сохранённых операций...`, 'info', { ttl: 4000 });
-      const sent = await OfflineQueue.flush((done, total, label) => {
-        addToast(`📤 Синхронизировано ${done}/${total}: ${label}`, 'success', { ttl: 2000 });
-      }).catch(() => 0);
-      setSyncing(false);
-      setOfflineCount(0);
-      if (sent > 0) {
-        addToast(`✅ Синхронизировано ${sent} операций — данные в порядке!`, 'success', { ttl: 5000 });
-        // Перезагружаем данные из Firebase
-        DB.load().then(d => { if (d) onUpdate({ ...EMPTY_DATA, ...d }); }).catch(() => {});
-      }
-    };
-    window.addEventListener('online', handleOnline);
-    return () => window.removeEventListener('online', handleOnline);
-  }, [addToast, onUpdate]);
-
-  // Ручная синхронизация
+  // Синхронизация офлайн-очереди больше не нужна — оставлена как no-op
   const syncOfflineQueue = useCallback(async () => {
-    if (syncing) return;
-    setSyncing(true);
-    const sent = await OfflineQueue.flush().catch(() => 0);
-    setSyncing(false);
-    const remaining = await OfflineQueue.count().catch(() => 0);
-    setOfflineCount(remaining);
-    if (sent > 0) addToast(`✅ Синхронизировано ${sent} операций`, 'success');
-    else addToast('Нечего синхронизировать', 'info');
-  }, [syncing, addToast]);
+    addToast('Приложение работает онлайн — офлайн-очередь не используется', 'info');
+  }, [addToast]);
 
   // Категории из core.js (глобальные AUX_CATEGORIES)
 
