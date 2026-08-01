@@ -215,22 +215,57 @@ const checkAchievements = (workerId, data) => {
 };
 
 // ==================== Автоподбор исполнителя (уровень, опыт, качество, загрузка) ====================
-const scoreWorkerForOp = (worker, opName, data) => {
+// Итерация 3.2: строит индекс Map<workerId, Op[]> за один проход по data.ops.
+// Раньше scoreWorkerForOp делал 4 полных прохода по data.ops НА КАЖДОГО кандидата,
+// а getAssignmentRecommendations вызывал его для каждого рабочего × каждой pending-
+// операции — квадратичная сложность. Индекс строится один раз и переиспользуется.
+const buildOpsByWorkerIndex = (data) => {
+  const idx = new Map();
+  for (const op of data.ops) {
+    if (!op.workerIds) continue;
+    for (const wid of op.workerIds) {
+      let arr = idx.get(wid);
+      if (!arr) { arr = []; idx.set(wid, arr); }
+      arr.push(op);
+    }
+  }
+  return idx;
+};
+
+// scoreWorkerForOp(worker, opName, data, opsByWorker?)
+// opsByWorker — опциональный предвычисленный индекс из buildOpsByWorkerIndex(data).
+// Если не передан — строится локально (обратная совместимость для одиночных вызовов).
+const scoreWorkerForOp = (worker, opName, data, opsByWorker) => {
   const wid = worker.id;
-  const allOps = data.ops.filter(op => op.workerIds?.includes(wid));
-  const doneThisType = allOps.filter(op => op.name === opName && op.status === 'done');
-  const defectThisType = allOps.filter(op => op.name === opName && op.status === 'defect');
-  const activeCount = data.ops.filter(op => (op.status === 'in_progress' || op.status === 'pending') && op.workerIds?.includes(wid)).length;
-  const allDone = allOps.filter(op => op.status === 'done').length;
+  // Берём операции рабочего из индекса (O(1)) вместо фильтрации всех ops (O(n)).
+  const allOps = opsByWorker
+    ? (opsByWorker.get(wid) || [])
+    : data.ops.filter(op => op.workerIds?.includes(wid));
+
+  // Один проход по операциям рабочего вместо 4 отдельных filter().
+  let doneThisTypeCount = 0, defectThisTypeCount = 0, activeCount = 0, allDone = 0;
+  const withPlan = [];
+  for (const op of allOps) {
+    const isThisType = op.name === opName;
+    if (op.status === 'done') {
+      allDone++;
+      if (isThisType) {
+        doneThisTypeCount++;
+        if (op.plannedHours && op.startedAt && op.finishedAt) withPlan.push(op);
+      }
+    } else if (op.status === 'defect') {
+      if (isThisType) defectThisTypeCount++;
+    }
+    if (op.status === 'in_progress' || op.status === 'pending') activeCount++;
+  }
   const level = getWorkerLevel(allDone);
 
   // Опыт по этому типу операции (0-30 баллов)
-  const expScore = Math.min(doneThisType.length * 2, 30);
+  const expScore = Math.min(doneThisTypeCount * 2, 30);
   // Качество по этому типу (0-25 баллов)
-  const total = doneThisType.length + defectThisType.length;
-  const qualityScore = total > 0 ? Math.round((doneThisType.length / total) * 25) : 12;
+  const total = doneThisTypeCount + defectThisTypeCount;
+  const qualityScore = total > 0 ? Math.round((doneThisTypeCount / total) * 25) : 12;
   // Скорость: средний факт/план (0-20 баллов)
-  const withPlan = doneThisType.filter(op => op.plannedHours && op.startedAt && op.finishedAt);
   const avgRatio = withPlan.length > 0 ? withPlan.reduce((s, op) => s + (op.finishedAt - op.startedAt) / (op.plannedHours * 3600000), 0) / withPlan.length : 1;
   const speedScore = Math.max(0, Math.round((2 - avgRatio) * 10));
   // Уровень (0-15 баллов)
@@ -240,7 +275,7 @@ const scoreWorkerForOp = (worker, opName, data) => {
 
   return { workerId: wid, workerName: worker.name, level, expScore, qualityScore, speedScore, levelScore, loadPenalty,
     totalScore: expScore + qualityScore + speedScore + levelScore - loadPenalty,
-    details: { experience: doneThisType.length, defects: defectThisType.length, avgRatio: Math.round(avgRatio * 100), activeOps: activeCount }
+    details: { experience: doneThisTypeCount, defects: defectThisTypeCount, avgRatio: Math.round(avgRatio * 100), activeOps: activeCount }
   };
 };
 
@@ -316,26 +351,32 @@ const autoAssignWorker = (data, opName) => {
     !data.ops.some(op => op.status === 'in_progress' && op.workerIds?.includes(w.id))
   );
   if (candidates.length === 0) return null;
-  const scored = candidates.map(w => scoreWorkerForOp(w, opName, data)).sort((a, b) => b.totalScore - a.totalScore);
+  // Итерация 3.2: индекс строится один раз для всех кандидатов
+  const opsByWorker = buildOpsByWorkerIndex(data);
+  const scored = candidates.map(w => scoreWorkerForOp(w, opName, data, opsByWorker)).sort((a, b) => b.totalScore - a.totalScore);
   return scored[0]?.workerId || null;
 };
 
 // Рекомендации по всем ожидающим операциям
 const getAssignmentRecommendations = (data) => {
   const pendingOps = data.ops.filter(op => op.status === 'pending' && !op.archived && (!op.workerIds || op.workerIds.length === 0));
+  // Итерация 3.2: индекс ops по рабочим строится ОДИН раз, а не заново для
+  // каждого scoreWorkerForOp внутри двойного цикла.
+  const opsByWorker = buildOpsByWorkerIndex(data);
+  const anyHasCompetences = data.workers.some(w => !w.archived && w.competences?.length > 0);
+  const activeWorkers = data.workers.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet));
+
   return pendingOps.map(op => {
     const order = data.orders.find(o => o.id === op.orderId);
-    const anyHasCompetences = data.workers.some(w => !w.archived && w.competences?.length > 0);
-    const activeWorkers = data.workers.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet));
 
     const qualified = activeWorkers
       .filter(w => !anyHasCompetences || w.competences?.includes(op.name))
-      .map(w => ({ ...scoreWorkerForOp(w, op.name, data), hasAccess: true }))
+      .map(w => ({ ...scoreWorkerForOp(w, op.name, data, opsByWorker), hasAccess: true }))
       .sort((a, b) => b.totalScore - a.totalScore);
 
     const others = activeWorkers
       .filter(w => anyHasCompetences && !w.competences?.includes(op.name))
-      .map(w => ({ ...scoreWorkerForOp(w, op.name, data), hasAccess: false }))
+      .map(w => ({ ...scoreWorkerForOp(w, op.name, data, opsByWorker), hasAccess: false }))
       .sort((a, b) => a.workerName.localeCompare(b.workerName, 'ru'));
 
     const scored = [...qualified, { divider: true }, ...others].filter(Boolean);
@@ -1539,9 +1580,14 @@ const DB = {
       if (archivedConsIds.size > 0)
         toSave.materialConsumptions = (toSave.materialConsumptions || []).filter(c => !archivedConsIds.has(c.id));
 
-      // ── Контроль размера ──
-      const payload  = JSON.stringify(toSave);
-      const sizeKb   = Math.round(payload.length / 1024);
+      // ── Контроль размера (Итерация 3.3: переиспользуем сериализацию) ──
+      // toSave сериализуется здесь для замера размера. Если pruning ниже не
+      // сработает (обычный случай, <700КБ), эта же строка пойдёт в localStorage-
+      // кэш — не сериализуем toSave второй раз. Флаг pruned отслеживает, менялся
+      // ли toSave после первой сериализации.
+      let payload  = JSON.stringify(toSave);
+      const sizeKb = Math.round(payload.length / 1024);
+      let pruned   = false;
 
       // Вспомогательная функция: оставить только N последних месяцев табеля
       const pruneTimesheet = (ts, keepMonths) => {
@@ -1569,21 +1615,27 @@ const DB = {
         );
         // Оставляем только последние 3 месяца табеля
         toSave.timesheet = pruneTimesheet(toSave.timesheet, 3);
+        pruned = true;
         const sizeAfter = Math.round(JSON.stringify(toSave).length / 1024);
         DB._lastError = `⚠ Данных ${sizeKb}→${sizeAfter} КБ — аварийная очистка. Данные сохранены в архив.`;
         console.warn(`Payload: ${sizeKb} KB → ${sizeAfter} KB after emergency pruning`);
       } else if (sizeKb > 700) {
         // Превентивно: оставляем последние 6 месяцев
         toSave.timesheet = pruneTimesheet(toSave.timesheet, 6);
+        pruned = true;
         DB._sizeWarning = sizeKb;
       } else {
         DB._sizeWarning = null;
       }
 
-      // Обновляем кэш немедленно
+      // Обновляем кэш немедленно.
+      // Итерация 3.3: если toSave не менялся после первой сериализации (pruned=false),
+      // переиспользуем payload вместо повторного JSON.stringify(toSave) — экономит
+      // одну полную сериализацию ~500КБ данных на каждом сохранении.
       const newVersion = Date.now();
       try {
-        localStorage.setItem(CACHE_KEY,   JSON.stringify({ data: toSave, savedAt: Date.now() }));
+        const dataJson = pruned ? JSON.stringify(toSave) : payload;
+        localStorage.setItem(CACHE_KEY,   '{"data":' + dataJson + ',"savedAt":' + Date.now() + '}');
         localStorage.setItem(VERSION_KEY, String(newVersion));
       } catch(e) {}
 
