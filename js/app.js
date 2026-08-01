@@ -3,10 +3,18 @@
 
 // ==================== Таблица лидеров ====================
 const Leaderboard = memo(({ data }) => {
-  const workers = useMemo(() => data.workers.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet)), [data.workers]);
+  const workers = useMemo(() => data.workers.filter(w => !w.archived && isWorkerOnShift(w, data.timesheet)), [data.workers, data.timesheet]);
+  // Итерация 3.1: раньше useMemo зависел от всего `data` — то есть пересчитывал
+  // статистику по ВСЕМ рабочим при ЛЮБОМ изменении данных (даже не влияющем на
+  // статистику), и вызывал calcWorkerStats (полный проход по ops+events) N раз.
+  // Теперь зависимость сужена до полей, реально влияющих на статистику:
+  // ops, events, workers. Date.now() заменён на «ведро дня» (стабильно в течение
+  // суток), чтобы мемоизация не сбрасывалась каждый рендер из-за нового таймстампа.
+  const dayBucket = Math.floor(Date.now() / 86400000);
   const boards = useMemo(() => {
+    const nowTime = dayBucket * 86400000;
     const stats = workers.map(w => {
-      const s = calcWorkerStats(w.id, data, Date.now());
+      const s = calcWorkerStats(w.id, data, nowTime);
       const doneCount = s.doneCount;
       const quality = s.doneCount + s.defectCount > 0 ? Math.round(s.doneCount / (s.doneCount + s.defectCount) * 100) : 100;
       const thanks = s.thanksReceived;
@@ -18,7 +26,7 @@ const Leaderboard = memo(({ data }) => {
       quality: [...stats].filter(s => s.doneCount >= 5).sort((a, b) => b.quality - a.quality || b.doneCount - a.doneCount).slice(0, 5),
       thanks: [...stats].filter(s => s.thanks > 0).sort((a, b) => b.thanks - a.thanks).slice(0, 5),
     };
-  }, [workers, data]);
+  }, [workers, data.ops, data.events, dayBucket]);
 
   const medals = ['🥇', '🥈', '🥉', '4.', '5.'];
   const renderBoard = (title, list, valueKey, valueSuffix) => {
