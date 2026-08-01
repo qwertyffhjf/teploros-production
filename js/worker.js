@@ -1366,8 +1366,8 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     }
     localStorage.setItem(key, String(lvl));
   }, [lvl, workerId]);
-  // Подсказка о ближайшем достижении
-  const workerStats = useMemo(() => calcWorkerStats(workerId, data, Date.now()), [data, workerId]);
+  // Подсказка о ближайшем достижении (Итерация 3.1: dayBucket + узкая зависимость)
+  const workerStats = useMemo(() => calcWorkerStats(workerId, data, Math.floor(Date.now() / 86400000) * 86400000), [data.ops, data.events, workerId]);
   const achHint = useMemo(() => {
     const s = workerStats;
     const remaining = [];
