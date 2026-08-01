@@ -126,9 +126,21 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
   
   const showWorkers = selWorker ? activeWorkers.filter(w => w.id === selWorker) : activeWorkers;
 
-  // Читаем сохранённые значения табеля из data.timesheet[YYYY-MM][workerId][day]
+  // Итерация 6.2: мгновенное обновление экрана, сохранение на сервер с задержкой.
+  // onUpdate здесь = App.save(), который уже включает DB.save(). Чтобы не вызывать
+  // его при каждом клике, разделяем: экран обновляем сразу через локальный стейт,
+  // а onUpdate (= save) вызываем один раз через 1.5 сек после последнего нажатия.
+  const tsTimerRef = useRef(null);
+  const tsPendingRef = useRef(null);
+  const [localTs, setLocalTs] = useState(null);
+  // Сбрасываем локальный стейт когда data.timesheet обновится с сервера
+  useEffect(() => { setLocalTs(null); }, [data.timesheet]);
+  // Эффективный timesheet: локальный (если есть правки) или серверный
+  const effectiveTs = localTs || data.timesheet || {};
+
+  // Читаем сохранённые значения табеля из effectiveTs[YYYY-MM][workerId][day]
   const tsKey = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}`;
-  const tsData = (data.timesheet || {})[tsKey] || {};
+  const tsData = (effectiveTs)[tsKey] || {};
 
   const getCellVal = (workerId, day) => {
     // Если сотрудник уволен — после даты увольнения автоматически "У"
@@ -144,27 +156,44 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
     return tsData[workerId]?.[day] || null;
   };
 
-  // Итерация 6.2: мгновенное обновление экрана, сохранение на сервер с задержкой.
-  // Раньше каждый клик по ячейке вызывал await DB.save (3–5 сек), теперь:
-  // экран обновляется сразу, а на сервер уходит одно сохранение через 1.5 сек
-  // после последнего нажатия. Можно щёлкать по ячейкам без пауз.
-  const scheduleSave = useDebouncedSave(data, onUpdate, 1500);
+  const scheduleTs = useCallback((newData) => {
+    tsPendingRef.current = newData;
+    if (tsTimerRef.current) clearTimeout(tsTimerRef.current);
+    tsTimerRef.current = setTimeout(() => {
+      const toSave = tsPendingRef.current;
+      if (toSave) {
+        tsPendingRef.current = null;
+        onUpdate(toSave); // одно сохранение пакетом
+      }
+    }, 1500);
+  }, [onUpdate]);
+
+  // Очистка таймера + финальное сохранение при размонтировании
+  useEffect(() => () => {
+    if (tsTimerRef.current) clearTimeout(tsTimerRef.current);
+    if (tsPendingRef.current) {
+      onUpdate(tsPendingRef.current);
+      tsPendingRef.current = null;
+    }
+  }, []);
 
   const setCellVal = useCallback((workerId, day, val) => {
     const key = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}`;
     const newTs = {
-      ...(data.timesheet || {}),
+      ...(effectiveTs),
       [key]: {
-        ...((data.timesheet || {})[key] || {}),
+        ...((effectiveTs)[key] || {}),
         [workerId]: {
-          ...(((data.timesheet || {})[key] || {})[workerId] || {}),
+          ...(((effectiveTs)[key] || {})[workerId] || {}),
           [day]: val || null
         }
       }
     };
-    const d = { ...data, timesheet: newTs };
-    scheduleSave(d);
-  }, [data, viewYear, viewMonth, scheduleSave]);
+    // Мгновенно обновляем экран через локальный стейт
+    setLocalTs(newTs);
+    // Планируем сохранение на сервер (одно, через 1.5 сек)
+    scheduleTs({ ...data, timesheet: newTs });
+  }, [data, effectiveTs, viewYear, viewMonth, scheduleTs]);
 
   const openPopup = useCallback((workerId, day) => {
     const val = getCellVal(workerId, day);
@@ -303,7 +332,7 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
     if (!pasteText.trim()) return;
     const rows = pasteText.trim().split('\n').map(r => r.split('\t'));
     let imported = 0;
-    const newTs = { ...(data.timesheet || {}) };
+    const newTs = { ...(effectiveTs) };
     const key = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}`;
     if (!newTs[key]) newTs[key] = {};
     rows.forEach(row => {
@@ -321,11 +350,11 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
         else if (CODES.includes(v)) { newTs[key][w.id][d] = { h: null, code: v }; imported++; }
       });
     });
-    const d = { ...data, timesheet: newTs };
-    scheduleSave(d);
+    setLocalTs(newTs);
+    scheduleTs({ ...data, timesheet: newTs });
     setPasteText(''); setShowImport(false);
     addToast(`Импортировано: ${imported} ячеек`, 'success');
-  }, [pasteText, data, viewYear, viewMonth, activeWorkers, dim, onUpdate, addToast]);
+  }, [pasteText, data, effectiveTs, viewYear, viewMonth, activeWorkers, dim, scheduleTs, addToast]);
 
   // Закрытие попапа по Escape/Enter
   useEffect(() => {
