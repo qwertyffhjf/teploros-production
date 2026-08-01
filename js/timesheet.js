@@ -144,7 +144,13 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
     return tsData[workerId]?.[day] || null;
   };
 
-  const setCellVal = useCallback(async (workerId, day, val) => {
+  // Итерация 6.2: мгновенное обновление экрана, сохранение на сервер с задержкой.
+  // Раньше каждый клик по ячейке вызывал await DB.save (3–5 сек), теперь:
+  // экран обновляется сразу, а на сервер уходит одно сохранение через 1.5 сек
+  // после последнего нажатия. Можно щёлкать по ячейкам без пауз.
+  const scheduleSave = useDebouncedSave(data, onUpdate, 1500);
+
+  const setCellVal = useCallback((workerId, day, val) => {
     const key = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}`;
     const newTs = {
       ...(data.timesheet || {}),
@@ -157,9 +163,8 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
       }
     };
     const d = { ...data, timesheet: newTs };
-    const saved = await DB.save(d); 
-    if (saved) { onUpdate(saved); }
-  }, [data, viewYear, viewMonth, onUpdate]);
+    scheduleSave(d);
+  }, [data, viewYear, viewMonth, scheduleSave]);
 
   const openPopup = useCallback((workerId, day) => {
     const val = getCellVal(workerId, day);
@@ -168,20 +173,20 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
     setTimeout(() => inputRef.current?.focus(), 50);
   }, []);
 
-  const saveCell = useCallback(async () => {
+  const saveCell = useCallback(() => {
     if (!activeCell) return;
     const { workerId, day } = activeCell;
     const h = parseFloat(popupVal);
     if (!isNaN(h) && h >= 0 && h <= 24) {
-      await setCellVal(workerId, day, { h, code: null });
+      setCellVal(workerId, day, { h, code: null });
     }
     setActiveCell(null); setPopupVal('');
   }, [activeCell, popupVal, setCellVal]);
 
-  const setCode = useCallback(async (code) => {
+  const setCode = useCallback((code) => {
     if (!activeCell) return;
     const { workerId, day } = activeCell;
-    await setCellVal(workerId, day, code ? { h: null, code } : null);
+    setCellVal(workerId, day, code ? { h: null, code } : null);
     setActiveCell(null); setPopupVal('');
   }, [activeCell, setCellVal]);
 
@@ -294,7 +299,7 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
     }
   }, [showWorkers, viewYear, viewMonth, data, addToast]);
 
-  const doImport = useCallback(async () => {
+  const doImport = useCallback(() => {
     if (!pasteText.trim()) return;
     const rows = pasteText.trim().split('\n').map(r => r.split('\t'));
     let imported = 0;
@@ -317,7 +322,7 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
       });
     });
     const d = { ...data, timesheet: newTs };
-    const saved = await DB.save(d); if (saved) onUpdate(saved);
+    scheduleSave(d);
     setPasteText(''); setShowImport(false);
     addToast(`Импортировано: ${imported} ячеек`, 'success');
   }, [pasteText, data, viewYear, viewMonth, activeWorkers, dim, onUpdate, addToast]);
@@ -512,9 +517,9 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
         h('div', { style:{ display:'flex', gap:4, marginBottom:8, flexWrap:'wrap' } },
           [8,7,6,4].map(v => h('button', { key:v,
             style:{ padding:'4px 8px', borderRadius:6, fontSize:12, fontWeight:500, background:GN3, color:GN2, border:`0.5px solid ${GN}`, cursor:'pointer' },
-            onClick: async () => {
+            onClick: () => {
               if (!activeCell) return;
-              await setCellVal(activeCell.workerId, activeCell.day, { h: v, code: null });
+              setCellVal(activeCell.workerId, activeCell.day, { h: v, code: null });
               setActiveCell(null); setPopupVal('');
             }
           }, `${v}ч`))
