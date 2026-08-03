@@ -185,9 +185,8 @@ function dpMergeSections(target, source) {
 }
 
 // Чтение PDF в массив страниц с координатами текста
-async function dpExtractPdfPages(file) {
+async function dpExtractPdfPages(buf) {
   await ensureCdn('pdfjs');
-  var buf = await file.arrayBuffer();
   var uint8 = new Uint8Array(buf);
   var pdf = await pdfjsLib.getDocument({ data: uint8 }).promise;
   var pages = [];
@@ -216,16 +215,62 @@ async function parseDrawingFiles(files, onProgress) {
   if (!onProgress) onProgress = function() {};
   onProgress(0.02, 'Чтение файлов…');
 
-  var specPdfs = [], sbPdfs = [], detailPdfs = [], dxfNames = {};
-  Array.from(files).forEach(function(f) {
+  // Универсальный сбор: {name, getData: ()=>Promise<ArrayBuffer>}
+  var collected = [];
+  var rawArr = Array.from(files);
+
+  console.log('[DrawingParser] Получено объектов: ' + rawArr.length);
+  rawArr.forEach(function(f, i) {
+    if (i < 5) console.log('[DrawingParser]   [' + i + '] name="' + f.name + '" relPath="' + (f.webkitRelativePath || '') + '" size=' + f.size);
+  });
+
+  // ZIP-архив(ы) → распаковываем
+  var zipFiles = rawArr.filter(function(f) { return /\.zip$/i.test(f.name); });
+  var plainFiles = rawArr.filter(function(f) { return !/\.zip$/i.test(f.name); });
+
+  if (zipFiles.length > 0) {
+    console.log('[DrawingParser] ZIP-архивов: ' + zipFiles.length + ' — распаковка…');
+    onProgress(0.04, 'Распаковка архива…');
+    await ensureCdn('jszip');
+    for (var zi = 0; zi < zipFiles.length; zi++) {
+      var zbuf = await zipFiles[zi].arrayBuffer();
+      var zip = await JSZip.loadAsync(zbuf);
+      var names = Object.keys(zip.files);
+      for (var ni = 0; ni < names.length; ni++) {
+        (function(entryName) {
+          var entry = zip.files[entryName];
+          if (entry.dir) return;
+          if (isJunkFile(entryName)) return;
+          collected.push({
+            name: entryName,
+            getData: function() { return entry.async('arraybuffer'); }
+          });
+        })(names[ni]);
+      }
+    }
+  }
+
+  // Обычные файлы (выбор папки / drag&drop)
+  plainFiles.forEach(function(f) {
     var path = f.webkitRelativePath || f.name;
     if (isJunkFile(path)) return;
-    var base = path.replace(/^.*[\/\\]/, '');
+    collected.push({
+      name: path,
+      getData: function() { return f.arrayBuffer(); }
+    });
+  });
+
+  console.log('[DrawingParser] Файлов после сбора: ' + collected.length);
+
+  // Классификация
+  var specPdfs = [], sbPdfs = [], detailPdfs = [], dxfNames = {};
+  collected.forEach(function(item) {
+    var base = item.name.replace(/^.*[\/\\]/, '');
     var lower = base.toLowerCase();
     if (lower.endsWith('.pdf')) {
-      if (base.indexOf('СП') !== -1) specPdfs.push(f);
-      else if (base.indexOf('СБ') !== -1 || base.indexOf('МЧ') !== -1) sbPdfs.push(f);
-      else detailPdfs.push(f);
+      if (base.indexOf('СП') !== -1) specPdfs.push(item);
+      else if (base.indexOf('СБ') !== -1 || base.indexOf('МЧ') !== -1) sbPdfs.push(item);
+      else detailPdfs.push(item);
     } else if (lower.endsWith('.dxf')) {
       dxfNames[base.replace(/\.dxf$/i, '')] = true;
     }
@@ -235,21 +280,30 @@ async function parseDrawingFiles(files, onProgress) {
     ' Деталей=' + detailPdfs.length + ' DXF=' + Object.keys(dxfNames).length);
 
   var totalFiles = specPdfs.length + sbPdfs.length + detailPdfs.length;
-  if (totalFiles === 0) throw new Error('Не найдены PDF-чертежи. Выберите папку или PDF-файлы.');
+  if (totalFiles === 0) {
+    var pdfCount = collected.filter(function(c){return /\.pdf$/i.test(c.name);}).length;
+    if (pdfCount === 0)
+      throw new Error('Не найдено ни одного PDF. Выберите папку с чертежами, PDF-файлы или ZIP-архив.');
+    else
+      throw new Error('PDF найдены (' + pdfCount + '), но без обозначений V3-… — это не чертежи Teplofor.');
+  }
 
   var processed = 0, allSpecs = {}, parsedParents = {}, detailMaterials = {}, errors = [];
 
-  function baseName(f) { return (f.webkitRelativePath || f.name).replace(/^.*[\/\\]/, ''); }
+  function baseName(item) { return item.name.replace(/^.*[\/\\]/, ''); }
   function parentOf(name) {
     var m = name.match(/^(V3-[^\s]+)/);
     return m ? m[1] : name.replace(/\.pdf$/i, '');
   }
 
-  async function safeParse(file, label) {
-    try { return await dpExtractPdfPages(file); }
+  async function safeParse(item, label) {
+    try {
+      var buf = await item.getData();
+      return await dpExtractPdfPages(buf);
+    }
     catch (err) {
-      errors.push(label + ' ' + baseName(file) + ': ' + err.message);
-      console.warn('[DrawingParser] ' + label + ' ' + baseName(file) + ':', err.message);
+      errors.push(label + ' ' + baseName(item) + ': ' + err.message);
+      console.warn('[DrawingParser] ' + label + ' ' + baseName(item) + ':', err.message);
       return null;
     }
   }
