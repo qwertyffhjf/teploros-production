@@ -1,63 +1,82 @@
-// teploros · drawing-parser.js
+// teploros · drawing-parser.js v2
 // Парсер PDF-чертежей: извлекает ведомость покупных и детали для раскроя
 // Работает в браузере через pdf.js + JSZip (CDN)
+// Поддерживает ZIP-архивы с Mac и Windows (фильтрует __MACOSX, .DS_Store, ._ файлы)
 
 // ─── Утилиты ───────────────────────────────────────────────
 
 /**
+ * Проверяет, является ли файл служебным (macOS resource fork и пр.)
+ */
+function isJunkFile(fullPath) {
+  if (fullPath.indexOf('__MACOSX') !== -1) return true;
+  if (fullPath.indexOf('.DS_Store') !== -1) return true;
+  var base = fullPath.replace(/^.*[\/\\]/, '');
+  if (base.charAt(0) === '.') return true;
+  if (base.indexOf('._') === 0) return true;
+  if (base === 'Thumbs.db') return true;
+  if (base === 'desktop.ini') return true;
+  if (!base) return true;
+  return false;
+}
+
+/**
  * Загружает и распаковывает ZIP-архив, возвращает массив файлов
- * @param {File} file
- * @returns {Promise<Array<{name: string, data: ArrayBuffer}>>}
  */
 async function unpackArchive(file) {
   await ensureCdn('jszip');
-  const buf = await file.arrayBuffer();
-  const zip = await JSZip.loadAsync(buf);
-  const entries = [];
-  const promises = [];
-  zip.forEach((path, entry) => {
+  var buf = await file.arrayBuffer();
+  var zip = await JSZip.loadAsync(buf);
+  var entries = [];
+  var promises = [];
+  zip.forEach(function(path, entry) {
     if (entry.dir) return;
+    if (isJunkFile(path)) return;
     promises.push(
-      entry.async('arraybuffer').then(data => {
-        entries.push({ name: path, data });
+      entry.async('arraybuffer').then(function(data) {
+        entries.push({ name: path, data: data });
       })
     );
   });
   await Promise.all(promises);
+  console.log('[DrawingParser] Файлов в архиве (после фильтрации): ' + entries.length);
+  entries.forEach(function(e) {
+    var base = e.name.replace(/^.*[\/\\]/, '');
+    var ext = base.match(/\.([^.]+)$/);
+    console.log('[DrawingParser]   ' + (ext ? ext[1].toUpperCase() : '???') + ': ' + base + ' (' + Math.round(e.data.byteLength / 1024) + ' KB)');
+  });
   return entries;
 }
 
 /**
  * Загружает PDF через pdf.js, возвращает текстовые элементы с координатами
- * @param {ArrayBuffer} data
- * @returns {Promise<Array<{page: number, items: Array<{x: number, y: number, text: string}>}>>}
  */
 async function extractPdfText(data) {
   await ensureCdn('pdfjs');
-  const pdf = await pdfjsLib.getDocument({ data }).promise;
-  const pages = [];
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    const viewport = page.getViewport({ scale: 1 });
-    const pageH = viewport.height;
-    const items = content.items
-      .filter(it => it.str && it.str.trim())
-      .map(it => ({
-        x: it.transform[4],
-        y: pageH - it.transform[5], // PDF y=0 внизу → переворачиваем
-        text: it.str.trim()
-      }));
-    pages.push({ page: i, items });
+  var uint8 = new Uint8Array(data);
+  var pdf = await pdfjsLib.getDocument({ data: uint8 }).promise;
+  var pages = [];
+  for (var i = 1; i <= pdf.numPages; i++) {
+    var page = await pdf.getPage(i);
+    var content = await page.getTextContent();
+    var viewport = page.getViewport({ scale: 1 });
+    var pageH = viewport.height;
+    var items = content.items
+      .filter(function(it) { return it.str && it.str.trim(); })
+      .map(function(it) {
+        return {
+          x: it.transform[4],
+          y: pageH - it.transform[5],
+          text: it.str.trim()
+        };
+      });
+    pages.push({ page: i, items: items });
   }
   return pages;
 }
 
 // ─── Парсер спецификаций ───────────────────────────────────
 
-/**
- * Находит X-позиции колонок «Поз.», «Наименование», «Кол.» на странице
- */
 function findSpecColumns(items) {
   var posX = null, nameX = null, qtyX = null;
   items.forEach(function(it) {
@@ -68,16 +87,13 @@ function findSpecColumns(items) {
   return { posX: posX, nameX: nameX, qtyX: qtyX };
 }
 
-/**
- * Группирует текстовые элементы в строки по Y-координате
- */
 function groupIntoRows(items, threshold) {
   if (!threshold) threshold = 8;
-  items.sort(function(a, b) { return a.y - b.y; });
+  var sorted = items.slice().sort(function(a, b) { return a.y - b.y; });
   var rows = [];
   var currentRow = [];
   var lastY = -9999;
-  items.forEach(function(it) {
+  sorted.forEach(function(it) {
     if (Math.abs(it.y - lastY) > threshold) {
       if (currentRow.length) rows.push(currentRow);
       currentRow = [it];
@@ -91,10 +107,10 @@ function groupIntoRows(items, threshold) {
 }
 
 var SECTION_MAP = {
-  'Сборочные единицы': 'assemblies',
-  'Детали': 'details',
-  'Стандартные изделия': 'standard_items',
-  'Прочие изделия': 'other_items'
+  '\u0421\u0431\u043e\u0440\u043e\u0447\u043d\u044b\u0435 \u0435\u0434\u0438\u043d\u0438\u0446\u044b': 'assemblies',
+  '\u0414\u0435\u0442\u0430\u043b\u0438': 'details',
+  '\u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u044b\u0435 \u0438\u0437\u0434\u0435\u043b\u0438\u044f': 'standard_items',
+  '\u041f\u0440\u043e\u0447\u0438\u0435 \u0438\u0437\u0434\u0435\u043b\u0438\u044f': 'other_items'
 };
 
 var SKIP_KEYWORDS = [
@@ -105,9 +121,6 @@ var SKIP_KEYWORDS = [
   'Масса', 'Масштаб', 'Т.контр', 'Лист'
 ];
 
-/**
- * Парсит одну страницу спецификации
- */
 function parseSpecPage(pageItems, cols) {
   var posMin = (cols.posX || 170) - 20;
   var nameMin = (cols.nameX || 600) - 30;
@@ -121,7 +134,6 @@ function parseSpecPage(pageItems, cols) {
     row.sort(function(a, b) { return a.x - b.x; });
     var combined = row.map(function(r) { return r.text; }).join(' ');
 
-    // Проверяем заголовок раздела
     var foundSection = null;
     Object.keys(SECTION_MAP).forEach(function(rus) {
       if (combined.indexOf(rus) !== -1 && combined.length < rus.length + 20) {
@@ -134,15 +146,13 @@ function parseSpecPage(pageItems, cols) {
       return;
     }
 
-    // Пропуск штампа
     var skip = false;
     SKIP_KEYWORDS.forEach(function(kw) { if (combined.indexOf(kw) !== -1) skip = true; });
     if (skip || !currentSection) return;
 
-    // Разделяем по колонкам
     var posText = '', nameText = '', qtyText = '';
     row.forEach(function(it) {
-      if (it.x < posMin) return; // формат A4
+      if (it.x < posMin) return;
       if (it.x < nameMin - 10) posText += ' ' + it.text;
       else if (it.x < qtyMin - 10) nameText += ' ' + it.text;
       else qtyText += ' ' + it.text;
@@ -152,7 +162,6 @@ function parseSpecPage(pageItems, cols) {
     qtyText = qtyText.trim();
     if (!posText && !nameText) return;
 
-    // Извлекаем позицию и обозначение
     var pos = 0, designation = '';
     var m = posText.match(/^(\d+)\s*(V3-[\w.]+)?\s*(.*)/);
     if (m) {
@@ -162,7 +171,6 @@ function parseSpecPage(pageItems, cols) {
       if (extra) nameText = extra + (nameText ? ' ' + nameText : '');
     }
 
-    // Извлекаем количество
     var qty = 0;
     if (qtyText) { var n = parseInt(qtyText); if (!isNaN(n)) qty = n; }
     if (qty === 0 && nameText) {
@@ -181,9 +189,6 @@ function parseSpecPage(pageItems, cols) {
   return sections;
 }
 
-/**
- * Извлекает материал и толщину из чертежа детали (plain text, без координат)
- */
 function extractMaterial(text) {
   var lines = text.split('\n').map(function(l) { return l.trim(); }).filter(Boolean);
   var material = '', thickness = '', mass = '';
@@ -191,7 +196,6 @@ function extractMaterial(text) {
   lines.forEach(function(line) {
     if (/Изм\.|Неуказан|DXF|предельные|Сварные|Копировал|Размеры для/.test(line)) return;
 
-    // Лист с толщиной
     var m1 = line.match(/^Лист\s*(\d+(?:[.,]\d+)?)\s*(?:мм)?\s*(.*)/);
     if (m1) {
       thickness = m1[1].replace(',', '.');
@@ -200,36 +204,29 @@ function extractMaterial(text) {
       return;
     }
 
-    // Толщина из ГОСТ 19903
     var m2 = line.match(/^(\d+)\s+ГОСТ\s+19903/);
     if (m2 && !thickness) { thickness = m2[1]; return; }
 
-    // Марка стали
     if (/^Ст[\.\d]/.test(line)) {
       material = material ? material + ', ' + line : line;
       return;
     }
 
-    // Сталь 20 ГОСТ...
     var m3 = line.match(/(Сталь\s+\d+\s+ГОСТ\s+[\d-]+)/);
     if (m3) { material = m3[1]; return; }
 
-    // Труба
     var m4 = line.match(/(Труба\s+.+ГОСТ\s+[\d-]+)/);
     if (m4) { material = m4[1]; return; }
 
-    // Полоса стальная
     if (line.indexOf('Полоса стальная') === 0) {
       material = line.split('.')[0]; return;
     }
 
-    // Асбест
     if (line.indexOf('асбестовая') !== -1) {
       material = line.indexOf('.') !== -1 ? line.split('.')[0] : line;
       return;
     }
 
-    // Масса (отдельное число с десятичной точкой/запятой)
     var m5 = line.match(/^(\d+[.,]\d+)$/);
     if (m5) mass = m5[1].replace(',', '.');
   });
@@ -243,54 +240,81 @@ function extractMaterial(text) {
 
 // ─── Главная функция ───────────────────────────────────────
 
-/**
- * Парсит ZIP-архив с чертежами, возвращает структурированные данные
- * @param {File} file - ZIP-файл с чертежами
- * @param {function} onProgress - колбек прогресса (0..1, message)
- * @returns {Promise<{purchased, cutting, pipes, otherDetails, errors}>}
- */
 async function parseDrawingArchive(file, onProgress) {
   if (!onProgress) onProgress = function() {};
 
   onProgress(0.05, 'Распаковка архива…');
-  var entries = await unpackArchive(file);
+  var entries;
+  try {
+    entries = await unpackArchive(file);
+  } catch (err) {
+    console.error('[DrawingParser] Ошибка распаковки:', err);
+    throw new Error('Не удалось распаковать архив: ' + err.message);
+  }
+
+  if (entries.length === 0) {
+    throw new Error('Архив пуст или содержит только служебные файлы');
+  }
 
   // Классификация файлов
-  var specPdfs = [];   // СП — отдельные спецификации
-  var sbPdfs = [];     // СБ/МЧ — сборочные чертежи (могут содержать спецификации)
-  var detailPdfs = []; // Чертежи деталей
-  var dxfNames = {};   // имена DXF без расширения → true
+  var specPdfs = [];
+  var sbPdfs = [];
+  var detailPdfs = [];
+  var dxfNames = {};
 
   entries.forEach(function(e) {
-    var name = e.name;
-    // Пропуск служебных файлов macOS
-    if (name.indexOf('__MACOSX') !== -1) return;
-    // Убираем путь к папке, оставляем имя файла
-    var base = name.replace(/^.*\//, '');
-    if (base.charAt(0) === '.' || base.indexOf('._') === 0) return;
-    if (base.match(/\.pdf$/i)) {
-      if (base.indexOf('СП') !== -1) specPdfs.push(e);
-      else if (base.indexOf('СБ') !== -1 || base.indexOf('МЧ') !== -1) sbPdfs.push(e);
+    var base = e.name.replace(/^.*[\/\\]/, '');
+    var lowerBase = base.toLowerCase();
+    if (lowerBase.match(/\.pdf$/)) {
+      if (base.indexOf('СП') !== -1 || base.indexOf('\u0421\u041f') !== -1) specPdfs.push(e);
+      else if (base.indexOf('СБ') !== -1 || base.indexOf('МЧ') !== -1 ||
+               base.indexOf('\u0421\u0411') !== -1 || base.indexOf('\u041c\u0427') !== -1) sbPdfs.push(e);
       else detailPdfs.push(e);
-    } else if (base.match(/\.dxf$/i)) {
+    } else if (lowerBase.match(/\.dxf$/)) {
       dxfNames[base.replace(/\.dxf$/i, '')] = true;
     }
   });
 
+  console.log('[DrawingParser] Классификация: СП=' + specPdfs.length + ' СБ/МЧ=' + sbPdfs.length + ' Детали=' + detailPdfs.length + ' DXF=' + Object.keys(dxfNames).length);
+
   var totalFiles = specPdfs.length + sbPdfs.length + detailPdfs.length;
+  if (totalFiles === 0) {
+    throw new Error('В архиве не найдены PDF-файлы чертежей');
+  }
+
   var processed = 0;
-  var allSpecs = {};      // parent → { assemblies, details, standard_items, ... }
-  var parsedParents = {}; // already parsed parents
-  var detailMaterials = {}; // designation → { material, thickness, mass }
+  var allSpecs = {};
+  var parsedParents = {};
+  var detailMaterials = {};
   var errors = [];
 
-  // 1. Парсим отдельные СП-файлы
+  // Безопасный парсер PDF с try/catch
+  async function safeParsePdf(entry, label) {
+    var base = entry.name.replace(/^.*[\/\\]/, '');
+    try {
+      var pages = await extractPdfText(entry.data);
+      return pages;
+    } catch (err) {
+      errors.push(label + ' ' + base + ': ' + err.message);
+      console.warn('[DrawingParser] ' + label + ' ' + base + ':', err.message);
+      return null;
+    }
+  }
+
+  function mergeSections(target, source) {
+    Object.keys(source).forEach(function(k) {
+      if (!target[k]) target[k] = [];
+      target[k] = target[k].concat(source[k]);
+    });
+  }
+
+  // 1. Парсим СП-файлы
   for (var si = 0; si < specPdfs.length; si++) {
     var sf = specPdfs[si];
-    var sfBase = sf.name.replace(/^.*\//, '');
-    onProgress(0.1 + 0.3 * (processed / totalFiles), 'Спецификация: ' + sfBase.slice(0, 40) + '…');
-    try {
-      var pages = await extractPdfText(sf.data);
+    var sfBase = sf.name.replace(/^.*[\/\\]/, '');
+    onProgress(0.1 + 0.3 * (processed / totalFiles), 'Спецификация: ' + sfBase.slice(0, 35) + '…');
+    var pages = await safeParsePdf(sf, 'СП');
+    if (pages) {
       var parentM = sfBase.match(/(V3-D[\d.]+)/);
       var parent = parentM ? parentM[1] : sfBase;
       var merged = {};
@@ -298,57 +322,53 @@ async function parseDrawingArchive(file, onProgress) {
         var cols = findSpecColumns(pg.items);
         if (!cols.posX) return;
         var sections = parseSpecPage(pg.items, cols);
-        Object.keys(sections).forEach(function(k) {
-          if (!merged[k]) merged[k] = [];
-          merged[k] = merged[k].concat(sections[k]);
-        });
+        mergeSections(merged, sections);
       });
-      allSpecs[parent] = merged;
-      parsedParents[parent] = true;
-    } catch (err) {
-      errors.push('Ошибка парсинга СП ' + sfBase + ': ' + err.message);
+      var itemCount = Object.keys(merged).reduce(function(s, k) { return s + merged[k].length; }, 0);
+      console.log('[DrawingParser] СП ' + parent + ': ' + itemCount + ' позиций');
+      if (itemCount > 0) {
+        allSpecs[parent] = merged;
+        parsedParents[parent] = true;
+      }
     }
     processed++;
   }
 
-  // 2. Парсим СБ/МЧ (только для узлов без отдельного СП)
+  // 2. Парсим СБ/МЧ
   for (var bi = 0; bi < sbPdfs.length; bi++) {
     var bf = sbPdfs[bi];
-    var bfBase = bf.name.replace(/^.*\//, '');
-    onProgress(0.1 + 0.3 * (processed / totalFiles), 'Сборочный: ' + bfBase.slice(0, 40) + '…');
-    try {
-      var bParentM = bfBase.match(/(V3-D[\d.]+)/);
-      var bParent = bParentM ? bParentM[1] : bfBase;
-      if (!parsedParents[bParent]) {
-        var bPages = await extractPdfText(bf.data);
+    var bfBase = bf.name.replace(/^.*[\/\\]/, '');
+    onProgress(0.1 + 0.3 * (processed / totalFiles), 'Сборочный: ' + bfBase.slice(0, 35) + '…');
+    var bParentM = bfBase.match(/(V3-D[\d.]+)/);
+    var bParent = bParentM ? bParentM[1] : bfBase;
+    if (!parsedParents[bParent]) {
+      var bPages = await safeParsePdf(bf, 'СБ');
+      if (bPages) {
         var bMerged = {};
         bPages.forEach(function(pg) {
           var bCols = findSpecColumns(pg.items);
           if (!bCols.posX) return;
           var bSections = parseSpecPage(pg.items, bCols);
-          Object.keys(bSections).forEach(function(k) {
-            if (!bMerged[k]) bMerged[k] = [];
-            bMerged[k] = bMerged[k].concat(bSections[k]);
-          });
+          mergeSections(bMerged, bSections);
         });
-        if (Object.keys(bMerged).length > 0) {
+        var bCount = Object.keys(bMerged).reduce(function(s, k) { return s + bMerged[k].length; }, 0);
+        if (bCount > 0) {
+          console.log('[DrawingParser] СБ ' + bParent + ': ' + bCount + ' позиций');
           allSpecs[bParent] = bMerged;
           parsedParents[bParent] = true;
         }
       }
-    } catch (err) {
-      errors.push('Ошибка парсинга СБ ' + bfBase + ': ' + err.message);
     }
     processed++;
   }
 
-  // 3. Извлекаем материал из чертежей деталей
+  // 3. Материалы из чертежей деталей
   for (var di = 0; di < detailPdfs.length; di++) {
     var df = detailPdfs[di];
-    var dfBase = df.name.replace(/^.*\//, '');
-    onProgress(0.4 + 0.5 * (processed / totalFiles), 'Деталь: ' + dfBase.slice(0, 40) + '…');
-    try {
-      var dPages = await extractPdfText(df.data);
+    var dfBase = df.name.replace(/^.*[\/\\]/, '');
+    onProgress(0.4 + 0.5 * (processed / totalFiles), 'Деталь: ' + dfBase.slice(0, 35) + '…');
+    var dPages = await safeParsePdf(df, 'Деталь');
+    if (dPages) {
       var fullText = dPages.map(function(pg) {
         return pg.items.map(function(it) { return it.text; }).join('\n');
       }).join('\n');
@@ -364,15 +384,17 @@ async function parseDrawingArchive(file, onProgress) {
         thickness: matInfo.thickness,
         mass: matInfo.mass
       };
-    } catch (err) {
-      errors.push('Ошибка чертежа ' + dfBase + ': ' + err.message);
     }
     processed++;
   }
 
   onProgress(0.95, 'Формирование результата…');
 
-  // 4. Собираем результат
+  console.log('[DrawingParser] Спецификации собраны: ' + Object.keys(allSpecs).length + ' узлов');
+  console.log('[DrawingParser] Материалы деталей: ' + Object.keys(detailMaterials).length);
+  console.log('[DrawingParser] DXF файлов: ' + Object.keys(dxfNames).length);
+
+  // 4. Сбор результата
   var purchased = [];
   var allDetails = [];
 
@@ -394,20 +416,14 @@ async function parseDrawingArchive(file, onProgress) {
       }
       var mi = detailMaterials[desig] || {};
       allDetails.push({
-        pos: item.pos,
-        designation: desig,
-        name: item.name,
-        qty: item.qty,
-        parent: parent,
-        material: mi.material || '',
-        thickness: mi.thickness || '',
-        mass: mi.mass || '',
-        hasDxf: hasDxf
+        pos: item.pos, designation: desig, name: item.name,
+        qty: item.qty, parent: parent,
+        material: mi.material || '', thickness: mi.thickness || '',
+        mass: mi.mass || '', hasDxf: hasDxf
       });
     });
   });
 
-  // Классификация деталей
   var cutting = allDetails.filter(function(d) { return d.hasDxf; });
   var pipes = allDetails.filter(function(d) {
     return /Труба|Швеллер/.test(d.name) && !d.hasDxf;
@@ -416,26 +432,23 @@ async function parseDrawingArchive(file, onProgress) {
     return !d.hasDxf && !/Труба|Швеллер/.test(d.name);
   });
 
-  // Дедупликация покупных (могут дублироваться из разных СБ)
+  // Дедупликация
   var purchasedDedup = [];
   var seenPurch = {};
   purchased.forEach(function(p) {
     var key = p.name + '|' + p.qty;
-    if (!seenPurch[key]) {
-      seenPurch[key] = true;
-      purchasedDedup.push(p);
-    }
+    if (!seenPurch[key]) { seenPurch[key] = true; purchasedDedup.push(p); }
   });
 
-  // Дедупликация деталей раскроя
   var cuttingDedup = [];
   var seenCut = {};
   cutting.forEach(function(c) {
-    if (!seenCut[c.designation]) {
-      seenCut[c.designation] = true;
-      cuttingDedup.push(c);
-    }
+    if (!seenCut[c.designation]) { seenCut[c.designation] = true; cuttingDedup.push(c); }
   });
+
+  console.log('[DrawingParser] ИТОГО: покупных=' + purchasedDedup.length +
+    ' раскрой=' + cuttingDedup.length + ' трубы=' + pipes.length +
+    ' прочие=' + otherDetails.length + ' ошибок=' + errors.length);
 
   onProgress(1, 'Готово');
 
