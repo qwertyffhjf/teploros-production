@@ -1360,6 +1360,8 @@ const _mergeFullState = (toSave, remoteData, remoteWh, remoteTs, remoteEv, base)
 const DB = {
   _saveTimer:   null,
   _saveResolve: null,   // resolve-функция текущего pending save Promise
+  _tsSaveTimer:   null, // отдельный дебаунс для быстрого сохранения табеля
+  _tsSaveResolve: null,
   _saving:      false,  // true пока идёт сохранение (от вызова до завершения записи) — блокирует onSnapshot
   _lastError:   null,
   _sizeWarning: null,
@@ -1471,7 +1473,48 @@ const DB = {
   },
 
   // ── Сохранение ────────────────────────────────────────────────────────────
-  async save(data) {
+  async save(data, opts = {}) {
+    // ── Быстрый путь: сохранение ТОЛЬКО табеля (timesheet_v1) ──
+    // Изменение одной ячейки табеля не должно перезаписывать весь production_v14
+    // (сотни ops/orders + помесячная архивация). Пишем один маленький документ.
+    if (opts.only === 'timesheet' && TS_DOC_REF) {
+      DB._saving = true;
+      if (DB._tsSaveTimer) clearTimeout(DB._tsSaveTimer);
+      if (DB._tsSaveResolve) { DB._tsSaveResolve(); DB._tsSaveResolve = null; }
+      return new Promise((resolve, reject) => {
+        DB._tsSaveResolve = resolve;
+        DB._tsSaveTimer = setTimeout(async () => {
+          DB._tsSaveResolve = null;
+          if (!DB._online) {
+            DB._lastError = 'Нет соединения — табель НЕ сохранён.';
+            DB._saving = false;
+            reject(new Error('OFFLINE: сохранение невозможно без сети'));
+            return;
+          }
+          try {
+            const tsData = {};
+            TS_FIELDS.forEach(f => { if (data[f] !== undefined) tsData[f] = data[f]; });
+            await TS_DOC_REF.set({
+              payload:   JSON.stringify(tsData),
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            // Обновляем базу табеля, чтобы merge основного документа не откатывал его
+            if (DB._baseData) TS_FIELDS.forEach(f => { if (data[f] !== undefined) DB._baseData[f] = data[f]; });
+            DB._online = true;
+          } catch (e) {
+            console.error('Timesheet save error:', e);
+            DB._lastError = 'Ошибка сохранения табеля: ' + e.message;
+            DB._online = false;
+            DB._saving = false;
+            reject(new Error('SAVE_FAILED: ' + e.message));
+            return;
+          }
+          resolve({ ...data });
+          setTimeout(() => { DB._saving = false; }, 300);
+        }, 400);
+      });
+    }
+
     DB._saving = true; // Блокируем onSnapshot немедленно
     try {
       let toSave = { ...data };
@@ -3580,13 +3623,6 @@ const CDN = {
   html5qrcode: { url: 'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js',
                  fallback: 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js',
                  check: () => typeof window.Html5Qrcode !== 'undefined' },
-  pdfjs:       { url: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
-                 fallback: 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js',
-                 check: () => typeof window.pdfjsLib !== 'undefined',
-                 after: () => { if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; } },
-  jszip:       { url: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
-                 fallback: 'https://unpkg.com/jszip@3.10.1/dist/jszip.min.js',
-                 check: () => typeof window.JSZip !== 'undefined' },
 };
 
 const BUNDLES = {
@@ -3605,7 +3641,7 @@ const BUNDLES = {
   // протокол ГИ) обёрнуты отдельным ensureCdn() прямо в обработчике клика.
   office: ['cdn:xlsx', 'cdn:pdfmake', 'cdn:vfsFonts', 'cdn:chartjs',
            'js/qms.js', 'js/analytics.js', 'js/timesheet.js', 'js/auxops.js',
-           'js/drawing-parser.js', 'js/reference.js', 'js/quality.js', 'js/hr.js', 'js/warehouse.js', 'js/master.js'],
+           'js/reference.js', 'js/quality.js', 'js/hr.js', 'js/warehouse.js', 'js/master.js'],
 };
 
 // Версия берём с собственного тега <script> core.js — core.js грузится синхронно
@@ -3636,11 +3672,11 @@ function ensureCdn(key) {
   _cdnPromises[key] = new Promise((resolve, reject) => {
     const s = document.createElement('script');
     s.src = spec.url;
-    s.onload = () => { _loadedCdn.add(key); if (spec.after) spec.after(); resolve(); };
+    s.onload = () => { _loadedCdn.add(key); resolve(); };
     s.onerror = () => {
       const s2 = document.createElement('script');
       s2.src = spec.fallback;
-      s2.onload = () => { _loadedCdn.add(key); if (spec.after) spec.after(); resolve(); };
+      s2.onload = () => { _loadedCdn.add(key); resolve(); };
       s2.onerror = () => reject(new Error('Не удалось загрузить ' + key));
       document.head.appendChild(s2);
     };
