@@ -1,5 +1,5 @@
 // teploros Service Worker v4 — Итерация 4: cache-first для версионированных файлов
-const APP_CACHE = 'teploros-app-v20260819';
+const APP_CACHE = 'teploros-app-v20260820';
 const CDN_CACHE = 'teploros-cdn-v1';
 const CDN_MAX_ENTRIES = 20; // 4.2: лимит записей CDN-кеша
 
