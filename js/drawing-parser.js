@@ -263,8 +263,11 @@ async function parseDrawingArchive(file, onProgress) {
 
   entries.forEach(function(e) {
     var name = e.name;
+    // Пропуск служебных файлов macOS
+    if (name.indexOf('__MACOSX') !== -1) return;
     // Убираем путь к папке, оставляем имя файла
     var base = name.replace(/^.*\//, '');
+    if (base.charAt(0) === '.' || base.indexOf('._') === 0) return;
     if (base.match(/\.pdf$/i)) {
       if (base.indexOf('СП') !== -1) specPdfs.push(e);
       else if (base.indexOf('СБ') !== -1 || base.indexOf('МЧ') !== -1) sbPdfs.push(e);
