@@ -671,6 +671,8 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
   const fileRef = useRef(null);
   const drawingFileRef = useRef(null);
   const [drawingProgress, setDrawingProgress] = useState(null); // null | { pct, msg }
+  const [showDropZone, setShowDropZone] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
 
   const [showImportComponents, setShowImportComponents] = useState(false);
 
@@ -741,6 +743,7 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
   // ── Импорт из чертежей (ZIP) ──────────────────────────────
   const handleDrawingImport = useCallback(async (files) => {
     if (!files || !files.length) return;
+    setShowDropZone(false);
     if (typeof parseDrawingFiles !== 'function') {
       addToast('Парсер чертежей не загружен', 'error'); return;
     }
@@ -819,6 +822,48 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
     }
     setDrawingProgress(null);
   }, [updNeeds, addToast]);
+
+  // ── Drag & Drop: рекурсивное чтение папок ──────────────────
+  const readEntriesRecursive = useCallback(async (entry) => {
+    if (entry.isFile) {
+      return [await new Promise((res, rej) => entry.file(res, rej))];
+    }
+    if (entry.isDirectory) {
+      var reader = entry.createReader();
+      var all = [];
+      var readBatch = () => new Promise((res, rej) => reader.readEntries(res, rej));
+      var batch;
+      do {
+        batch = await readBatch();
+        for (var i = 0; i < batch.length; i++) {
+          var sub = await readEntriesRecursive(batch[i]);
+          all = all.concat(sub);
+        }
+      } while (batch.length > 0);
+      return all;
+    }
+    return [];
+  }, []);
+
+  const handleDrop = useCallback(async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    var items = e.dataTransfer.items;
+    if (!items || !items.length) return;
+    var allFiles = [];
+    var promises = [];
+    for (var i = 0; i < items.length; i++) {
+      var entry = items[i].webkitGetAsEntry && items[i].webkitGetAsEntry();
+      if (entry) {
+        promises.push(readEntriesRecursive(entry).then(function(files) {
+          allFiles = allFiles.concat(files);
+        }));
+      }
+    }
+    await Promise.all(promises);
+    if (allFiles.length > 0) handleDrawingImport(allFiles);
+  }, [readEntriesRecursive, handleDrawingImport]);
 
   const addGroup = () => updNeeds(p => ({ ...p, groups: [...(p.groups || []), makeGroup('Новая группа')] }));
   const deleteGroup = (gid) => updNeeds(p => ({ ...p, groups: p.groups.filter(g => g.id !== gid) }));
@@ -906,8 +951,8 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
           style: { fontSize: 12, padding: '6px 12px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' }
         }, '📤 Экспорт Excel'),
         canEdit && !drawingProgress && h('button', {
-          onClick: () => drawingFileRef.current?.click(),
-          style: { fontSize: 12, padding: '6px 12px', border: `0.5px solid ${GN}`, borderRadius: 7, color: GN2, background: GN3, cursor: 'pointer', fontWeight: 500 }
+          onClick: () => setShowDropZone(v => !v),
+          style: { fontSize: 12, padding: '6px 12px', border: `0.5px solid ${GN}`, borderRadius: 7, color: GN2, background: showDropZone ? GN3 : 'transparent', cursor: 'pointer', fontWeight: 500 }
         }, '📐 Из чертежей'),
         canEdit && h('button', {
           onClick: addGroup,
@@ -917,8 +962,29 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
       ),
       h('input', { ref: fileRef, type: 'file', accept: '.xlsx,.xls', style: { display: 'none' },
         onChange: e => { handleImport(e.target.files[0]); e.target.value = ''; } }),
-      h('input', { ref: drawingFileRef, type: 'file', webkitdirectory: '', directory: '', multiple: true, style: { display: 'none' },
+      h('input', { ref: drawingFileRef, type: 'file', accept: '.pdf,.dxf', multiple: true, style: { display: 'none' },
         onChange: e => { handleDrawingImport(e.target.files); e.target.value = ''; } }),
+      showDropZone && !drawingProgress && h('div', {
+        onDragOver: e => { e.preventDefault(); setDragOver(true); },
+        onDragLeave: e => { e.preventDefault(); setDragOver(false); },
+        onDrop: handleDrop,
+        onClick: () => drawingFileRef.current?.click(),
+        style: {
+          marginTop: 10, padding: '24px 16px', borderRadius: 10,
+          border: '2px dashed ' + (dragOver ? GN : 'var(--border)'),
+          background: dragOver ? GN3 : 'var(--card-2)',
+          textAlign: 'center', cursor: 'pointer',
+          transition: 'border-color 0.2s, background 0.2s'
+        }
+      },
+        h('div', { style: { fontSize: 28, marginBottom: 6 } }, '📂'),
+        h('div', { style: { fontSize: 13, fontWeight: 500, color: 'var(--fg)' } },
+          'Перетащите сюда папку с чертежами'),
+        h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 4 } },
+          'или нажмите чтобы выбрать PDF и DXF файлы'),
+        h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 2 } },
+          'Поддерживаются: PDF (чертежи, спецификации) и DXF (для раскроя)')
+      ),
       drawingProgress && h('div', { style: { marginTop: 8, padding: '8px 12px', background: GN3, borderRadius: 8, border: '0.5px solid ' + GN } },
         h('div', { style: { fontSize: 12, fontWeight: 500, color: GN2, marginBottom: 4 } }, drawingProgress.msg),
         h('div', { style: { height: 4, borderRadius: 2, background: 'rgba(0,0,0,0.1)' } },
