@@ -785,7 +785,7 @@ const GreetingBanner = memo(({ role, name, data, workerId }) => {
       return [
         { icon: '▶',  label: 'В работе',    val: inWork,   color: AM2   },
         { icon: '⏳', label: 'Ожидают',     val: pending,  color: 'var(--fg-muted)' },
-        onCheck  > 0 ? { icon: '🔍', label: 'На контроле', val: onCheck,  color: '#0277BD' } : null,
+        onCheck  > 0 ? { icon: '🔍', label: 'На контроле', val: onCheck,  color: BL } : null,
         overdue  > 0 ? { icon: '⚠',  label: 'Просрочено', val: overdue,  color: RD        } : null,
         { icon: '👤', label: 'Свободных',   val: freeW,    color: GN    },
       ].filter(Boolean);
@@ -1112,7 +1112,7 @@ const Dashboard = memo(({ data, addToast, onOrderClick }) => {
               ),
               h('span', { style: { fontSize: 11, fontWeight: 500, color: o.pct === 100 ? GN : AM } }, `${o.done}/${o.total}`)
             ),
-            h('div', { style: { height: 6, background: '#eee', borderRadius: 3, overflow: 'hidden' } },
+            h('div', { style: { height: 6, background:'var(--card-2)', borderRadius: 3, overflow: 'hidden' } },
               h('div', { style: { height: 6, background: o.pct === 100 ? GN : o.hasDefect ? RD : AM, borderRadius: 3, width: `${o.pct}%`, transition: 'width 0.3s' } })
             )
           ))
@@ -2037,7 +2037,7 @@ async function generateRouteSheet(order, data) {
       }, margin: [0, 0, 0, 20] },
 
       // Подписи
-      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, color: '#ccc' }], margin: [0, 0, 0, 10] },
+      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, color:'var(--muted)' }], margin: [0, 0, 0, 10] },
       { columns: [
         { width: '33%', stack: [
           { text: 'Выдал мастер:', fontSize: 9, bold: true },
@@ -2501,7 +2501,7 @@ const SalesScreen = memo(({ data, addToast, onOrderClick }) => {
                 ),
                 h('td', { style:{ padding:'10px 10px', minWidth:120 } },
                   prog.total > 0 && h('div', null,
-                    h('div', { style:{ height:5, background:'#eee', borderRadius:3, overflow:'hidden', marginBottom:3 } },
+                    h('div', { style:{ height:5, background:'var(--card-2)', borderRadius:3, overflow:'hidden', marginBottom:3 } },
                       h('div', { style:{ height:'100%', borderRadius:3, width:`${prog.pct*100}%`,
                         background: prog.pct>=1 ? GN : prog.pct>=0.5 ? AM : '#378ADD' } })
                     ),
@@ -2559,6 +2559,7 @@ function App() {
   // работа заблокирована до восстановления.
   const [offlineBlock, setOfflineBlock] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [updateAvailable, setUpdateAvailable] = useState(false);
   const [role, setRole] = useState(null);
   const [greetingKey, setGreetingKey] = React.useState(0); // меняется при каждом входе
   const [workerId, setWorkerId] = useState(null);
@@ -2584,6 +2585,13 @@ function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // 4.3: Слушаем событие обновления SW — показываем баннер
+  useEffect(() => {
+    const onUpdate = () => setUpdateAvailable(true);
+    window.addEventListener('_tpUpdateAvailable', onUpdate);
+    return () => window.removeEventListener('_tpUpdateAvailable', onUpdate);
   }, []);
 
   useEffect(() => {
@@ -2821,7 +2829,7 @@ function App() {
 
   if (loading) return h('div', { style: { padding:48, textAlign:'center' } },
     h('div', { style: { fontSize:28, marginBottom:12 } }, '⏳'),
-    h('div', { style: { fontSize:15, color:'#444', marginBottom:6 } }, 'Загрузка...'),
+    h('div', { style: { fontSize:15, color:'var(--fg-muted)', marginBottom:6 } }, 'Загрузка...'),
     h('div', { style: { fontSize:12, color:'var(--muted)' } },
       loadingSec < 5 ? 'Подключение к серверу...' : `Нет ответа от сервера (${loadingSec}с)`
     )
@@ -2852,7 +2860,7 @@ function App() {
 
   // QR-режим
   if (initialOpId && !role) return h('div', null,
-    h('div', { style: { display:'flex', gap:12, padding:'10px 0', borderBottom:'0.5px solid rgba(0,0,0,0.08)' } },
+    h('div', { style: { display:'flex', gap:12, padding:'10px 0', borderBottom:'0.5px solid var(--border)' } },
       h('button', { style: gbtn({ fontSize:11 }), onClick: goBack }, '← На главную'),
       h('div', { style: { fontSize:12, color:'var(--muted)' } }, 'QR-операция')
     ),
@@ -2888,7 +2896,7 @@ function App() {
 
   // Режим "только чат"
   if (effectiveRole === 'chat') return h('div', null,
-    h('div', { style: { display:'flex', gap:12, padding:'10px 0', borderBottom:'0.5px solid rgba(0,0,0,0.08)', alignItems:'center' } },
+    h('div', { style: { display:'flex', gap:12, padding:'10px 0', borderBottom:'0.5px solid var(--border)', alignItems:'center' } },
       h('button', { style: gbtn({ fontSize:11 }), onClick: goBack }, '← Выход'),
       h('div', { style: { fontSize:12, color:'var(--muted)' } }, `Чат · ${currentUser.name}`)
     ),
@@ -2970,6 +2978,21 @@ function App() {
         )
       )
     ),
+    // 4.3: Баннер обновления — показывается когда новый SW ждёт активации
+    updateAvailable && h('div', {
+      style: { display:'flex', alignItems:'center', justifyContent:'center', gap:8,
+        padding:'8px 16px', background: BL3, borderBottom: `1px solid ${BL}`,
+        fontSize:13, color: BL2 }
+    },
+      '🔄 Доступно обновление',
+      h('button', {
+        style: { padding:'4px 12px', borderRadius:6, border:'none', background: BL, color:'#fff',
+          fontSize:12, fontWeight:500, cursor:'pointer' },
+        onClick: () => {
+          if (window._tpNewSW) window._tpNewSW.postMessage({ type: 'SKIP_WAITING' });
+        }
+      }, 'Обновить')
+    ),
     h(GreetingBanner, { key: greetingKey, role: effectiveRole, name: currentUser.name, data, workerId }),
     showChat
       ? h(ChatScreen, { data, onUpdate: save, addToast, currentUser, onBack: () => setShowChat(false) })
@@ -2978,7 +3001,7 @@ function App() {
         // дальше бандл закеширован Service Worker'ом и подгружается мгновенно.
         ? h('div', { style: { display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'60px 20px', gap:10, color:'var(--muted)', fontSize:13 } },
             bundleError
-              ? h('div', { style: { color: '#c33', textAlign:'center' } }, '⚠ Не удалось загрузить модуль: ' + bundleError + '. Проверьте соединение и обновите страницу.')
+              ? h('div', { style: { color: RD, textAlign:'center' } }, '⚠ Не удалось загрузить модуль: ' + bundleError + '. Проверьте соединение и обновите страницу.')
               : h(React.Fragment, null, h('div', { style: { fontSize: 24 } }, '⏳'), 'Загрузка модуля…')
           )
         : h('div', null,
@@ -3032,11 +3055,18 @@ if ('serviceWorker' in navigator) {
       console.log('SW registered:', reg.scope);
       // Проверка обновлений каждые 30 минут
       setInterval(() => reg.update(), 30 * 60 * 1000);
-      // Примечание: баннер "Доступна новая версия" убран по просьбе пользователя.
-      // На фактическое поведение это не влияет — sw.js уже вызывает self.skipWaiting()
-      // и clients.claim() безусловно, так что новый SW и так забирает все открытые
-      // вкладки и вызывает controllerchange → reload ниже; баннер лишь дублировал
-      // это уведомлением, которое не успевало ни на что повлиять.
+      // 4.3: Update-баннер — при появлении нового SW показываем баннер «Обновить»
+      reg.addEventListener('updatefound', () => {
+        const newWorker = reg.installing;
+        if (!newWorker) return;
+        newWorker.addEventListener('statechange', () => {
+          // Новый SW установлен и ждёт активации (waiting) — показываем баннер
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            window._tpNewSW = newWorker;
+            window.dispatchEvent(new CustomEvent('_tpUpdateAvailable'));
+          }
+        });
+      });
     }).catch(err => console.log('SW registration failed:', err));
   });
   // Перезагрузка после активации нового SW
