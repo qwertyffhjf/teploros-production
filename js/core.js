@@ -554,6 +554,8 @@ const Presence = {
   _id: null,
   start(userId, userName) {
     if (!userId || !PRESENCE_REF) return;
+    // 4.4: при повторном вызове — очистить старый интервал
+    if (this._interval) clearInterval(this._interval);
     this._id = userId;
     const ref = PRESENCE_REF.doc(userId);
     const update = () => ref.set({ userId, userName: userName || '?', lastSeen: Date.now(), online: true }).catch(() => {});
