@@ -2670,11 +2670,11 @@ function App() {
     };
   }, []);
 
-  const save = useCallback((d) => {
+  const save = useCallback((d, opts) => {
     savingRef.current = true;
     setData(d);
     setIsSaving(true);
-    DB.save(d).then(() => {
+    DB.save(d, opts).then(() => {
       // savingRef остаётся true пока Firebase не подтвердит запись
       // Сбрасываем с небольшой задержкой чтобы onSnapshot успел обработаться
       setTimeout(() => {
