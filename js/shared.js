@@ -739,14 +739,14 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
 
   // Группы
   // ── Импорт из чертежей (ZIP) ──────────────────────────────
-  const handleDrawingImport = useCallback(async (file) => {
-    if (!file) return;
-    if (typeof parseDrawingArchive !== 'function') {
+  const handleDrawingImport = useCallback(async (files) => {
+    if (!files || !files.length) return;
+    if (typeof parseDrawingFiles !== 'function') {
       addToast('Парсер чертежей не загружен', 'error'); return;
     }
     setDrawingProgress({ pct: 0, msg: 'Начинаю…' });
     try {
-      var result = await parseDrawingArchive(file, function(pct, msg) {
+      var result = await parseDrawingFiles(files, function(pct, msg) {
         setDrawingProgress({ pct: pct, msg: msg });
       });
       if (result.errors && result.errors.length > 0) {
@@ -917,8 +917,8 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
       ),
       h('input', { ref: fileRef, type: 'file', accept: '.xlsx,.xls', style: { display: 'none' },
         onChange: e => { handleImport(e.target.files[0]); e.target.value = ''; } }),
-      h('input', { ref: drawingFileRef, type: 'file', accept: '.zip', style: { display: 'none' },
-        onChange: e => { handleDrawingImport(e.target.files[0]); e.target.value = ''; } }),
+      h('input', { ref: drawingFileRef, type: 'file', webkitdirectory: '', directory: '', multiple: true, style: { display: 'none' },
+        onChange: e => { handleDrawingImport(e.target.files); e.target.value = ''; } }),
       drawingProgress && h('div', { style: { marginTop: 8, padding: '8px 12px', background: GN3, borderRadius: 8, border: '0.5px solid ' + GN } },
         h('div', { style: { fontSize: 12, fontWeight: 500, color: GN2, marginBottom: 4 } }, drawingProgress.msg),
         h('div', { style: { height: 4, borderRadius: 2, background: 'rgba(0,0,0,0.1)' } },
