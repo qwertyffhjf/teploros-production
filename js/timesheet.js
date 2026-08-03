@@ -163,7 +163,7 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
       const toSave = tsPendingRef.current;
       if (toSave) {
         tsPendingRef.current = null;
-        onUpdate(toSave); // одно сохранение пакетом
+        onUpdate(toSave, { only: 'timesheet' }); // быстрое сохранение только табеля
       }
     }, 1500);
   }, [onUpdate]);
@@ -172,7 +172,7 @@ const MasterTimeTracking = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
   useEffect(() => () => {
     if (tsTimerRef.current) clearTimeout(tsTimerRef.current);
     if (tsPendingRef.current) {
-      onUpdate(tsPendingRef.current);
+      onUpdate(tsPendingRef.current, { only: 'timesheet' });
       tsPendingRef.current = null;
     }
   }, []);
