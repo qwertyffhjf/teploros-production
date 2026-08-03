@@ -962,7 +962,7 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
       ),
       h('input', { ref: fileRef, type: 'file', accept: '.xlsx,.xls', style: { display: 'none' },
         onChange: e => { handleImport(e.target.files[0]); e.target.value = ''; } }),
-      h('input', { ref: drawingFileRef, type: 'file', accept: '.pdf,.dxf', multiple: true, style: { display: 'none' },
+      h('input', { ref: drawingFileRef, type: 'file', accept: '.pdf,.dxf,.zip', multiple: true, style: { display: 'none' },
         onChange: e => { handleDrawingImport(e.target.files); e.target.value = ''; } }),
       showDropZone && !drawingProgress && h('div', {
         onDragOver: e => { e.preventDefault(); setDragOver(true); },
@@ -979,11 +979,11 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
       },
         h('div', { style: { fontSize: 28, marginBottom: 6 } }, '📂'),
         h('div', { style: { fontSize: 13, fontWeight: 500, color: 'var(--fg)' } },
-          'Перетащите сюда папку с чертежами'),
+          'Перетащите сюда папку с чертежами или ZIP-архив'),
         h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 4 } },
-          'или нажмите чтобы выбрать PDF и DXF файлы'),
+          'или нажмите чтобы выбрать PDF, DXF или ZIP'),
         h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 2 } },
-          'Поддерживаются: PDF (чертежи, спецификации) и DXF (для раскроя)')
+          'Поддерживаются: PDF, DXF, ZIP-архив')
       ),
       drawingProgress && h('div', { style: { marginTop: 8, padding: '8px 12px', background: GN3, borderRadius: 8, border: '0.5px solid ' + GN } },
         h('div', { style: { fontSize: 12, fontWeight: 500, color: GN2, marginBottom: 4 } }, drawingProgress.msg),
