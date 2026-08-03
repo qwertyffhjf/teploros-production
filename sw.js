@@ -1,6 +1,7 @@
-// teploros Service Worker v3 — устойчивое кеширование
-const APP_CACHE = 'teploros-app-v20260815';
+// teploros Service Worker v4 — Итерация 4: cache-first для версионированных файлов
+const APP_CACHE = 'teploros-app-v20260816';
 const CDN_CACHE = 'teploros-cdn-v1';
+const CDN_MAX_ENTRIES = 20; // 4.2: лимит записей CDN-кеша
 
 const ASSETS = [
   './',
@@ -24,6 +25,9 @@ const ASSETS = [
 ];
 
 // Установка — кешируем по одному, не падаем если файл недоступен
+// 4.3: skipWaiting() возвращён — без него новый SW ждёт закрытия всех вкладок,
+// и пользователи застревают на старой версии. Баннер остаётся для UI-уведомления,
+// но перезагрузка теперь происходит автоматически через controllerchange → reload.
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(APP_CACHE).then(cache =>
@@ -37,7 +41,7 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
-// Активация — удаляем только старые APP-кеши, CDN не трогаем
+// Активация — удаляем старые APP-кеши + чистим CDN-кеш (4.2)
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then(names =>
@@ -46,6 +50,14 @@ self.addEventListener('activate', (event) => {
           .filter(n => n.startsWith('teploros-app-') && n !== APP_CACHE)
           .map(n => caches.delete(n))
       )
+    ).then(() =>
+      // 4.2: CDN-кеш растёт бесконечно — оставляем последние CDN_MAX_ENTRIES записей
+      caches.open(CDN_CACHE).then(cache =>
+        cache.keys().then(requests => {
+          const excess = requests.slice(0, Math.max(0, requests.length - CDN_MAX_ENTRIES));
+          return Promise.all(excess.map(r => cache.delete(r)));
+        })
+      ).catch(() => {})
     )
   );
   self.clients.claim();
@@ -103,7 +115,26 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Локальные статические файлы (JS, CSS, иконки) — network-first с fallback в кеш
+  // 4.1: Версионированные локальные файлы (?v=...) — CACHE-FIRST
+  // Версия в URL гарантирует свежесть: при деплое URL меняется → кеш промахивается → файл грузится из сети.
+  // Это безопасно и экономит 1–2 сек на каждом открытии приложения.
+  if (url.origin === location.origin && url.search.includes('v=')) {
+    event.respondWith(
+      caches.match(event.request).then(cached => {
+        if (cached) return cached;
+        return fetch(event.request).then(response => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(APP_CACHE).then(cache => cache.put(event.request, clone));
+          }
+          return response;
+        }).catch(() => cached || new Response('', { status: 503 }));
+      })
+    );
+    return;
+  }
+
+  // Локальные статические файлы БЕЗ версии (иконки, manifest и т.д.) — network-first с fallback в кеш
   event.respondWith(
     fetch(event.request)
       .then(response => {
