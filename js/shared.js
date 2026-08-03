@@ -669,6 +669,8 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
   const [dirty, setDirty]       = useState(false);
   const [year, setYear]         = useState(new Date().getFullYear());
   const fileRef = useRef(null);
+  const drawingFileRef = useRef(null);
+  const [drawingProgress, setDrawingProgress] = useState(null); // null | { pct, msg }
 
   const [showImportComponents, setShowImportComponents] = useState(false);
 
@@ -736,6 +738,88 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
   }, [order, updNeeds, addToast]);
 
   // Группы
+  // ── Импорт из чертежей (ZIP) ──────────────────────────────
+  const handleDrawingImport = useCallback(async (file) => {
+    if (!file) return;
+    if (typeof parseDrawingArchive !== 'function') {
+      addToast('Парсер чертежей не загружен', 'error'); return;
+    }
+    setDrawingProgress({ pct: 0, msg: 'Начинаю…' });
+    try {
+      var result = await parseDrawingArchive(file, function(pct, msg) {
+        setDrawingProgress({ pct: pct, msg: msg });
+      });
+      if (result.errors && result.errors.length > 0) {
+        result.errors.forEach(function(e) { console.warn('DrawingParser:', e); });
+      }
+      // Формируем группы
+      var groups = [];
+      // 1. Раскрой
+      if (result.cutting && result.cutting.length > 0) {
+        groups.push({
+          id: 'raskroj', name: 'Раскрой',
+          items: result.cutting.map(function(c) { return {
+            id: uid(), name: c.name, code: c.designation,
+            material: c.material, thickness: c.thickness,
+            qty: c.qty || 1, unit: 'шт', length: '',
+            note: c.mass ? 'Масса: ' + c.mass + ' кг' : '',
+            status: 'pending'
+          }; })
+        });
+      }
+      // 2. Профильный прокат (трубы, швеллеры)
+      if (result.pipes && result.pipes.length > 0) {
+        groups.push({
+          id: 'prokat', name: 'Профильный прокат',
+          items: result.pipes.map(function(p) { return {
+            id: uid(), name: p.name, code: p.designation || '',
+            material: p.material || '', thickness: '',
+            qty: p.qty || 1, unit: 'шт', length: '',
+            note: '', status: 'pending'
+          }; })
+        });
+      }
+      // 3. Покупные (стандартные изделия)
+      if (result.purchased && result.purchased.length > 0) {
+        groups.push({
+          id: 'komplekt', name: 'Комплектация (покупные)',
+          items: result.purchased.map(function(p) { return {
+            id: uid(), name: p.name, code: p.designation || '',
+            material: '', thickness: '',
+            qty: p.qty || 1, unit: 'шт', length: '',
+            note: '', status: 'pending'
+          }; })
+        });
+      }
+      // 4. Прочие детали (токарка и пр.)
+      if (result.otherDetails && result.otherDetails.length > 0) {
+        groups.push({
+          id: uid(), name: 'Прочие детали',
+          items: result.otherDetails.map(function(d) { return {
+            id: uid(), name: d.name, code: d.designation || '',
+            material: d.material || '', thickness: d.thickness || '',
+            qty: d.qty || 1, unit: 'шт', length: '',
+            note: d.mass ? 'Масса: ' + d.mass + ' кг' : '',
+            status: 'pending'
+          }; })
+        });
+      }
+      if (groups.length === 0) {
+        addToast('Не удалось извлечь данные из чертежей', 'error');
+        setDrawingProgress(null);
+        return;
+      }
+      updNeeds(function() { return { groups: groups }; });
+      var totalItems = groups.reduce(function(s, g) { return s + g.items.length; }, 0);
+      addToast('Из чертежей: ' + groups.length + ' групп, ' + totalItems + ' позиций'
+        + (result.stats.dxfFiles > 0 ? ', ' + result.stats.dxfFiles + ' DXF' : ''), 'success');
+    } catch (err) {
+      console.error('DrawingImport error:', err);
+      addToast('Ошибка парсинга: ' + err.message, 'error');
+    }
+    setDrawingProgress(null);
+  }, [updNeeds, addToast]);
+
   const addGroup = () => updNeeds(p => ({ ...p, groups: [...(p.groups || []), makeGroup('Новая группа')] }));
   const deleteGroup = (gid) => updNeeds(p => ({ ...p, groups: p.groups.filter(g => g.id !== gid) }));
   const updateGroupName = (gid, name) => updNeeds(p => ({ ...p, groups: p.groups.map(g => g.id === gid ? { ...g, name } : g) }));
@@ -821,6 +905,10 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
           onClick: () => exportNeedsToExcel(order, needs),
           style: { fontSize: 12, padding: '6px 12px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' }
         }, '📤 Экспорт Excel'),
+        canEdit && !drawingProgress && h('button', {
+          onClick: () => drawingFileRef.current?.click(),
+          style: { fontSize: 12, padding: '6px 12px', border: `0.5px solid ${GN}`, borderRadius: 7, color: GN2, background: GN3, cursor: 'pointer', fontWeight: 500 }
+        }, '📐 Из чертежей'),
         canEdit && h('button', {
           onClick: addGroup,
           style: { fontSize: 12, padding: '6px 12px', border: `0.5px solid ${AM}`, borderRadius: 7, color: AM2, background: 'transparent', cursor: 'pointer', fontWeight: 500 }
@@ -828,7 +916,15 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
         saving && h('span', { style: { fontSize: 11, color: 'var(--muted)' } }, '💾 Сохранение…')
       ),
       h('input', { ref: fileRef, type: 'file', accept: '.xlsx,.xls', style: { display: 'none' },
-        onChange: e => { handleImport(e.target.files[0]); e.target.value = ''; } })
+        onChange: e => { handleImport(e.target.files[0]); e.target.value = ''; } }),
+      h('input', { ref: drawingFileRef, type: 'file', accept: '.zip', style: { display: 'none' },
+        onChange: e => { handleDrawingImport(e.target.files[0]); e.target.value = ''; } }),
+      drawingProgress && h('div', { style: { marginTop: 8, padding: '8px 12px', background: GN3, borderRadius: 8, border: '0.5px solid ' + GN } },
+        h('div', { style: { fontSize: 12, fontWeight: 500, color: GN2, marginBottom: 4 } }, drawingProgress.msg),
+        h('div', { style: { height: 4, borderRadius: 2, background: 'rgba(0,0,0,0.1)' } },
+          h('div', { style: { height: '100%', borderRadius: 2, background: GN, width: Math.round(drawingProgress.pct * 100) + '%', transition: 'width 0.3s' } })
+        )
+      )
     ),
 
     // Группы
