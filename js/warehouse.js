@@ -1123,8 +1123,35 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnl
   // Заявки — снабженец создаёт/редактирует прямо в складе
   const [needsOrderId, setNeedsOrderId]   = useState(null);  // выбранный заказ для редактирования заявки
   const [needsSearch, setNeedsSearch]     = useState('');
+  const [needsScope, setNeedsScope]       = useState('active'); // active | closed | archive
   const [showImport, setShowImport] = useState(false);
   const [selectedStock, setSelectedStock] = React.useState(new Set());
+
+  // Стадия заказа с точки зрения снабжения:
+  //   active  — нужны действия: заявки нет или позиции ещё не получены
+  //   closed  — снабжению делать нечего: всё получено ЛИБО производство завершено
+  //   archive — заказ отгружен или отправлен в архив
+  // Отдельная стадия closed нужна потому, что заказ живёт в производстве
+  // недели после того, как материалы получены, и всё это время засорял список.
+  const needsStages = useMemo(() => {
+    const opsByOrder = {};
+    (data.ops || []).forEach(op => {
+      if (op.archived) return;
+      (opsByOrder[op.orderId] = opsByOrder[op.orderId] || []).push(op);
+    });
+    const m = {};
+    (data.orders || []).forEach(o => {
+      if (o.parentOrderId) return;
+      if (o.archived || o.shipped) { m[o.id] = 'archive'; return; }
+      const on    = needsAll[o.id];
+      const items = on ? (on.groups || []).reduce((s, g) => s.concat(g.items || []), []) : [];
+      const allReceived = items.length > 0 && items.every(i => i.status === 'received');
+      const ops = opsByOrder[o.id] || [];
+      const prodDone = ops.length > 0 && ops.every(op => op.status === 'done' || op.status === 'defect');
+      m[o.id] = (allReceived || prodDone) ? 'closed' : 'active';
+    });
+    return m;
+  }, [data.orders, data.ops, needsAll]);
 
   const { ask, confirmEl } = useConfirm();
   const delSelectedStock = React.useCallback(async () => {
@@ -1636,13 +1663,48 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnl
 
       // Если заказ не выбран — показываем список
       !needsOrderId && h('div', null,
+        // Переключатель разделов
         (() => {
-          const filtered = data.orders
-            .filter(o => !o.archived && !o.shipped && !o.parentOrderId)
-            .filter(o => !needsSearch || o.number.toLowerCase().includes(needsSearch.toLowerCase()) || (o.product || '').toLowerCase().includes(needsSearch.toLowerCase()))
-            .sort((a, b) => (a.deadline || '').localeCompare(b.deadline || ''));
+          const cnt = { active: 0, closed: 0, archive: 0 };
+          Object.keys(needsStages).forEach(id => { if (cnt[needsStages[id]] !== undefined) cnt[needsStages[id]]++; });
+          return h('div', { style: { display: 'flex', gap: 6, marginBottom: 10 } },
+            [['active', '🔧 В работе', cnt.active],
+             ['closed', '✅ Закрыто',  cnt.closed],
+             ['archive', '📁 Архив',   cnt.archive]].map(function(o) {
+              const key = o[0], on = needsScope === key;
+              return h('button', { key: key, onClick: () => setNeedsScope(key),
+                style: { flex: 1, fontSize: 12, fontWeight: on ? 600 : 400, padding: '7px 8px',
+                  borderRadius: 8, cursor: 'pointer', whiteSpace: 'nowrap',
+                  border: '0.5px solid ' + (on ? BL : 'var(--border)'),
+                  background: on ? '#E6F1FB' : 'transparent',
+                  color: on ? '#185FA5' : 'var(--muted)' } },
+                o[1] + ' (' + o[2] + ')');
+            })
+          );
+        })(),
 
-          if (filtered.length === 0) return h('div', { style: S.card }, h(EmptyState, { icon: '📋', title: 'Нет активных заказов', desc: 'Все заказы выполнены или в архиве', compact: true }));
+        (() => {
+          // При активном поиске ищем по ВСЕМ разделам, включая архив —
+          // иначе заказ «не находится», хотя он есть.
+          const q = needsSearch.trim().toLowerCase();
+          const filtered = data.orders
+            .filter(o => !o.parentOrderId)
+            .filter(o => q ? true : needsStages[o.id] === needsScope)
+            .filter(o => !q || o.number.toLowerCase().includes(q) || (o.product || '').toLowerCase().includes(q))
+            .sort((a, b) => (!q && needsScope === 'archive')
+              ? (b.deadline || '').localeCompare(a.deadline || '')
+              : (a.deadline || '').localeCompare(b.deadline || ''));
+
+          if (filtered.length === 0) {
+            const es = q
+              ? { icon: '🔍', title: 'Ничего не найдено', desc: 'Поиск идёт по всем разделам, включая архив' }
+              : needsScope === 'active'
+              ? { icon: '🎉', title: 'Нет заказов в работе', desc: 'По всем активным заказам материалы получены' }
+              : needsScope === 'closed'
+              ? { icon: '✅', title: 'Пока пусто', desc: 'Сюда попадают заказы, по которым всё получено' }
+              : { icon: '📁', title: 'Архив пуст', desc: 'Сюда попадают отгруженные и архивные заказы' };
+            return h('div', { style: S.card }, h(EmptyState, { icon: es.icon, title: es.title, desc: es.desc, compact: true }));
+          }
 
           return filtered.map(order => {
             const orderNeeds = needsAll[order.id];
@@ -1664,6 +1726,10 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnl
               h('div', { style: { flex: 1, minWidth: 0 } },
                 h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 } },
                   h('span', { style: { fontSize: 13, fontWeight: 600, color: AM2 } }, order.number),
+                  needsStages[order.id] !== 'active' && h('span', {
+                    style: { fontSize: 10, padding: '1px 6px', borderRadius: 6, flexShrink: 0,
+                      background: 'var(--bg)', color: 'var(--muted)', border: '0.5px solid var(--border)' } },
+                    order.shipped ? 'отгружен' : order.archived ? 'архив' : 'закрыт'),
                   h('span', { style: { fontSize: 12, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, order.product || ''),
                 ),
                 h('div', { style: { fontSize: 11, color: 'var(--muted)', display: 'flex', gap: 10 } },
