@@ -76,6 +76,25 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
     addToast('Операция восстановлена', 'success');
   }, [data, onUpdate, addToast]);
 
+  // Архивация заказа целиком (вместе со всеми операциями) прямо из раздела операций
+  const archiveOrder = useCallback(async (orderId) => {
+    const order = data.orders.find(o => o.id === orderId);
+    if (!order) return;
+    const orderOps = data.ops.filter(o => o.orderId === orderId && !o.archived);
+    if (!(await askConfirm({ message: `Переместить заказ ${order.number} и все его операции (${orderOps.length} шт.) в архив?`, danger: true }))) return;
+    const ids = new Set([orderId]);
+    data.orders.forEach(o => { if (o.parentOrderId === orderId) ids.add(o.id); });
+    let d = {
+      ...data,
+      orders: data.orders.map(o => ids.has(o.id) ? { ...o, archived: true } : o),
+      ops: data.ops.map(o => ids.has(o.orderId) ? { ...o, archived: true } : o),
+    };
+    d = logAction(d, 'order_archive', { orderId, orderNumber: order.number });
+    const prev = data;
+    onUpdate(d); DB.save(d).catch(() => onUpdate(prev));
+    addToast(`Заказ ${order.number} и ${orderOps.length} операций архивированы`, 'info');
+  }, [data, onUpdate, addToast]);
+
   const assignWorkers = useCallback(async (opId, workerIds) => {
     const op = data.ops.find(o => o.id === opId);
     const invalidWorkers = data.workers.filter(w => workerIds.includes(w.id) && w.competences && w.competences.length > 0 && !w.competences.includes(op.name));
@@ -519,7 +538,8 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
               ] : !op.archived ? [
                 h('button', { key: 'qr', style: gbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => onShowQR(op, data.workers.find(w => w.id === op.workerIds?.[0])) }, 'QR'),
                 h('button', { key: 'edit', style: (editingId === op.id ? abtn : gbtn)({ fontSize: 11, padding: '4px 8px' }), onClick: () => editingId === op.id ? resetForm() : edit(op) }, editingId === op.id ? '✕' : '✎'),
-                editingId !== op.id && h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => del(op.id) }, '✕')
+                editingId !== op.id && h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), title: 'Архивировать операцию', onClick: () => del(op.id) }, '✕'),
+                editingId !== op.id && h('button', { key: 'delOrder', style: rbtn({ fontSize: 11, padding: '4px 8px', background: '#fff3f3' }), title: 'Архивировать весь заказ и все его операции', onClick: e => { e.stopPropagation(); archiveOrder(op.orderId); } }, '📦')
               ] : h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => restore(op.id) }, '↩')
             ) },
         ],
