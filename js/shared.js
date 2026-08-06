@@ -776,8 +776,8 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
           id: 'prokat', name: 'Профильный прокат',
           items: result.pipes.map(function(p) { return {
             id: uid(), name: p.name, code: p.designation || '',
-            material: p.material || '', thickness: '',
-            qty: p.qty || 1, unit: 'шт', length: '',
+            material: p.material || '', thickness: p.thickness || '',
+            qty: p.qty || 1, unit: 'шт', length: p.pipeLength || '',
             note: '', status: 'pending'
           }; })
         });
