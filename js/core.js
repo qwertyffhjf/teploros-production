@@ -3623,6 +3623,14 @@ const CDN = {
   html5qrcode: { url: 'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js',
                  fallback: 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js',
                  check: () => typeof window.Html5Qrcode !== 'undefined' },
+  pdfjs:       { url: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+                 fallback: 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js',
+                 check: () => typeof window.pdfjsLib !== 'undefined',
+                 after: () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+                   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; } },
+  jszip:       { url: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
+                 fallback: 'https://unpkg.com/jszip@3.10.1/dist/jszip.min.js',
+                 check: () => typeof window.JSZip !== 'undefined' },
 };
 
 const BUNDLES = {
@@ -3673,11 +3681,11 @@ function ensureCdn(key) {
   _cdnPromises[key] = new Promise((resolve, reject) => {
     const s = document.createElement('script');
     s.src = spec.url;
-    s.onload = () => { _loadedCdn.add(key); resolve(); };
+    s.onload = () => { _loadedCdn.add(key); if (spec.after) spec.after(); resolve(); };
     s.onerror = () => {
       const s2 = document.createElement('script');
       s2.src = spec.fallback;
-      s2.onload = () => { _loadedCdn.add(key); resolve(); };
+      s2.onload = () => { _loadedCdn.add(key); if (spec.after) spec.after(); resolve(); };
       s2.onerror = () => reject(new Error('Не удалось загрузить ' + key));
       document.head.appendChild(s2);
     };
