@@ -376,6 +376,25 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
         )
       )
     ),
+    // Кнопка архивации заказа — видна когда выбран конкретный заказ в фильтре
+    (() => {
+      const statusFilters = ['all', 'pending', 'active', 'on_check', 'issues', 'done', 'pending_approval'];
+      if (statusFilters.includes(filt)) return null;
+      const ord = data.orders.find(o => o.id === filt);
+      if (!ord) return null;
+      const orderOpsCount = data.ops.filter(o => o.orderId === filt && !o.archived).length;
+      return h('div', { style: { display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' } },
+        h('span', { style: { fontSize: 12, color: 'var(--muted)' } }, `Заказ ${ord.number} · ${orderOpsCount} операций`),
+        h('button', {
+          style: { ...rbtn({ fontSize: 12, padding: '5px 12px' }), background: '#fff3f3' },
+          title: 'Архивировать заказ и все его операции',
+          onClick: async () => {
+            await archiveOrder(ord.id);
+            setFilt('all');
+          }
+        }, '📦 Архивировать заказ')
+      );
+    })(),
     // 🎯 Контролы для пакетного удаления
     selectedOps.size > 0 && h('div', { style: { display: 'flex', gap: 8, marginBottom: 12, padding: '10px 14px', background: AM3, border: `1px solid ${AM}`, borderRadius: 8, alignItems: 'center', flexWrap: 'wrap' } },
       h('span', { style: { fontSize: 13, color: AM2, fontWeight: 600 } }, `✓ Выбрано: ${selectedOps.size}`),
