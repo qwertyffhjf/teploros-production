@@ -1213,7 +1213,13 @@ const WarehouseScreen = memo(({ data, onUpdate, addToast, currentUserId, readOnl
       })
     };
     try {
-      await MaterialsDB.save(orderId, updNeeds);
+      // save() возвращает false вместо исключения — без этой проверки склад
+      // показывал «Принято» даже когда запись не прошла.
+      const okSave = await MaterialsDB.save(orderId, updNeeds);
+      if (!okSave) {
+        addToast(MaterialsDB._lastError || 'Ошибка сохранения — проверьте соединение', 'error');
+        return;
+      }
       setNeedsAll(prev => ({ ...prev, [orderId]: updNeeds }));
 
       // Авто-подтверждение order.components если ВСЕ позиции заявки получены
