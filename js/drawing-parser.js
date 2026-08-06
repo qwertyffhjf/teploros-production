@@ -93,8 +93,8 @@ function dpParseSpecPage(pageItems, cols) {
     var bodyText = dpNormalize(body.join(' '));
     if (!bodyText) return;
 
-    // «Номер [Обозначение V3-…] Название»
-    var m = bodyText.match(/^(\d{1,3})\s+(V3-[\w.\-]+)?\s*(.*)$/);
+    // «Номер [Обозначение V3-… / КВК-200… и т.д.] Название»
+    var m = bodyText.match(/^(\d{1,3})\s+((?:V3|КВК|КСВа|КВа)\s*-[\w.\-]+)?\s*(.*)$/);
     if (!m) return;
     var pos = parseInt(m[1]);
     var designation = (m[2] || '').trim();
@@ -182,6 +182,37 @@ function dpMergeSections(target, source) {
     if (!target[k]) target[k] = [];
     target[k] = target[k].concat(source[k]);
   });
+}
+
+// Разбор строки проката: «Труба 57 x 3,5 ГОСТ 10704-91. L=142 мм.»
+// → { name: 'Труба 57×3,5', material: 'ГОСТ 10704-91', thickness: '3,5', pipeLength: '142' }
+function dpParsePipeInfo(rawName) {
+  var info = { name: rawName, material: '', thickness: '', pipeLength: '' };
+  var s = rawName;
+
+  // 1. Длина: «L=142 мм.» в конце
+  var mL = s.match(/\.?\s*L\s*=\s*(\d+(?:[.,]\d+)?)\s*(?:мм\.?)?\s*\.?\s*$/i);
+  if (mL) {
+    info.pipeLength = mL[1].replace(',', '.');
+    s = s.slice(0, s.length - mL[0].length).trim();
+  }
+
+  // 2. ГОСТ
+  var mG = s.match(/\s*(ГОСТ\s*[\d\-]+)/);
+  if (mG) {
+    info.material = mG[1].replace(/\s{2,}/g, ' ');
+    s = s.replace(mG[0], '').replace(/[.\s]+$/, '').trim();
+  }
+
+  // 3. Толщина из «D x T» (труба, полоса)
+  var mT = s.match(/(\d+(?:[.,]\d+)?)\s*[xх×]\s*(\d+(?:[.,]\d+)?)/);
+  if (mT) {
+    info.thickness = mT[2].replace(',', '.');
+    s = s.replace(/(\d+(?:[.,]\d+)?)\s*[xх×]\s*(\d+(?:[.,]\d+)?)/, mT[1] + '×' + mT[2]);
+  }
+
+  info.name = s.trim();
+  return info;
 }
 
 // Чтение PDF в массив страниц с координатами текста
@@ -394,7 +425,15 @@ async function parseDrawingFiles(files, onProgress) {
   });
 
   var cutting = allDetails.filter(function(d) { return d.hasDxf; });
-  var pipes = allDetails.filter(function(d) { return /Труба|Швеллер|Круг \d|Полоса/.test(d.name) && !d.hasDxf; });
+  var pipes = allDetails.filter(function(d) { return /Труба|Швеллер|Круг \d|Полоса/.test(d.name) && !d.hasDxf; })
+    .map(function(d) {
+      var pi = dpParsePipeInfo(d.name);
+      d.name = pi.name;
+      d.material = d.material || pi.material;
+      d.thickness = d.thickness || pi.thickness;
+      d.pipeLength = pi.pipeLength;
+      return d;
+    });
   var otherDetails = allDetails.filter(function(d) {
     return !d.hasDxf && !/Труба|Швеллер|Круг \d|Полоса/.test(d.name);
   });
