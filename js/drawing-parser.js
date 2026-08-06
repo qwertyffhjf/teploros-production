@@ -151,8 +151,16 @@ function dpExtractMaterial(pages) {
       var m2 = line.match(/(\d+(?:[.,]\d+)?)\s+ГОСТ\s+19903/);
       if (m2) { thickness = m2[1].replace(',', '.'); return; }
     }
+    // Сортовой прокат в основной надписи: «Швеллер 12П ГОСТ 8240-97»,
+    // «Уголок 63х5 ГОСТ 8509-93», «Круг 20 ГОСТ 2590-2006», «Двутавр 20Б1».
+    // Идёт ДО марки стали: в строке «Швеллер 12П Ст3сп5 ГОСТ 8240-97» нужно
+    // обозначение профиля — из него считается погонная масса.
+    var mProf = line.match(/((?:Швеллер|Уголок|Двутавр|Балка|Круг|Квадрат)\s+[A-Za-zА-Яа-яёЁ\d.,х×*\/-]+.*?ГОСТ\s+[\d\-]+)/i);
+    if (mProf) { material = dpNormalize(mProf[1]); return; }
     // Марка стали: «Ст.3 пс -5 ГОСТ 14637-89» → «Ст.3пс-5»
-    var mSt = line.match(/(Ст\.?\s?\d[\w\s\-]*?)\s+ГОСТ\s+([\d\-]+)/);
+    // \w в JS не включает кириллицу — без А-Яа-яёЁ марки «Ст3пс», «Ст3сп5»
+    // не распознавались вовсе, хотя комментарий выше описывает именно их.
+    var mSt = line.match(/(Ст\.?\s?\d[\w\sА-Яа-яёЁ\-]*?)\s+ГОСТ\s+([\d\-]+)/);
     if (mSt && material.indexOf('Ст') === -1 && !/Лист|Сталь/.test(material)) {
       var grade = mSt[1].replace(/\s+/g, '');
       material = material ? material + ', ' + grade : grade;
@@ -424,18 +432,28 @@ async function parseDrawingFiles(files, onProgress) {
     });
   });
 
-  var cutting = allDetails.filter(function(d) { return d.hasDxf; });
-  var pipes = allDetails.filter(function(d) { return /Труба|Швеллер|Круг \d|Полоса/.test(d.name) && !d.hasDxf; })
-    .map(function(d) {
-      var pi = dpParsePipeInfo(d.name);
-      d.name = pi.name;
-      d.material = d.material || pi.material;
-      d.thickness = d.thickness || pi.thickness;
-      d.pipeLength = pi.pipeLength;
-      return d;
-    });
-  var otherDetails = allDetails.filter(function(d) {
-    return !d.hasDxf && !/Труба|Швеллер|Круг \d|Полоса/.test(d.name);
+  // Прокат определяем и по названию детали, и по её материалу: деталь «Стойка»
+  // из швеллера раньше уезжала в «Прочие» и для закупки не существовала.
+  // Уголок, двутавр и квадрат в старый список вообще не входили.
+  var RE_PROFILE = /Труба|Швеллер|Уголок|Двутавр|Балка|Круг\s+\d|Квадрат\s+\d|Полоса/i;
+  var isProfile = function(d) {
+    return RE_PROFILE.test(d.name || '') || RE_PROFILE.test(d.material || '');
+  };
+
+  var cutting  = allDetails.filter(function(d) { return d.hasDxf; });
+  // Разделяем ДО .map: dpParsePipeInfo мутирует d.name, и порядок фильтров
+  // иначе начал бы влиять на результат.
+  var nonDxf   = allDetails.filter(function(d) { return !d.hasDxf; });
+  var pipesRaw = nonDxf.filter(isProfile);
+  var otherDetails = nonDxf.filter(function(d) { return !isProfile(d); });
+
+  var pipes = pipesRaw.map(function(d) {
+    var pi = dpParsePipeInfo(d.name);
+    d.name = pi.name;
+    d.material = d.material || pi.material;
+    d.thickness = d.thickness || pi.thickness;
+    d.pipeLength = pi.pipeLength;
+    return d;
   });
 
   // Дедупликация
