@@ -218,83 +218,185 @@ const calcOrderCost = (order, data, hourlyRate = 500) => {
 const MaterialsDB = (() => {
   if (!firestore) return null;
   const col = () => firestore.collection('materials');
-  const docRef = (year) => col().doc(`needs_${year}`);
   const currentYear = () => new Date().getFullYear();
 
-  return {
-    // Загрузить потребности по заказу (может быть в текущем или прошлом году)
+  // ── Шардирование заявок ─────────────────────────────────────────────
+  // Раньше ВСЕ заявки года лежали в одном документе needs_{year}. После
+  // подключения парсера чертежей заявка стала весить ~16 КБ (≈70 позиций),
+  // и при 30–80 заказах в год документ упирался в лимит Firestore 1 МБ
+  // примерно на 55-м заказе. В этот момент переставали сохраняться заявки
+  // по ВСЕМ заказам сразу, а не только по новому.
+  //
+  // Теперь заказ детерминированно попадает в один из NEEDS_SHARDS документов
+  // needs_{year}_s{0..7}. Чтение/запись конкретного заказа — по-прежнему один
+  // документ (шард вычисляется из orderId), список для склада — 8 чтений.
+  // Старый документ needs_{year} остаётся читаемым: данные переезжают лениво,
+  // при первом сохранении заказа. Разовая миграция не нужна.
+  const NEEDS_SHARDS = 8;
+
+  const shardOf = (orderId) => {
+    const s = String(orderId || '');
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    return Math.abs(h) % NEEDS_SHARDS;
+  };
+
+  const shardRef  = (year, idx)     => col().doc(`needs_${year}_s${idx}`);
+  const legacyRef = (year)          => col().doc(`needs_${year}`);
+  const refFor    = (year, orderId) => shardRef(year, shardOf(orderId));
+
+  // Заказы, найденные в старом документе — чтобы не делать лишнее чтение
+  // legacy при каждом сохранении.
+  const legacySeen = new Set();
+
+  const readPayload = (snap) => {
+    if (!snap || !snap.exists) return {};
+    const d = snap.data();
+    try { return d.payload ? JSON.parse(d.payload) : d; }
+    catch (e) { console.error('MaterialsDB: JSON.parse failed', e); return {}; }
+  };
+
+  const MAX_KB  = 900;   // лимит Firestore 1 МБ, оставляем запас (как в DB.save)
+  const WARN_KB = 700;
+
+  // Убрать заказ из старого общего документа после переезда в шард
+  const migrateOut = async (year, orderId) => {
+    const ref = legacyRef(year);
+    await firestore.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return;
+      const payload = readPayload(snap);
+      if (!payload.orders || !payload.orders[orderId]) return;
+      delete payload.orders[orderId];
+      tx.set(ref, {
+        payload: JSON.stringify(payload),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+    legacySeen.delete(orderId);
+  };
+
+  const api = {
+    _lastError: null,     // текст последней ошибки — для тостов
+    _sizeWarning: null,   // КБ, если шард подходит к лимиту
+
+    // Загрузить потребности по заказу (текущий или прошлый год)
     async load(orderId) {
       const yr = currentYear();
       for (const y of [yr, yr - 1]) {
+        // 1) новый формат — шард
         try {
-          const snap = await docRef(y).get();
-          if (snap.exists) {
-            const d = snap.data();
-            const payload = d.payload ? JSON.parse(d.payload) : d;
-            if (payload.orders?.[orderId]) {
-              return { year: y, needs: payload.orders[orderId] };
-            }
+          const p = readPayload(await refFor(y, orderId).get());
+          if (p.orders && p.orders[orderId]) return { year: y, needs: p.orders[orderId] };
+        } catch (e) { /* ignore */ }
+        // 2) старый формат — общий документ года
+        try {
+          const p = readPayload(await legacyRef(y).get());
+          if (p.orders && p.orders[orderId]) {
+            legacySeen.add(orderId);
+            return { year: y, needs: p.orders[orderId] };
           }
-        } catch(e) { /* ignore */ }
+        } catch (e) { /* ignore */ }
       }
       return { year: yr, needs: null };
     },
 
-    // Сохранить потребности по заказу
+    // Сохранить потребности по заказу.
+    // Транзакция: двое могут править заявки по разным заказам одновременно
+    // и не затирать друг друга (раньше был read-modify-write всего документа —
+    // правка того, кто сохранил первым, молча пропадала).
     async save(orderId, needs, year) {
-      const yr = year || currentYear();
-      const ref = docRef(yr);
+      const yr  = year || currentYear();
+      const ref = refFor(yr, orderId);
+      api._lastError = null;
       try {
-        const snap = await ref.get();
-        let payload = {};
-        if (snap.exists) {
-          const d = snap.data();
-          try { payload = d.payload ? JSON.parse(d.payload) : d; } catch(e) { payload = d; console.error('shared JSON.parse failed', e); }
-        }
-        if (!payload.orders) payload.orders = {};
-        payload.orders[orderId] = needs;
-        await ref.set({ payload: JSON.stringify(payload), updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
-        return true;
-      } catch(e) {
+        await firestore.runTransaction(async (tx) => {
+          const snap    = await tx.get(ref);
+          const payload = readPayload(snap);
+          if (!payload.orders) payload.orders = {};
+          payload.orders[orderId] = needs;
+
+          const json   = JSON.stringify(payload);
+          const sizeKb = Math.round(json.length / 1024);
+          if (sizeKb > MAX_KB) {
+            throw new Error(`Заявки не помещаются в документ (${sizeKb} КБ из 1024). Заархивируйте старые заказы.`);
+          }
+          api._sizeWarning = sizeKb > WARN_KB ? sizeKb : null;
+          if (api._sizeWarning) console.warn(`MaterialsDB: шард ${sizeKb} КБ — близко к лимиту`);
+
+          tx.set(ref, {
+            payload: json,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          });
+        });
+      } catch (e) {
         console.error('MaterialsDB.save error:', e);
+        api._lastError = (e && e.message) ? e.message : 'Ошибка сохранения';
         return false;
       }
+      // Ленивая миграция из старого документа — не критично, если не удалась
+      if (legacySeen.has(orderId)) {
+        try { await migrateOut(yr, orderId); }
+        catch (e) { console.warn('MaterialsDB: миграция из legacy не удалась', e); }
+      }
+      return true;
     },
 
-    // Загрузить все потребности за год (для склада)
+    // Загрузить все потребности за год (экран склада): 8 шардов + старый документ
     async loadAll(year) {
-      const yr = year || currentYear();
+      const yr  = year || currentYear();
+      const out = {};
       try {
-        const snap = await docRef(yr).get();
-        if (!snap.exists) return {};
-        const d = snap.data();
-        const payload = d.payload ? JSON.parse(d.payload) : d;
-        return payload.orders || {};
-      } catch(e) { return {}; }
+        const refs = [];
+        for (let i = 0; i < NEEDS_SHARDS; i++) refs.push(shardRef(yr, i));
+        refs.push(legacyRef(yr));
+        const snaps = await Promise.all(refs.map(r => r.get().catch(() => null)));
+
+        // Сначала старый документ, потом шарды — у шардов приоритет
+        const legacy = readPayload(snaps[NEEDS_SHARDS]);
+        Object.keys(legacy.orders || {}).forEach(id => {
+          legacySeen.add(id);
+          out[id] = legacy.orders[id];
+        });
+        for (let i = 0; i < NEEDS_SHARDS; i++) {
+          const p = readPayload(snaps[i]);
+          Object.keys(p.orders || {}).forEach(id => { out[id] = p.orders[id]; });
+        }
+      } catch (e) {
+        console.error('MaterialsDB.loadAll error:', e);
+      }
+      return out;
     },
 
-    // Удалить потребности по заказу (используется при безвозвратном удалении заказа —
-    // например при чистке дублей). Ищем в текущем и прошлом году, как и load().
+    // Удалить потребности по заказу (при безвозвратном удалении заказа).
+    // Чистим и шард, и старый документ, в текущем и прошлом году.
     async remove(orderId) {
       const yr = currentYear();
+      let removed = false;
       for (const y of [yr, yr - 1]) {
-        try {
-          const ref = docRef(y);
-          const snap = await ref.get();
-          if (!snap.exists) continue;
-          const d = snap.data();
-          let payload = {};
-          try { payload = d.payload ? JSON.parse(d.payload) : d; } catch(e) { payload = d; }
-          if (payload.orders && payload.orders[orderId]) {
-            delete payload.orders[orderId];
-            await ref.set({ payload: JSON.stringify(payload), updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
-            return true;
-          }
-        } catch(e) { /* ignore */ }
+        for (const ref of [refFor(y, orderId), legacyRef(y)]) {
+          try {
+            await firestore.runTransaction(async (tx) => {
+              const snap = await tx.get(ref);
+              if (!snap.exists) return;
+              const payload = readPayload(snap);
+              if (!payload.orders || !payload.orders[orderId]) return;
+              delete payload.orders[orderId];
+              tx.set(ref, {
+                payload: JSON.stringify(payload),
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+              });
+              removed = true;
+            });
+          } catch (e) { /* ignore */ }
+        }
       }
-      return false;
+      legacySeen.delete(orderId);
+      return removed;
     },
   };
+
+  return api;
 })();
 
 // ── Утилиты ────────────────────────────────────────────────
@@ -703,7 +805,7 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
     const ok = await MaterialsDB.save(order.id, updNeeds, year);
     setSaving(false);
     setDirty(false);
-    if (!ok) addToast('Ошибка сохранения материалов', 'error');
+    if (!ok) addToast(MaterialsDB._lastError || 'Ошибка сохранения материалов', 'error');
   }, [order?.id, year, addToast]);
 
   const updNeeds = useCallback((fn) => {
