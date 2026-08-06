@@ -167,7 +167,9 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
   }, [data, onUpdate, addToast]);
 
   const opsToShow = useMemo(() => {
-    let filtered = data.ops.filter(o => showArchived ? true : !o.archived);
+    // Скрываем операции архивных заказов (даже если у самой операции archived=false — защита от старых данных)
+    const archivedOrderIds = new Set(data.orders.filter(o => o.archived).map(o => o.id));
+    let filtered = data.ops.filter(o => showArchived ? !archivedOrderIds.has(o.orderId) : (!o.archived && !archivedOrderIds.has(o.orderId)));
     // Фильтр по типу продукции (через заказ)
     if (opsFilterType) {
       const typeOrderIds = new Set(data.orders.filter(o => o.productType === opsFilterType).map(o => o.id));
@@ -1150,8 +1152,15 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     const hasSubOrders = data.orders.some(o => o.parentOrderId === id);
     const msg = hasSubOrders ? 'Переместить заказ и все подзаказы в архив?' : 'Переместить заказ в архив?';
     if (!(await askConfirm({ message: msg, danger: false }))) return;
-    // Архивируем заказ и все его подзаказы
-    let d = { ...data, orders: data.orders.map(o => o.id === id || o.parentOrderId === id ? { ...o, archived: true } : o) };
+    // Собираем все ID (заказ + подзаказы)
+    const ids = new Set([id]);
+    data.orders.forEach(o => { if (o.parentOrderId === id) ids.add(o.id); });
+    // Архивируем заказы и все связанные операции
+    let d = {
+      ...data,
+      orders: data.orders.map(o => ids.has(o.id) ? { ...o, archived: true } : o),
+      ops: data.ops.map(o => ids.has(o.orderId) ? { ...o, archived: true } : o),
+    };
     d = logAction(d, 'order_archive', { orderId: id, orderNumber: order?.number });
     const prevDataOrder = data;
     onUpdate(d); DB.save(d).catch(() => onUpdate(prevDataOrder));
@@ -1159,11 +1168,17 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   }, [data, onUpdate, addToast]);
 
   const restore = useCallback(async id => {
-    // Восстанавливаем заказ и все его подзаказы
-    let d = { ...data, orders: data.orders.map(o => o.id === id || o.parentOrderId === id ? { ...o, archived: false } : o) };
+    // Восстанавливаем заказ, подзаказы и все их операции
+    const ids = new Set([id]);
+    data.orders.forEach(o => { if (o.parentOrderId === id) ids.add(o.id); });
+    let d = {
+      ...data,
+      orders: data.orders.map(o => ids.has(o.id) ? { ...o, archived: false } : o),
+      ops: data.ops.map(o => ids.has(o.orderId) ? { ...o, archived: false } : o),
+    };
     d = logAction(d, 'order_restore', { orderId: id });
     onUpdate(d); DB.save(d).catch(() => onUpdate(data));
-    addToast('Заказ восстановлен', 'success');
+    addToast('Заказ восстановлён', 'success');
   }, [data, onUpdate, addToast]);
 
   // ── Безвозвратное удаление заказа(ов) вместе со всеми этапами ──────────
