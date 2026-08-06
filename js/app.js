@@ -1404,18 +1404,18 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
         return m ? Number(m[1].replace(',','.')) : 0;
       })(),
       components: p.components,
-      isParentOrder: p.productQty > 1,
+      isParentOrder: false,
     };
 
-    // Если qty = 1 — операции создаём сразу (нет смысла делить)
-    const newOps = p.productQty === 1 ? stages.map(stage => ({
-      id: uid(), orderId, name: stage.name, stageId: stage.id, qty: 1,
+    // Операции создаём всегда — qty передаём из заказа
+    const newOps = stages.map(stage => ({
+      id: uid(), orderId, name: stage.name, stageId: stage.id, qty: p.productQty,
       workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
       archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null,
       plannedHours: stage.plannedHours || undefined, drawingUrl: stage.drawingUrl || undefined,
       requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.toLowerCase().includes('опресс'),
       requiresPressureTest: stage.name.toLowerCase().includes('опресс'),
-    })) : [];
+    }));
 
     // Поставки материалов — всегда у родителя
     const newDeliveries = [];
@@ -1456,22 +1456,15 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
     onUpdate(d);
     setCreatedCount(built.length);
 
-    const queue = built.filter(b => b.order.qty > 1).map(b => b.order.id);
-    if (queue.length > 0) {
-      setSplitQueue(queue);
-      setSplitIndex(0);
-      setStep('split');
-    } else {
-      const totalOps = built.reduce((s, b) => s + b.ops.length, 0);
-      const totalComp = built.reduce((s, b) => s + (b.order.components?.length || 0), 0);
-      const totalDel = built.reduce((s, b) => s + b.deliveries.length, 0);
-      const msg = multi
-        ? [`${built.length} заказа создано`, `${totalOps} операций`, totalComp > 0 ? `${totalComp} комплектующих` : null, totalDel > 0 ? `${totalDel} поставок материалов` : null].filter(Boolean).join(' · ')
-        : [`Заказ ${built[0].order.number} создан`, `${totalOps} операций`, totalComp > 0 ? `${totalComp} комплектующих` : null, totalDel > 0 ? `${totalDel} поставок материалов` : null].filter(Boolean).join(' · ');
-      addToast(`✓ ${msg}`, 'success');
-      setStep('done');
-      setTimeout(onClose, 1500);
-    }
+    const totalOps = built.reduce((s, b) => s + b.ops.length, 0);
+    const totalComp = built.reduce((s, b) => s + (b.order.components?.length || 0), 0);
+    const totalDel = built.reduce((s, b) => s + b.deliveries.length, 0);
+    const msg = multi
+      ? [`${built.length} заказа создано`, `${totalOps} операций`, totalComp > 0 ? `${totalComp} комплектующих` : null, totalDel > 0 ? `${totalDel} поставок материалов` : null].filter(Boolean).join(' · ')
+      : [`Заказ ${built[0].order.number} создан`, `${totalOps} операций`, totalComp > 0 ? `${totalComp} комплектующих` : null, totalDel > 0 ? `${totalDel} поставок материалов` : null].filter(Boolean).join(' · ');
+    addToast(`✓ ${msg}`, 'success');
+    setStep('done');
+    setTimeout(onClose, 1500);
   };
 
   // Вызывается когда SubOrderSplitStep завершил разделение текущего заказа
