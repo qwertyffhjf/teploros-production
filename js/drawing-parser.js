@@ -1,4 +1,4 @@
-// teploros · drawing-parser.js v4
+// teploros · drawing-parser.js v5
 // Парсер PDF-чертежей: извлекает спецификации, покупные изделия,
 // детали для лазерного раскроя (по наличию DXF), материалы и массу.
 // Принимает файлы из input[multiple] или перетаскивания папки.
@@ -106,7 +106,8 @@ function dpParseSpecPage(pageItems, cols) {
       if (!isNaN(qn)) qty = qn;
     }
     if (qty === 0 && name) {
-      var m2 = name.match(/^(.+?)\s+(\d{1,3})$/);
+      // Строго 1-2 цифры в конце: количество в спецификации не бывает >99
+      var m2 = name.match(/^(.+?)\s+(\d{1,2})$/);
       if (m2) { name = m2[1]; qty = parseInt(m2[2]); }
     }
 
@@ -412,25 +413,69 @@ async function parseDrawingFiles(files, onProgress) {
 
   onProgress(0.95, 'Формирование результата…');
 
-  // 4. Сбор результата
+  // 4. Сбор результата с учётом дерева спецификаций
+  //    Проблема: если СП «Теплообменник с обвесом» ссылается на дочерний СП
+  //    «Теплообменник», парсер обрабатывает оба независимо и дублирует позиции.
+  //    Решение: строим дерево, обходим его, пропуская детали/стандартные из
+  //    родительского СП если они принадлежат дочернему СП. Также учитываем
+  //    множитель: если сборочная единица входит в количестве >1 (напр. Петля ×4),
+  //    все её стандартные изделия умножаются на это количество.
+
+  // 4a. Собираем множители из секций assemblies
+  var childQty = {};  // designation → qty (сколько раз сборка входит в родителя)
+  var childOf = {};   // childDesignation → parentDesignation
+  Object.keys(allSpecs).forEach(function(parent) {
+    var asm = allSpecs[parent].assemblies || [];
+    asm.forEach(function(it) {
+      if (it.designation && allSpecs[it.designation]) {
+        childQty[it.designation] = it.qty || 1;
+        childOf[it.designation] = parent;
+      }
+    });
+  });
+
+  // 4b. Определяем «корневые» спецификации (те, кто сам не является дочерним)
+  var roots = Object.keys(allSpecs).filter(function(k) { return !childOf[k]; });
+
+  // 4c. Рекурсивный обход дерева
   var purchased = [], allDetails = [];
-  Object.keys(allSpecs).sort().forEach(function(parent) {
-    var sec = allSpecs[parent];
+  var visited = {};
+
+  function flattenSpec(specKey, multiplier) {
+    if (visited[specKey]) return;  // защита от циклов
+    visited[specKey] = true;
+    var sec = allSpecs[specKey];
+    if (!sec) return;
+
+    // Стандартные изделия — с множителем
     (sec.standard_items || []).forEach(function(it) {
-      purchased.push({ name: it.name, qty: it.qty, designation: it.designation, parent: parent });
+      purchased.push({ name: it.name, qty: it.qty * multiplier,
+        designation: it.designation, parent: specKey });
     });
     (sec.other_items || []).forEach(function(it) {
-      purchased.push({ name: it.name, qty: it.qty, designation: it.designation, parent: parent });
+      purchased.push({ name: it.name, qty: it.qty * multiplier,
+        designation: it.designation, parent: specKey });
     });
+
+    // Детали — с множителем
     (sec.details || []).forEach(function(it) {
       var d = it.designation, hasDxf = false;
       if (d) Object.keys(dxfNames).forEach(function(dn) { if (dn.indexOf(d) !== -1) hasDxf = true; });
       var mi = detailMaterials[d] || {};
       allDetails.push({ pos: it.pos, designation: d, name: it.name || mi.name || '',
-        qty: it.qty, parent: parent, material: mi.material || '',
+        qty: it.qty * multiplier, parent: specKey, material: mi.material || '',
         thickness: mi.thickness || '', mass: mi.mass || '', hasDxf: hasDxf });
     });
-  });
+
+    // Рекурсия в дочерние сборочные единицы
+    (sec.assemblies || []).forEach(function(it) {
+      if (it.designation && allSpecs[it.designation]) {
+        flattenSpec(it.designation, multiplier * (it.qty || 1));
+      }
+    });
+  }
+
+  roots.forEach(function(r) { flattenSpec(r, 1); });
 
   // Прокат определяем и по названию детали, и по её материалу: деталь «Стойка»
   // из швеллера раньше уезжала в «Прочие» и для закупки не существовала.
