@@ -1170,7 +1170,7 @@ const ReceiveDeliveryScreen = memo(({ deliveryId, data, onUpdate, currentUserId,
       );
       const event = { id: uid(), type: 'material_receive', materialId: delivery.materialId, orderId: delivery.orderId, deliveryId: delivery.id, qty: qtyNum, ts: now(), confirmedBy: currentUserId, note };
       const d = { ...data, materialDeliveries: updDeliveries, materials: updMaterials, events: [...data.events, event] };
-      await DB.save(d); onUpdate(d);
+      onUpdate(d);
       addToast(status === 'confirmed' ? '✅ Поставка подтверждена!' : '⚡ Частичная поставка принята', 'success');
       onClose();
     } catch(e) {
@@ -1360,6 +1360,8 @@ const _mergeFullState = (toSave, remoteData, remoteWh, remoteTs, remoteEv, base)
 const DB = {
   _saveTimer:   null,
   _saveResolve: null,   // resolve-функция текущего pending save Promise
+  _saveReject:  null,   // reject-функция текущего pending save Promise
+  _saveWaiters: [],     // промисы вытесненных (superseded) сейвов — разрешаются по факту РЕАЛЬНОЙ записи
   _tsSaveTimer:   null, // отдельный дебаунс для быстрого сохранения табеля
   _tsSaveResolve: null,
   _saving:      false,  // true пока идёт сохранение (от вызова до завершения записи) — блокирует onSnapshot
@@ -1368,6 +1370,14 @@ const DB = {
   _online:      true,    // текущий статус сети
   _version:     null,    // версия последних загруженных данных (для optimistic locking)
   _saveHistory: [],      // 📜 История сохранений: [{ts, version, userId, summary}] — последние 10
+
+  // Разрешить/отклонить все вытесненные сейвы. Вызывается ТОЛЬКО по факту
+  // реального завершения записи в Firestore (успех или ошибка).
+  _flushSaveWaiters(err, val) {
+    const list = DB._saveWaiters;
+    DB._saveWaiters = [];
+    list.forEach(w => { try { err ? w.reject(err) : w.resolve(val); } catch(e) {} });
+  },
   _lastBackupAt: null,   // ⏱ когда последний раз писали реальный снапшот в app_backups
   // «База» для трёхстороннего слияния при конфликте (аудит): снапшот данных на момент,
   // когда локальная сессия последний раз была синхронизирована с сервером — либо через
@@ -1709,15 +1719,23 @@ const DB = {
       // ── Debounce с Promise — каждый вызов возвращает промис, разрешаемый по факту записи ──
       // Если предыдущий debounce ещё не сработал — отменяем его и резолвим (данные superseded)
       if (DB._saveTimer) clearTimeout(DB._saveTimer);
-      if (DB._saveResolve) { DB._saveResolve(); DB._saveResolve = null; }
+      // ⚠️ КРИТИЧНО: НЕ резолвим промис вытесненного сейва здесь.
+      // Раньше он резолвился досрочно — вызывающий код (App.save) считал запись
+      // завершённой, сбрасывал savingRef через 300мс, и в это окно проскакивал
+      // onSnapshot со СТАРЫМИ данными, затирая только что созданную запись.
+      // Теперь ждём фактической записи: см. _flushSaveWaiters.
+      if (DB._saveResolve) {
+        DB._saveWaiters.push({ resolve: DB._saveResolve, reject: DB._saveReject });
+        DB._saveResolve = null; DB._saveReject = null;
+      }
 
       // Online-only: убрана запись в beforeunload-очередь. При офлайне сохранять
       // некуда — приложение покажет блокирующий экран.
 
       return new Promise((resolve, reject) => {
-        DB._saveResolve = resolve;
+        DB._saveResolve = resolve; DB._saveReject = reject;
         DB._saveTimer = setTimeout(async () => {
-          DB._saveResolve = null;
+          DB._saveResolve = null; DB._saveReject = null;
           if (!DB._online) {
             // ONLINE-ONLY: нет сети — НЕ сохраняем в очередь (это был источник
             // затирания чужих правок при возврате сети). Сообщаем об ошибке,
@@ -1725,7 +1743,9 @@ const DB = {
             // пользователю продолжать вносить изменения без сети.
             DB._lastError = 'Нет соединения с сервером. Изменения НЕ сохранены — дождитесь восстановления сети.';
             DB._saving = false;
-            reject(new Error('OFFLINE: сохранение невозможно без сети'));
+            const errOff = new Error('OFFLINE: сохранение невозможно без сети');
+            reject(errOff);
+            DB._flushSaveWaiters(errOff);
             return;
           }
           try {
@@ -1881,10 +1901,14 @@ const DB = {
             // отклоняем промис. Данные не теряются: они остались в UI-стейте,
             // пользователь увидит блокирующий экран и повторит после сети.
             DB._saving = false;
-            reject(new Error('SAVE_FAILED: ' + e.message));
+            const errSave = new Error('SAVE_FAILED: ' + e.message);
+            reject(errSave);
+            DB._flushSaveWaiters(errSave);
             return;
           }
-          resolve({ ...toSave, _version: newVersion });
+          const savedVal = { ...toSave, _version: newVersion };
+          resolve(savedVal);
+          DB._flushSaveWaiters(null, savedVal);   // вытесненные сейвы — тоже записаны
           setTimeout(() => { DB._saving = false; }, 500);
         }, 800); // Уменьшаем debounce: 800ms вместо 1000ms — быстрее сохраняет
       });
@@ -2789,7 +2813,7 @@ const DataTable = memo(({
 });
 
 // ==================== useSave — универсальный хук сохранения ====================
-// Заменяет паттерн: await DB.save(d); onUpdate(d); addToast(...)
+// Заменяет паттерн: onUpdate(d); addToast(...)
 // Использование:
 //   const save = useSave(data, onUpdate, addToast);
 //   save(newData, { msg: 'Заказ сохранён', undo: () => save(data, { msg: 'Отменено' }) });
