@@ -1083,6 +1083,35 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     return stages.map(stage => ({ id: uid(), orderId, name: stage.name, qty: orderQty, workerIds: [], workerQty: {}, status: 'pending', createdAt: now(), plannedHours: stage.plannedHours || undefined, archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null, plannedStartDate: undefined, drawingUrl: drawingUrl || stage.drawingUrl || undefined, requiresQC: stage.name.includes('свар') || stage.name.includes('Опресс') || stage.name.toLowerCase().includes('опресс'), requiresPressureTest: stage.name.toLowerCase().includes('опресс') }));
   }, [data.productionStages]);
 
+  // Восстановление осиротевшего родителя как обычного рабочего заказа.
+  // Снимает isParentOrder, разархивирует его старые операции (если были),
+  // а если операций нет совсем — создаёт их заново по этапам.
+  const restoreParentAsSimple = useCallback(async (orderId) => {
+    const order = data.orders.find(o => o.id === orderId);
+    if (!order) return;
+    const archivedOwnOps = data.ops.filter(o => o.orderId === orderId && o.archived);
+    const hasLiveOps = data.ops.some(o => o.orderId === orderId && !o.archived);
+
+    let newOps = [];
+    let ops = data.ops;
+    if (hasLiveOps) {
+      // операции уже есть — ничего не создаём
+    } else if (archivedOwnOps.length > 0) {
+      // разархивируем старые
+      ops = data.ops.map(o => (o.orderId === orderId && o.archived) ? { ...o, archived: false } : o);
+    } else {
+      // создаём заново
+      newOps = createDefaultOps(orderId, order.productType, Number(order.qty) || 1, order.drawingUrl);
+      ops = [...data.ops, ...newOps];
+    }
+
+    let d = { ...data, orders: data.orders.map(o => o.id === orderId ? { ...o, isParentOrder: false } : o), ops };
+    d = logAction(d, 'order_restore_simple', { orderId, orderNumber: order.number });
+    onUpdate(d);
+    const restoredCount = hasLiveOps ? 0 : (archivedOwnOps.length || newOps.length);
+    addToast(`Заказ ${order.number} восстановлен${restoredCount ? ` · ${restoredCount} операций` : ''}`, 'success');
+  }, [data, onUpdate, addToast, createDefaultOps]);
+
   // Создаём поставки материалов по всем этапам у которых есть requiredMaterialIds
   const createMaterialDeliveries = useCallback((orderId, productType, orderQty, bomId) => {
     const deliveries = [];
@@ -1543,6 +1572,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       canEdit: true,
       onEditMaterials: (id) => setMaterialOrderId(id),
       onOpenOrder: (id) => setViewOrderId(id),
+      onRestoreAsSimple: (id) => { restoreParentAsSimple(id); setViewOrderId(null); },
     }),
     materialOrderId && h('div', {
       role: 'dialog', 'aria-modal': 'true',
