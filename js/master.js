@@ -1057,7 +1057,12 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   // не завязываясь на состояние конкретного React-компонента напрямую.
   useEffect(() => {
     window._tpOpenSubOrderSplit = (orderId) => setSplitOrderId(orderId);
-    return () => { if (window._tpOpenSubOrderSplit) delete window._tpOpenSubOrderSplit; };
+    // Навигация между заказами (родитель ↔ подзаказ) из карточки заказа
+    window._tpOpenOrderCard = (orderId) => setViewOrderId(orderId);
+    return () => {
+      if (window._tpOpenSubOrderSplit) delete window._tpOpenSubOrderSplit;
+      if (window._tpOpenOrderCard) delete window._tpOpenOrderCard;
+    };
   }, []);
   const productTypes = data.settings?.productTypes || [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }];
 
@@ -1537,6 +1542,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       onClose: () => setViewOrderId(null),
       canEdit: true,
       onEditMaterials: (id) => setMaterialOrderId(id),
+      onOpenOrder: (id) => setViewOrderId(id),
     }),
     materialOrderId && h('div', {
       role: 'dialog', 'aria-modal': 'true',
