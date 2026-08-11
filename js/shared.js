@@ -1881,7 +1881,7 @@ const QRModal = memo(({ ops, order, worker, onClose }) => {
       while (ref.current.firstChild) ref.current.removeChild(ref.current.firstChild);
       const url = new URL(window.location.href);
       url.searchParams.set('opId', op.id);
-      new window.QRCode(ref.current, { text: url.toString(), width: 140, height: 140, colorDark: AM4, colorLight: '#ffffff' });
+      new window.QRCode(ref.current, { text: url.toString(), width: 140, height: 140, colorDark: '#BA7517', colorLight: '#ffffff' });
     };
     if (window.QRCode) { render(); return; }
     const s = document.createElement('script');
