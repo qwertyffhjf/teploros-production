@@ -1844,8 +1844,8 @@ const OrderComponentsBlock = memo(({ order, data, onUpdate, userRole }) => {
         )
       } : o)
     };
-    await DB.save(updated);
-    onUpdate(updated);
+    onUpdate(updated);      // мгновенно обновляем UI
+    DB.save(updated).catch(() => {}); // сохраняем в фоне (не блокируем отклик)
   };
 
   const unconfirmComponent = async (compId) => {
@@ -1859,8 +1859,8 @@ const OrderComponentsBlock = memo(({ order, data, onUpdate, userRole }) => {
         )
       } : o)
     };
-    await DB.save(updated);
     onUpdate(updated);
+    DB.save(updated).catch(() => {});
   };
 
   const confirmAll = async () => {
@@ -1875,8 +1875,8 @@ const OrderComponentsBlock = memo(({ order, data, onUpdate, userRole }) => {
         )
       } : o)
     };
-    await DB.save(updated);
     onUpdate(updated);
+    DB.save(updated).catch(() => {});
   };
 
   const unconfirmAll = async () => {
@@ -1888,8 +1888,8 @@ const OrderComponentsBlock = memo(({ order, data, onUpdate, userRole }) => {
         components: parseComps(o.components).map(c => ({ ...c, status: 'pending', confirmedAt: null }))
       } : o)
     };
-    await DB.save(updated);
     onUpdate(updated);
+    DB.save(updated).catch(() => {});
   };
 
   return h('div', { style: { padding: '14px 20px', borderBottom: '0.5px solid rgba(0,0,0,0.06)' } },
