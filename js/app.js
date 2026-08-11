@@ -3029,7 +3029,25 @@ function App() {
           effectiveRole === 'sales'      && h(ErrorBoundary, { name: 'SalesScreen' }, h(SalesScreen,     { data, addToast, onOrderClick: setSelectedOrderId })),
           effectiveRole === 'dashboard' && h(ErrorBoundary, { name: 'Dashboard' }, h(Dashboard, { data, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }))
         ),
-    selectedOrderId && h(OrderCardModal, { orderId: selectedOrderId, data, onUpdate: save, onClose: () => setSelectedOrderId(null), canEdit: true, userRole: effectiveRole, onEditMaterials: (id) => { setSelectedOrderId(null); }, onOpenOrder: (id) => setSelectedOrderId(id) }),
+    selectedOrderId && h(OrderCardModal, { orderId: selectedOrderId, data, onUpdate: save, onClose: () => setSelectedOrderId(null), canEdit: true, userRole: effectiveRole, onEditMaterials: (id) => { setSelectedOrderId(null); }, onOpenOrder: (id) => setSelectedOrderId(id), onRestoreAsSimple: (id) => {
+      const order = data.orders.find(o => o.id === id);
+      if (!order) return;
+      const archivedOwn = data.ops.filter(o => o.orderId === id && o.archived);
+      const hasLive = data.ops.some(o => o.orderId === id && !o.archived);
+      const stages = (data.productionStages || []).filter(s => !order.productType || s.productType === order.productType);
+      let ops = data.ops;
+      if (hasLive) { /* есть операции */ }
+      else if (archivedOwn.length > 0) { ops = data.ops.map(o => (o.orderId === id && o.archived) ? { ...o, archived: false } : o); }
+      else {
+        const newOps = stages.map(stage => ({ id: uid(), orderId: id, name: stage.name, stageId: stage.id, qty: Number(order.qty) || 1, workerIds: [], workerQty: {}, status: 'pending', createdAt: now(), archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null, plannedHours: stage.plannedHours || undefined, drawingUrl: order.drawingUrl || stage.drawingUrl || undefined, requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.toLowerCase().includes('опресс'), requiresPressureTest: stage.name.toLowerCase().includes('опресс') }));
+        ops = [...data.ops, ...newOps];
+      }
+      let d = { ...data, orders: data.orders.map(o => o.id === id ? { ...o, isParentOrder: false } : o), ops };
+      if (typeof logAction === 'function') d = logAction(d, 'order_restore_simple', { orderId: id, orderNumber: order.number });
+      save(d);
+      setSelectedOrderId(null);
+      addToast(`Заказ ${order.number} восстановлен`, 'success');
+    } }),
     // 🌍 Глобальная карточка сотрудника — открывается из любого места системы
     selectedWorkerId && (() => {
       const worker = data.workers.find(w => w.id === selectedWorkerId);
