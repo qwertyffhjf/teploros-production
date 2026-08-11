@@ -2199,6 +2199,45 @@ const migrateWorkerIds = (ops) => {
 const migrateData = (d) => {
   if (!d.pressureTests) d.pressureTests = [];
   if (d.ops) d = { ...d, ops: migrateWorkerIds(d.ops) };
+
+  // Миграция: исправить «битые» разделения заказов.
+  // Раньше при разделении родитель не помечался isParentOrder и его операции
+  // не архивировались — получались дубли (операции и на родителе, и на подзаказах),
+  // а подзаказы «висели в воздухе». Находим родителей, у которых есть подзаказы,
+  // помечаем их isParentOrder и архивируем их собственные активные операции.
+  if (d.orders?.length && d.ops?.length) {
+    const parentIds = new Set();
+    d.orders.forEach(o => { if (o.parentOrderId) parentIds.add(o.parentOrderId); });
+    if (parentIds.size > 0) {
+      let fixedOrders = 0, fixedOps = 0;
+      d = { ...d,
+        orders: d.orders.map(o => {
+          if (parentIds.has(o.id) && !o.isParentOrder) { fixedOrders++; return { ...o, isParentOrder: true }; }
+          return o;
+        }),
+        ops: d.ops.map(op => {
+          if (parentIds.has(op.orderId) && !op.archived) { fixedOps++; return { ...op, archived: true }; }
+          return op;
+        }),
+      };
+      if (fixedOrders || fixedOps) console.log(`Миграция разделений: ${fixedOrders} родителей помечено, ${fixedOps} дублирующих операций архивировано`);
+    }
+
+    // Миграция: наследовать чертёж от родителя в подзаказы, где он не проставлен
+    const orderById = {};
+    d.orders.forEach(o => { orderById[o.id] = o; });
+    if (d.orders.some(o => o.parentOrderId && !o.drawingUrl && orderById[o.parentOrderId]?.drawingUrl)) {
+      let fixed = 0;
+      d = { ...d, orders: d.orders.map(o => {
+        if (o.parentOrderId && !o.drawingUrl) {
+          const parent = orderById[o.parentOrderId];
+          if (parent?.drawingUrl) { fixed++; return { ...o, drawingUrl: parent.drawingUrl }; }
+        }
+        return o;
+      })};
+      if (fixed) console.log(`Миграция: чертёж унаследован в ${fixed} подзаказов`);
+    }
+  }
   if (!d.productionStages || d.productionStages.length === 0) {
     d = { ...d, productionStages: OPERATION_STAGES.map(name => ({ id: uid(), name, productType: 'boiler' })) };
   }
