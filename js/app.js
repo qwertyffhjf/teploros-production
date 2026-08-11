@@ -1680,6 +1680,12 @@ const SubOrderSplitStep = memo(({ data, onUpdate, addToast, onClose, parentOrder
           source: parentOrder.source,
           serialNumber: sub.serialNumber.trim() || '',
           parentOrderId: parentOrderId,  // ← привязка к родителю
+          // Наследуемые от родителя поля (чертёж, тип изделия, мощность, комплектующие)
+          drawingUrl: parentOrder.drawingUrl || undefined,
+          productType: parentOrder.productType || undefined,
+          boilerType: parentOrder.boilerType || undefined,
+          powerKw: parentOrder.powerKw || undefined,
+          components: parentOrder.components || undefined,
         });
 
         stages.forEach(stage => {
@@ -1687,7 +1693,9 @@ const SubOrderSplitStep = memo(({ data, onUpdate, addToast, onClose, parentOrder
             id: uid(), orderId: subId, name: stage.name, stageId: stage.id, qty: 1,
             workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
             archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null,
-            plannedHours: stage.plannedHours || undefined, drawingUrl: stage.drawingUrl || undefined,
+            plannedHours: stage.plannedHours || undefined,
+            // Чертёж: приоритет у родительского заказа, потом у этапа
+            drawingUrl: parentOrder.drawingUrl || stage.drawingUrl || undefined,
             requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.toLowerCase().includes('опресс'),
             requiresPressureTest: stage.name.toLowerCase().includes('опресс'),
           });
@@ -1696,8 +1704,16 @@ const SubOrderSplitStep = memo(({ data, onUpdate, addToast, onClose, parentOrder
 
       const d = {
         ...data,
-        orders: [...data.orders, ...newOrders],
-        ops: [...data.ops, ...newOps],
+        orders: [...data.orders, ...newOrders].map(o =>
+          // Родитель становится агрегатором: помечаем isParentOrder,
+          // чтобы UI показывал его как контейнер, а не как рабочий заказ
+          o.id === parentOrderId ? { ...o, isParentOrder: true } : o
+        ),
+        // Архивируем операции родителя — теперь работа идёт по подзаказам.
+        // Без этого операции дублируются (и на родителе, и на подзаказах).
+        ops: [...data.ops.map(op =>
+          op.orderId === parentOrderId ? { ...op, archived: true } : op
+        ), ...newOps],
       };
 
       await DB.save(d);
@@ -1722,7 +1738,9 @@ const SubOrderSplitStep = memo(({ data, onUpdate, addToast, onClose, parentOrder
         id: uid(), orderId: parentOrderId, name: stage.name, stageId: stage.id, qty,
         workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
         archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null,
-        plannedHours: stage.plannedHours || undefined, drawingUrl: stage.drawingUrl || undefined,
+        plannedHours: stage.plannedHours || undefined,
+        // Чертёж: приоритет у заказа, потом у этапа
+        drawingUrl: parentOrder?.drawingUrl || stage.drawingUrl || undefined,
         requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.toLowerCase().includes('опресс'),
         requiresPressureTest: stage.name.toLowerCase().includes('опресс'),
       }));
@@ -3011,7 +3029,7 @@ function App() {
           effectiveRole === 'sales'      && h(ErrorBoundary, { name: 'SalesScreen' }, h(SalesScreen,     { data, addToast, onOrderClick: setSelectedOrderId })),
           effectiveRole === 'dashboard' && h(ErrorBoundary, { name: 'Dashboard' }, h(Dashboard, { data, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }))
         ),
-    selectedOrderId && h(OrderCardModal, { orderId: selectedOrderId, data, onUpdate: save, onClose: () => setSelectedOrderId(null), canEdit: true, userRole: effectiveRole, onEditMaterials: (id) => { setSelectedOrderId(null); } }),
+    selectedOrderId && h(OrderCardModal, { orderId: selectedOrderId, data, onUpdate: save, onClose: () => setSelectedOrderId(null), canEdit: true, userRole: effectiveRole, onEditMaterials: (id) => { setSelectedOrderId(null); }, onOpenOrder: (id) => setSelectedOrderId(id) }),
     // 🌍 Глобальная карточка сотрудника — открывается из любого места системы
     selectedWorkerId && (() => {
       const worker = data.workers.find(w => w.id === selectedWorkerId);
