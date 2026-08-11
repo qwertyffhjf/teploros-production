@@ -1365,6 +1365,8 @@ const DB = {
   _tsSaveTimer:   null, // отдельный дебаунс для быстрого сохранения табеля
   _tsSaveResolve: null,
   _saving:      false,  // true пока идёт сохранение (от вызова до завершения записи) — блокирует onSnapshot
+  _migrationDirty:  null,  // данные, изменённые миграцией и ждущие одноразового закрепления в БД
+  _migrationSaving: false, // идёт закрепляющее сохранение миграции
   _lastError:   null,
   _sizeWarning: null,
   _online:      true,    // текущий статус сети
@@ -2018,6 +2020,21 @@ const DB = {
       // для будущего трёхстороннего слияния — см. DB._baseData.
       DB._baseData = migrated;
       callback(migrated);
+
+      // Закрепление миграции: если тяжёлые починки изменили данные, сохраняем
+      // результат ОДИН раз в фоне. После записи снапшот придёт уже «чистым» и
+      // миграция перестанет находить что чинить — прекращается повтор вхолостую.
+      if (DB._migrationDirty && !DB._saving && !DB._migrationSaving) {
+        const toPersist = DB._migrationDirty;
+        DB._migrationDirty = null;
+        DB._migrationSaving = true;
+        DB.save(toPersist)
+          .then(() => console.log('Миграция закреплена в БД'))
+          .catch(() => {})
+          .finally(() => { DB._migrationSaving = false; });
+      } else {
+        DB._migrationDirty = null;
+      }
     };
 
     // ── Итерация 2.1: Буферизация snapshot при активном сохранении ──────────
@@ -2197,6 +2214,7 @@ const migrateWorkerIds = (ops) => {
 
 // Миграция данных: заполняет productionStages из OPERATION_STAGES если пусто
 const migrateData = (d) => {
+  let _heavyFixed = false;  // true только если ТЯЖЁЛЫЕ починки реально изменили данные
   if (!d.pressureTests) d.pressureTests = [];
   if (d.ops) d = { ...d, ops: migrateWorkerIds(d.ops) };
 
@@ -2210,17 +2228,19 @@ const migrateData = (d) => {
     d.orders.forEach(o => { if (o.parentOrderId && !o.archived) parentIds.add(o.parentOrderId); });
     if (parentIds.size > 0) {
       let fixedOrders = 0, fixedOps = 0;
-      d = { ...d,
-        orders: d.orders.map(o => {
-          if (parentIds.has(o.id) && !o.isParentOrder) { fixedOrders++; return { ...o, isParentOrder: true }; }
-          return o;
-        }),
-        ops: d.ops.map(op => {
-          if (parentIds.has(op.orderId) && !op.archived) { fixedOps++; return { ...op, archived: true }; }
-          return op;
-        }),
-      };
-      if (fixedOrders || fixedOps) console.log(`Миграция разделений: ${fixedOrders} родителей помечено, ${fixedOps} дублирующих операций архивировано`);
+      const orders2 = d.orders.map(o => {
+        if (parentIds.has(o.id) && !o.isParentOrder) { fixedOrders++; return { ...o, isParentOrder: true }; }
+        return o;
+      });
+      const ops2 = d.ops.map(op => {
+        if (parentIds.has(op.orderId) && !op.archived) { fixedOps++; return { ...op, archived: true }; }
+        return op;
+      });
+      if (fixedOrders || fixedOps) {
+        d = { ...d, orders: orders2, ops: ops2 };
+        _heavyFixed = true;
+        console.log(`Миграция разделений: ${fixedOrders} родителей помечено, ${fixedOps} дублирующих операций архивировано`);
+      }
     }
 
     // Миграция: «оздоровление» осиротевших родителей.
@@ -2233,7 +2253,7 @@ const migrateData = (d) => {
     const orphanParents = d.orders.filter(o => o.isParentOrder && !o.archived && !liveParentIds.has(o.id));
     if (orphanParents.length > 0) {
       const orphanIds = new Set(orphanParents.map(o => o.id));
-      let healed = 0, restoredOps = 0;
+      let restoredOps = 0;
       d = { ...d,
         orders: d.orders.map(o => orphanIds.has(o.id) ? { ...o, isParentOrder: false } : o),
         ops: d.ops.map(op => {
@@ -2242,8 +2262,8 @@ const migrateData = (d) => {
           return op;
         }),
       };
-      healed = orphanParents.length;
-      console.log(`Миграция: оздоровлено ${healed} осиротевших родителей, восстановлено ${restoredOps} операций`);
+      _heavyFixed = true;
+      console.log(`Миграция: оздоровлено ${orphanParents.length} осиротевших родителей, восстановлено ${restoredOps} операций`);
     }
 
     // Миграция: наследовать чертёж от родителя в подзаказы, где он не проставлен
@@ -2258,7 +2278,7 @@ const migrateData = (d) => {
         }
         return o;
       })};
-      if (fixed) console.log(`Миграция: чертёж унаследован в ${fixed} подзаказов`);
+      if (fixed) { _heavyFixed = true; console.log(`Миграция: чертёж унаследован в ${fixed} подзаказов`); }
     }
 
     // Миграция: очистить устаревшие factStartedAt/factFinishedAt у родителей
@@ -2278,7 +2298,7 @@ const migrateData = (d) => {
         }
         return o;
       })};
-      if (cleaned) console.log(`Миграция: очищены устаревшие даты факт-старта/финиша у ${cleaned} родителей`);
+      if (cleaned) { _heavyFixed = true; console.log(`Миграция: очищены устаревшие даты факт-старта/финиша у ${cleaned} родителей`); }
     }
   }
   if (!d.productionStages || d.productionStages.length === 0) {
@@ -2373,6 +2393,14 @@ const migrateData = (d) => {
       }
       d = { ...d, timesheet: newTimesheet };
     }
+  }
+
+  // Если тяжёлые починки (оздоровление родителей, очистка дат, наследование
+  // чертежей и т.п.) реально изменили заказы/операции — закрепляем результат
+  // одноразовым фоновым сохранением. Иначе на каждом snapshot миграция находит
+  // то же самое заново и гоняет тяжёлую работу вхолостую (тормозит весь UI).
+  if (_heavyFixed) {
+    DB._migrationDirty = d;
   }
 
   return d;
