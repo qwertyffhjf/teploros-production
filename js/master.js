@@ -66,13 +66,13 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
     if (!(await askConfirm({ message: 'Переместить операцию в архив?', danger: false }))) return;
     let d = { ...data, ops: data.ops.map(o => o.id === id ? { ...o, archived: true } : o) };
     d = logAction(d, 'op_archive', { opId: id, opName: data.ops.find(o => o.id === id)?.name });
-    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    onUpdate(d);
     addToast('Операция архивирована', 'info', { label: 'Отменить', action: () => restore(id), ttl: 5000 });
   }, [data, onUpdate, addToast]);
 
   const restore = useCallback(async (id) => {
     const d = { ...data, ops: data.ops.map(o => o.id === id ? { ...o, archived: false } : o) };
-    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    onUpdate(d);
     addToast('Операция восстановлена', 'success');
   }, [data, onUpdate, addToast]);
 
@@ -91,7 +91,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
     };
     d = logAction(d, 'order_archive', { orderId, orderNumber: order.number });
     const prev = data;
-    onUpdate(d); DB.save(d).catch(() => onUpdate(prev));
+    onUpdate(d);
     addToast(`Заказ ${order.number} и ${orderOps.length} операций архивированы`, 'info');
   }, [data, onUpdate, addToast]);
 
@@ -101,7 +101,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
     if (invalidWorkers.length > 0) { addToast(`У следующих сотрудников нет компетенции: ${invalidWorkers.map(w => w.name).join(', ')}`, 'error'); return; }
     
     const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, workerIds } : o) };
-    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    onUpdate(d);
     addToast('Исполнители обновлены', 'success');
   }, [data, onUpdate, addToast]);
 
@@ -127,14 +127,14 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
     if (selectedOps.size === 0) return;
     const d = { ...data, ops: data.ops.filter(op => !selectedOps.has(op.id)) };
     const prevData = data;
-    onUpdate(d); setSelectedOps(new Set()); DB.save(d).catch(() => onUpdate(prevData));
-    addToast(`Удалено операций: ${selectedOps.size}`, 'info', { label: 'Отменить', action: () => { onUpdate(prevData); DB.save(prevData).catch(()=>{}); }, ttl: 5000 });
+    onUpdate(d); setSelectedOps(new Set());
+    addToast(`Удалено операций: ${selectedOps.size}`, 'info', { label: 'Отменить', action: () => { onUpdate(prevData); }, ttl: 5000 });
   };
 
   const hideSelected = async () => {
     if (selectedOps.size === 0) return;
     const d = { ...data, ops: data.ops.map(op => selectedOps.has(op.id) ? { ...op, hiddenFromFeed: true } : op) };
-    onUpdate(d); setSelectedOps(new Set()); DB.save(d).catch(() => onUpdate(data));
+    onUpdate(d); setSelectedOps(new Set());
     addToast(`Скрыто операций: ${selectedOps.size}`, 'info');
   };
 
@@ -142,8 +142,8 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
     if (selectedOps.size === 0) return;
     const d = { ...data, ops: data.ops.map(op => selectedOps.has(op.id) ? { ...op, archived: true } : op) };
     const prevData = data;
-    onUpdate(d); setSelectedOps(new Set()); DB.save(d).catch(() => onUpdate(prevData));
-    addToast(`Архивировано операций: ${selectedOps.size}`, 'info', { label: 'Отменить', action: () => { onUpdate(prevData); DB.save(prevData).catch(()=>{}); }, ttl: 5000 });
+    onUpdate(d); setSelectedOps(new Set());
+    addToast(`Архивировано операций: ${selectedOps.size}`, 'info', { label: 'Отменить', action: () => { onUpdate(prevData); }, ttl: 5000 });
   };
 
   const edit = useCallback(op => {
@@ -167,7 +167,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
     const finalData = logAction({ ...data, ...d }, 'master_approve_extra_work',
       { opId, orderId: op.orderId, extraKey: op.extraKey, param: op.extraParam, price: op.extraPrice, qty: op.extraQty, totalAmount: op.extraAmount });
     onUpdate(finalData);
-    DB.save(finalData).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
+    
     addToast(`Допработа утверждена: ${(op.extraAmount || 0).toLocaleString('ru-RU')} ₽`, 'success');
   }, [data, onUpdate, addToast]);
 
@@ -181,7 +181,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
     const finalData = logAction(d, 'master_reject_extra_work',
       { opId, orderId: op.orderId, extraKey: op.extraKey, reason: reason.trim() });
     onUpdate(finalData);
-    DB.save(finalData).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
+    
     addToast('Допработа отклонена', 'info');
   }, [data, onUpdate, addToast]);
 
@@ -251,7 +251,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
         });
         if (!added) { addToast('Не найдено подходящих операций (проверьте номера заказов)', 'error'); return; }
         const d = { ...data, ops: newOps };
-        onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+        onUpdate(d);
         addToast(`Добавлено операций: ${added}`, 'success');
       }}),
     // Форма создания/редактирования операции
@@ -593,7 +593,7 @@ const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) =
       addToast('Нельзя: циклическая зависимость', 'error'); return;
     }
     const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, dependsOn: newDeps.length > 0 ? newDeps : undefined } : o) };
-    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    onUpdate(d);
   }, [data, ops, onUpdate, addToast, orderId]);
 
   const setAllSequential = useCallback(async () => {
@@ -605,13 +605,13 @@ const DependencyEditor = memo(({ data, orderId, onUpdate, addToast, onClose }) =
       return { ...o, dependsOn: [ordered[idx - 1].id] };
     });
     const d = { ...data, ops: updated };
-    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    onUpdate(d);
     addToast('Расставлено последовательно', 'success');
   }, [data, ops, orderId, onUpdate, addToast]);
 
   const setAllParallel = useCallback(async () => {
     const d = { ...data, ops: data.ops.map(o => o.orderId === orderId ? { ...o, dependsOn: undefined } : o) };
-    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    onUpdate(d);
     addToast('Расставлено параллельно', 'success');
   }, [data, orderId, onUpdate, addToast]);
 
@@ -750,7 +750,7 @@ const DependencyEditorInline = memo(({ data, orderId, onUpdate, addToast }) => {
     };
     if (!deps.includes(depId) && checkCycle(depId)) { addToast('Нельзя: циклическая зависимость', 'error'); return; }
     const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, dependsOn: newDeps.length > 0 ? newDeps : undefined } : o) };
-    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    onUpdate(d);
   }, [data, ops, orderId, onUpdate, addToast]);
 
   const setAllSequential = useCallback(async () => {
@@ -762,13 +762,13 @@ const DependencyEditorInline = memo(({ data, orderId, onUpdate, addToast }) => {
       return { ...o, dependsOn: [ordered[idx - 1].id] };
     });
     const d = { ...data, ops: updated };
-    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    onUpdate(d);
     addToast('Расставлено последовательно', 'success');
   }, [data, ops, orderId, onUpdate, addToast]);
 
   const setAllParallel = useCallback(async () => {
     const d = { ...data, ops: data.ops.map(o => o.orderId === orderId ? { ...o, dependsOn: undefined } : o) };
-    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    onUpdate(d);
     addToast('Расставлено параллельно', 'success');
   }, [data, orderId, onUpdate, addToast]);
 
@@ -1126,7 +1126,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       const newDrawingUrl = form.drawingUrl.trim() || undefined;
       const updatedOps = data.ops.map(o => o.orderId === editingId && o.status === 'pending' && newDrawingUrl ? { ...o, drawingUrl: newDrawingUrl } : o);
       const d = { ...data, orders: updatedOrders, ops: updatedOps };
-      onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+      onUpdate(d);
       setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '', boilerType: '', powerKw: '' }); setFieldErrors({}); setShowForm(false);
       addToast(`Заказ ${form.number} обновлён`, 'success');
     } else {
@@ -1150,7 +1150,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
           if (reservations.length > 0) {
             const newDeliveries = createMaterialDeliveries(newOrder.id, form.productType, Number(form.qty), form.bomId);
             const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps], materialReservations: [...(data.materialReservations || []), ...reservations], materialDeliveries: [...(data.materialDeliveries || []), ...newDeliveries] };
-            onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+            onUpdate(d);
             setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '', boilerType: '', powerKw: '' }); setFieldErrors({}); setShowForm(false);
             addToast(`Заказ ${form.number} создан — зарезервированы материалы${newDeliveries.length > 0 ? `, ожидается ${newDeliveries.length} поставок` : ''}`, 'success');
             if (newOps.length > 0) setPrintOrderId(newOrder.id);
@@ -1160,7 +1160,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       }
       const newDeliveries = createMaterialDeliveries(newOrder.id, form.productType, Number(form.qty), form.bomId);
       const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps], materialDeliveries: [...(data.materialDeliveries || []), ...newDeliveries] };
-      onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+      onUpdate(d);
       setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '', boilerType: '', powerKw: '' }); setFieldErrors({}); setShowForm(false);
       addToast(newDeliveries.length > 0 ? `Заказ ${form.number} создан — ожидается ${newDeliveries.length} поставок` : `Заказ ${form.number} создан`, 'success');
       if (newOps.length > 0) setPrintOrderId(newOrder.id);
@@ -1182,7 +1182,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     }
     let d = { ...data, orders: data.orders.map(o => o.id === id ? { ...o, shipped: true, shippedAt: Date.now() } : o) };
     d = logAction(d, 'order_shipped', { orderId: id, orderNumber: order?.number });
-    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    onUpdate(d);
     addToast(`Заказ ${order?.number} отгружен ✓`, 'success');
   }, [data, onUpdate, addToast]);
 
@@ -1202,7 +1202,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     };
     d = logAction(d, 'order_archive', { orderId: id, orderNumber: order?.number });
     const prevDataOrder = data;
-    onUpdate(d); DB.save(d).catch(() => onUpdate(prevDataOrder));
+    onUpdate(d);
     addToast(`Заказ ${order?.number || ''} архивирован`, 'info', { label: 'Отменить', action: () => restore(id), ttl: 5000 });
   }, [data, onUpdate, addToast]);
 
@@ -1216,7 +1216,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       ops: data.ops.map(o => ids.has(o.orderId) ? { ...o, archived: false } : o),
     };
     d = logAction(d, 'order_restore', { orderId: id });
-    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    onUpdate(d);
     addToast('Заказ восстановлён', 'success');
   }, [data, onUpdate, addToast]);
 
@@ -1258,7 +1258,6 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     const prevData = data;
     onUpdate(d);
     setDupSelected(prev => { const n = new Set(prev); ids.forEach(id => n.delete(id)); return n; });
-    DB.save(d).catch(() => onUpdate(prevData));
     // Отдельная коллекция заявок на материалы — чистим по возможности, не блокируя основное сохранение
     if (typeof MaterialsDB !== 'undefined' && MaterialsDB) {
       [...ids].forEach(id => { MaterialsDB.remove(id).catch(() => {}); });
@@ -1410,7 +1409,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
         const newOps = newOrders.flatMap(o => createDefaultOps(o.id, o.productType || '', o.qty, o.drawingUrl || undefined));
         let d = { ...data, orders: [...data.orders, ...newOrders], ops: [...data.ops, ...newOps] };
         d = logAction(d, 'orders_batch_import', { count: newOrders.length });
-        onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+        onUpdate(d);
         addToast(`Импортировано заказов: ${newOrders.length}`, 'success');
       }}),
     viewOrderId && (() => {
@@ -2247,7 +2246,6 @@ const SmartGantt = memo(({ data, onUpdate, addToast }) => {
       o.id === conflictOrderId ? { ...o, priority: newPriority } : o
     )};
     onUpdate(updated);
-    DB.save(updated).catch(() => onUpdate(data));
     addToast(`Приоритет заказа ${conflictOrder.number} повышен → ${newPriority}`, 'success');
     setSwapDialog(null);
   };
@@ -2525,11 +2523,11 @@ const ResourceCalendar = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
     if (!availForm.workerId || !availForm.startDate || !availForm.endDate) return;
     const newAvail = { id: uid(), workerId: availForm.workerId, startDate: new Date(availForm.startDate).getTime(), endDate: new Date(availForm.endDate).getTime(), type: availForm.type };
     const updated = { ...data, workerAvailabilities: [...(data.workerAvailabilities || []), newAvail] };
-    onUpdate(updated); DB.save(updated).catch(() => onUpdate(data));
+    onUpdate(updated);
     setShowModal(null); setAvailForm({ workerId:'', startDate:'', endDate:'', type:'vacation' });
     addToast('Период недоступности добавлен', 'success');
   };
-  const deleteAvailability = async (id) => { const updated = { ...data, workerAvailabilities: (data.workerAvailabilities || []).filter(a => a.id !== id) }; onUpdate(updated); DB.save(updated).catch(() => onUpdate(data)); addToast('Период удалён', 'info'); };
+  const deleteAvailability = async (id) => { const updated = { ...data, workerAvailabilities: (data.workerAvailabilities || []).filter(a => a.id !== id) }; onUpdate(updated); addToast('Период удалён', 'info'); };
   const changeWeek = (delta) => { const newStart = new Date(startDate); newStart.setDate(newStart.getDate() + delta*7); setStartDate(newStart); };
   return h('div', { style: { ...S.card } },
     h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 } },
@@ -2590,7 +2588,7 @@ const MasterKanban = memo(({ data, onUpdate, addToast }) => {
     const newLimits = { ...wipLimits, [stage]: val || undefined };
     if (!val) delete newLimits[stage];
     const d = { ...data, settings: { ...data.settings, wipLimits: newLimits } };
-    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    onUpdate(d);
     setEditingWip(null); setWipValue('');
     addToast(val ? `WIP-лимит «${stage}»: ${val} операций` : `WIP-лимит снят: ${stage}`, 'success');
   }, [data, wipLimits, onUpdate, addToast]);
@@ -2832,13 +2830,17 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
       if (o.archived || o.shipped || o.isParentOrder) return false;
       if (!o.deadline) return false;
       const daysLeft = Math.ceil((new Date(o.deadline) - now_) / 86400000);
-      return daysLeft <= 3;
+      // Исключить заказы, просрочившиеся > 7 дней (явно забыли отгрузить)
+      // и заказы ещё не начинавшиеся (завтра и позже)
+      return daysLeft > -7 && daysLeft <= 3;
     }).map(o => {
       const daysLeft = Math.ceil((new Date(o.deadline) - now_) / 86400000);
       const orderOps = data.ops.filter(op => op.orderId === o.id && !op.archived);
       const doneOps  = orderOps.filter(op => op.status === 'done' || op.status === 'approved').length;
       const pct      = orderOps.length > 0 ? Math.round(doneOps / orderOps.length * 100) : 0;
-      return { ...o, daysLeft, pct, totalOps: orderOps.length, doneOps };
+      // Если заказ на 100% завершён — автоматически считаем его готовым к отгрузке
+      // (пользователь забыл нажать кнопку 🚚)
+      return { ...o, daysLeft, pct, totalOps: orderOps.length, doneOps, shouldAutoShip: pct === 100 };
     }).sort((a, b) => a.daysLeft - b.daysLeft);
 
     // Узкие места — операции in_progress идущие дольше нормы * 1.5
@@ -3058,7 +3060,13 @@ const MasterActionDashboard = memo(({ summary, data, onTabSwitch }) => {
             ),
             h('div', { style: { fontSize: 11, color: 'var(--muted)', flexShrink: 0 } },
               ord.doneOps + '/' + ord.totalOps + ' оп. · ' + ord.pct + '%'
-            )
+            ),
+            // Кнопка отгрузки если заказ 100% готов
+            ord.pct === 100 && h('button', {
+              style: { ...gbtn({ padding: '4px 8px', fontSize: 11 }), color: GN2, borderColor: GN, fontWeight: 600 },
+              title: 'Отгрузить готовый заказ',
+              onClick: () => shipOrder(ord.id)
+            }, '✓ Отгрузить')
           )
         );
       })
@@ -3143,7 +3151,7 @@ const QMSScreen = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
         : d
     );
     const d = { ...data, defects: updated };
-    onUpdate(d); DB.save(d).catch(() => onUpdate(data));
+    onUpdate(d);
     setInvestigatingDefectId(null);
     setRootCause(''); setPreventiveMeasure(''); setInvestigationNotes('');
     addToast(`Дефект переведён в статус «${status}»`, 'success');
@@ -3364,7 +3372,7 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
     if (worker && worker.competences && worker.competences.length > 0 && !worker.competences.includes(op.name)) { addToast('У сотрудника нет компетенции', 'error'); return; }
     const result = buildStartUpdate(data, op, workerId);
     const updated = { ...data, ops: result.ops, events: result.events };
-    onUpdate(updated); DB.save(updated).catch(() => onUpdate(data));
+    onUpdate(updated);
     addToast('Операция начата', 'success');
   }, [data, op, onUpdate, addToast]);
 
@@ -3378,7 +3386,7 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
       return d;
     }, updated);
     const final = allAchUpdated;
-    onUpdate(final); DB.save(final).catch(() => onUpdate(data));
+    onUpdate(final);
     setShowDefForm(false); setDefNote(''); setDefectReasonId(''); setWeldParams({ seamNumber:'', electrode:'', result:'ok' });
     addToast('Операция завершена', 'info');
   }, [data, op, onUpdate, defNote, defectReasonId, weldParams, addToast]);
@@ -3389,7 +3397,7 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
     const duration = downtimeStartedAt ? now() - downtimeStartedAt : 0;
     const newEvent = { id: uid(), type:'downtime', workerId: op.workerIds?.[0], opId: op.id, ts: now(), downtimeTypeId: selectedDowntimeType, shift, startedAt: downtimeStartedAt || now(), duration, equipmentId: downtimeEquipmentId || undefined };
     const updated = { ...data, events: [...data.events, newEvent] };
-    onUpdate(updated); DB.save(updated).catch(() => onUpdate(data));
+    onUpdate(updated);
     setShowDowntimeModal(false); setSelectedDowntimeType(''); setDowntimeStartedAt(null); setDowntimeEquipmentId('');
     addToast('Простой зафиксирован', 'success');
   }, [data, op, selectedDowntimeType, downtimeStartedAt, onUpdate, addToast]);
