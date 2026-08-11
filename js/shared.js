@@ -1291,7 +1291,7 @@ ${subOrders.length > 0 ? `
   iframe.onload = () => { iframe.contentWindow.print(); setTimeout(() => document.body.removeChild(iframe), 2000); };
 };
 
-const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false, onEditMaterials, onEditDeps, userRole, onOpenOrder }) => {
+const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false, onEditMaterials, onEditDeps, userRole, onOpenOrder, onRestoreAsSimple }) => {
   if (!orderId) return null;
   const ord = data.orders.find(o => o.id === orderId);
   if (!ord) return null;
@@ -1429,15 +1429,30 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
         (() => {
           const subOrders = (data.orders || []).filter(o => o.parentOrderId === ord.id && !o.archived);
 
-          // Старый «зависший» заказ (isParentOrder=true, нет подзаказов, нет операций)
+          // Осиротевший родитель: помечен parent, но подзаказов нет и активных операций нет.
+          // Это НЕ обязательно «прерванное разделение» — чаще подзаказы удалили вручную.
+          // Даём понятный выбор: восстановить как обычный заказ ИЛИ разделить на подзаказы.
           if (ord.isParentOrder && subOrders.length === 0) {
             const hasOps = (data.ops || []).some(o => o.orderId === ord.id && !o.archived);
-            if (!hasOps) return h('div', { style: { padding: '10px 14px', background: AM3, borderRadius: 8, fontSize: 12, color: AM2, marginBottom: 14 } },
-              h('div', { style: { marginBottom: 8 } }, '⚠ Подзаказы не созданы — заказ без операций (разделение было прервано)'),
-              h('button', {
-                style: { background: AM, color: '#fff', border: 'none', borderRadius: 6, padding: '6px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' },
-                onClick: () => { if (typeof onClose === 'function') onClose(); setTimeout(() => window._tpOpenSubOrderSplit && window._tpOpenSubOrderSplit(ord.id), 100); }
-              }, '🔧 Разделить на подзаказы')
+            if (!hasOps) return h('div', { style: { padding: '12px 14px', background: AM3, borderRadius: 8, fontSize: 12, color: AM2, marginBottom: 14 } },
+              h('div', { style: { marginBottom: 10, lineHeight: 1.5 } },
+                h('span', { style: { fontWeight: 600 } }, '⚠ Заказ без операций и подзаказов'),
+                h('br'),
+                'Похоже, подзаказы были удалены. Выберите, как продолжить:'
+              ),
+              h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+                // Основное действие: восстановить как обычный рабочий заказ
+                canEdit && typeof onRestoreAsSimple === 'function' && h('button', {
+                  style: { background: AM, color: '#fff', border: 'none', borderRadius: 6, padding: '7px 14px', fontSize: 12, fontWeight: 500, cursor: 'pointer' },
+                  title: 'Создать операции прямо на этом заказе (без разделения)',
+                  onClick: () => onRestoreAsSimple(ord.id)
+                }, '↺ Восстановить операции'),
+                // Альтернатива: всё-таки разделить на подзаказы
+                h('button', {
+                  style: { background: 'transparent', color: AM, border: `0.5px solid ${AM}`, borderRadius: 6, padding: '7px 14px', fontSize: 12, fontWeight: 500, cursor: 'pointer' },
+                  onClick: () => { if (typeof onClose === 'function') onClose(); setTimeout(() => window._tpOpenSubOrderSplit && window._tpOpenSubOrderSplit(ord.id), 100); }
+                }, '🔧 Разделить на подзаказы')
+              )
             );
           }
 
