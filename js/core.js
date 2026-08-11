@@ -2260,6 +2260,26 @@ const migrateData = (d) => {
       })};
       if (fixed) console.log(`Миграция: чертёж унаследован в ${fixed} подзаказов`);
     }
+
+    // Миграция: очистить устаревшие factStartedAt/factFinishedAt у родителей
+    // с живыми подзаказами. Эти даты остались с момента ДО разделения (когда
+    // родитель был обычным заказом) и вводят в заблуждение — таймлайн показывал
+    // родителя «готовым», хотя подзаказы ещё в работе. Теперь таймлайн родителя
+    // агрегируется из подзаказов, а собственные даты не нужны.
+    const parentsWithSubs = new Set();
+    d.orders.forEach(o => { if (o.parentOrderId && !o.archived) parentsWithSubs.add(o.parentOrderId); });
+    if ([...parentsWithSubs].some(id => { const p = orderById[id]; return p && (p.factStartedAt || p.factFinishedAt); })) {
+      let cleaned = 0;
+      d = { ...d, orders: d.orders.map(o => {
+        if (parentsWithSubs.has(o.id) && (o.factStartedAt || o.factFinishedAt)) {
+          cleaned++;
+          const { factStartedAt, factFinishedAt, ...rest } = o;
+          return rest;
+        }
+        return o;
+      })};
+      if (cleaned) console.log(`Миграция: очищены устаревшие даты факт-старта/финиша у ${cleaned} родителей`);
+    }
   }
   if (!d.productionStages || d.productionStages.length === 0) {
     d = { ...d, productionStages: OPERATION_STAGES.map(name => ({ id: uid(), name, productType: 'boiler' })) };
