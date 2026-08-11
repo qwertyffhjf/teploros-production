@@ -1291,10 +1291,17 @@ ${subOrders.length > 0 ? `
   iframe.onload = () => { iframe.contentWindow.print(); setTimeout(() => document.body.removeChild(iframe), 2000); };
 };
 
-const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false, onEditMaterials, onEditDeps, userRole }) => {
+const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false, onEditMaterials, onEditDeps, userRole, onOpenOrder }) => {
   if (!orderId) return null;
   const ord = data.orders.find(o => o.id === orderId);
   if (!ord) return null;
+
+  // Переход к другому заказу (родитель ↔ подзаказ). Через prop или глобальный хелпер.
+  const goToOrder = (id) => {
+    if (typeof onOpenOrder === 'function') { onOpenOrder(id); return; }
+    if (typeof window._tpOpenOrderCard === 'function') { onClose(); setTimeout(() => window._tpOpenOrderCard(id), 80); return; }
+  };
+  const parentOrd = ord.parentOrderId ? data.orders.find(o => o.id === ord.parentOrderId) : null;
 
   const ops        = data.ops.filter(o => o.orderId === ord.id && !o.archived);
   const done       = ops.filter(o => o.status === 'done').length;
@@ -1445,7 +1452,7 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
                 const subDone = subOps.filter(o => o.status === 'done').length;
                 const pct = subOps.length > 0 ? Math.round(subDone / subOps.length * 100) : 0;
                 return h('div', { key: sub.id, style: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderTop: i > 0 ? '0.5px solid var(--border-soft)' : 'none', fontSize: 12 } },
-                  h('span', { style: { color: AM, cursor: 'pointer', fontWeight: 500, minWidth: 80, textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => { if (typeof onClose === 'function') onClose(); setTimeout(() => window._tpOpenOrder && window._tpOpenOrder(sub.id), 100); } }, sub.number),
+                  h('span', { style: { color: AM, cursor: 'pointer', fontWeight: 500, minWidth: 80, textDecoration: 'underline', textDecorationStyle: 'dotted' }, onClick: () => goToOrder(sub.id) }, sub.number),
                   h('div', { style: { flex: 1, height: 6, background: 'var(--bg)', borderRadius: 3, overflow: 'hidden' } },
                     h('div', { style: { height: '100%', width: `${pct}%`, background: pct === 100 ? GN : AM, borderRadius: 3 } })
                   ),
@@ -1507,6 +1514,15 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
 
         // Подзаказ: показываем шильдик и кнопку редактирования
         ord.parentOrderId && h('div', { style: { background: 'rgba(239,159,39,0.06)', border: `0.5px solid ${AM}`, borderRadius: 8, padding: '10px 14px', marginBottom: 12 } },
+          // Ссылка на родительский заказ — чтобы подзаказ не был «в воздухе»
+          parentOrd && h('div', { style: { marginBottom: 10, paddingBottom: 10, borderBottom: `0.5px solid ${AM4}` } },
+            h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 4 } }, '📦 Входит в заказ'),
+            h('button', {
+              onClick: () => goToOrder(parentOrd.id),
+              style: { background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', fontSize: 14, fontWeight: 600, color: AM, textDecoration: 'underline', textDecorationStyle: 'dotted' },
+              title: 'Открыть родительский заказ'
+            }, `№ ${parentOrd.number} — ${parentOrd.product || ''}`)
+          ),
           h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 6 } }, '🏷 Шильдик (номер изделия)'),
           ord.serialNumber
             ? h('div', { style: { fontSize: 16, fontWeight: 600, fontFamily: 'monospace', color: AM2 } }, ord.serialNumber)
