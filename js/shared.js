@@ -1358,6 +1358,24 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
 
         // ── Мини-таймлайн жизненного цикла заказа ──
         (() => {
+          // Для родительского заказа даты Старт/Готов агрегируем из подзаказов —
+          // собственные factStartedAt/factFinishedAt у родителя устаревшие
+          // (остались с момента до разделения) и вводят в заблуждение.
+          const subs = ord.isParentOrder
+            ? (data.orders || []).filter(o => o.parentOrderId === ord.id && !o.archived)
+            : [];
+          const isParentWithSubs = ord.isParentOrder && subs.length > 0;
+
+          // Старт: самый ранний факт-старт среди подзаказов
+          const aggStart = isParentWithSubs
+            ? subs.map(s => s.factStartedAt).filter(Boolean).sort((a,b) => a-b)[0] || null
+            : ord.factStartedAt;
+          // Готов: только когда ВСЕ подзаказы завершены — берём самую позднюю дату
+          const allSubsDone = isParentWithSubs && subs.every(s => s.factFinishedAt || s.shipped);
+          const aggFinish = isParentWithSubs
+            ? (allSubsDone ? Math.max(...subs.map(s => s.factFinishedAt || s.shippedAt || 0)) || null : null)
+            : (ord.factFinishedAt || (ord.shipped ? ord.shippedAt : null));
+
           const deliveries = (data.materialDeliveries || []).filter(d => d.orderId === ord.id);
           const matPoints = deliveries.reduce((acc, d) => {
             if (!acc.find(a => a.materialId === d.materialId)) {
@@ -1372,8 +1390,8 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
             { key: 'contract',  label: 'Запуск',     ts: ord.contractDate || ord.createdAt, color: '#2a78d6' },
             ...matPoints.map(mp => ({ key: `mat_${mp.materialId}`, label: mp.isCutting ? `✂ ${mp.name}` : mp.name, ts: mp.confirmedAt, color: '#4a3aa7', partial: mp.status === 'partial' })),
             ...(showMaterialsReady ? [{ key: 'materials', label: 'Материалы', ts: ord.materialsReadyAt, color: '#059669' }] : []),
-            { key: 'factStart', label: 'Старт',      ts: ord.factStartedAt, color: '#eda100' },
-            { key: 'factFinish',label: 'Готов',      ts: ord.factFinishedAt || (ord.shipped ? ord.shippedAt : null), color: '#1baf7a' },
+            { key: 'factStart', label: 'Старт',      ts: aggStart, color: '#eda100' },
+            { key: 'factFinish',label: 'Готов',      ts: aggFinish, color: '#1baf7a' },
           ];
 
           const hasAny = milestones.some(m => m.ts);
