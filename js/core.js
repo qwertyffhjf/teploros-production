@@ -2207,7 +2207,7 @@ const migrateData = (d) => {
   // помечаем их isParentOrder и архивируем их собственные активные операции.
   if (d.orders?.length && d.ops?.length) {
     const parentIds = new Set();
-    d.orders.forEach(o => { if (o.parentOrderId) parentIds.add(o.parentOrderId); });
+    d.orders.forEach(o => { if (o.parentOrderId && !o.archived) parentIds.add(o.parentOrderId); });
     if (parentIds.size > 0) {
       let fixedOrders = 0, fixedOps = 0;
       d = { ...d,
@@ -2221,6 +2221,29 @@ const migrateData = (d) => {
         }),
       };
       if (fixedOrders || fixedOps) console.log(`Миграция разделений: ${fixedOrders} родителей помечено, ${fixedOps} дублирующих операций архивировано`);
+    }
+
+    // Миграция: «оздоровление» осиротевших родителей.
+    // Заказ помечен isParentOrder, но живых подзаказов не осталось (удалили/архивировали).
+    // Возвращаем его в рабочее состояние: снимаем флаг и разархивируем его операции,
+    // если они были архивированы при разделении. Так заказ перестаёт «висеть» и
+    // перестаёт предлагать бессмысленное повторное разделение.
+    const liveParentIds = new Set();
+    d.orders.forEach(o => { if (o.parentOrderId && !o.archived) liveParentIds.add(o.parentOrderId); });
+    const orphanParents = d.orders.filter(o => o.isParentOrder && !o.archived && !liveParentIds.has(o.id));
+    if (orphanParents.length > 0) {
+      const orphanIds = new Set(orphanParents.map(o => o.id));
+      let healed = 0, restoredOps = 0;
+      d = { ...d,
+        orders: d.orders.map(o => orphanIds.has(o.id) ? { ...o, isParentOrder: false } : o),
+        ops: d.ops.map(op => {
+          // Разархивируем операции осиротевшего родителя (они были архивированы при split)
+          if (orphanIds.has(op.orderId) && op.archived) { restoredOps++; return { ...op, archived: false }; }
+          return op;
+        }),
+      };
+      healed = orphanParents.length;
+      console.log(`Миграция: оздоровлено ${healed} осиротевших родителей, восстановлено ${restoredOps} операций`);
     }
 
     // Миграция: наследовать чертёж от родителя в подзаказы, где он не проставлен
