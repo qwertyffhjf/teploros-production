@@ -1644,10 +1644,11 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
           return null;
         })(),
 
-        // Комплектующие
-        components.length > 0 && h('div', { style: { marginBottom: 14 } },
+        // Комплектующие — блок показываем всегда для офисных ролей (там кнопка «из ТЗ»),
+        // даже если позиций пока нет (заказ из 1С приходит без комплектации).
+        (components.length > 0 || (canEdit && userRole !== 'worker')) && h('div', { style: { marginBottom: 14 } },
           h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 8 } },
-            `📦 Комплектующие (${components.length} поз.)`
+            `📦 Комплектующие${components.length > 0 ? ' (' + components.length + ' поз.)' : ''}`
           ),
           h(OrderComponentsBlock, { order: ord, data, onUpdate, userRole })
         ),
