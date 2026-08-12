@@ -174,6 +174,33 @@ async function gdFindOrderFolders(rootFolderUrl, orderNumber) {
 }
 
 // Скачивает содержимое конкретной папки по id → массив File для parseDrawingFiles().
+// Ищет и скачивает файл бланка ТЗ (Excel) в папке заказа.
+// Признак: .xlsx/.xls; приоритет именам с «бланк»/«тз». Возвращает { file, name } или null.
+async function gdLoadSpecFile(folderId, onProgress) {
+  if (!onProgress) onProgress = function() {};
+  onProgress(0.1, 'Ищу бланк ТЗ в папке заказа…');
+  const items = await gdListFolder(folderId, '', onProgress, [], 0);
+  const xls = items.filter(function(it) { return /\.(xlsx|xls)$/i.test(it.path); });
+  if (!xls.length) return null;
+
+  // Приоритет: имя содержит «бланк» или «тз»
+  xls.sort(function(a, b) {
+    var pa = /бланк|тз/i.test(a.path) ? 0 : 1;
+    var pb = /бланк|тз/i.test(b.path) ? 0 : 1;
+    return pa - pb;
+  });
+  const pick = xls[0];
+
+  onProgress(0.5, 'Скачиваю бланк: ' + pick.path);
+  const url = 'https://www.googleapis.com/drive/v3/files/' + pick.id
+    + '?alt=media&supportsAllDrives=true';
+  const r = await fetch(gdKeyUrl(url));
+  if (!r.ok) throw new Error('Не скачался бланк ТЗ (HTTP ' + r.status + ')');
+  const blob = await r.blob();
+  return { file: new File([blob], pick.path, { type: blob.type }), name: pick.path,
+           multiple: xls.length > 1 };
+}
+
 async function gdLoadFolderIdAsFiles(folderId, onProgress) {
   if (!onProgress) onProgress = function() {};
   onProgress(0.03, 'Читаю содержимое папки…');
