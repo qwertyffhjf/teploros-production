@@ -3783,7 +3783,7 @@ const BUNDLES = {
   // протокол ГИ) обёрнуты отдельным ensureCdn() прямо в обработчике клика.
   office: ['cdn:xlsx', 'cdn:pdfmake', 'cdn:vfsFonts', 'cdn:chartjs',
            'js/qms.js', 'js/analytics.js', 'js/timesheet.js', 'js/auxops.js',
-           'js/drawing-parser.js', 'js/reference.js', 'js/quality.js', 'js/hr.js',
+           'js/gdrive.js', 'js/drawing-parser.js', 'js/reference.js', 'js/quality.js', 'js/hr.js',
            'js/warehouse.js', 'js/master.js'],
 };
 
