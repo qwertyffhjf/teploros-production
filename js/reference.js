@@ -1709,6 +1709,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
   const [welcomeLabel, setWelcomeLabel] = useState(settings.welcomeLabel || 'Производственный учёт · НТ');
   const [labelWidth, setLabelWidth] = useState(settings.labelWidth || 50);
   const [labelHeight, setLabelHeight] = useState(settings.labelHeight || 35);
+  const [drawingsRootUrl, setDrawingsRootUrl] = useState(settings.drawingsRootUrl || '');
   const [loginWidgets, setLoginWidgets] = useState(settings.loginWidgets || ['activeOrders', 'onCheck', 'freeWorkers']);
   const toggleLoginWidget = (id) => {
     setLoginWidgets(prev => {
@@ -1765,6 +1766,13 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
     const d = { ...data, settings: { ...settings, welcomeTitle: welcomeTitle.trim(), welcomeSubtitle: welcomeSubtitle.trim(), welcomeLabel: welcomeLabel.trim(), labelWidth: parseInt(labelWidth) || 50, labelHeight: parseInt(labelHeight) || 35, loginWidgets } };
     onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); }); addToast('Текст главной страницы обновлён', 'success');
   }, [data, settings, welcomeTitle, welcomeSubtitle, welcomeLabel, labelWidth, labelHeight, loginWidgets, onUpdate, addToast]);
+
+  const saveDrawingsRoot = useCallback(() => {
+    const d = { ...data, settings: { ...settings, drawingsRootUrl: drawingsRootUrl.trim() } };
+    onUpdate(d);
+    if (typeof DB !== 'undefined' && DB.save) DB.save(d).catch(() => onUpdate(data));
+    addToast('Папка чертежей сохранена', 'success');
+  }, [data, settings, drawingsRootUrl, onUpdate, addToast]);
 
   const genRandomPin = useCallback(async (workerId) => {
     let pin;
@@ -1959,6 +1967,24 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
         h('button', { style: abtn({ height:36 }), onClick: saveWelcome }, 'Сохранить')
       ),
       h('div', { style: { fontSize:11, color:'var(--muted)' } }, 'По умолчанию: 50 × 35. Применяется при печати QR-этикеток.')
+    ),
+    h('div', { style: S.card },
+      h('div', { style: S.sec }, 'Google Диск · папка чертежей'),
+      h('div', { style: { fontSize:11, color:'var(--muted)', marginBottom:8 } },
+        'Ссылка на общую папку, внутри которой лежат папки заказов (названы по номеру: 45/26). '
+        + 'Кнопка «Из чертежей» в заявке на материалы будет искать папку заказа здесь автоматически.'),
+      h('div', { style: { display:'flex', gap:12, alignItems:'flex-end', flexWrap:'wrap' } },
+        h('div', { style: { flex:1, minWidth:240 } },
+          h('label', { style: S.lbl }, 'Ссылка на папку'),
+          h('input', { type:'text', style: { ...S.inp, width:'100%' },
+            placeholder:'https://drive.google.com/drive/folders/…',
+            value: drawingsRootUrl, onChange: e => setDrawingsRootUrl(e.target.value) })),
+        h('button', { style: abtn({ height:36 }), onClick: saveDrawingsRoot }, 'Сохранить')
+      ),
+      settings.drawingsRootUrl && h('a', {
+        href: settings.drawingsRootUrl, target:'_blank', rel:'noopener',
+        style: { fontSize:10, color:BL, marginTop:4, display:'block' }
+      }, '📁 Открыть текущую папку')
     ),
     h(StorageMonitor, { data, addToast }),
     h('div', { style: S.card },
