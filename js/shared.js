@@ -672,8 +672,11 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
   const drawingFileRef = useRef(null);
   const [drawingProgress, setDrawingProgress] = useState(null); // null | { pct, msg }
   const [showDropZone, setShowDropZone] = useState(false);
-  // Ссылка на папку чертежей в Google Диске. Берём из заказа, если ПДО её уже вписал.
-  const [driveUrl, setDriveUrl] = useState(order?.drawingUrl || '');
+  // Папка чертежей на Google Диске.
+  // driveUrl — ручной запасной путь (прямая ссылка, если автопоиск не нашёл).
+  // driveCandidates — несколько папок с одним номером (напр. 45/26 и 45/26 НТ) — спрашиваем, какую.
+  const [driveUrl, setDriveUrl] = useState('');
+  const [driveCandidates, setDriveCandidates] = useState(null); // null | [{id, name}]
   const [dragOver, setDragOver] = useState(false);
 
   const [showImportComponents, setShowImportComponents] = useState(false);
