@@ -672,6 +672,8 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
   const drawingFileRef = useRef(null);
   const [drawingProgress, setDrawingProgress] = useState(null); // null | { pct, msg }
   const [showDropZone, setShowDropZone] = useState(false);
+  // Ссылка на папку чертежей в Google Диске. Берём из заказа, если ПДО её уже вписал.
+  const [driveUrl, setDriveUrl] = useState(order?.drawingUrl || '');
   const [dragOver, setDragOver] = useState(false);
 
   const [showImportComponents, setShowImportComponents] = useState(false);
@@ -812,6 +814,17 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
         setDrawingProgress(null);
         return;
       }
+      // Защита от потери приёмки: если в текущей ведомости уже есть отмеченные
+      // позиции (заказано/частично/получено), перезапись сотрёт их статусы.
+      // Разбор чертежей теперь запускается легко и может повториться — спрашиваем.
+      var hasProgress = (needs && needs.groups || []).some(function(g) {
+        return (g.items || []).some(function(it) { return it.status && it.status !== 'pending'; });
+      });
+      if (hasProgress) {
+        var ok = window.confirm('В заявке уже отмечены полученные или заказанные позиции. '
+          + 'Разбор чертежей заменит ведомость и сотрёт эти отметки. Продолжить?');
+        if (!ok) { setDrawingProgress(null); return; }
+      }
       updNeeds(function() { return { groups: groups }; });
       var totalItems = groups.reduce(function(s, g) { return s + g.items.length; }, 0);
       addToast('Из чертежей: ' + groups.length + ' групп, ' + totalItems + ' позиций'
@@ -821,7 +834,78 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
       addToast('Ошибка парсинга: ' + err.message, 'error');
     }
     setDrawingProgress(null);
-  }, [updNeeds, addToast]);
+  }, [updNeeds, needs, addToast]);
+
+  // Импорт из конкретной папки Диска по id.
+  // File-объекты приезжают из Drive API и идут в тот же handleDrawingImport, что и ручной выбор.
+  const importFromFolderId = useCallback(async (folderId) => {
+    setDriveCandidates(null);
+    setShowDropZone(false);
+    setDrawingProgress({ pct: 0, msg: 'Подключаюсь к Google Диску…' });
+    try {
+      const files = await gdLoadFolderIdAsFiles(folderId, (pct, msg) => {
+        setDrawingProgress({ pct, msg });
+      });
+      await handleDrawingImport(files);
+    } catch (err) {
+      console.error('DriveImport error:', err);
+      addToast('Google Диск: ' + err.message, 'error');
+      setDrawingProgress(null);
+    }
+  }, [handleDrawingImport, addToast]);
+
+  // Автопоиск папки заказа по номеру внутри общей папки «Чертежи» (ссылка — в настройках).
+  // 1 папка → парсим сразу. Несколько → спрашиваем. 0 → предлагаем ручную ссылку.
+  const handleDriveAutoFind = useCallback(async () => {
+    if (typeof gdFindOrderFolders !== 'function') {
+      addToast('Модуль Google Диска не загружен', 'error'); return;
+    }
+    if (!gdIsConfigured()) {
+      addToast('Не настроен ключ Google Диска', 'error'); return;
+    }
+    const rootUrl = data?.settings?.drawingsRootUrl || '';
+    if (!rootUrl) {
+      addToast('В настройках не задана общая папка чертежей', 'error');
+      setShowDropZone(true);
+      return;
+    }
+    const num = (order?.number || '').trim();
+    if (!num) { addToast('У заказа нет номера', 'error'); return; }
+
+    setDriveCandidates(null);
+    setDrawingProgress({ pct: 0, msg: 'Ищу папку заказа ' + num + '…' });
+    try {
+      const folders = await gdFindOrderFolders(rootUrl, num);
+      if (folders.length === 0) {
+        setDrawingProgress(null);
+        addToast('Папка заказа ' + num + ' не найдена — вставьте ссылку вручную', 'error');
+        setShowDropZone(true);
+        return;
+      }
+      if (folders.length === 1) {
+        await importFromFolderId(folders[0].id);
+        return;
+      }
+      setDrawingProgress(null);
+      setDriveCandidates(folders);
+    } catch (err) {
+      console.error('DriveAutoFind error:', err);
+      setDrawingProgress(null);
+      addToast('Google Диск: ' + err.message, 'error');
+    }
+  }, [data, order, importFromFolderId, addToast]);
+
+  // Ручной запасной путь: прямая ссылка на папку
+  const handleDriveManualImport = useCallback(async () => {
+    const url = (driveUrl || '').trim();
+    if (!url) { addToast('Вставьте ссылку на папку', 'error'); return; }
+    if (typeof gdExtractFolderId !== 'function') {
+      addToast('Модуль Google Диска не загружен', 'error'); return;
+    }
+    const fid = gdExtractFolderId(url);
+    if (!fid) { addToast('Не похоже на ссылку папки Google Диска', 'error'); return; }
+    await importFromFolderId(fid);
+  }, [driveUrl, importFromFolderId, addToast]);
 
   // ── Drag & Drop: рекурсивное чтение папок ──────────────────
   const readEntriesRecursive = useCallback(async (entry) => {
@@ -951,9 +1035,15 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
           style: { fontSize: 12, padding: '6px 12px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' }
         }, '📤 Экспорт Excel'),
         canEdit && !drawingProgress && h('button', {
-          onClick: () => setShowDropZone(v => !v),
-          style: { fontSize: 12, padding: '6px 12px', border: `0.5px solid ${GN}`, borderRadius: 7, color: GN2, background: showDropZone ? GN3 : 'transparent', cursor: 'pointer', fontWeight: 500 }
+          onClick: handleDriveAutoFind,
+          title: 'Найти папку заказа на Google Диске и разобрать чертежи',
+          style: { fontSize: 12, padding: '6px 12px', border: `0.5px solid ${GN}`, borderRadius: 7, color: GN2, background: 'transparent', cursor: 'pointer', fontWeight: 500 }
         }, '📐 Из чертежей'),
+        canEdit && !drawingProgress && h('button', {
+          onClick: () => setShowDropZone(v => !v),
+          title: 'Ручной выбор: файлы, ZIP или ссылка на папку',
+          style: { fontSize: 12, padding: '6px 9px', border: `0.5px solid ${GN}`, borderRadius: 7, color: GN2, background: showDropZone ? GN3 : 'transparent', cursor: 'pointer', fontWeight: 500 }
+        }, '⚙️'),
         canEdit && h('button', {
           onClick: addGroup,
           style: { fontSize: 12, padding: '6px 12px', border: `0.5px solid ${AM}`, borderRadius: 7, color: AM2, background: 'transparent', cursor: 'pointer', fontWeight: 500 }
@@ -984,6 +1074,48 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
           'или нажмите чтобы выбрать PDF, DXF или ZIP'),
         h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 2 } },
           'Поддерживаются: PDF, DXF, ZIP-архив')
+      ),
+      showDropZone && !drawingProgress && h('div', {
+        onClick: e => e.stopPropagation(),
+        style: { marginTop: 8, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }
+      },
+        h('span', { style: { fontSize: 11, color: 'var(--muted)' } }, '☁️ или прямо из папки Диска:'),
+        h('input', {
+          value: driveUrl,
+          onChange: e => setDriveUrl(e.target.value),
+          placeholder: 'https://drive.google.com/drive/folders/…',
+          style: { flex: 1, minWidth: 200, fontSize: 11, padding: '5px 8px',
+                   borderRadius: 6, border: '0.5px solid var(--border)',
+                   background: 'var(--card)', color: 'var(--fg)' }
+        }),
+        h('button', {
+          onClick: handleDriveManualImport,
+          style: { fontSize: 11, padding: '5px 10px', borderRadius: 6,
+                   border: '0.5px solid ' + GN, color: GN2, background: 'transparent',
+                   cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap' }
+        }, 'Загрузить')
+      ),
+      driveCandidates && driveCandidates.length > 0 && h('div', {
+        style: { marginTop: 8, padding: '10px 12px', background: GN3, borderRadius: 8, border: '0.5px solid ' + GN }
+      },
+        h('div', { style: { fontSize: 12, fontWeight: 600, color: GN2, marginBottom: 6 } },
+          'Нашёл несколько папок для заказа ' + (order?.number || '') + ' — какая нужна?'),
+        driveCandidates.map(function(f) {
+          return h('button', {
+            key: f.id,
+            onClick: function() { importFromFolderId(f.id); },
+            style: { display: 'block', width: '100%', textAlign: 'left', fontSize: 12,
+                     padding: '7px 10px', marginBottom: 4, borderRadius: 6,
+                     border: '0.5px solid ' + GN, color: 'var(--fg)', background: 'var(--card)',
+                     cursor: 'pointer' }
+          }, '📁 ' + f.name);
+        }),
+        h('button', {
+          onClick: function() { setDriveCandidates(null); },
+          style: { fontSize: 11, padding: '4px 8px', borderRadius: 6, marginTop: 2,
+                   border: '0.5px solid var(--border)', color: 'var(--muted)',
+                   background: 'transparent', cursor: 'pointer' }
+        }, 'Отмена')
       ),
       drawingProgress && h('div', { style: { marginTop: 8, padding: '8px 12px', background: GN3, borderRadius: 8, border: '0.5px solid ' + GN } },
         h('div', { style: { fontSize: 12, fontWeight: 500, color: GN2, marginBottom: 4 } }, drawingProgress.msg),
