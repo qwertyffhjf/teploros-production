@@ -18,6 +18,24 @@ const GDRIVE_API_KEY = 'AIzaSyBItp6XNV7dCW4Yp8YZsEiGQa1hCmkHd2A';
 
 const GDRIVE_FOLDER_MIME = 'application/vnd.google-apps.folder';
 
+// Ссылку на папку люди приносят в разном виде — вытаскиваем id из всех вариантов.
+function gdExtractFolderId(url) {
+  if (!url) return '';
+  const s = String(url).trim();
+  if (/^[a-zA-Z0-9_-]{20,}$/.test(s)) return s;          // голый id
+  let m = s.match(/\/folders\/([a-zA-Z0-9_-]+)/);        // .../folders/ID
+  if (m) return m[1];
+  m = s.match(/[?&]id=([a-zA-Z0-9_-]+)/);                 // ...open?id=ID
+  if (m) return m[1];
+  m = s.match(/\/d\/([a-zA-Z0-9_-]+)/);                   // .../d/ID/...
+  if (m) return m[1];
+  return '';
+}
+
+function gdIsConfigured() {
+  return !!GDRIVE_API_KEY;
+}
+
 function gdKeyUrl(url) {
   return url + (url.indexOf('?') === -1 ? '?' : '&') + 'key=' + encodeURIComponent(GDRIVE_API_KEY);
 }
