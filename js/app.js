@@ -1816,7 +1816,67 @@ const SubOrderSplitStep = memo(({ data, onUpdate, addToast, onClose, parentOrder
 
 // ==================== OrderComponentsBlock ====================
 // Блок комплектующих в карточке заказа
-const OrderComponentsBlock = memo(({ order, data, onUpdate, userRole }) => {
+const OrderComponentsBlock = memo(({ order, data, onUpdate, userRole, addToast }) => {
+  // Диалог подтверждения комплектации из бланка ТЗ (полуавтомат: ПДО сверяет и добавляет).
+  const [specDialog, setSpecDialog] = React.useState(null); // null | { fileName, rows:[{name,detail,checked}] }
+  const [specBusy, setSpecBusy] = React.useState(false);
+
+  const toast = addToast || (typeof window !== 'undefined' && window.__addToast) || function(){};
+
+  // Ищет папку заказа на Диске, скачивает бланк, парсит, показывает предложение.
+  const loadSpecFromDrive = async () => {
+    if (typeof gdFindOrderFolders !== 'function' || typeof parseSpecFile !== 'function') {
+      toast('Модуль Google Диска не загружен', 'error'); return;
+    }
+    if (!gdIsConfigured || !gdIsConfigured()) { toast('Не настроен ключ Google Диска', 'error'); return; }
+    const rootUrl = data?.settings?.drawingsRootUrl || '';
+    if (!rootUrl) { toast('В настройках не задана общая папка чертежей', 'error'); return; }
+    const num = (order?.number || '').trim();
+    if (!num) { toast('У заказа нет номера', 'error'); return; }
+
+    setSpecBusy(true);
+    try {
+      const folders = await gdFindOrderFolders(rootUrl, num);
+      if (folders.length === 0) { toast('Папка заказа ' + num + ' не найдена на Диске', 'error'); setSpecBusy(false); return; }
+      // при неоднозначности берём первую совпавшую (бланк ищем внутри неё)
+      const spec = await gdLoadSpecFile(folders[0].id);
+      if (!spec) { toast('В папке заказа нет файла бланка (Excel)', 'error'); setSpecBusy(false); return; }
+      const parsed = await parseSpecFile(spec.file);
+      if (!parsed.components.length) { toast('В бланке не нашлось комплектации для добавления', 'error'); setSpecBusy(false); return; }
+      setSpecDialog({
+        fileName: spec.name,
+        multiple: spec.multiple,
+        rows: parsed.components.map(c => ({ name: c.name, detail: c.detail, checked: true }))
+      });
+    } catch (err) {
+      console.error('loadSpecFromDrive error:', err);
+      toast('Бланк ТЗ: ' + err.message, 'error');
+    }
+    setSpecBusy(false);
+  };
+
+  // Записывает отмеченные позиции в components (status: pending) — оптимистично.
+  const applySpecComponents = () => {
+    if (!specDialog || !onUpdate) return;
+    const chosen = specDialog.rows.filter(r => r.checked);
+    if (!chosen.length) { setSpecDialog(null); return; }
+    const existing = (() => { try { return Array.isArray(order.components) ? order.components
+      : JSON.parse(order.components || '[]'); } catch(e) { return []; } })();
+    // не дублируем по имени
+    const names = new Set(existing.map(c => (c.name||'').toLowerCase()));
+    const additions = chosen
+      .filter(r => !names.has(r.name.toLowerCase()))
+      .map(r => ({ id: uid(), name: r.name + (r.detail ? ' — ' + r.detail : ''),
+                   code: '', qty: 1, unit: 'шт', price: 0, status: 'pending', fromSpec: true }));
+    if (!additions.length) { toast('Эти позиции уже есть в комплектующих', 'error'); setSpecDialog(null); return; }
+    const updated = { ...data, orders: data.orders.map(o => o.id === order.id
+      ? { ...o, components: [...existing, ...additions] } : o) };
+    onUpdate(updated);
+    DB.save(updated).catch(() => onUpdate(data));
+    toast('Добавлено из ТЗ: ' + additions.length + ' поз.', 'success');
+    setSpecDialog(null);
+  };
+
   // Защита: components может быть строкой из Firebase
   let components = order.components || [];
   if (typeof components === 'string') {
@@ -1893,6 +1953,48 @@ const OrderComponentsBlock = memo(({ order, data, onUpdate, userRole }) => {
   };
 
   return h('div', { style: { padding: '14px 20px', borderBottom: '0.5px solid rgba(0,0,0,0.06)' } },
+    // Диалог подтверждения комплектации из бланка ТЗ
+    specDialog && h('div', {
+      style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 9999,
+               display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 },
+      onClick: () => setSpecDialog(null)
+    },
+      h('div', {
+        onClick: e => e.stopPropagation(),
+        style: { background: 'var(--card)', borderRadius: 14, padding: 20, maxWidth: 460, width: '100%',
+                 maxHeight: '80vh', overflow: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,0.3)' }
+      },
+        h('div', { style: { fontSize: 15, fontWeight: 600, color: 'var(--fg)', marginBottom: 4 } },
+          'Комплектация из ТЗ'),
+        h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 4 } },
+          'Файл: ' + specDialog.fileName),
+        specDialog.multiple && h('div', { style: { fontSize: 11, color: AM2, marginBottom: 8 } },
+          '⚠️ В папке несколько таблиц — проверьте, что это верный бланк'),
+        h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 12 } },
+          'Отметьте позиции, которые добавить в комплектующие заказа. Сверьте с бланком.'),
+        specDialog.rows.map((r, i) =>
+          h('label', { key: i, style: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px',
+              marginBottom: 4, borderRadius: 8, background: r.checked ? GN3 : 'var(--card-2)', cursor: 'pointer' } },
+            h('input', { type: 'checkbox', checked: r.checked,
+              onChange: () => setSpecDialog(prev => ({ ...prev,
+                rows: prev.rows.map((x, j) => j === i ? { ...x, checked: !x.checked } : x) })) }),
+            h('div', null,
+              h('div', { style: { fontSize: 13, fontWeight: 500, color: 'var(--fg)' } }, r.name),
+              r.detail && h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, r.detail)
+            )
+          )
+        ),
+        h('div', { style: { display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' } },
+          h('button', { onClick: () => setSpecDialog(null),
+            style: { fontSize: 12, padding: '8px 16px', borderRadius: 8, cursor: 'pointer',
+                     background: 'transparent', color: 'var(--muted)', border: '0.5px solid var(--border)' } }, 'Отмена'),
+          h('button', { onClick: applySpecComponents,
+            style: { fontSize: 12, padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontWeight: 600,
+                     background: GN3, color: GN2, border: `0.5px solid ${GN}` } },
+            'Добавить (' + specDialog.rows.filter(r => r.checked).length + ')')
+        )
+      )
+    ),
     // Заголовок с прогрессом
     h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 } },
       h('div', { style: S.sec }, `📦 Комплектующие`),
@@ -1900,11 +2002,11 @@ const OrderComponentsBlock = memo(({ order, data, onUpdate, userRole }) => {
         padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 500,
         background: allOk ? GN3 : AM3,
         color: allOk ? GN2 : AM2
-      }}, allOk ? `✓ Все получены (${components.length})` : `${confirmed} / ${components.length}`)
+      }}, components.length === 0 ? 'нет позиций' : (allOk ? `✓ Все получены (${components.length})` : `${confirmed} / ${components.length}`))
     ),
 
     // Прогресс-бар
-    h('div', { style: { height: 4, background: 'var(--st-pending-bg)', borderRadius: 3, overflow: 'hidden', marginBottom: 12 } },
+    components.length > 0 && h('div', { style: { height: 4, background: 'var(--st-pending-bg)', borderRadius: 3, overflow: 'hidden', marginBottom: 12 } },
       h('div', { style: { height: '100%', width: `${components.length > 0 ? confirmed/components.length*100 : 0}%`, background: allOk ? GN : AM, borderRadius: 3, transition: 'width .3s' } })
     ),
 
@@ -1915,6 +2017,13 @@ const OrderComponentsBlock = memo(({ order, data, onUpdate, userRole }) => {
         style: { fontSize: 12, padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontWeight: 500,
           background: GN3, color: GN2, border: `0.5px solid ${GN}` }
       }, '✓ Подтвердить всё'),
+      h('button', {
+        onClick: loadSpecFromDrive,
+        disabled: specBusy,
+        title: 'Прочитать бланк ТЗ из папки заказа на Google Диске и добавить комплектацию',
+        style: { fontSize: 12, padding: '6px 14px', borderRadius: 8, cursor: specBusy ? 'default' : 'pointer', fontWeight: 500,
+          background: 'transparent', color: BL, border: `0.5px solid ${BL}`, opacity: specBusy ? 0.6 : 1 }
+      }, specBusy ? '⏳ Читаю бланк…' : '📋 Комплектация из ТЗ'),
       allOk && h('button', {
         onClick: unconfirmAll,
         style: { fontSize: 12, padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontWeight: 400,
@@ -1923,13 +2032,13 @@ const OrderComponentsBlock = memo(({ order, data, onUpdate, userRole }) => {
     ),
 
     // Если не подтверждены — предупреждение
-    !allOk && h('div', { style: { padding: '8px 12px', background: AM3, borderRadius: 8, marginBottom: 10, fontSize: 12, color: AM2, display: 'flex', alignItems: 'center', gap: 8 } },
+    !allOk && components.length > 0 && h('div', { style: { padding: '8px 12px', background: AM3, borderRadius: 8, marginBottom: 10, fontSize: 12, color: AM2, display: 'flex', alignItems: 'center', gap: 8 } },
       h('span', { style: { fontSize: 16 } }, '⚠️'),
       'Отгрузка заблокирована до получения всех комплектующих'
     ),
 
     // Таблица комплектующих
-    h('div', { className: 'table-responsive' },
+    components.length > 0 && h('div', { className: 'table-responsive' },
       h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 } },
         h('thead', null, h('tr', null,
           ['Наименование', 'Код', 'Кол-во', 'Ед.', 'Статус', ''].map((t, i) =>
@@ -2773,6 +2882,9 @@ function App() {
     const id = Date.now() + Math.random();
     setToasts(prev => [...prev, { id, message, type, action }]);
   }, []);
+  // Глобальный указатель — чтобы вложенные компоненты (OrderComponentsBlock)
+  // могли показать тост без проброса addToast через всю цепочку пропсов.
+  React.useEffect(() => { window.__addToast = addToast; return () => {}; }, [addToast]);
   const removeToast = useCallback(id => setToasts(prev => prev.filter(t => t.id !== id)), []);
 
   // Сброс PIN через мастер-ключ (вызывается из LoginScreen)
