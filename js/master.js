@@ -1415,6 +1415,110 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     });
   }, [data.orders, data.ops, showArchived, showShipped, filterType, sortMode]);
   const paginated = useMemo(() => { const start = (page-1)*pageSize; return ordersToShow.slice(start, start+pageSize); }, [ordersToShow, page]);
+
+  // Экспорт заказов в Excel — выгружает текущий отфильтрованный список (ordersToShow)
+  const exportOrdersXLSX = useCallback(async () => {
+    try {
+      await ensureCdn('xlsx');
+      const DAY = 86400000;
+      const fmtTs = ts => ts ? new Date(ts).toLocaleDateString('ru-RU') : '';
+      const secName = id => (data.sections.find(s => s.id === id)?.name) || '';
+      const wName = id => (data.workers.find(w => w.id === id)?.name) || '';
+      const OPS = { pending: 'Ожидает', in_progress: 'В работе', done: 'Выполнена', on_check: 'На проверке ОТК', defect: 'Брак', rework: 'Переделка', pending_approval: 'Ждёт подтверждения' };
+
+      const orderRows = [];
+      const opRows = [];
+
+      ordersToShow.forEach(ord => {
+        const ops = data.ops.filter(o => o.orderId === ord.id && !o.archived);
+        const total = ops.length;
+        const done = ops.filter(o => o.status === 'done').length;
+        const inProgress = ops.filter(o => o.status === 'in_progress').length;
+        const progress = total ? Math.round(done / total * 100) : 0;
+
+        const currentOp = ops.find(o => o.status === 'in_progress')
+          || ops.find(o => o.status === 'on_check')
+          || ops.find(o => o.status === 'pending');
+        const currentOpName = ord.shipped ? '—'
+          : (total > 0 && done === total) ? 'Все операции завершены'
+          : (currentOp ? currentOp.name : '—');
+
+        const statusLabel = ord.shipped ? 'Отгружен'
+          : (total > 0 && done === total) ? 'Готов к отгрузке'
+          : inProgress > 0 ? 'В работе'
+          : done > 0 ? 'Частично выполнен'
+          : 'Ожидает';
+
+        const dl = ord.deadline ? Math.ceil((new Date(ord.deadline) - Date.now()) / DAY) : null;
+        const overdue = !ord.shipped && dl !== null && dl < 0;
+
+        const comps = parseComps(ord.components);
+        let compText, compComplete;
+        if (!comps.length) { compText = 'без комплектующих'; compComplete = true; }
+        else {
+          const conf = comps.filter(c => c.status === 'confirmed').length;
+          compComplete = conf === comps.length;
+          compText = compComplete ? ('полная (' + comps.length + ')') : (conf + '/' + comps.length);
+        }
+        const ready = total > 0 && done === total && compComplete;
+
+        const executors = [...new Set(ops.flatMap(o => (o.workerIds || []).map(wName)).filter(Boolean))].join(', ');
+        const sects = [...new Set(ops.map(o => secName(o.sectionId)).filter(Boolean))].join(', ');
+        const prio = (PRIORITY[ord.priority] && PRIORITY[ord.priority].label) || ord.priority || '';
+        const ptype = (productTypes.find(p => p.id === ord.productType)?.label) || ord.productType || '';
+
+        orderRows.push({
+          'Номер':            ord.number || '',
+          'Заказчик':         ord.customer || '',
+          'Изделие':          ord.product || '',
+          'Тип изделия':      ptype,
+          'Серийный №':       ord.serialNumber || '',
+          'Мощность, кВт':    ord.powerKw || '',
+          'Кол-во':           ord.qty || 1,
+          'Приоритет':        prio,
+          'Плановый срок':    ord.deadline || '',
+          'Осталось дней':    dl !== null ? dl : '',
+          'Просрочен':        overdue ? 'Да' : '',
+          'Статус':           statusLabel,
+          'Текущая операция': currentOpName,
+          'Готовность, %':    progress,
+          'Операций всего':   total,
+          'Выполнено':        done,
+          'Осталось':         total - done,
+          'Комплектация':     compText,
+          'Готов к отгрузке': ready ? 'Да' : '',
+          'Участок':          sects,
+          'Исполнители':      executors,
+          'Чертёж':           ord.drawingUrl ? 'есть' : '',
+          'Дата договора':    fmtTs(ord.contractDate),
+          'Раскрой получен':  fmtTs(ord.cuttingArrivedAt),
+          'Факт. старт':      fmtTs(ord.factStartedAt),
+          'Факт. завершение': fmtTs(ord.factFinishedAt),
+          'Отгружен':         fmtTs(ord.shippedAt),
+          'Создан':           fmtTs(ord.createdAt),
+        });
+
+        ops.forEach(op => {
+          opRows.push({
+            'Заказ':       ord.number || '',
+            'Операция':    op.name || '',
+            'Статус':      OPS[op.status] || op.status || '',
+            'Участок':     secName(op.sectionId),
+            'План, ч':     op.plannedHours != null ? op.plannedHours : '',
+            'Исполнители': (op.workerIds || []).map(wName).filter(Boolean).join(', '),
+          });
+        });
+      });
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(orderRows), 'Заказы');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(opRows), 'Операции');
+      XLSX.writeFile(wb, 'zakazy_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+      addToast('Выгружено заказов: ' + orderRows.length, 'success');
+    } catch (e) {
+      addToast('Ошибка экспорта: ' + e.message, 'error');
+    }
+  }, [ordersToShow, data, productTypes, addToast]);
   // Состояние раскрытых родительских заказов
   const [expandedParents, setExpandedParents] = useState({});
   const toggleParent = (orderId) => setExpandedParents(prev => ({ ...prev, [orderId]: !prev[orderId] }));
@@ -1698,7 +1802,8 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
         h('input', { type: 'checkbox', checked: showArchived, onChange: e => setShowArchived(e.target.checked) }), 'Архивные'      ),
       h('label', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 } },
         h('input', { type: 'checkbox', checked: showShipped, onChange: e => setShowShipped(e.target.checked) }), 'Отгружен'
-      )
+      ),
+      h('button', { style: gbtn({ fontSize: 11, padding: '4px 10px', marginLeft: 'auto' }), onClick: exportOrdersXLSX, title: 'Выгрузить видимые заказы в Excel (учитывает фильтры)' }, '📥 Экспорт Excel')
     ),
     paginated.length === 0
       ? h('div', { style: S.card }, h(EmptyState, {
