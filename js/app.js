@@ -2240,7 +2240,7 @@ const ShopMasterScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 // ==================== PDOScreen (ПДО) ====================
 const PDOScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [tab, setTab] = useState('orders');
-  const TABS = [['orders','Заказы'],['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['plan','План'],['reports','Отчёты'],['auxops','Доп. работы'],['journal','Журнал'],['notifications','Уведомления']];
+  const TABS = [['orders','Заказы'],['ops','Операции'],['recommend','Назначения'],['kanban','Канбан'],['gantt','Гант'],['calendar','Загрузка'],['plan','План'],['reports','Отчёты'],['prodreports','Сводки'],['auxops','Доп. работы'],['journal','Журнал'],['notifications','Уведомления']];
 
 
 
@@ -2258,6 +2258,7 @@ const PDOScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     tab === 'calendar'      && h(ErrorBoundary, { name: 'ResourceCalendar' }, h(ResourceCalendar,          { data, onUpdate, addToast })),
     tab === 'plan'          && h(ErrorBoundary, { name: 'MasterTodayPlan' }, h(MasterTodayPlan,           { data })),
     tab === 'reports'       && h(ErrorBoundary, { name: 'ReportsBuilder' }, h(ReportsBuilder,            { data })),
+    tab === 'prodreports'   && h(ErrorBoundary, { name: 'ProductionReports' }, h(ProductionReports,       { data, onUpdate, addToast })),
     tab === 'auxops'        && h(ErrorBoundary, { name: 'AuxOpsViewer' }, h(AuxOpsViewer,              { data, onUpdate, addToast })),
     tab === 'journal'       && h(ErrorBoundary, { name: 'MasterJournal' }, h(MasterJournal,             { data })),
     tab === 'notifications' && h(ErrorBoundary, { name: 'MasterNotifications' }, h(MasterNotifications,       { data }))
@@ -2267,7 +2268,7 @@ const PDOScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 // ==================== DirectorScreen (Руководитель) ====================
 const DirectorScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [tab, setTab] = useState('overview');
-  const TABS = [['overview','Обзор'],['monthly','Отчёт месяца'],['analytics','Аналитика'],['reports','Отчёты'],['kpi','KPI / Премии'],['reclamations','Рекламации'],['auxops','Доп. работы'],['orders','Заказы'],['kanban','Канбан']];
+  const TABS = [['overview','Обзор'],['monthly','Отчёт месяца'],['analytics','Аналитика'],['reports','Отчёты'],['kpi','KPI / Премии'],['prodreports','Сводки'],['reclamations','Рекламации'],['auxops','Доп. работы'],['orders','Заказы'],['kanban','Канбан']];
 
   const period30 = useMemo(() => Date.now() - 30 * 86400000, [data]); // пересчитывается при обновлении данных
   const doneOps    = useMemo(() => data.ops.filter(o => o.status === 'done'   && o.finishedAt >= period30).length, [data.ops, period30]);
@@ -2373,6 +2374,7 @@ const DirectorScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     tab === 'reports'      && h(ReportsBuilder,     { data }),
     tab === 'monthly'      && h(MonthlyReport,       { data }),
     tab === 'kpi'          && h(KPIReport,           { data }),
+    tab === 'prodreports'  && h(ProductionReports,   { data, onUpdate, addToast }),
     tab === 'reclamations' && h(MasterReclamations,  { data, onUpdate, addToast }),
     tab === 'auxops'       && h(AuxOpsViewer,        { data, onUpdate, addToast }),
     tab === 'orders'       && h(MasterOrders,        { data, onUpdate, addToast, onOrderClick }),
