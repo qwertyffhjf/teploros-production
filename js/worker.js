@@ -1318,26 +1318,6 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
         )
       );
     }
-    if (op.name.includes('свар')) {
-      return h('div', null,
-        h('div', { style: { display: 'flex', gap: 8, marginBottom: 8 } },
-          h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Номер шва', value: weldParams.seamNumber, onChange: e => setWeldParams(p => ({ ...p, seamNumber: e.target.value })) }),
-          h('input', { style: { ...S.inp, flex: 1 }, placeholder: 'Тип электрода', value: weldParams.electrode, onChange: e => setWeldParams(p => ({ ...p, electrode: e.target.value })) })
-        ),
-        h('div', { style: { display: 'flex', gap: 8, marginBottom: 8 } },
-          h('label', { style: { display: 'flex', alignItems: 'center', gap: 4 } },
-            h('input', { type: 'radio', name: `weldResult_worker_${op.id}`, value: 'ok', checked: weldParams.result === 'ok', onChange: e => setWeldParams(p => ({ ...p, result: e.target.value })) }), 'Принято'),
-          h('label', { style: { display: 'flex', alignItems: 'center', gap: 4 } },
-            h('input', { type: 'radio', name: `weldResult_worker_${op.id}`, value: 'fail', checked: weldParams.result === 'fail', onChange: e => setWeldParams(p => ({ ...p, result: e.target.value })) }), 'Брак')
-        ),
-        h('div', { className: 'action-btns', style: { display: 'flex', gap: 8 } },
-          h('button', { style: { ...abtn({ flex: 1 }), background: GN, color: GN2 }, onClick: () => doFinish(op) }, '✓ Завершить'),
-          h('button', { style: rbtn({ flex: 1 }), onClick: () => { setShowDefForm(true); setDefectFromPrev(true); } }, '⚠ Брак с пред. уч.'),
-          h('button', { style: { ...rbtn({ flex: 1 }), background: '#FFF0F0', color: RD2, borderColor: '#F09595' }, onClick: () => { setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
-          h('button', { style: gbtn({ flex: 1 }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
-        )
-      );
-    }
     return h('div', { className: 'action-btns', style: { display: 'flex', gap: 8 } },
       h('button', { style: { ...abtn({ flex: 1 }), background: GN, color: GN2 }, onClick: () => doFinish(op) }, '✓ Завершить'),
       h('button', { style: rbtn({ flex: 1 }), onClick: () => { setShowDefForm(true); setDefectFromPrev(true); } }, '⚠ Брак с пред. уч.'),
