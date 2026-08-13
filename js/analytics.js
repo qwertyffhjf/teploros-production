@@ -1861,3 +1861,129 @@ const OrderLifecycle = memo(({ data, onUpdate, addToast }) => {
         })
   );
 });
+
+// ==================== ProductionReports (Сводки для руководства) ====================
+// Три отчёта из запроса руководства: загрузка цеха, просроченные/горящие, сроки (lead-time).
+const ProductionReports = memo(({ data, onUpdate, addToast }) => {
+  const DAY = 86400000;
+  const wName = React.useCallback(id => (data.workers.find(w => w.id === id)?.name) || '', [data.workers]);
+  const sName = React.useCallback(id => (data.sections.find(s => s.id === id)?.name) || '', [data.sections]);
+
+  const overdueList = React.useMemo(() => {
+    const active = data.orders.filter(o => !o.archived && !o.shipped && !o.parentOrderId);
+    return active.map(o => ({ o, dl: o.deadline ? Math.ceil((new Date(o.deadline) - Date.now()) / DAY) : null }))
+      .filter(x => x.dl !== null && x.dl <= 3)
+      .sort((a, b) => a.dl - b.dl);
+  }, [data.orders]);
+  const overdueCount = overdueList.filter(x => x.dl < 0).length;
+  const burningCount = overdueList.filter(x => x.dl >= 0).length;
+
+  const workloadPreview = React.useMemo(() => {
+    const activeOps = data.ops.filter(o => !o.archived && (o.status === 'in_progress' || o.status === 'pending' || o.status === 'on_check' || o.status === 'rework'));
+    const workers = new Set();
+    activeOps.forEach(op => (op.workerIds || []).forEach(id => workers.add(id)));
+    return { ops: activeOps.length, workers: workers.size };
+  }, [data.ops]);
+
+  // — Отчёт «Загрузка цеха» —
+  const exportWorkload = React.useCallback(async () => {
+    try {
+      await ensureCdn('xlsx');
+      const activeOps = data.ops.filter(o => !o.archived && (o.status === 'in_progress' || o.status === 'pending' || o.status === 'on_check' || o.status === 'rework'));
+      const statusRu = { in_progress: 'в работе', pending: 'в очереди', on_check: 'на ОТК', rework: 'переделка' };
+
+      const bySection = {};
+      activeOps.forEach(op => {
+        const s = sName(op.sectionId) || 'Без участка';
+        if (!bySection[s]) bySection[s] = { 'Участок': s, 'В работе': 0, 'В очереди': 0, 'Плановые часы': 0 };
+        if (op.status === 'in_progress') bySection[s]['В работе']++; else bySection[s]['В очереди']++;
+        bySection[s]['Плановые часы'] += (op.plannedHours || 0);
+      });
+      const sectionRows = Object.values(bySection)
+        .map(r => ({ ...r, 'Плановые часы': Math.round(r['Плановые часы'] * 10) / 10 }))
+        .sort((a, b) => (b['В работе'] + b['В очереди']) - (a['В работе'] + a['В очереди']));
+
+      const byWorker = {};
+      activeOps.forEach(op => (op.workerIds || []).forEach(id => {
+        if (!byWorker[id]) byWorker[id] = { 'Сотрудник': wName(id) || id, 'Участок': sName(data.workers.find(w => w.id === id)?.sectionId), 'В работе': 0, 'В очереди': 0, 'Плановые часы': 0 };
+        if (op.status === 'in_progress') byWorker[id]['В работе']++; else byWorker[id]['В очереди']++;
+        byWorker[id]['Плановые часы'] += (op.plannedHours || 0);
+      }));
+      const workerRows = Object.values(byWorker)
+        .map(r => ({ ...r, 'Плановые часы': Math.round(r['Плановые часы'] * 10) / 10 }))
+        .sort((a, b) => (b['В работе'] + b['В очереди']) - (a['В работе'] + a['В очереди']));
+
+      const opRows = activeOps.map(op => ({
+        'Заказ': data.orders.find(o => o.id === op.orderId)?.number || '',
+        'Операция': op.name || '',
+        'Состояние': statusRu[op.status] || op.status,
+        'Участок': sName(op.sectionId),
+        'Плановые часы': op.plannedHours != null ? op.plannedHours : '',
+        'Исполнители': (op.workerIds || []).map(wName).filter(Boolean).join(', '),
+      }));
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sectionRows.length ? sectionRows : [{ 'Участок': 'нет активных операций' }]), 'По участкам');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(workerRows.length ? workerRows : [{ 'Сотрудник': 'нет активных операций' }]), 'По сотрудникам');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(opRows.length ? opRows : [{ 'Заказ': 'нет активных операций' }]), 'Операции');
+      XLSX.writeFile(wb, 'zagruzka_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+      addToast('Отчёт по загрузке готов', 'success');
+    } catch (e) { addToast('Ошибка экспорта: ' + e.message, 'error'); }
+  }, [data, wName, sName, addToast]);
+
+  // — Отчёт «Просроченные и горящие» —
+  const exportOverdue = React.useCallback(async () => {
+    try {
+      await ensureCdn('xlsx');
+      const rows = overdueList.map(({ o, dl }) => {
+        const ops = data.ops.filter(x => x.orderId === o.id && !x.archived);
+        const total = ops.length, done = ops.filter(x => x.status === 'done').length;
+        const cur = ops.find(x => x.status === 'in_progress') || ops.find(x => x.status === 'pending');
+        const execs = [...new Set(ops.flatMap(x => (x.workerIds || []).map(wName)).filter(Boolean))].join(', ');
+        return {
+          'Номер': o.number || '',
+          'Заказчик': o.customer || '',
+          'Изделие': o.product || '',
+          'Кол-во': o.qty || 1,
+          'Плановый срок': o.deadline || '',
+          'Состояние': dl < 0 ? ('просрочен на ' + Math.abs(dl) + ' дн') : dl === 0 ? 'срок сегодня' : ('горит, ' + dl + ' дн'),
+          'Готовность, %': total ? Math.round(done / total * 100) : 0,
+          'Текущая операция': cur ? cur.name : (total > 0 && done === total ? 'все операции завершены' : '—'),
+          'Исполнители': execs,
+          'Приоритет': (PRIORITY[o.priority] && PRIORITY[o.priority].label) || o.priority || '',
+        };
+      });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{ 'Номер': 'нет просроченных и горящих заказов' }]), 'Просрочка и риски');
+      XLSX.writeFile(wb, 'prosrochka_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+      addToast('Просроченных/горящих: ' + rows.length, 'success');
+    } catch (e) { addToast('Ошибка экспорта: ' + e.message, 'error'); }
+  }, [overdueList, data.ops, wName, addToast]);
+
+  const card = { ...S.card, marginBottom: 12, padding: '14px 16px' };
+  const hTitle = { fontSize: 14, fontWeight: 600, marginBottom: 4 };
+  const sub = { fontSize: 12, color: 'var(--muted)', lineHeight: 1.5, marginBottom: 10 };
+
+  return h('div', null,
+    h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 12 } },
+      'Готовые выгрузки для руководства. Каждая кнопка сразу отдаёт файл Excel.'),
+
+    h('div', { style: card },
+      h('div', { style: hTitle }, '🏭 Загрузка цеха'),
+      h('div', { style: sub }, 'Активных операций: ' + workloadPreview.ops + ', задействовано рабочих: ' + workloadPreview.workers + '. Выгрузка: сколько операций и плановых часов в работе и в очереди — по участкам, по сотрудникам и детализация.'),
+      h('button', { style: abtn(), onClick: exportWorkload }, '📥 Скачать «Загрузка цеха»')
+    ),
+
+    h('div', { style: card },
+      h('div', { style: hTitle }, '⏰ Просроченные и горящие заказы'),
+      h('div', { style: sub }, 'Просрочено: ' + overdueCount + ', горит (≤3 дней): ' + burningCount + '. Выгрузка: заказчик, изделие, срок, насколько просрочен, готовность, текущая операция, исполнители.'),
+      h('button', { style: abtn(), onClick: exportOverdue }, '📥 Скачать «Просрочка и риски»')
+    ),
+
+    h('div', { style: { ...S.card, padding: '14px 16px' } },
+      h('div', { style: hTitle }, '📅 Сроки производства (lead-time)'),
+      h('div', { style: sub }, 'По каждому заказу этапы и длительности — ожидание раскроя, лаг до старта, время производства, фактические даты. Внизу отчёта — кнопка выгрузки в Excel.'),
+      h(OrderLifecycle, { data, onUpdate, addToast })
+    )
+  );
+});
