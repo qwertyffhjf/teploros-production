@@ -543,6 +543,40 @@
         bodyNode));
   }
 
-  // экспорт как глобальный компонент (master.js: h(SectionAnalytics, { data }))
-  window.SectionAnalytics = SectionAnalytics;
+  // ── Совместимость имён компонентов ──────────────────────────────────────────
+  //  Диспетчеры вкладок в master.js / app.js исторически ссылаются на компоненты,
+  //  которых нет в кодовой базе: AnalyticsDashboard (вкладка «Аналитика»),
+  //  ReportsBuilder («Отчёты»), KPIReport («KPI»), MasterJournal («Журнал»).
+  //  Из-за этого вкладки падали с ReferenceError. Определяем их здесь.
+  //  Заглушки перезапишутся, если появятся настоящие компоненты.
+
+  //  Заглушка нереализованного раздела (без хуков)
+  function makeAnStub(title, note) {
+    return function AnStub() {
+      var h = window.React.createElement;
+      return h('div', { style: { padding: '56px 24px', textAlign: 'center',
+          font: '15px/1.5 -apple-system, Segoe UI, Roboto, sans-serif', color: '#6b7280' } },
+        h('div', { style: { fontSize: '42px', marginBottom: '10px', opacity: 0.45 } }, '🚧'),
+        h('div', { style: { fontSize: '18px', fontWeight: 700, color: '#374151', marginBottom: '6px' } }, title),
+        h('div', null, note));
+    };
+  }
+
+  //  Роутер встраиваемых блоков. Вызовы с { section } (quality.js, warehouse.js,
+  //  app.js, master.js:3080) — это старый мини-виджет, который был затёрт новым
+  //  дашбордом; пока он не восстановлен, блок не рендерим, чтобы не встраивать
+  //  полный портфельный дашборд в чужие экраны. Без section (алиас
+  //  AnalyticsDashboard / вкладка «Аналитика») — показываем дашборд.
+  //  Хуков в роутере нет → React #310 не грозит.
+  function SectionAnalyticsSlot(props) {
+    if (props && props.section) return null;
+    return window.React.createElement(SectionAnalytics, props);
+  }
+
+  //  Экспорт
+  window.AnalyticsDashboard = SectionAnalytics;      // вкладка «Аналитика» → полный дашборд
+  window.SectionAnalytics   = SectionAnalyticsSlot;  // встраиваемые блоки { section } → пусто
+  window.ReportsBuilder = window.ReportsBuilder || makeAnStub('Отчёты', 'Раздел «Отчёты» пока не реализован.');
+  window.KPIReport      = window.KPIReport      || makeAnStub('KPI / Премии', 'Раздел «KPI / Премии» пока не реализован.');
+  window.MasterJournal  = window.MasterJournal  || makeAnStub('Журнал', 'Раздел «Журнал» пока не реализован.');
 })();
