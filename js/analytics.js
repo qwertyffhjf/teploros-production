@@ -544,13 +544,10 @@
   }
 
   // ── Совместимость имён компонентов ──────────────────────────────────────────
-  //  Диспетчеры вкладок в master.js / app.js исторически ссылаются на компоненты,
-  //  которых нет в кодовой базе: AnalyticsDashboard (вкладка «Аналитика»),
-  //  ReportsBuilder («Отчёты»), KPIReport («KPI»), MasterJournal («Журнал»).
+  //  Диспетчеры вкладок master.js/app.js ссылаются на компоненты, которых нет в
+  //  кодовой базе: AnalyticsDashboard, ReportsBuilder, KPIReport, MasterJournal.
   //  Из-за этого вкладки падали с ReferenceError. Определяем их здесь.
-  //  Заглушки перезапишутся, если появятся настоящие компоненты.
 
-  //  Заглушка нереализованного раздела (без хуков)
   function makeAnStub(title, note) {
     return function AnStub() {
       var h = window.React.createElement;
@@ -562,18 +559,13 @@
     };
   }
 
-  //  Роутер встраиваемых блоков. Вызовы с { section } (quality.js, warehouse.js,
-  //  app.js, master.js:3080) — это старый мини-виджет, который был затёрт новым
-  //  дашбордом; пока он не восстановлен, блок не рендерим, чтобы не встраивать
-  //  полный портфельный дашборд в чужие экраны. Без section (алиас
-  //  AnalyticsDashboard / вкладка «Аналитика») — показываем дашборд.
-  //  Хуков в роутере нет → React #310 не грозит.
+  //  Роутер встраиваемых блоков: вызовы с { section } не рендерим (старый мини-виджет
+  //  затёрт новым дашбордом), без section — показываем дашборд. Хуков нет → #310 ок.
   function SectionAnalyticsSlot(props) {
     if (props && props.section) return null;
     return window.React.createElement(SectionAnalytics, props);
   }
 
-  //  Экспорт
   window.AnalyticsDashboard = SectionAnalytics;      // вкладка «Аналитика» → полный дашборд
   window.SectionAnalytics   = SectionAnalyticsSlot;  // встраиваемые блоки { section } → пусто
   window.ReportsBuilder = window.ReportsBuilder || makeAnStub('Отчёты', 'Раздел «Отчёты» пока не реализован.');
