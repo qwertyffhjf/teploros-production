@@ -3723,26 +3723,6 @@ const TabBar = memo(({ tabs, tab, setTab }) =>
   )
 );
 
-// ==================== useChartRef (общий хук Chart.js) ====================
-// Возвращает { canvasRef, draw }. draw(config) рисует Chart.js на <canvas ref={canvasRef}>,
-// уничтожая предыдущий экземпляр; график уничтожается при размонтировании.
-// Извлечён из монолита — auxops.js (и потенциально другие модули) ожидают его как глобальный хук.
-function useChartRef() {
-  const canvasRef = useRef(null);
-  const chartRef  = useRef(null);
-  const draw = useCallback((config) => {
-    if (!window.Chart || !canvasRef.current) return null;
-    if (chartRef.current) { try { chartRef.current.destroy(); } catch (e) {} chartRef.current = null; }
-    try { chartRef.current = new window.Chart(canvasRef.current, config); }
-    catch (e) { chartRef.current = null; }
-    return chartRef.current;
-  }, []);
-  useEffect(() => () => {
-    if (chartRef.current) { try { chartRef.current.destroy(); } catch (e) {} chartRef.current = null; }
-  }, []);
-  return { canvasRef, draw };
-}
-
 // ==================== CommandPalette (Cmd+K глобальный поиск) ====================
 // ==================== Ленивая подгрузка office/field бандлов (аудит, perf) ====================
 // Раньше index.html грузил все модули (master/hr/analytics/warehouse/auxops/quality/
