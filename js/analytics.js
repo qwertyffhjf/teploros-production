@@ -1,1989 +1,343 @@
-// teploros · analytics.js
-// Автоматически извлечено из монолита
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>teploros · Аналитика (прототип analytics.js)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+:root{
+  --blue:#118DFF;--navy:#12239E;--teal:#01B8AA;--coral:#E66C37;--red:#D64550;
+  --purple:#6B007B;--yellow:#D9B300;--emer:#12B886;--amber:#F2C811;
+}
+/* ===== LIGHT (default) ===== */
+[data-theme="light"]{
+  --bg:#e6e6e6;--canvas:#F3F2F1;--tile:#fff;--ink:#242220;--soft:#6b6864;
+  --line:#E4E2E0;--grid:#eeeeee;--track:#f0f0f0;--hover:#f6f9ff;
+}
+/* ===== DARK ===== */
+[data-theme="dark"]{
+  --bg:#0f0e0d;--canvas:#181614;--tile:#242220;--ink:#f3f2f1;--soft:#a19f9d;
+  --line:#3b3a39;--grid:#333130;--track:#3b3a39;--hover:#2f2d2b;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Segoe UI",-apple-system,BlinkMacSystemFont,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;transition:background .2s}
+.appbar{height:48px;background:var(--canvas);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;padding:0 16px;position:sticky;top:0;z-index:30}
+.brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px}
+.brand .sq{width:16px;height:16px;border-radius:3px;background:conic-gradient(from 45deg,#F2C811,#E66C37,#118DFF,#01B8AA)}
+.sep{width:1px;height:22px;background:var(--line)}
+.path{font-size:13px;color:var(--soft)}
+.spacer{flex:1}
+.theme-toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--soft);background:var(--tile);border:1px solid var(--line);border-radius:20px;padding:3px 4px;cursor:pointer;user-select:none}
+.theme-toggle .opt{padding:4px 11px;border-radius:16px;font-weight:600}
+.theme-toggle .opt.on{background:var(--blue);color:#fff}
+.tabs{display:flex;gap:4px;background:var(--canvas);border-bottom:1px solid var(--line);padding:6px 16px 0;position:sticky;top:48px;z-index:20}
+.tab{border:1px solid transparent;border-bottom:none;background:transparent;font:inherit;font-size:13px;padding:9px 18px;border-radius:6px 6px 0 0;cursor:pointer;color:var(--soft);position:relative;top:1px;display:flex;align-items:center;gap:6px}
+.tab:hover{background:var(--hover);color:var(--ink)}
+.tab.active{background:var(--tile);border-color:var(--line);color:var(--ink);font-weight:600}
+.tab.active::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--tile)}
+.stage{padding:16px;display:none}
+.stage.active{display:block}
+.canvas{background:var(--canvas);border-radius:6px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,.14);max-width:1280px;margin:0 auto}
+.rt-title{font-size:20px;font-weight:600;padding:2px 6px 12px;color:var(--ink)}
+.rt-title small{display:block;font-size:12px;font-weight:400;color:var(--soft);margin-top:2px}
+.grid{display:grid;gap:12px}
+.kpis{grid-template-columns:repeat(5,1fr)}
+.kpi{background:var(--tile);border-radius:6px;padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,.1);border-left:4px solid var(--blue)}
+.kpi.k2{border-left-color:var(--teal)}.kpi.k3{border-left-color:var(--coral)}
+.kpi.k4{border-left-color:var(--red)}.kpi.k5{border-left-color:var(--purple)}
+.kpi .lbl{font-size:11px;color:var(--soft);font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+.kpi .val{font-size:27px;font-weight:600;line-height:1.1;margin-top:4px;color:var(--ink)}
+.kpi .val .u{font-size:14px;font-weight:500;color:var(--soft)}
+.kpi .sub{font-size:12px;margin-top:4px;color:var(--soft)}
+.up{color:var(--emer);font-weight:600}.down{color:var(--red);font-weight:600}
+.tile{background:var(--tile);border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:12px 14px;display:flex;flex-direction:column;min-height:0}
+.tile h3{font-size:13px;font-weight:600;color:var(--ink)}
+.tile .th-sub{font-size:11px;color:var(--soft);margin:1px 0 8px}
+.chart-wrap{flex:1;position:relative;min-height:190px}
+table.pbi{width:100%;border-collapse:collapse;font-size:12.5px}
+table.pbi thead th{text-align:left;font-weight:600;color:var(--soft);border-bottom:2px solid var(--line);padding:7px 8px;position:sticky;top:0;background:var(--tile);text-transform:uppercase;font-size:11px;letter-spacing:.3px}
+table.pbi td{padding:7px 8px;border-bottom:1px solid var(--grid);color:var(--ink)}
+table.pbi tbody tr:hover{background:var(--hover)}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.badge{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:11px}
+.b-prod{background:#e3f0ff;color:#0b62c4}.b-ship{background:#eef2ff;color:#3a3ea8}
+.b-new{background:#ececec;color:#666}.b-late{background:#fde7ea;color:#b1283a}
+[data-theme="dark"] .b-prod{background:#123a5c;color:#7cc0ff}
+[data-theme="dark"] .b-ship{background:#26264a;color:#9a9df0}
+[data-theme="dark"] .b-new{background:#333130;color:#c8c6c4}
+[data-theme="dark"] .b-late{background:#4a1f26;color:#ff8a9c}
+.scroll{overflow:auto}
+.databar{height:13px;border-radius:2px;display:inline-block;vertical-align:middle}
+.grid12{grid-template-columns:repeat(12,1fr)}
+.s3{grid-column:span 3}.s4{grid-column:span 4}.s5{grid-column:span 5}.s6{grid-column:span 6}
+.s7{grid-column:span 7}.s8{grid-column:span 8}.s12{grid-column:span 12}
+.treemap{position:relative;width:100%;flex:1;min-height:210px}
+.tm-cell{position:absolute;border:2px solid var(--canvas);border-radius:4px;overflow:hidden;padding:6px 8px;color:#fff;display:flex;flex-direction:column}
+.tm-cell .t1{font-size:12px;font-weight:700;line-height:1.1}
+.tm-cell .t2{font-size:11px;opacity:.92;margin-top:2px}
+.gauge-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
+.gauge-center .g1{font-size:30px;font-weight:700;color:var(--ink)}.gauge-center .g2{font-size:11px;color:var(--soft)}
+.gantt-months{display:grid;grid-template-columns:140px 1fr;gap:8px;font-size:10px;color:var(--soft);margin-bottom:4px}
+.gantt-months .gm{display:flex}.gantt-months .gm span{flex:1;text-align:center}
+.gantt-row{display:grid;grid-template-columns:140px 1fr;align-items:center;gap:8px;margin-bottom:5px;font-size:11px}
+.g-lbl{color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gantt-track{position:relative;height:18px;background:var(--track);border-radius:3px}
+.gantt-bar{position:absolute;height:18px;border-radius:3px;top:0;display:flex;align-items:center;padding-left:6px;color:#fff;font-size:10px;font-weight:600;overflow:hidden}
+.footnote{max-width:1280px;margin:10px auto 0;font-size:11px;color:#8a8886;text-align:center}
+@media(max-width:900px){.kpis{grid-template-columns:repeat(2,1fr)}
+ .grid12 .s3,.grid12 .s4,.grid12 .s5,.grid12 .s6,.grid12 .s7,.grid12 .s8{grid-column:span 12}}
+</style>
+</head>
+<body data-theme="light">
+<div class="appbar">
+  <div class="brand"><span class="sq"></span> teploros · Аналитика</div>
+  <span class="sep"></span><span class="path">Заказы · единица измерения — кВт / МВт</span>
+  <span class="spacer"></span>
+  <div class="theme-toggle" id="themeToggle">
+    <span class="opt on" data-theme-opt="light">☀ Светлая</span>
+    <span class="opt" data-theme-opt="dark">🌙 Тёмная</span>
+  </div>
+</div>
+<div class="tabs">
+  <button class="tab active" data-stage="overview">📊 Обзор</button>
+  <button class="tab" data-stage="production">🏭 Производство</button>
+  <button class="tab" data-stage="risk">⚠️ Риск</button>
+</div>
 
-// ==================== ANALYTICS HELPERS ====================
-// 📊 OEE (Overall Equipment Effectiveness) = Availability × Performance × Quality
-const calcOEE = (data, workerId, period = 30) => {
-  const t = now();
-  const since = t - period * 86400000;
-  
-  // Доступность: время работы / планируемое время
-  const allOps = data.ops.filter(op => op.workerIds?.includes(workerId) && op.finishedAt >= since);
-  const downtimes = data.events.filter(e => e.workerId === workerId && e.type === 'downtime' && e.ts >= since);
-  const downtimeMs = downtimes.reduce((s, e) => s + (e.durationMs || 0), 0);
-  const totalMs = allOps.reduce((s, op) => s + (op.finishedAt - op.startedAt || 0), 0);
-  const availability = totalMs > 0 ? Math.min(100, (1 - downtimeMs / (totalMs + downtimeMs)) * 100) : 0;
-  
-  // Производительность: фактическое время / плановое время
-  const withPlan = allOps.filter(op => op.plannedHours && op.startedAt && op.finishedAt);
-  let performance = 100;
-  if (withPlan.length > 0) {
-    const avgRatio = withPlan.reduce((s, op) => s + (op.finishedAt - op.startedAt) / (op.plannedHours * 3600000), 0) / withPlan.length;
-    performance = Math.min(100, 100 / (avgRatio || 1));
-  }
-  
-  // Качество: годные / всего
-  const doneCount = allOps.filter(op => op.status === 'done').length;
-  const defectCount = allOps.filter(op => op.status === 'defect').length;
-  const quality = (doneCount + defectCount) > 0 ? (doneCount / (doneCount + defectCount)) * 100 : 100;
-  
-  // OEE = A × P × Q / 10000
-  const oee = (availability * performance * quality) / 10000;
-  
-  return { oee: Math.round(oee), availability: Math.round(availability), performance: Math.round(performance), quality: Math.round(quality) };
-};
+<!-- ===== OVERVIEW ===== -->
+<div class="stage active" id="stage-overview">
+ <div class="canvas">
+  <div class="rt-title">Обзор портфеля <small>структура заказов по мощности · данные на 13.08.2026</small></div>
+  <div class="grid kpis" style="margin-bottom:12px">
+    <div class="kpi"><div class="lbl">Мощность портфеля</div><div class="val" id="o_pw">—</div><div class="sub">39 заказов</div></div>
+    <div class="kpi k2"><div class="lbl">В производстве</div><div class="val" id="o_wip">—</div><div class="sub">17 заказов</div></div>
+    <div class="kpi k3"><div class="lbl">Отгружено</div><div class="val" id="o_ship">—</div><div class="sub">22 заказа</div></div>
+    <div class="kpi k4"><div class="lbl">Просрочено</div><div class="val" id="o_late">—</div><div class="sub">5 заказов</div></div>
+    <div class="kpi k5"><div class="lbl">Ср. мощность</div><div class="val" id="o_avg">—</div><div class="sub">на заказ</div></div>
+  </div>
+  <div class="grid grid12">
+    <div class="tile s4"><h3>По статусам</h3><div class="th-sub">мощность, кВт</div><div class="chart-wrap"><canvas id="o_donut"></canvas></div></div>
+    <div class="tile s8"><h3>Отгрузки по месяцам</h3><div class="th-sub">кВт</div><div class="chart-wrap"><canvas id="o_month"></canvas></div></div>
+    <div class="tile s7"><h3>Мощность по семействам котлов</h3><div class="th-sub">площадь = кВт</div><div class="treemap" id="o_tree"></div></div>
+    <div class="tile s5"><h3>Топ заказчиков</h3><div class="th-sub">кВт</div><div class="chart-wrap"><canvas id="o_cust"></canvas></div></div>
+    <div class="tile s12"><h3>Крупнейшие заказы</h3><div class="th-sub">по мощности</div>
+      <div class="scroll" style="max-height:210px"><table class="pbi">
+        <thead><tr><th>№</th><th>Заказчик</th><th>Изделие</th><th class="num">кВт</th><th>Приоритет</th><th>Статус</th></tr></thead>
+        <tbody id="o_tbody"></tbody></table></div></div>
+  </div>
+ </div>
+ <div class="footnote">Прототип рендера analytics.js · мощность распознаётся из модели/поля «Мощность, кВт»</div>
+</div>
 
-// 📈 План/факт по операциям за период
-const calcPlanFact = (data, period = 30) => {
-  const t = now();
-  const since = t - period * 86400000;
-  const ops = data.ops.filter(op => op.finishedAt >= since && op.status === 'done');
-  
-  let plannedHours = 0, actualHours = 0;
-  ops.forEach(op => {
-    if (op.plannedHours) plannedHours += op.plannedHours;
-    if (op.startedAt && op.finishedAt) actualHours += (op.finishedAt - op.startedAt) / 3600000;
+<!-- ===== PRODUCTION ===== -->
+<div class="stage" id="stage-production">
+ <div class="canvas">
+  <div class="rt-title">Производство <small>загрузка участков, операции, сроки</small></div>
+  <div class="grid kpis" style="margin-bottom:12px">
+    <div class="kpi k2"><div class="lbl">Заказов на линии</div><div class="val" id="pr_wip">—</div><div class="sub">не отгружено</div></div>
+    <div class="kpi"><div class="lbl">Операций открыто</div><div class="val" id="pr_ops">—</div><div class="sub">из 460 всего</div></div>
+    <div class="kpi k3"><div class="lbl">На проверке ОТК</div><div class="val" id="pr_qc">—</div><div class="sub">операций</div></div>
+    <div class="kpi k5"><div class="lbl">Ср. готовность</div><div class="val" id="pr_ready">—</div><div class="sub">активных заказов</div></div>
+    <div class="kpi k4"><div class="lbl">Готовы к отгрузке</div><div class="val" id="pr_rts">—</div><div class="sub">ждут отгрузки</div></div>
+  </div>
+  <div class="grid grid12">
+    <div class="tile s5"><h3>Загрузка участков</h3><div class="th-sub">открытые операции по участкам</div><div class="chart-wrap"><canvas id="pr_uch"></canvas></div></div>
+    <div class="tile s7"><h3>График заказов (Гантт)</h3><div class="th-sub">план по срокам, активные заказы</div><div id="pr_gantt" style="margin-top:4px"></div></div>
+    <div class="tile s7"><h3>Готовность активных заказов</h3><div class="th-sub">%, по убыванию</div><div class="chart-wrap"><canvas id="pr_prog"></canvas></div></div>
+    <div class="tile s5"><h3>Операции по статусам</h3><div class="th-sub">весь пул 460</div><div class="chart-wrap"><canvas id="pr_opstat"></canvas></div></div>
+  </div>
+ </div>
+ <div class="footnote">Прототип рендера analytics.js · данные из листов «Заказы» и «Операции»</div>
+</div>
+
+<!-- ===== RISK ===== -->
+<div class="stage" id="stage-risk">
+ <div class="canvas">
+  <div class="rt-title">Риск и сроки <small>просрочка, что горит, мощность под угрозой</small></div>
+  <div class="grid kpis" style="margin-bottom:12px">
+    <div class="kpi k4"><div class="lbl">кВт под риском</div><div class="val" id="r_pw">—</div><div class="sub">просроч. + &lt;7 дн</div></div>
+    <div class="kpi k4"><div class="lbl">Просрочено</div><div class="val" id="r_late">—</div><div class="sub">заказов</div></div>
+    <div class="kpi k3"><div class="lbl">Близко к сроку</div><div class="val" id="r_soon">—</div><div class="sub">&lt; 7 дней</div></div>
+    <div class="kpi"><div class="lbl">Ср. просрочка</div><div class="val" id="r_days">—</div><div class="sub">дней</div></div>
+    <div class="kpi k2"><div class="lbl">Готовы к отгрузке</div><div class="val" id="r_rts">—</div><div class="sub">можно закрыть</div></div>
+  </div>
+  <div class="grid grid12">
+    <div class="tile s7"><h3>кВт под риском по заказам</h3><div class="th-sub">цвет = глубина просрочки</div><div class="chart-wrap"><canvas id="r_bar"></canvas></div></div>
+    <div class="tile s5"><h3>Готовность просроченных</h3><div class="th-sub">насколько близко к финишу</div><div class="chart-wrap"><canvas id="r_ready"></canvas></div></div>
+    <div class="tile s12"><h3>Матрица риска</h3><div class="th-sub">просроченные и близкие к сроку</div>
+      <div class="scroll" style="max-height:250px"><table class="pbi">
+        <thead><tr><th>№</th><th>Заказчик</th><th>Изделие</th><th class="num">кВт</th><th class="num">Осталось дн</th><th>Готовность</th><th>Операция</th></tr></thead>
+        <tbody id="r_tbody"></tbody></table></div></div>
+  </div>
+ </div>
+ <div class="footnote">Прототип рендера analytics.js · риск = «Просрочен» или осталось &lt; 7 дней</div>
+</div>
+
+<script>
+/* ============================================================
+   Прототип рендера будущего analytics.js.
+   Паттерн ровно как будет в боевом модуле:
+   - чистый рендер поверх ORDERS/UCHASTKI (в MES это будет data.*)
+   - ленивая отрисовка: строим только активную раскладку
+   - destroy() всех графиков при переключении вкладки/темы
+   - тема через data-theme на <body>, выбор в localStorage
+   ============================================================ */
+const ORDERS = [{"num":"51/26","cust":"ООО \"СК ИДЕА-Л\"","prod":"Термомасляный котел Teplofor Dilex MV3-DD 150","pw":150.0,"qty":1,"prio":"Средний","status":"Частично выполнен","ready":50,"daysLeft":-30,"overdue":true,"readyShip":false,"op":"Опрессовка котла","shipped":null,"family":"MV3"},{"num":"38/26","cust":"ООО \"АИСС\"","prod":"Сдвоенный вертикальный котел Teplofor Duplex VV2-D 300","pw":300.0,"qty":1,"prio":"Средний","status":"Частично выполнен","ready":86,"daysLeft":-10,"overdue":true,"readyShip":false,"op":"Сборка/сварка топки","shipped":null,"family":"VV2"},{"num":"43/26","cust":"ИП Бекрешев Константин Викторович","prod":"Сдвоенный вертикальный котел Teplofor Duplex VV2-D 400","pw":400.0,"qty":2,"prio":"Средний","status":"Частично выполнен","ready":20,"daysLeft":-4,"overdue":true,"readyShip":false,"op":"Заполнение крышек","shipped":null,"family":"VV2"},{"num":"45/26-1","cust":"ООО \"СМУ\"","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 300","pw":300.0,"qty":2,"prio":"Средний","status":"Ожидает","ready":0,"daysLeft":-4,"overdue":true,"readyShip":false,"op":"—","shipped":null,"family":"V2"},{"num":"45/26-2","cust":"ООО \"СМУ\"","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 350","pw":350.0,"qty":1,"prio":"Средний","status":"Частично выполнен","ready":44,"daysLeft":-4,"overdue":true,"readyShip":false,"op":"Сварка задней крышки","shipped":null,"family":"V2"},{"num":"К46/26 ДЛЯ КНР Lextop DN 200","cust":"—","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 200 (200 кВт, 6 бар,115С)","pw":200.0,"qty":2,"prio":"Средний","status":"Ожидает","ready":0,"daysLeft":1,"overdue":false,"readyShip":false,"op":"Поставка комплектующих на МВХ","shipped":null,"family":"V2"},{"num":"41/26","cust":"ООО \"БЕЛРУСИМПЭКС\"","prod":"Водогрейный котел трехходовой Teplofor Lex V3-D 1000","pw":1000.0,"qty":1,"prio":"Средний","status":"Частично выполнен","ready":13,"daysLeft":2,"overdue":false,"readyShip":false,"op":"Сварка передней крышки","shipped":null,"family":"V3"},{"num":"44/26","cust":"ООО \"СКЛАД\"","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 1200","pw":1200.0,"qty":2,"prio":"Средний","status":"В работе","ready":7,"daysLeft":2,"overdue":false,"readyShip":false,"op":"Сварка задней крышки","shipped":null,"family":"V2"},{"num":"42/26-1","cust":"ООО \"КАПИТАЛГРАНДСТРОЙ\"","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 200","pw":200.0,"qty":2,"prio":"Средний","status":"Ожидает","ready":0,"daysLeft":7,"overdue":false,"readyShip":false,"op":"—","shipped":null,"family":"V2"},{"num":"42/26-2","cust":"ООО \"КАПИТАЛГРАНДСТРОЙ\"","prod":"Котел водогрейный двухходовой Teplofor Lex V2-D 500","pw":500.0,"qty":2,"prio":"Средний","status":"Ожидает","ready":0,"daysLeft":7,"overdue":false,"readyShip":false,"op":"—","shipped":null,"family":"V2"},{"num":"42/26","cust":"ООО \"ПАПИНА ФЕРМА\"","prod":"Паровой двухходовой котел Teplofor Lexor SP2-D 2500","pw":2500.0,"qty":1,"prio":"Высокий","status":"Частично выполнен","ready":50,"daysLeft":12,"overdue":false,"readyShip":false,"op":"Заполнение крышек","shipped":null,"family":"SP2"},{"num":"55/26","cust":"ООО УК \"ПОЛЁТ\"","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 70","pw":70.0,"qty":2,"prio":"Средний","status":"Ожидает","ready":0,"daysLeft":12,"overdue":false,"readyShip":false,"op":"—","shipped":null,"family":"V2"},{"num":"54/26","cust":"ООО \"КВИКС\"","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 300","pw":300.0,"qty":1,"prio":"Средний","status":"Ожидает","ready":0,"daysLeft":15,"overdue":false,"readyShip":false,"op":"Поставка комплектующих на МВХ","shipped":null,"family":"V2"},{"num":"56/26","cust":"ООО \"ЭНЕРГО ГРУПП\"","prod":"Сдвоенный вертикальный котел Teplofor Duplex VV2-D 1000","pw":1000.0,"qty":1,"prio":"Средний","status":"Ожидает","ready":0,"daysLeft":18,"overdue":false,"readyShip":false,"op":"Поставка комплектующих на МВХ","shipped":null,"family":"VV2"},{"num":"39/26","cust":"ООО \"ОНКРАФТ\"","prod":"Котел водогрейный Teplofor Lex V2-D 2500, 6 бар","pw":2500.0,"qty":1,"prio":"Средний","status":"Ожидает","ready":0,"daysLeft":22,"overdue":false,"readyShip":false,"op":"Поставка комплектующих на МВХ","shipped":null,"family":"V2"},{"num":"49/26","cust":"ООО \"СПЕЦ-СЕРВИС\"","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 2000","pw":2000.0,"qty":3,"prio":"Средний","status":"Ожидает","ready":0,"daysLeft":28,"overdue":false,"readyShip":false,"op":"—","shipped":null,"family":"V2"},{"num":"57/26","cust":"ИП Ежелев Виктор Григорьевич","prod":"Водогрейный котел трехходовой Teplofor Lex V3-D 2500","pw":2500.0,"qty":2,"prio":"Средний","status":"Ожидает","ready":0,"daysLeft":38,"overdue":false,"readyShip":false,"op":"Поставка комплектующих на МВХ","shipped":null,"family":"V3"},{"num":"37/26","cust":"ООО \"НТ\"","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 300","pw":300.0,"qty":2,"prio":"Средний","status":"Отгружен","ready":100,"daysLeft":-13,"overdue":false,"readyShip":true,"op":"—","shipped":"11.08.2026","family":"V2"},{"num":"36/26","cust":"ИП Горохова Светлана Николаевна","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 150","pw":150.0,"qty":1,"prio":"Средний","status":"Отгружен","ready":100,"daysLeft":-24,"overdue":false,"readyShip":true,"op":"—","shipped":"11.08.2026","family":"V2"},{"num":"35/1/26","cust":"ООО \"КЭО\"","prod":"Сдвоенный вертикальный котел Teplofor Duplex VV2-D 2000","pw":2000.0,"qty":1,"prio":"Высокий","status":"Отгружен","ready":100,"daysLeft":-30,"overdue":false,"readyShip":true,"op":"—","shipped":"11.08.2026","family":"VV2"},{"num":"34/26","cust":"ООО \"ПТ-СЕРВИС\"","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 500","pw":500.0,"qty":1,"prio":"Средний","status":"Отгружен","ready":100,"daysLeft":-31,"overdue":false,"readyShip":true,"op":"—","shipped":"11.08.2026","family":"V2"},{"num":"61/26","cust":"ИП Куликовских Михаил Евгеньевич","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 800","pw":800.0,"qty":1,"prio":"Средний","status":"Отгружен","ready":100,"daysLeft":-38,"overdue":false,"readyShip":true,"op":"—","shipped":"11.08.2026","family":"V2"},{"num":"01/4/26/900","cust":"—","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 900","pw":900.0,"qty":2,"prio":"Средний","status":"Отгружен","ready":92,"daysLeft":-13,"overdue":false,"readyShip":false,"op":"—","shipped":"31.07.2026","family":"V2"},{"num":"01/3/26/1500","cust":"—","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 1500","pw":1500.0,"qty":2,"prio":"Средний","status":"Отгружен","ready":67,"daysLeft":-13,"overdue":false,"readyShip":false,"op":"—","shipped":"31.07.2026","family":"V2"},{"num":"01/3/26/4500","cust":"—","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 4500","pw":4500.0,"qty":2,"prio":"Средний","status":"Отгружен","ready":33,"daysLeft":-13,"overdue":false,"readyShip":false,"op":"—","shipped":"31.07.2026","family":"V2"},{"num":"01/1/26/1000","cust":"—","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 1000","pw":1000.0,"qty":1,"prio":"Средний","status":"Отгружен","ready":82,"daysLeft":-13,"overdue":false,"readyShip":false,"op":"—","shipped":"31.07.2026","family":"V2"},{"num":"01/2/26/1000","cust":"—","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 1000","pw":1000.0,"qty":1,"prio":"Средний","status":"Отгружен","ready":83,"daysLeft":-13,"overdue":false,"readyShip":false,"op":"—","shipped":"31.07.2026","family":"V2"},{"num":"01/2/26/3500","cust":"—","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 3500","pw":3500.0,"qty":3,"prio":"Средний","status":"Отгружен","ready":33,"daysLeft":-13,"overdue":false,"readyShip":false,"op":"—","shipped":"31.07.2026","family":"V2"},{"num":"01/1/26/2000","cust":"—","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 2000","pw":2000.0,"qty":2,"prio":"Средний","status":"Отгружен","ready":83,"daysLeft":-17,"overdue":false,"readyShip":false,"op":"—","shipped":"31.07.2026","family":"V2"},{"num":"53/","cust":"ООО \"СПЕЦЭКСПЕРТИЗА\"","prod":"Двухходовой котел узкий Teplofor Lexender UV2-D 1000","pw":1000.0,"qty":1,"prio":"Средний","status":"Отгружен","ready":100,"daysLeft":-59,"overdue":false,"readyShip":true,"op":"—","shipped":"15.07.2026","family":"V2"},{"num":"58/26/1","cust":"—","prod":"Сдвоенный вертикальный котел Teplofor Duplex VV2-D 800","pw":800.0,"qty":1,"prio":"Средний","status":"Отгружен","ready":100,"daysLeft":-44,"overdue":false,"readyShip":true,"op":"—","shipped":"08.07.2026","family":"VV2"},{"num":"31/1/26","cust":"ООО \"КСИ\"","prod":"Сдвоенный вертикальный котел Teplofor Duplex VV2-D 500 бесшовная труба","pw":500.0,"qty":1,"prio":"Средний","status":"Отгружен","ready":100,"daysLeft":-40,"overdue":false,"readyShip":true,"op":"—","shipped":"07.07.2026","family":"VV2"},{"num":"31/26","cust":"ООО \"КСИ\"","prod":"Сдвоенный вертикальный котел Teplofor Duplex VV2-D 1800","pw":1800.0,"qty":1,"prio":"Средний","status":"Отгружен","ready":93,"daysLeft":-40,"overdue":false,"readyShip":false,"op":"—","shipped":"07.07.2026","family":"VV2"},{"num":"14/26","cust":"ООО \"ВМС ИНЖИНИРИНГ\"","prod":"Водогрейный котел двухходовой Teplofor Lex V2-D 600","pw":600.0,"qty":2,"prio":"Средний","status":"Отгружен","ready":100,"daysLeft":-83,"overdue":false,"readyShip":true,"op":"—","shipped":"26.06.2026","family":"V2"},{"num":"33/1/26","cust":"—","prod":"котел 1800мВт для КНР","pw":1800.0,"qty":1,"prio":"Высокий","status":"Отгружен","ready":100,"daysLeft":-74,"overdue":false,"readyShip":true,"op":"—","shipped":"24.06.2026","family":"др."},{"num":"21/26","cust":"ООО \"ГК\"","prod":"Сдвоенный вертикальный котел Teplofor Duplex VV2-D 1000","pw":1000.0,"qty":1,"prio":"Средний","status":"Отгружен","ready":100,"daysLeft":-59,"overdue":false,"readyShip":true,"op":"—","shipped":"23.06.2026","family":"VV2"},{"num":"45/26","cust":"ИП Бекрешев Константин Викторович","prod":"Сдвоенный вертикальный котел Teplofor Duplex VV2-D 600","pw":600.0,"qty":3,"prio":"Средний","status":"Отгружен","ready":100,"daysLeft":-71,"overdue":false,"readyShip":true,"op":"—","shipped":"11.06.2026","family":"VV2"},{"num":"8/26","cust":"ООО \"КУЛОН-СЕРВИС-ГАЗ\"","prod":"Сдвоенный вертикальный котел Teplofor Duplex VV2-D 700","pw":700.0,"qty":1,"prio":"Средний","status":"Отгружен","ready":100,"daysLeft":-75,"overdue":false,"readyShip":true,"op":"—","shipped":"11.06.2026","family":"VV2"},{"num":"17/26","cust":"ООО \"ТАНДЕМ КЛИМАТ МСК\"","prod":"Сдвоенный вертикальный котел Teplofor Duplex VV2-D 600","pw":600.0,"qty":1,"prio":"Средний","status":"Отгружен","ready":100,"daysLeft":-83,"overdue":false,"readyShip":true,"op":"—","shipped":"08.06.2026","family":"VV2"}];
+const UCH = [{"u":"Крышки","open":43,"done":70,"tot":113},{"u":"Теплообменник","open":43,"done":110,"tot":153},{"u":"Окраска","open":29,"done":33,"tot":62},{"u":"Кожух","open":28,"done":22,"tot":50},{"u":"Опресcовка","open":12,"done":19,"tot":31},{"u":"Склад","open":7,"done":5,"tot":12}];
+const P={blue:'#118DFF',navy:'#12239E',teal:'#01B8AA',coral:'#E66C37',red:'#D64550',purple:'#6B007B',yellow:'#D9B300',emer:'#12B886',grey:'#8A8886'};
+Chart.defaults.font.family='Segoe UI, sans-serif';Chart.defaults.font.size=11;
+Chart.defaults.plugins.legend.labels.boxWidth=10;Chart.defaults.plugins.legend.labels.boxHeight=10;
+
+const charts={};
+function destroyAll(){Object.values(charts).forEach(c=>{try{c.destroy()}catch(e){}});for(const k in charts)delete charts[k];}
+
+/* ---- helpers ---- */
+const kw=o=>o.pw*o.qty;
+const isShipped=o=>o.status==='Отгружен';
+const active=ORDERS.filter(o=>!isShipped(o));
+const kwf=v=>v>=1000?(v/1000).toFixed(1)+' МВт':Math.round(v)+' кВт';
+const kwU=v=>v>=1000?[(v/1000).toFixed(1),' МВт']:[Math.round(v),' кВт'];
+const short=s=>String(s).replace(/^(ООО|ИП|АО|ЗАО|ПАО)\s*/,'').replace(/["«»]/g,'').slice(0,22);
+const fam=k=>({MV3:'Dilex MV',VV2:'Duplex VV',V2:'Lex V2',V3:'Lex V3',SP2:'Lexor SP',['др.']:'Прочие'}[k]||k);
+const prod=s=>String(s).replace('Термомасляный котел ','').replace('Teplofor ','');
+function themeColor(name){return getComputedStyle(document.body).getPropertyValue('--'+name).trim();}
+const badge=s=>{const m={'Отгружен':'b-ship','Частично выполнен':'b-prod','В работе':'b-prod','Ожидает':'b-new'};return '<span class="badge '+(m[s]||'b-new')+'">'+s+'</span>'};
+
+/* ---- treemap ---- */
+function treemap(el,items){
+  const W=el.clientWidth||600,H=el.clientHeight||210;
+  items.sort((a,b)=>b.val-a.val);
+  const total=items.reduce((s,i)=>s+i.val,0)||1;
+  let html='',acc=0,top=[],bot=[],half=total*0.60;
+  items.forEach(i=>{acc<half?(top.push(i),acc+=i.val):bot.push(i)});
+  const strip=(arr,yy,hh)=>{const t=arr.reduce((s,i)=>s+i.val,0)||1;let xx=0;
+    arr.forEach(i=>{const w=i.val/t*W;html+=`<div class="tm-cell" style="left:${xx}px;top:${yy}px;width:${w}px;height:${hh}px;background:${i.color}"><div class="t1">${i.label}</div><div class="t2">${i.sub}</div></div>`;xx+=w});};
+  const h1=H*0.6;strip(top,0,h1);strip(bot,h1,H-h1);el.innerHTML=html;
+}
+
+/* ---- axis colors follow theme ---- */
+function axis(){const g=themeColor('grid'),s=themeColor('soft');return {grid:{color:g},ticks:{color:s}};}
+
+/* ============ OVERVIEW ============ */
+function buildOverview(){
+  const totKw=ORDERS.reduce((s,o)=>s+kw(o),0);
+  const shipKw=ORDERS.filter(isShipped).reduce((s,o)=>s+kw(o),0);
+  const wipKw=active.reduce((s,o)=>s+kw(o),0);
+  const lateKw=ORDERS.filter(o=>o.overdue).reduce((s,o)=>s+kw(o),0);
+  const set=(id,v)=>{const[n,u]=kwU(v);document.getElementById(id).innerHTML=n+'<span class="u">'+u+'</span>'};
+  set('o_pw',totKw);set('o_wip',wipKw);set('o_ship',shipKw);set('o_late',lateKw);
+  document.getElementById('o_avg').innerHTML=Math.round(totKw/ORDERS.length)+'<span class="u"> кВт</span>';
+  // donut by status (kW)
+  const st={};ORDERS.forEach(o=>{st[o.status]=(st[o.status]||0)+kw(o)});
+  charts.od=new Chart(o_donut,{type:'doughnut',data:{labels:Object.keys(st),datasets:[{data:Object.values(st),backgroundColor:[P.navy,P.blue,P.teal,P.grey,P.coral],borderWidth:2,borderColor:themeColor('tile')}]},options:{cutout:'60%',plugins:{legend:{position:'right',labels:{color:themeColor('soft')}},tooltip:{callbacks:{label:c=>c.label+': '+Math.round(c.parsed)+' кВт'}}},maintainAspectRatio:false}});
+  // month
+  const m={};ORDERS.forEach(o=>{if(o.shipped){const p=o.shipped.split('.');const k=p[1]+'.'+p[2];m[k]=(m[k]||0)+kw(o)}});
+  const ord=['06.2026','07.2026','08.2026'];
+  charts.om=new Chart(o_month,{type:'bar',data:{labels:['Июнь','Июль','Август'],datasets:[{data:ord.map(k=>m[k]||0),backgroundColor:P.blue,borderRadius:4,barThickness:46}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>Math.round(c.parsed.y)+' кВт'}}},scales:{y:axis(),x:{grid:{display:false},ticks:{color:themeColor('soft')}}},maintainAspectRatio:false}});
+  // treemap by family
+  const fa={};ORDERS.forEach(o=>{fa[o.family]=(fa[o.family]||0)+kw(o)});
+  const cols=[P.navy,P.blue,P.teal,P.emer,P.coral,P.purple];
+  requestAnimationFrame(()=>treemap(o_tree,Object.entries(fa).map(([k,v],i)=>({label:fam(k),val:v,color:cols[i%cols.length],sub:kwf(v)}))));
+  // customers
+  const c={};ORDERS.forEach(o=>{c[o.cust]=(c[o.cust]||0)+kw(o)});
+  const cs=Object.entries(c).sort((a,b)=>b[1]-a[1]).slice(0,7);
+  charts.oc=new Chart(o_cust,{type:'bar',data:{labels:cs.map(x=>short(x[0])),datasets:[{data:cs.map(x=>x[1]),backgroundColor:P.teal,borderRadius:3,barThickness:15}]},options:{indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>Math.round(c.parsed.x)+' кВт'}}},scales:{x:axis(),y:{grid:{display:false},ticks:{color:themeColor('soft')}}},maintainAspectRatio:false}});
+  // table
+  const top=[...ORDERS].sort((a,b)=>kw(b)-kw(a)).slice(0,8);
+  o_tbody.innerHTML=top.map(o=>`<tr><td><b>${o.num}</b></td><td>${short(o.cust)}</td><td>${prod(o.prod).slice(0,26)}</td><td class="num"><b>${Math.round(kw(o))}</b></td><td>${o.prio}</td><td>${badge(o.status)}</td></tr>`).join('');
+}
+
+/* ============ PRODUCTION ============ */
+function buildProduction(){
+  const openOps=UCH.reduce((s,u)=>s+u.open,0);
+  document.getElementById('pr_wip').textContent=active.length;
+  document.getElementById('pr_ops').textContent=openOps;
+  document.getElementById('pr_qc').textContent=7;
+  document.getElementById('pr_ready').innerHTML=Math.round(active.reduce((s,o)=>s+o.ready,0)/active.length)+'<span class="u">%</span>';
+  document.getElementById('pr_rts').textContent=ORDERS.filter(o=>o.readyShip).length;
+  // участки
+  charts.pu=new Chart(pr_uch,{type:'bar',data:{labels:UCH.map(u=>u.u),datasets:[
+    {label:'Открыто',data:UCH.map(u=>u.open),backgroundColor:P.coral,barThickness:16},
+    {label:'Выполнено',data:UCH.map(u=>u.done),backgroundColor:P.navy,barThickness:16}
+  ]},options:{indexAxis:'y',plugins:{legend:{position:'top',align:'end',labels:{color:themeColor('soft')}}},scales:{x:{stacked:true,...axis()},y:{stacked:true,grid:{display:false},ticks:{color:themeColor('soft')}}},maintainAspectRatio:false}});
+  // gantt
+  buildGantt();
+  // progress
+  const act=[...active].sort((a,b)=>b.ready-a.ready);
+  charts.pp=new Chart(pr_prog,{type:'bar',data:{labels:act.map(o=>o.num),datasets:[{data:act.map(o=>o.ready),backgroundColor:act.map(o=>o.ready>66?P.emer:o.ready>33?P.yellow:P.coral),borderRadius:3}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.parsed.y+'% · '+act[c.dataIndex].cust.slice(0,20)}}},scales:{y:{max:100,...axis()},x:{grid:{display:false},ticks:{color:themeColor('soft'),font:{size:9}}}},maintainAspectRatio:false}});
+  // op status
+  const os={'Выполнена':293,'Ожидает':158,'На проверке ОТК':7,'В работе':2};
+  charts.pos=new Chart(pr_opstat,{type:'doughnut',data:{labels:Object.keys(os),datasets:[{data:Object.values(os),backgroundColor:[P.navy,P.grey,P.coral,P.teal],borderWidth:2,borderColor:themeColor('tile')}]},options:{cutout:'60%',plugins:{legend:{position:'right',labels:{color:themeColor('soft')}}},maintainAspectRatio:false}});
+}
+function buildGantt(){
+  const el=document.getElementById('pr_gantt');
+  const rows=[...active].filter(o=>typeof o.daysLeft==='number').sort((a,b)=>a.daysLeft-b.daysLeft).slice(0,8);
+  // scale: daysLeft from -35 .. +60
+  const lo=-35,hi=60,span=hi-lo;
+  const today=(0-lo)/span*100;
+  let html=`<div class="gantt-months"><span></span><div class="gm"><span>−1 мес</span><span>сегодня</span><span>+1 мес</span><span>+2 мес</span></div></div>`;
+  rows.forEach(o=>{
+    const startD=Math.max(lo,o.daysLeft-25), endD=o.daysLeft;
+    const left=(startD-lo)/span*100, w=Math.max(3,(endD-startD)/span*100);
+    const col=o.overdue?P.red:o.ready>60?P.emer:o.daysLeft<7?P.coral:P.blue;
+    html+=`<div class="gantt-row"><div class="g-lbl">${o.num} · ${fam(o.family)}</div><div class="gantt-track"><div class="gantt-bar" style="left:${left}%;width:${w}%;background:${col}">${o.ready}%</div></div></div>`;
   });
-  
-  const ratio = plannedHours > 0 ? (actualHours / plannedHours) : 1;
-  return { plannedHours: Math.round(plannedHours * 10) / 10, actualHours: Math.round(actualHours * 10) / 10, ratio: Math.round(ratio * 100) / 100, opsCount: ops.length };
-};
-
-// 🔮 Прогноз сроков: если темп сохранится, когда закончится заказ
-const calcForecast = (data, orderId) => {
-  const order = data.orders.find(o => o.id === orderId);
-  if (!order) return null;
-  
-  const ops = data.ops.filter(op => op.orderId === orderId && !op.archived);
-  const doneOps = ops.filter(op => op.status === 'done');
-  const pendingOps = ops.filter(op => op.status === 'pending' || op.status === 'in_progress');
-  
-  if (doneOps.length === 0 || pendingOps.length === 0) return null;
-  
-  // Средняя скорость: часы на одну операцию
-  const avgHours = doneOps.reduce((s, op) => s + (op.plannedHours || op.finishedAt - op.startedAt) / 3600000, 0) / doneOps.length;
-  const remainingHours = pendingOps.length * avgHours;
-  
-  // Прогноз: сегодня + оставшиеся часы
-  const forecastMs = remainingHours * 3600000;
-  const forecastDate = new Date(now() + forecastMs);
-  
-  return { forecastDate, remainingHours: Math.round(remainingHours * 10) / 10, daysLeft: Math.ceil(remainingHours / 8) };
-};
-
-// ==================== MasterJournal ====================
-const MasterJournal = memo(({ data, onWorkerClick }) => {
-  const sortedEvents = useMemo(() => [...data.events].sort((a,b) => b.ts - a.ts).slice(0, 200), [data.events]);
-  return h('div', { style: { ...S.card, maxHeight: 500, overflowY: 'auto' } },
-    h('div', { style: S.sec }, 'Журнал событий (последние 200)'),
-    sortedEvents.length === 0
-      ? h('div', { style: { padding: 16, textAlign: 'center' } }, 'Нет событий')
-      : h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null, ['Время','Тип','Сотрудник','Операция','Смена','Примечание'].map((t,i) => h('th', { key: i, style: S.th, scope: 'col' }, t)))),
-          h('tbody', null, sortedEvents.map(e => {
-            const worker = data.workers.find(w => w.id === e.workerId);
-            const op = data.ops.find(o => o.id === e.opId);
-            return h('tr', { key: e.id },
-              h('td', { style: S.td }, new Date(e.ts).toLocaleString()),
-              h('td', { style: S.td }, e.type),
-              h('td', { style: S.td }, worker ? h(WN, { worker, onWorkerClick }) : '—'),
-              h('td', { style: S.td }, op?.name || '—'),
-              h('td', { style: S.td }, e.shift || '—'),
-              h('td', { style: S.td }, e.note || (e.downtimeTypeId ? data.downtimeTypes.find(dt => dt.id === e.downtimeTypeId)?.name : ''))
-            );
-          }))
-        ))
-  );
-});
-
-
-
-// ==================== SectionAnalytics ====================
-// Универсальная аналитическая панель: мини-KPI сверху + кнопка «Полная аналитика»
-// Использование: h(SectionAnalytics, { section: 'warehouse'|'production'|'hr'|'quality'|'dashboard', data, period?, onPeriodChange? })
-
-const useChartRef = () => {
-  const canvasRef = useRef(null);
-  const chartRef  = useRef(null);
-  const draw = useCallback((config) => {
-    if (!canvasRef.current || !window.Chart) return;
-    if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; }
-    chartRef.current = new Chart(canvasRef.current, config);
-  }, []);
-  useEffect(() => () => { if (chartRef.current) chartRef.current.destroy(); }, []);
-  return { canvasRef, draw };
-};
-
-// Маленький спарклайн (только canvas)
-const MiniSparkline = memo(({ values, color, height = 36 }) => {
-  const { canvasRef, draw } = useChartRef();
-  useEffect(() => {
-    if (!values?.length) return;
-    draw({
-      type: 'line',
-      data: { labels: values.map((_, i) => i), datasets: [{ data: values, borderColor: color, borderWidth: 2, fill: true, backgroundColor: color + '22', tension: 0.4, pointRadius: 0 }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { enabled: false } }, scales: { x: { display: false }, y: { display: false } }, animation: { duration: 800, easing: 'easeOutQuart' }, animations: { y: { duration: 800, easing: 'easeOutQuart', from: (ctx) => ctx.chart?.height ?? 0 } } }
-    });
-  }, [values, color, draw]);
-  return h('canvas', { ref: canvasRef, style: { height, width: '100%', display: 'block' } });
-});
-
-// KPI карточка с искрой
-const KpiCard = memo(({ label, value, delta, deltaDir, color, spark }) => {
-  const deltaColor = deltaDir === 'up' ? GN2 : deltaDir === 'dn' ? RD2 : '#888';
-  const deltaIcon  = deltaDir === 'up' ? '▲' : deltaDir === 'dn' ? '▼' : '=';
-  return h('div', { style: { background: 'var(--card-solid,#fff)', border: '0.5px solid rgba(0,0,0,0.08)', borderRadius: 10, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 2 } },
-    h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em' } }, label),
-    h('div', { style: { fontSize: 22, fontWeight: 500, color: color || 'inherit', lineHeight: 1.1 } }, value),
-    delta && h('div', { style: { fontSize: 10, color: deltaColor } }, `${deltaIcon} ${delta}`),
-    spark && h(MiniSparkline, { values: spark.values, color: spark.color, height: 28 })
-  );
-});
-
-// Полноэкранная аналитика (модалка)
-const FullAnalyticsModal = memo(({ section, data, onClose }) => {
-  const [period, setPeriod]             = useState(30);
-  const [chartType, setChartType]       = useState('bar'); // bar | line
-  const [archiveLoading, setArchiveLoading] = useState(false);
-  const periodStart = useMemo(() => now() - period * 86400000, [period]);
-  const c1 = useChartRef(), c2 = useChartRef(), c3 = useChartRef(), c4 = useChartRef();
-
-  // ── Данные по разделам ──
-  const computed = useMemo(() => {
-    if (section === 'production' || section === 'dashboard') {
-      const ops = data.ops.filter(o => !o.archived && (o.finishedAt >= periodStart || o.startedAt >= periodStart));
-      const done = ops.filter(o => o.status === 'done');
-      const defect = ops.filter(o => o.status === 'defect');
-      const inProg = ops.filter(o => o.status === 'in_progress');
-      // По дням
-      const days = 7;
-      const dayLabels = Array.from({ length: days }, (_, i) => {
-        const d = new Date(now() - (days - 1 - i) * 86400000);
-        return d.toLocaleDateString('ru-RU', { weekday: 'short' });
-      });
-      const doneByDay = Array.from({ length: days }, (_, i) => {
-        const start = now() - (days - i) * 86400000;
-        const end   = now() - (days - 1 - i) * 86400000;
-        return data.ops.filter(o => o.finishedAt >= start && o.finishedAt < end && o.status === 'done').length;
-      });
-      const defByDay = Array.from({ length: days }, (_, i) => {
-        const start = now() - (days - i) * 86400000;
-        const end   = now() - (days - 1 - i) * 86400000;
-        return data.ops.filter(o => o.finishedAt >= start && o.finishedAt < end && o.status === 'defect').length;
-      });
-      // По сотрудникам
-      const workerMap = {};
-      done.forEach(o => (o.workerIds || []).forEach(wid => { workerMap[wid] = (workerMap[wid] || 0) + 1; }));
-      const topWorkers = Object.entries(workerMap).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([id, cnt]) => ({ name: data.workers.find(w => w.id === id)?.name?.split(' ')[0] || '?', cnt }));
-      // Брак по причинам
-      const defReasons = {};
-      defect.forEach(o => { const k = data.defectReasons?.find(r => r.id === o.defectReasonId)?.name || 'Прочее'; defReasons[k] = (defReasons[k] || 0) + 1; });
-      const topDefects = Object.entries(defReasons).sort((a, b) => b[1] - a[1]).slice(0, 5);
-      return { done: done.length, defect: defect.length, inProg: inProg.length, quality: done.length + defect.length > 0 ? Math.round(done.length / (done.length + defect.length) * 100) : 100, dayLabels, doneByDay, defByDay, topWorkers, topDefects };
-    }
-    if (section === 'warehouse') {
-      const consumptions = (data.materialConsumptions || []).filter(mc => mc.ts >= periodStart);
-      const matMap = {};
-      consumptions.forEach(mc => { const m = data.materials.find(x => x.id === mc.materialId); if (m) matMap[m.name] = (matMap[m.name] || 0) + mc.qty; });
-      const topMats = Object.entries(matMap).sort((a, b) => b[1] - a[1]).slice(0, 5);
-      const critical = data.materials.filter(m => m.minStock && m.quantity <= m.minStock);
-      const totalValue = data.materials.reduce((s, m) => s + m.quantity * (m.unitCost || 0), 0);
-      const receives = data.events.filter(e => e.type === 'material_receive' && e.ts >= periodStart);
-      const days = 7;
-      const dayLabels = Array.from({ length: days }, (_, i) => { const d = new Date(now() - (days - 1 - i) * 86400000); return d.toLocaleDateString('ru-RU', { weekday: 'short' }); });
-      const rcvByDay = Array.from({ length: days }, (_, i) => { const s = now() - (days - i) * 86400000, e = now() - (days - 1 - i) * 86400000; return data.events.filter(ev => ev.type === 'material_receive' && ev.ts >= s && ev.ts < e).length; });
-      const outByDay = Array.from({ length: days }, (_, i) => { const s = now() - (days - i) * 86400000, e = now() - (days - 1 - i) * 86400000; return (data.materialConsumptions || []).filter(mc => mc.ts >= s && mc.ts < e).length; });
-      return { total: data.materials.length, critical: critical.length, totalValue: Math.round(totalValue), receives: receives.length, topMats, dayLabels, rcvByDay, outByDay };
-    }
-    if (section === 'hr') {
-      const activeW = data.workers.filter(w => !w.archived);
-      const working = activeW.filter(w => isWorkerOnShift(w, data.timesheet)).length;
-      const absent  = activeW.filter(w => w.status === 'absent').length;
-      const workerStats = activeW.map(w => {
-        const ops = data.ops.filter(o => (o.workerIds || []).includes(w.id) && o.finishedAt >= periodStart);
-        const done = ops.filter(o => o.status === 'done').length;
-        const def  = ops.filter(o => o.status === 'defect').length;
-        return { name: w.name?.split(' ')[0] || '?', done, def, rate: done + def > 0 ? Math.round(def / (done + def) * 100) : 0 };
-      }).sort((a, b) => b.done - a.done).slice(0, 7);
-      const statusCounts = { working: 0, absent: 0, sick: 0, vacation: 0 };
-      activeW.forEach(w => { const s = getWorkerStatusToday(w.id, data.timesheet) || w.status || 'working'; if (statusCounts[s] !== undefined) statusCounts[s]++; });
-      return { total: activeW.length, working, absent, statusCounts, workerStats };
-    }
-    if (section === 'quality') {
-      const defectOps = data.ops.filter(o => o.status === 'defect' && o.finishedAt >= periodStart);
-      const doneOps   = data.ops.filter(o => o.status === 'done'   && o.finishedAt >= periodStart);
-      const quality   = doneOps.length + defectOps.length > 0 ? Math.round(doneOps.length / (doneOps.length + defectOps.length) * 100) : 100;
-      const byReason  = {};
-      defectOps.forEach(o => { const k = data.defectReasons?.find(r => r.id === o.defectReasonId)?.name || 'Прочее'; byReason[k] = (byReason[k] || 0) + 1; });
-      const topReasons = Object.entries(byReason).sort((a, b) => b[1] - a[1]).slice(0, 5);
-      const byWorker = {};
-      defectOps.forEach(o => (o.workerIds || []).forEach(wid => { const w = data.workers.find(x => x.id === wid)?.name?.split(' ')[0] || '?'; byWorker[w] = (byWorker[w] || 0) + 1; }));
-      const topWorkers = Object.entries(byWorker).sort((a, b) => b[1] - a[1]).slice(0, 5);
-      const days = 7;
-      const dayLabels = Array.from({ length: days }, (_, i) => { const d = new Date(now() - (days - 1 - i) * 86400000); return d.toLocaleDateString('ru-RU', { weekday: 'short' }); });
-      const qualByDay = Array.from({ length: days }, (_, i) => {
-        const s = now() - (days - i) * 86400000, e = now() - (days - 1 - i) * 86400000;
-        const dn = data.ops.filter(o => o.finishedAt >= s && o.finishedAt < e && o.status === 'done').length;
-        const df = data.ops.filter(o => o.finishedAt >= s && o.finishedAt < e && o.status === 'defect').length;
-        return dn + df > 0 ? Math.round(dn / (dn + df) * 100) : 100;
-      });
-      return { quality, defects: defectOps.length, reclamations: (data.reclamations || []).length, topReasons, topWorkers, dayLabels, qualByDay };
-    }
-    return {};
-  }, [section, data, periodStart]);
-
-  // ── Рисуем графики ──
-  useEffect(() => {
-    // Общие опции — красивая анимация с easing
-    // delay: каждый столбец появляется с задержкой 40ms × индекс (stagger)
-    const co = {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      animation: {
-        duration: 700,
-        easing: 'easeOutQuart',
-      },
-      animations: {
-        // Столбцы растут снизу вверх
-        y: {
-          from: (ctx) => {
-            if (ctx.type === 'data' && ctx.mode === 'default') {
-              return ctx.chart.scales.y?.getPixelForValue(0) ?? ctx.chart.height;
-            }
-          },
-          duration: 700,
-          easing: 'easeOutQuart',
-          delay: (ctx) => ctx.dataIndex * 40, // stagger 40ms на каждый столбец
-        },
-        // Горизонтальные (indexAxis: 'y') — растут слева
-        x: {
-          from: (ctx) => {
-            if (ctx.type === 'data' && ctx.mode === 'default' && ctx.chart.options?.indexAxis === 'y') {
-              return ctx.chart.scales.x?.getPixelForValue(0) ?? 0;
-            }
-          },
-          duration: 650,
-          easing: 'easeOutQuart',
-          delay: (ctx) => ctx.dataIndex * 50,
-        },
-      },
-    };
-    if (section === 'production' || section === 'dashboard') {
-      if (computed.dayLabels) {
-        c1.draw({ type: 'bar', data: { labels: computed.dayLabels, datasets: [{ label: 'Выполнено', data: computed.doneByDay, backgroundColor: GN, borderRadius: 4 }, { label: 'Брак', data: computed.defByDay, backgroundColor: RD, borderRadius: 4 }] }, options: { ...co, scales: { x: { stacked: false }, y: { beginAtZero: true } }, plugins: { legend: { display: true, position: 'bottom', labels: { font: { size: 10 } } } } } });
-      }
-      if (computed.topWorkers?.length) {
-        c2.draw({ type: 'bar', data: { labels: computed.topWorkers.map(w => w.name), datasets: [{ data: computed.topWorkers.map(w => w.cnt), backgroundColor: '#378ADD', borderRadius: 4 }] }, options: { ...co, indexAxis: 'y', scales: { x: { beginAtZero: true }, y: {} } } });
-      }
-      if (computed.topDefects?.length) {
-        c3.draw({ type: 'bar', data: { labels: computed.topDefects.map(d => d[0].length > 14 ? d[0].slice(0, 14) + '…' : d[0]), datasets: [{ data: computed.topDefects.map(d => d[1]), backgroundColor: RD, borderRadius: 4 }] }, options: { ...co, indexAxis: 'y', scales: { x: { beginAtZero: true }, y: {} } } });
-      }
-    } else if (section === 'warehouse') {
-      if (computed.dayLabels) {
-        c1.draw({ type: 'bar', data: { labels: computed.dayLabels, datasets: [{ label: 'Приходы', data: computed.rcvByDay, backgroundColor: GN, borderRadius: 4 }, { label: 'Расходы', data: computed.outByDay, backgroundColor: AM, borderRadius: 4 }] }, options: { ...co, scales: { x: {}, y: { beginAtZero: true } }, plugins: { legend: { display: true, position: 'bottom', labels: { font: { size: 10 } } } } } });
-      }
-      if (computed.topMats?.length) {
-        c2.draw({ type: 'bar', data: { labels: computed.topMats.map(m => m[0].length > 14 ? m[0].slice(0, 14) + '…' : m[0]), datasets: [{ data: computed.topMats.map(m => m[1]), backgroundColor: '#7F77DD', borderRadius: 4 }] }, options: { ...co, indexAxis: 'y', scales: { x: { beginAtZero: true }, y: {} } } });
-      }
-    } else if (section === 'hr') {
-      if (computed.workerStats?.length) {
-        c1.draw({ type: 'bar', data: { labels: computed.workerStats.map(w => w.name), datasets: [{ label: 'Выполнено', data: computed.workerStats.map(w => w.done), backgroundColor: GN, borderRadius: 4 }, { label: 'Брак', data: computed.workerStats.map(w => w.def), backgroundColor: RD, borderRadius: 4 }] }, options: { ...co, scales: { x: { stacked: false }, y: { beginAtZero: true } }, plugins: { legend: { display: true, position: 'bottom', labels: { font: { size: 10 } } } } } });
-      }
-      if (computed.statusCounts) {
-        const sc = computed.statusCounts;
-        c2.draw({ type: 'doughnut', data: { labels: ['На смене', 'Отсутствует', 'Больничный', 'Отпуск'], datasets: [{ data: [sc.working, sc.absent, sc.sick, sc.vacation], backgroundColor: [GN, RD, AM, '#7F77DD'], borderWidth: 0 }] }, options: { ...co, plugins: { legend: { display: true, position: 'right', labels: { font: { size: 10 }, boxWidth: 10 } } } } });
-      }
-    } else if (section === 'quality') {
-      if (computed.dayLabels) {
-        c1.draw({ type: 'line', data: { labels: computed.dayLabels, datasets: [{ label: 'Качество %', data: computed.qualByDay, borderColor: GN, backgroundColor: GN + '22', fill: true, tension: 0.4, pointRadius: 3, pointBackgroundColor: GN }] }, options: { ...co, scales: { y: { min: 70, max: 100, beginAtZero: false } }, plugins: { legend: { display: false } } } });
-      }
-      if (computed.topReasons?.length) {
-        c2.draw({ type: 'bar', data: { labels: computed.topReasons.map(r => r[0].length > 14 ? r[0].slice(0, 14) + '…' : r[0]), datasets: [{ data: computed.topReasons.map(r => r[1]), backgroundColor: RD, borderRadius: 4 }] }, options: { ...co, indexAxis: 'y', scales: { x: { beginAtZero: true }, y: {} } } });
-      }
-      if (computed.topWorkers?.length) {
-        c3.draw({ type: 'bar', data: { labels: computed.topWorkers.map(w => w[0]), datasets: [{ data: computed.topWorkers.map(w => w[1]), backgroundColor: AM, borderRadius: 4 }] }, options: { ...co, indexAxis: 'y', scales: { x: { beginAtZero: true }, y: {} } } });
-      }
-    }
-  }, [computed, section, c1, c2, c3, c4]);
-
-  const TITLES = { production: '⚙ Производство — полная аналитика', dashboard: '📊 Цех — полная аналитика', warehouse: '📦 Склад — полная аналитика', hr: '👥 Сотрудники — полная аналитика', quality: '🔍 Качество — полная аналитика' };
-
-  return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 300, overflowY: 'auto', padding: '16px 8px' }, onClick: e => e.target === e.currentTarget && onClose() },
-    h('div', { style: { background: '#f5f5f2', borderRadius: 14, width: 'min(900px,100%)', margin: '0 auto', boxShadow: '0 8px 40px rgba(0,0,0,0.2)' } },
-      // Шапка
-      h('div', { style: { background: 'var(--card-solid,#fff)', borderRadius: '14px 14px 0 0', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '0.5px solid rgba(0,0,0,0.08)' } },
-        h('div', { style: { fontSize: 15, fontWeight: 500 } }, TITLES[section] || 'Аналитика'),
-        h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
-          // Период
-          h('div', { style: { display: 'flex', gap: 4 } },
-            [7, 14, 30, 90, 180, 365].map(d => h('button', {
-              key: d,
-              style: period === d ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }),
-              onClick: () => setPeriod(d),
-              title: d > 60 ? 'Данные загружаются из архива' : undefined
-            }, d >= 365 ? '1г' : d >= 180 ? '6м' : `${d}д`))
-          ),
-          archiveLoading && h('span', { style: { fontSize: 11, color: '#EF9F27', animation: 'pulse 1s infinite' } }, '⏳ архив...'),
-          h('button', { style: gbtn({ fontSize: 11 }), onClick: () => {
-            const wb = XLSX.utils.book_new();
-            if (section === 'warehouse' && computed.topMats) {
-              XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(computed.topMats.map(([m, q]) => ({ Материал: m, Расход: q }))), 'Расход');
-            }
-            XLSX.writeFile(wb, `analytics_${section}_${new Date().toISOString().slice(0,10)}.xlsx`);
-          } }, '📥 Excel'),
-          h('button', { onClick: onClose, style: { background: 'none', border: 'none', fontSize: 22, color: 'var(--muted)', cursor: 'pointer' } }, '×')
-        )
-      ),
-      h('div', { style: { padding: 16 } },
-        // Графики
-        h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 } },
-          h('div', { style: { background: 'var(--card-solid,#fff)', borderRadius: 10, padding: '12px 14px', border: '0.5px solid rgba(0,0,0,0.08)' } },
-            h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--fg-muted)', marginBottom: 8 } },
-              section === 'warehouse' ? 'Движение по дням' :
-              section === 'hr' ? 'Выработка сотрудников' :
-              section === 'quality' ? 'Качество по дням (%)' : 'Выполнение по дням'
-            ),
-            h('div', { className: 'op-card-anim', style: { height: 200, animationDelay: '0.05s' } }, h('canvas', { ref: c1.canvasRef }))
-          ),
-          h('div', { style: { background: 'var(--card-solid,#fff)', borderRadius: 10, padding: '12px 14px', border: '0.5px solid rgba(0,0,0,0.08)' } },
-            h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--fg-muted)', marginBottom: 8 } },
-              section === 'warehouse' ? 'Топ расхода материалов' :
-              section === 'hr' ? 'Статус сотрудников' :
-              section === 'quality' ? 'Брак по причинам' : 'Выработка по сотрудникам'
-            ),
-            h('div', { className: 'op-card-anim', style: { height: 200, animationDelay: '0.12s' } }, h('canvas', { ref: c2.canvasRef }))
-          ),
-          (section === 'production' || section === 'dashboard' || section === 'quality') && h('div', { style: { background: 'var(--card-solid,#fff)', borderRadius: 10, padding: '12px 14px', border: '0.5px solid rgba(0,0,0,0.08)', gridColumn: '1 / -1' } },
-            h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--fg-muted)', marginBottom: 8 } },
-              section === 'quality' ? 'Брак по исполнителям' : 'Брак по причинам'
-            ),
-            h('div', { className: 'op-card-anim', style: { height: 160, animationDelay: '0.18s' } }, h('canvas', { ref: c3.canvasRef }))
-          )
-        )
-      )
-    )
-  );
-});
-
-// Мини-аналитика (встроена в шапку раздела)
-const SectionAnalytics = memo(({ section, data }) => {
-  const [expanded, setExpanded] = useState(false);
-  const [period] = useState(30);
-  const periodStart = useMemo(() => now() - period * 86400000, [period]);
-
-  const kpis = useMemo(() => {
-    if (section === 'production' || section === 'dashboard') {
-      const done    = data.ops.filter(o => o.status === 'done'   && o.finishedAt >= periodStart).length;
-      const defect  = data.ops.filter(o => o.status === 'defect' && o.finishedAt >= periodStart).length;
-      const inProg  = data.ops.filter(o => o.status === 'in_progress' && !o.archived).length;
-      const quality = done + defect > 0 ? Math.round(done / (done + defect) * 100) : 100;
-      const spark7  = Array.from({ length: 7 }, (_, i) => { const s = now() - (7 - i) * 86400000, e = now() - (6 - i) * 86400000; return data.ops.filter(o => o.finishedAt >= s && o.finishedAt < e && o.status === 'done').length; });
-      return [
-        { label: 'Выполнено', value: done, delta: 'за 30 дней', deltaDir: 'up', color: GN2, spark: { values: spark7, color: GN } },
-        { label: 'В работе',  value: inProg, delta: 'сейчас', deltaDir: 'neu', color: AM2 },
-        { label: 'Качество',  value: `${quality}%`, delta: quality >= 95 ? 'отлично' : quality >= 85 ? 'норма' : 'требует внимания', deltaDir: quality >= 95 ? 'up' : quality >= 85 ? 'neu' : 'dn', color: quality >= 95 ? GN2 : quality >= 85 ? AM2 : RD2 },
-        { label: 'Брак',      value: defect, delta: 'за 30 дней', deltaDir: defect > 5 ? 'dn' : 'neu', color: defect > 0 ? RD2 : '#888' },
-      ];
-    }
-    if (section === 'warehouse') {
-      const critical = data.materials.filter(m => m.minStock && m.quantity <= m.minStock).length;
-      const totalVal = Math.round(data.materials.reduce((s, m) => s + m.quantity * (m.unitCost || 0), 0) / 1000);
-      const receives = data.events.filter(e => e.type === 'material_receive' && e.ts >= periodStart).length;
-      const requests = data.events.filter(e => e.type === 'chat_alert' && e.alertType === 'need_material' && !e.fulfilled).length;
-      return [
-        { label: 'Позиций',       value: data.materials.length, delta: 'в справочнике', deltaDir: 'neu' },
-        { label: 'Критичных',     value: critical, delta: 'ниже минимума', deltaDir: critical > 0 ? 'dn' : 'up', color: critical > 0 ? RD2 : GN2 },
-        { label: 'Стоимость',     value: `${totalVal}к₽`, delta: 'на складе', deltaDir: 'neu', color: AM2 },
-        { label: 'Заявок ожид.', value: requests, delta: 'от рабочих', deltaDir: requests > 0 ? 'dn' : 'neu', color: requests > 0 ? AM2 : '#888' },
-      ];
-    }
-    if (section === 'hr') {
-      const active  = data.workers.filter(w => !w.archived);
-      const working = active.filter(w => isWorkerOnShift(w, data.timesheet)).length;
-      const absent  = active.filter(w => !isWorkerOnShift(w, data.timesheet)).length;
-      const avgDone = active.length > 0 ? Math.round(data.ops.filter(o => o.status === 'done' && o.finishedAt >= periodStart).length / Math.max(working, 1)) : 0;
-      return [
-        { label: 'Сотрудников', value: active.length, delta: 'в системе', deltaDir: 'neu' },
-        { label: 'На смене',    value: working, delta: `${Math.round(working / Math.max(active.length, 1) * 100)}% явка`, deltaDir: 'up', color: GN2 },
-        { label: 'Отсутствуют', value: absent, delta: 'б/л, отпуск', deltaDir: absent > 3 ? 'dn' : 'neu', color: absent > 3 ? RD2 : '#888' },
-        { label: 'Ср. выработка', value: `${avgDone}оп`, delta: 'на чел/месяц', deltaDir: 'neu', color: AM2 },
-      ];
-    }
-    if (section === 'quality') {
-      const doneOps   = data.ops.filter(o => o.status === 'done'   && o.finishedAt >= periodStart);
-      const defectOps = data.ops.filter(o => o.status === 'defect' && o.finishedAt >= periodStart);
-      const onCheck   = data.ops.filter(o => o.status === 'on_check' && !o.archived);
-      const quality   = doneOps.length + defectOps.length > 0 ? Math.round(doneOps.length / (doneOps.length + defectOps.length) * 100) : 100;
-      return [
-        { label: 'Качество',      value: `${quality}%`, delta: 'принято с 1 раза', deltaDir: quality >= 95 ? 'up' : quality >= 85 ? 'neu' : 'dn', color: quality >= 95 ? GN2 : AM2 },
-        { label: 'Брак',          value: defectOps.length, delta: 'за 30 дней', deltaDir: defectOps.length > 5 ? 'dn' : 'neu', color: defectOps.length > 0 ? RD2 : GN2 },
-        { label: 'На проверке',   value: onCheck.length, delta: 'ожидают контроля', deltaDir: onCheck.length > 3 ? 'dn' : 'neu', color: onCheck.length > 0 ? AM2 : '#888' },
-        { label: 'Рекламации',    value: (data.reclamations || []).length, delta: 'всего открытых', deltaDir: (data.reclamations || []).length > 0 ? 'dn' : 'up', color: (data.reclamations || []).length > 0 ? RD2 : GN2 },
-      ];
-    }
-    return [];
-  }, [section, data, periodStart]);
-
-  return h('div', { style: { marginBottom: 16 } },
-    // KPI полоска
-    h('div', { style: { display: 'grid', gridTemplateColumns: `repeat(${kpis.length}, 1fr)`, gap: 8, marginBottom: 8 } },
-      kpis.map((kpi, i) => h(KpiCard, { key: i, ...kpi }))
-    ),
-    // Кнопка полной аналитики
-    h('button', {
-      style: { ...gbtn({ fontSize: 11, width: '100%', padding: '7px' }), display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 },
-      onClick: () => setExpanded(true)
-    }, '📊 Полная аналитика — графики, фильтры, экспорт'),
-    // Модалка
-    expanded && h(FullAnalyticsModal, { section, data, onClose: () => setExpanded(false) })
-  );
-});
-
-// ==================== PasteImportWidget ====================
-// Универсальный виджет вставки из Excel через Ctrl+V
-// Использование: h(PasteImportWidget, { columns, onImport, addToast })
-// columns = [{ key, label, required?, default? }]
-// onImport(rows) вызывается с массивом объектов после подтверждения
-
-
-
-// ==================== KPI-отчёт для премирования ====================
-const KPIReport = memo(({ data, onWorkerClick }) => {
-  const [period, setPeriod] = useState(30);
-  const periodStart = useMemo(() => now() - period * 86400000, [period]);
-
-  const workerKPIs = useMemo(() => {
-    return data.workers.map(w => {
-      const wid = w.id;
-      const allOps = data.ops.filter(op => op.workerIds?.includes(wid));
-      const doneInPeriod = allOps.filter(op => op.status === 'done' && op.finishedAt >= periodStart);
-      const defectInPeriod = allOps.filter(op => op.status === 'defect' && op.finishedAt >= periodStart);
-      const totalInPeriod = doneInPeriod.length + defectInPeriod.length;
-      const allDone = allOps.filter(op => op.status === 'done').length;
-      const level = getWorkerLevel(allDone);
-      const levelTitle = getLevelTitle(level);
-
-      // Производительность: факт/план
-      const withPlan = doneInPeriod.filter(op => op.plannedHours && op.startedAt && op.finishedAt);
-      const productivity = withPlan.length > 0 ? Math.round(withPlan.reduce((s, op) => s + op.plannedHours * 3600000, 0) / withPlan.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0) * 100) : null;
-
-      // Качество: % без брака
-      const quality = totalInPeriod > 0 ? Math.round(doneInPeriod.length / totalInPeriod * 100) : 100;
-
-      // Дисциплина: простои по вине рабочего
-      const downtimes = data.events.filter(e => e.workerId === wid && e.type === 'downtime' && e.ts >= periodStart);
-      const downtimeHrs = Math.round(downtimes.reduce((s, e) => s + (e.duration || 0), 0) / 3600000 * 10) / 10;
-
-      // Универсальность: количество разных типов операций
-      const uniqueOps = new Set(doneInPeriod.map(op => op.name)).size;
-
-      // Достижения за период
-      const achievements = (w.achievements || []).length;
-
-      // Итоговый KPI-балл (0-100)
-      const kpiScore = Math.min(100, Math.round(
-        (doneInPeriod.length > 0 ? 20 : 0) + // есть выработка
-        Math.min((productivity || 0) / 5, 25) + // производительность до 25
-        Math.min(quality / 4, 25) + // качество до 25
-        Math.min(uniqueOps * 3, 15) + // универсальность до 15
-        Math.min(level, 10) + // уровень до 10
-        (downtimeHrs === 0 ? 5 : 0) // без простоев +5
-      ));
-
-      // Рекомендация по премированию
-      const bonusLevel = kpiScore >= 85 ? 'A' : kpiScore >= 70 ? 'B' : kpiScore >= 50 ? 'C' : 'D';
-      const bonusPct = bonusLevel === 'A' ? 30 : bonusLevel === 'B' ? 15 : bonusLevel === 'C' ? 0 : -10;
-
-      return { ...w, level, levelTitle, doneCount: doneInPeriod.length, defectCount: defectInPeriod.length, productivity, quality, downtimeHrs, uniqueOps, achievements, kpiScore, bonusLevel, bonusPct };
-    }).filter(w => isWorkerOnShift(w, data.timesheet) || w.doneCount > 0).sort((a, b) => b.kpiScore - a.kpiScore);
-  }, [data, periodStart]);
-
-  const exportKPI = useCallback(() => {
-    const ws = XLSX.utils.json_to_sheet(workerKPIs.map(w => ({
-      'Сотрудник': w.name, 'Должность': w.position || '', 'Уровень': `${w.level} (${w.levelTitle})`,
-      'Операций': w.doneCount, 'Брак': w.defectCount, 'Качество %': w.quality,
-      'Производит. %': w.productivity || '', 'Универсальность': w.uniqueOps,
-      'Простои (ч)': w.downtimeHrs, 'KPI': w.kpiScore, 'Грейд': w.bonusLevel, 'Премия %': w.bonusPct
-    })));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'KPI');
-    XLSX.writeFile(wb, `kpi_report_${period}d_${new Date().toISOString().slice(0, 10)}.xlsx`);
-  }, [workerKPIs, period]);
-
-  const bonusColors = { A: GN, B: AM, C: '#888', D: RD };
-
-  return h('div', null,
-    h('div', { style: { display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' } },
-      h('span', { style: { fontSize: 12, fontWeight: 500 } }, 'Период:'),
-      [7, 14, 30, 60, 90].map(d => h('button', { key: d, style: period === d ? abtn({ fontSize: 11 }) : gbtn({ fontSize: 11 }), onClick: () => setPeriod(d) }, `${d} дней`)),
-      h('button', { style: gbtn({ marginLeft: 'auto' }), onClick: exportKPI }, '📥 Экспорт KPI в Excel')
-    ),
-    // Легенда грейдов
-    h('div', { style: { ...S.card, marginBottom: 12, padding: 10, display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 11 } },
-      h('span', { style: { fontWeight: 500 } }, 'Грейды:'),
-      h('span', { style: { color: GN } }, 'A (85+) = +30% премия'),
-      h('span', { style: { color: AM } }, 'B (70-84) = +15%'),
-      h('span', { style: { color: 'var(--muted)' } }, 'C (50-69) = 0%'),
-      h('span', { style: { color: RD } }, 'D (<50) = −10%')
-    ),
-    workerKPIs.length === 0 ? h('div', { style: { ...S.card, textAlign: 'center', color: 'var(--muted)' } }, 'Нет данных за период') :
-      h('div', { style: { ...S.card, padding: 0 } }, h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-        h('thead', null, h('tr', null, ['Сотрудник', 'Ур.', 'Операций', 'Качество', 'Произв.', 'Универс.', 'Простои', 'KPI', 'Грейд'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
-        h('tbody', null, workerKPIs.map((w, i) => h('tr', { key: w.id, style: { background: i === 0 ? '#FFFDE7' : 'transparent' } },
-          h('td', { style: { ...S.td, fontWeight: 500 } }, h(WN, { worker: w, onWorkerClick }), i === 0 && h('span', { style: { marginLeft: 4 } }, '🏆')),
-          h('td', { style: { ...S.td, textAlign: 'center' } }, h('span', { style: { padding: '2px 6px', fontSize: 10, borderRadius: 6, background: AM3, color: AM2 } }, `${w.level}`)),
-          h('td', { style: { ...S.td, textAlign: 'center' } }, w.doneCount, w.defectCount > 0 && h('span', { style: { color: RD, marginLeft: 4, fontSize: 10 } }, `−${w.defectCount}`)),
-          h('td', { style: { ...S.td, textAlign: 'center', color: w.quality >= 95 ? GN : w.quality >= 80 ? AM : RD, fontWeight: 500 } }, `${w.quality}%`),
-          h('td', { style: { ...S.td, textAlign: 'center', color: w.productivity ? (w.productivity >= 100 ? GN : w.productivity >= 80 ? AM : RD) : '#888' } }, w.productivity ? `${w.productivity}%` : '—'),
-          h('td', { style: { ...S.td, textAlign: 'center' } }, w.uniqueOps),
-          h('td', { style: { ...S.td, textAlign: 'center', color: w.downtimeHrs > 0 ? RD : GN } }, w.downtimeHrs > 0 ? `${w.downtimeHrs}ч` : '✓'),
-          h('td', { style: { ...S.td, textAlign: 'center', fontSize: 16, fontWeight: 500, color: bonusColors[w.bonusLevel] || '#888' } }, w.kpiScore),
-          h('td', { style: { ...S.td, textAlign: 'center' } },
-            h('span', { style: { display: 'inline-block', width: 28, height: 28, lineHeight: '28px', textAlign: 'center', borderRadius: '50%', fontWeight: 700, fontSize: 13, color: '#fff', background: bonusColors[w.bonusLevel] || '#888' } }, w.bonusLevel),
-            h('div', { style: { fontSize: 9, color: bonusColors[w.bonusLevel], marginTop: 2 } }, `${w.bonusPct > 0 ? '+' : ''}${w.bonusPct}%`)
-          )
-        )))
-      )))
-  );
-});
-
-// ==================== Рекомендации по назначениям ====================
-const AssignmentRecommendations = memo(({ data, onUpdate, addToast }) => {
-  const recommendations = useMemo(() => getAssignmentRecommendations(data)
-, [data]);
-  const { ask: askConfirm, confirmEl } = useConfirm();
-
-  const assignWorker = useCallback(async (opId, workerId) => {
-    const op = data.ops.find(o => o.id === opId);
-    if (!op) return;
-    const d = { ...data, ops: data.ops.map(o => o.id === opId ? { ...o, workerIds: [...new Set([...(o.workerIds || []), workerId])] } : o) };
-    const worker = data.workers.find(w => w.id === workerId);
-    onUpdate(d); DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
-    addToast(`${worker?.name} назначен на "${op.name}"`, 'success');
-  }, [data, onUpdate, addToast]);
-
-  const assignAll = useCallback(async () => {
-    if (!(await askConfirm({ message: `Назначить кандидатов на ${recommendations.length} операций?`, danger: false }))) return;
-    let updated = { ...data };
-    let count = 0;
-    recommendations.forEach(rec => {
-      if (rec.candidates.length > 0) {
-        const bestId = rec.candidates[0].workerId;
-        updated = { ...updated, ops: updated.ops.map(o => o.id === rec.opId ? { ...o, workerIds: [...new Set([...(o.workerIds || []), bestId])] } : o) };
-        count++;
-      }
-    });
-    if (count > 0) {
-      onUpdate(updated); DB.save(updated).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
-      addToast(`Назначено: ${count} операций`, 'success');
-    }
-  }, [data, recommendations, onUpdate, addToast]);
-
-  return h('div', null,
-    confirmEl,
-    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } },
-      h('div', { style: S.sec }, `Рекомендации по назначениям (${recommendations.length} без исполнителя)`),
-      recommendations.length > 0 && h('button', { style: abtn(), onClick: assignAll }, `🤖 Назначить всех (${recommendations.length})`)
-    ),
-    recommendations.length === 0
-      ? h('div', { style: { ...S.card, textAlign: 'center', color: 'var(--muted)', padding: 20 } }, 'Все операции имеют исполнителей')
-      : recommendations.slice(0, 20).map(rec => h('div', { key: rec.opId, style: { ...S.card, padding: 12, marginBottom: 8, borderLeft: `4px solid ${PRIORITY[rec.orderPriority]?.color || '#888'}` } },
-          h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 8 } },
-            h('div', null,
-              h('span', { style: { fontSize: 13, fontWeight: 500 } }, rec.opName),
-              h('span', { style: { marginLeft: 8, fontSize: 11, color: AM } }, rec.orderNumber),
-              rec.deadline && h('span', { style: { marginLeft: 8, fontSize: 10, color: 'var(--muted)' } }, `до ${rec.deadline}`)
-            ),
-            h('span', { style: { fontSize: 10, color: PRIORITY[rec.orderPriority]?.color } }, PRIORITY[rec.orderPriority]?.label)
-          ),
-          rec.candidates.filter(c => !c.divider && c.hasAccess).length === 0 && rec.candidates.filter(c => !c.divider).length === 0
-            ? h('div', { style: { fontSize: 11, color: RD } }, 'Нет сотрудников')
-            : h('div', { style: { display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 6, WebkitOverflowScrolling: 'touch', scrollbarWidth: 'thin' } },
-                rec.candidates.map((c, i) => {
-                  // Разделитель между группами
-                  if (c.divider) {
-                    return rec.candidates.some(x => !x.divider && !x.hasAccess)
-                      ? h('div', { key: 'div', style: { display: 'flex', alignItems: 'center', flexShrink: 0, gap: 4 } },
-                          h('div', { style: { width: 1, height: 48, background: 'rgba(0,0,0,0.1)' } }),
-                          h('div', { style: { fontSize: 9, color: '#bbb', writingMode: 'vertical-lr', textOrientation: 'mixed', padding: '4px 0' } }, 'нет допуска')
-                        )
-                      : null;
-                  }
-                  const isTop = i === 0 && c.hasAccess;
-                  const noBadge = !c.hasAccess;
-                  return h('div', { key: c.workerId,
-                    style: { flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
-                      borderRadius: 10, cursor: 'pointer',
-                      background: noBadge ? '#f5f5f2' : isTop ? GN3 : 'var(--card-2)',
-                      border: noBadge ? '0.5px solid rgba(0,0,0,0.08)' : isTop ? `0.5px solid ${GN}` : '0.5px solid rgba(0,0,0,0.1)',
-                      opacity: noBadge ? 0.7 : 1,
-                      minWidth: 160, maxWidth: 200 },
-                    onClick: () => assignWorker(rec.opId, c.workerId) },
-                    h('div', { style: { flex: 1, minWidth: 0 } },
-                      h('div', { style: { fontSize: 12, fontWeight: isTop ? 500 : 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } },
-                        c.workerName,
-                        isTop && h('span', { style: { marginLeft: 4, fontSize: 10, color: GN } }, '★')
-                      ),
-                      h('div', { style: { fontSize: 10, color: 'var(--muted)', marginTop: 2 } },
-                        `Ур.${c.level} · Опыт:${c.details.experience} · Кач:${c.qualityScore}/25`
-                      )
-                    ),
-                    h('div', { style: { fontSize: 15, fontWeight: 500, color: noBadge ? '#bbb' : isTop ? GN : AM, flexShrink: 0 } }, noBadge ? '—' : c.totalScore)
-                  );
-                })
-              )
-        ))
-  );
-});
-
-
-
-
-// ==================== AiAnalyst ====================
-const AiAnalyst = memo(({ data, period, allData }) => {
-  const [loading,  setLoading]  = useState(false);
-  const [result,   setResult]   = useState(null);
-  const [error,    setError]    = useState(null);
-  const [expanded, setExpanded] = useState(true);
-  const [question, setQuestion] = useState('');
-  const [mode,     setMode]     = useState('auto'); // 'auto' | 'custom'
-
-  const hasKey = !!(data.settings?.openrouterApiKey || data.settings?.geminiApiKey || data.settings?.aiApiKey);
-
-  const buildContext = () => {
-    const periodStart = Date.now() - period * 86400000;
-    const src = allData || data;
-
-    // Заказы
-    const activeOrders = src.orders.filter(o => !o.archived && !o.shipped);
-    const overdueOrders = activeOrders.filter(o => o.deadline && new Date(o.deadline) < new Date());
-    const shippedMonth = src.orders.filter(o => o.shipped && (o.shippedAt||0) > periodStart);
-
-    // Операции
-    const ops = src.ops.filter(o => (o.finishedAt||0) > periodStart);
-    const done = ops.filter(o => o.status === 'done');
-    const defect = ops.filter(o => o.status === 'defect');
-    const quality = ops.length > 0 ? Math.round(done.length / (done.length + defect.length) * 100) : 100;
-
-    // Топ-рабочих по операциям
-    const byWorker = {};
-    done.forEach(op => (op.workerIds||[]).forEach(wid => {
-      if (!byWorker[wid]) byWorker[wid] = { done: 0, defect: 0 };
-      byWorker[wid].done++;
-    }));
-    defect.forEach(op => (op.workerIds||[]).forEach(wid => {
-      if (!byWorker[wid]) byWorker[wid] = { done: 0, defect: 0 };
-      if (byWorker[wid]) byWorker[wid].defect++;
-    }));
-    const workerStats = Object.entries(byWorker).map(([wid, s]) => {
-      const w = data.workers.find(x => x.id === wid);
-      return { name: w?.name || 'ID:'+wid.slice(-4), done: s.done, defect: s.defect,
-               quality: s.done+s.defect > 0 ? Math.round(s.done/(s.done+s.defect)*100) : 100 };
-    }).sort((a,b) => b.done - a.done).slice(0, 8);
-
-    // Нормы (топ отклонений)
-    const normAlerts = Object.entries(src.opNorms||{})
-      .filter(([,n]) => n.samples >= 3 && n.planned)
-      .map(([name, n]) => ({ name, planned: n.planned, avg: Math.round(n.totalMs/n.samples/3600000*10)/10 }))
-      .filter(n => Math.abs(n.avg - n.planned) / n.planned > 0.2)
-      .sort((a,b) => Math.abs(b.avg-b.planned)/b.planned - Math.abs(a.avg-a.planned)/a.planned)
-      .slice(0, 5);
-
-    // Простои
-    const downtimes = (src.events||[]).filter(e => e.type === 'downtime' && e.ts > periodStart);
-    const downtimeH = Math.round(downtimes.reduce((s,e) => s+(e.duration||0),0)/3600000*10)/10;
-    const downtimeByType = {};
-    downtimes.forEach(e => {
-      const t = (src.downtimeTypes||[]).find(x=>x.id===e.downtimeTypeId)?.name || 'Прочее';
-      downtimeByType[t] = (downtimeByType[t]||0) + (e.duration||0);
-    });
-
-    // Рекламации
-    const recl = (src.reclamations||[]).filter(r => (r.createdAt||0) > periodStart);
-
-    return `ПРОИЗВОДСТВЕННАЯ СТАТИСТИКА за последние ${period} дней:
-
-ЗАКАЗЫ:
-- Активных: ${activeOrders.length}, из них просрочено: ${overdueOrders.length}
-- Отгружено за период: ${shippedMonth.length}
-- Просроченные: ${overdueOrders.slice(0,5).map(o=>`${o.number} (${o.product||''})`).join(', ')}
-
-ОПЕРАЦИИ:
-- Выполнено: ${done.length}, брак: ${defect.length}, качество: ${quality}%
-- Всего операций в работе сейчас: ${src.ops.filter(o=>o.status==='in_progress'&&!o.archived).length}
-
-РАБОЧИЕ (топ по операциям):
-${workerStats.map(w=>`- ${w.name}: ${w.done} оп., качество ${w.quality}%${w.defect>0?`, брак ${w.defect}`:''}`).join('\n')}
-
-ПРОСТОИ: ${downtimeH}ч за период
-${Object.entries(downtimeByType).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([t,ms])=>`- ${t}: ${Math.round(ms/3600000*10)/10}ч`).join('\n')}
-
-НОРМЫ (отклонения >20%):
-${normAlerts.length > 0 ? normAlerts.map(n=>`- ${n.name}: план ${n.planned}ч, факт ${n.avg}ч`).join('\n') : '- отклонений нет'}
-
-РЕКЛАМАЦИИ за период: ${recl.length}`;
-  };
-
-  const analyze = async (customQuestion) => {
-    const apiKey = data.settings?.openrouterApiKey || data.settings?.geminiApiKey || data.settings?.aiApiKey;
-    if (!apiKey) { setError('API ключ не задан. Добавьте OpenRouter / Gemini / Claude API Key в Система → Настройки.'); return; }
-
-    setLoading(true); setResult(null); setError(null);
-
-    const context = buildContext();
-    const userPrompt = customQuestion || `Проанализируй производственную статистику. Дай:
-1. Главные проблемы (2-3 пункта)
-2. Что идёт хорошо (1-2 пункта)  
-3. Конкретные рекомендации (2-3 пункта)
-Пиши кратко и по делу, как опытный производственник.`;
-
-    try {
-      // 1) OpenRouter — бесплатный, OpenAI-совместимый, и в отличие от Groq
-      // реально поддерживает CORS для прямых вызовов из браузера.
-      // model: 'openrouter/free' — их автороутер сам выбирает доступную бесплатную модель,
-      // чтобы не зависеть от конкретного ID (линейка бесплатных моделей часто меняется).
-      const openrouterKey = data.settings?.openrouterApiKey;
-      if (openrouterKey) {
-        const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${openrouterKey}`,
-            'HTTP-Referer': window.location.origin,
-            'X-Title': 'Teploros MES'
-          },
-          body: JSON.stringify({
-            model: 'openrouter/free',
-            max_tokens: 800,
-            temperature: 0.3,
-            messages: [
-              { role: 'system', content: 'Ты аналитик производственной системы. Отвечай кратко и по делу на русском.' },
-              { role: 'user', content: context + '\n\n' + userPrompt }
-            ]
-          })
-        });
-        const d = await r.json();
-        if (d.choices?.[0]?.message?.content) {
-          setResult(d.choices[0].message.content);
-          setLoading(false); return;
-        }
-        if (d.error) throw new Error(d.error.message || JSON.stringify(d.error));
-      }
-
-      // 2) Gemini Flash (бесплатный, но может быть недоступен по гео)
-      const geminiKey = data.settings?.geminiApiKey;
-      if (geminiKey) {
-        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: context + '\n\n' + userPrompt }] }],
-            generationConfig: { maxOutputTokens: 800, temperature: 0.3 }
-          })
-        });
-        const d = await r.json();
-        if (d.candidates?.[0]?.content?.parts?.[0]?.text) {
-          setResult(d.candidates[0].content.parts[0].text);
-          setLoading(false); return;
-        }
-        if (d.error) throw new Error(d.error.message);
-      }
-
-      // 3) Fallback: Claude API (платный, но самый качественный ответ)
-      const claudeKey = data.settings?.aiApiKey;
-      if (claudeKey) {
-        const r = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-api-key': claudeKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-          body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 800,
-            system: 'Ты аналитик производственной системы. Отвечай кратко и по делу на русском.',
-            messages: [{ role: 'user', content: context + '\n\n' + userPrompt }] })
-        });
-        const d = await r.json();
-        if (d.content?.[0]?.text) { setResult(d.content[0].text); setLoading(false); return; }
-        if (d.error) throw new Error(d.error.message || JSON.stringify(d.error));
-      }
-
-      throw new Error('Нет доступного API ключа');
-    } catch(e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const QUICK = [
-    'Кто из рабочих показывает лучшие результаты и почему?',
-    'Какие операции чаще всего дают брак?',
-    'Есть ли риск срыва дедлайнов на этой неделе?',
-    'Что делать с простоями?',
-  ];
-
-  return h('div', { style: { ...S.card, marginBottom: 12, border: `0.5px solid ${AM4}` } },
-
-    // Заголовок
-    h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom: expanded ? 12 : 0 } },
-      h('span', { style: { fontSize:18 } }, '🤖'),
-      h('div', { style: { flex:1 } },
-        h('div', { style: { fontWeight:600, fontSize:14 } }, 'AI-аналитик'),
-        h('div', { style: { fontSize:11, color:'var(--muted)' } },
-          data.settings?.openrouterApiKey ? 'OpenRouter (free) · готов к работе'
-          : data.settings?.geminiApiKey ? 'Gemini Flash · готов к работе'
-          : data.settings?.aiApiKey ? 'Claude API · готов к работе'
-          : '⚠ API ключ не задан'
-        )
-      ),
-      result && h('button', { style: gbtn({ fontSize:11, padding:'4px 10px' }), onClick:()=>setExpanded(v=>!v) }, expanded ? '▾' : '▸'),
-      h('button', {
-        style: loading ? gbtn({ fontSize:12, padding:'6px 14px', opacity:0.6 }) : abtn({ fontSize:12, padding:'6px 14px' }),
-        onClick: () => { setExpanded(true); analyze(mode === 'custom' ? question : null); },
-        disabled: loading
-      }, loading ? '⏳ Анализирую...' : '✦ Анализировать')
-    ),
-
-    expanded && h('div', null,
-
-      // Быстрые вопросы
-      !result && !loading && h('div', { style: { marginBottom:10 } },
-        h('div', { style:{ fontSize:11, color:'var(--muted)', marginBottom:6 } }, 'Быстрые вопросы:'),
-        h('div', { style:{ display:'flex', flexWrap:'wrap', gap:6 } },
-          QUICK.map(q => h('button', { key:q, style: gbtn({ fontSize:11, padding:'4px 10px' }),
-            onClick: () => { setExpanded(true); analyze(q); }
-          }, q))
-        )
-      ),
-
-      // Своё поле вопроса
-      !result && !loading && h('div', { style:{ display:'flex', gap:8, marginTop:8 } },
-        h('input', { type:'text', placeholder:'Или задай свой вопрос...', value: question,
-          onChange: e => setQuestion(e.target.value),
-          onKeyDown: e => e.key === 'Enter' && question.trim() && analyze(question),
-          style:{ flex:1, fontSize:13, padding:'7px 10px', borderRadius:8, border:'0.5px solid rgba(0,0,0,0.15)',
-            background:'var(--bg,#fff)', color:'var(--fg,#222)', outline:'none' }
-        }),
-        h('button', { style: abtn({ fontSize:12, padding:'6px 14px' }),
-          onClick: () => question.trim() && analyze(question)
-        }, 'Спросить')
-      ),
-
-      // Ошибка
-      error && h('div', { style:{ padding:'10px 12px', background: RD3, borderRadius:8, fontSize:12, color: RD2, marginTop:8 } },
-        '⚠ ', error,
-        error.includes('API ключ') && h('span', null, ' → Система → Настройки → OpenRouter / Gemini / Claude API Key')
-      ),
-
-      // Результат
-      result && h('div', { style:{ marginTop:8 } },
-        h('div', { style:{ padding:'12px 14px', background:'var(--bg,#f8f8f5)', borderRadius:10,
-          fontSize:13, lineHeight:1.7, whiteSpace:'pre-wrap', color:'var(--fg,#222)' } }, result),
-        h('div', { style:{ display:'flex', gap:8, marginTop:8 } },
-          h('button', { style: gbtn({ fontSize:11, padding:'4px 10px' }),
-            onClick: () => { setResult(null); setError(null); }
-          }, '← Новый вопрос'),
-          h('button', { style: gbtn({ fontSize:11, padding:'4px 10px' }),
-            onClick: () => analyze(mode === 'custom' ? question : null)
-          }, '↺ Обновить')
-        )
-      )
-    )
-  );
-});
-
-// ==================== AnalyticsDashboard (Волна 1: Lead Time, Такт, Нормы, Парето, Тренды) ====================
-const AnalyticsDashboard = memo(({ data, onWorkerClick }) => {
-  const [period, setPeriod] = useState(30);
-  const periodStart = useMemo(() => now() - period * 86400000, [period]);
-
-  // ── Загрузка архивных данных для периодов > 60 дней ──
-  const [archiveData, setArchiveData] = useState(null);
-  const [archiveLoading, setArchiveLoading] = useState(false);
-  const [archiveMonthsList, setArchiveMonthsList] = useState([]);
-
-  // Загружаем список доступных архивных месяцев
-  useEffect(() => {
-    DB.listArchiveMonths().then(months => setArchiveMonthsList(months)).catch(() => {});
-  }, []);
-
-  // При выборе периода > 60 дней — подгружаем нужные архивные месяцы
-  useEffect(() => {
-    if (period <= 60) { setArchiveData(null); return; }
-    setArchiveLoading(true);
-    const needed = [];
-    const now_ = Date.now();
-    for (let i = 0; i < Math.ceil(period / 30) + 1; i++) {
-      const d = new Date(now_ - i * 30 * 86400000);
-      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-      if (!needed.includes(key)) needed.push(key);
-    }
-    Promise.all(needed.map(m => DB.loadArchive(m).catch(() => null)))
-      .then(results => {
-        const merged = { orders:[], ops:[], events:[], materialConsumptions:[] };
-        results.filter(Boolean).forEach(r => {
-          ['orders','ops','events','materialConsumptions'].forEach(k => {
-            if (Array.isArray(r[k])) merged[k].push(...r[k]);
-          });
-        });
-        setArchiveData(merged);
-        setArchiveLoading(false);
-      })
-      .catch(() => setArchiveLoading(false));
-  }, [period]);
-
-  // Объединённые данные: текущие + архивные
-  const allData = useMemo(() => {
-    if (!archiveData || period <= 60) return data;
-    const mergeById = (curr, arch) => {
-      const ids = new Set((curr||[]).map(x=>x.id));
-      return [...(curr||[]), ...(arch||[]).filter(x=>!ids.has(x.id))];
-    };
-    return {
-      ...data,
-      orders: mergeById(data.orders, archiveData.orders),
-      ops:    mergeById(data.ops,    archiveData.ops),
-      events: mergeById(data.events, archiveData.events),
-      materialConsumptions: mergeById(data.materialConsumptions, archiveData.materialConsumptions),
-    };
-  }, [data, archiveData, period]);
-  const chartRef1 = useRef(null); const canvasRef1 = useRef(null);
-  const chartRef2 = useRef(null); const canvasRef2 = useRef(null);
-
-  // ===== 1. Lead Time по заказам =====
-  const leadTimeData = useMemo(() => {
-    return allData.orders.filter(o => !o.archived).map(order => {
-      const ops = allData.ops.filter(op => op.orderId === order.id);
-      const doneOps = ops.filter(op => op.status === 'done' && op.startedAt && op.finishedAt);
-      if (doneOps.length === 0) return null;
-      const firstStart = Math.min(...doneOps.map(op => op.startedAt));
-      const lastFinish = Math.max(...doneOps.map(op => op.finishedAt));
-      const totalElapsed = lastFinish - firstStart; // общее время от начала до конца
-      const workingTime = doneOps.reduce((s, op) => s + (op.finishedAt - op.startedAt), 0); // время в работе
-      const waitingTime = totalElapsed - workingTime; // время ожидания между этапами
-      const allDone = ops.every(op => op.status === 'done' || op.status === 'defect');
-      return { id: order.id, number: order.number, product: order.product, totalElapsed, workingTime, waitingTime, waitingPct: totalElapsed > 0 ? Math.round(waitingTime / totalElapsed * 100) : 0, opsDone: doneOps.length, opsTotal: ops.length, completed: allDone, firstStart, lastFinish };
-    }).filter(Boolean).sort((a, b) => b.lastFinish - a.lastFinish);
-  }, [data.orders, data.ops]);
-
-  const avgLeadTime = leadTimeData.length > 0 ? leadTimeData.reduce((s, d) => s + d.totalElapsed, 0) / leadTimeData.length : 0;
-  const avgWaitingPct = leadTimeData.length > 0 ? Math.round(leadTimeData.reduce((s, d) => s + d.waitingPct, 0) / leadTimeData.length) : 0;
-
-  // ===== 2. Автонормирование =====
-  const normSuggestions = useMemo(() => {
-    const byName = {};
-    allData.ops.filter(op => op.status === 'done' && op.startedAt && op.finishedAt && op.finishedAt >= periodStart).forEach(op => {
-      if (!byName[op.name]) byName[op.name] = { times: [], currentNorm: null };
-      byName[op.name].times.push((op.finishedAt - op.startedAt) / 3600000);
-      if (op.plannedHours) byName[op.name].currentNorm = op.plannedHours;
-    });
-    return Object.entries(byName).map(([name, stats]) => {
-      const sorted = stats.times.sort((a, b) => a - b);
-      const median = sorted[Math.floor(sorted.length / 2)];
-      const avg = stats.times.reduce((s, t) => s + t, 0) / stats.times.length;
-      const suggested = Math.round(median * 10) / 10;
-      const current = stats.currentNorm;
-      const deviation = current ? Math.round((avg / current - 1) * 100) : null;
-      return { name, count: stats.times.length, avg: Math.round(avg * 10) / 10, median: suggested, min: Math.round(Math.min(...stats.times) * 10) / 10, max: Math.round(Math.max(...stats.times) * 10) / 10, current, suggested, deviation };
-    }).filter(s => s.count >= 3).sort((a, b) => Math.abs(b.deviation || 0) - Math.abs(a.deviation || 0));
-  }, [data.ops, periodStart]);
-
-  // ===== 3. Расчёт такта =====
-  const taktData = useMemo(() => {
-    const completedOrders = data.orders.filter(o => {
-      const ops = data.ops.filter(op => op.orderId === o.id);
-      return ops.length > 0 && ops.every(op => op.status === 'done' || op.status === 'defect');
-    });
-    const completedInPeriod = completedOrders.filter(o => {
-      const lastOp = data.ops.filter(op => op.orderId === o.id && op.finishedAt).sort((a, b) => b.finishedAt - a.finishedAt)[0];
-      return lastOp && lastOp.finishedAt >= periodStart;
-    });
-    const pendingOrders = data.orders.filter(o => !o.archived && data.ops.some(op => op.orderId === o.id && op.status !== 'done' && op.status !== 'defect'));
-    const daysInPeriod = period;
-    const actualRate = completedInPeriod.length / daysInPeriod; // заказов в день
-    // Требуемый такт: незавершённые заказы / оставшееся время до ближайшего дедлайна
-    const withDeadline = pendingOrders.filter(o => o.deadline);
-    const avgDaysToDeadline = withDeadline.length > 0 ? withDeadline.reduce((s, o) => s + Math.max(1, (new Date(o.deadline).getTime() - now()) / 86400000), 0) / withDeadline.length : 30;
-    const requiredRate = pendingOrders.length > 0 ? pendingOrders.length / avgDaysToDeadline : 0;
-    const taktOk = actualRate >= requiredRate || requiredRate === 0;
-    return { completedInPeriod: completedInPeriod.length, pendingOrders: pendingOrders.length, actualRate: Math.round(actualRate * 100) / 100, requiredRate: Math.round(requiredRate * 100) / 100, taktOk, avgDaysToDeadline: Math.round(avgDaysToDeadline) };
-  }, [data.orders, data.ops, period, periodStart]);
-
-  // ===== 4. Парето-анализ простоев =====
-  const paretoData = useMemo(() => {
-    const downtimes = data.events.filter(e => e.type === 'downtime' && e.ts >= periodStart);
-    const byReason = {};
-    downtimes.forEach(e => {
-      const reason = data.downtimeTypes.find(dt => dt.id === e.downtimeTypeId)?.name || 'Неизвестно';
-      if (!byReason[reason]) byReason[reason] = { count: 0, totalMs: 0 };
-      byReason[reason].count++;
-      byReason[reason].totalMs += (e.duration || 0);
-    });
-    const sorted = Object.entries(byReason).sort((a, b) => b[1].totalMs - a[1].totalMs);
-    const totalMs = sorted.reduce((s, [, v]) => s + v.totalMs, 0);
-    let cumulative = 0;
-    return sorted.map(([reason, stat]) => {
-      cumulative += stat.totalMs;
-      return { reason, count: stat.count, totalHrs: Math.round(stat.totalMs / 3600000 * 10) / 10, pct: totalMs > 0 ? Math.round(stat.totalMs / totalMs * 100) : 0, cumPct: totalMs > 0 ? Math.round(cumulative / totalMs * 100) : 0 };
-    });
-  }, [data.events, data.downtimeTypes, periodStart]);
-
-  // ===== 5. Тренды качества =====
-  const qualityTrends = useMemo(() => {
-    const weeks = [];
-    for (let i = 0; i < Math.min(period / 7, 12); i++) {
-      const weekEnd = now() - i * 7 * 86400000;
-      const weekStart = weekEnd - 7 * 86400000;
-      const done = data.ops.filter(op => op.status === 'done' && op.finishedAt >= weekStart && op.finishedAt < weekEnd).length;
-      const defect = data.ops.filter(op => op.status === 'defect' && op.finishedAt >= weekStart && op.finishedAt < weekEnd).length;
-      const total = done + defect;
-      const rate = total > 0 ? Math.round(defect / total * 1000) / 10 : 0;
-      weeks.push({ weekNum: i, label: i === 0 ? 'Тек.' : `-${i}нед`, done, defect, total, rate });
-    }
-    weeks.reverse();
-    // Тренд: растёт ли брак последние 3 недели
-    const recent = weeks.slice(-3);
-    const trending = recent.length >= 3 && recent[2].rate > recent[1].rate && recent[1].rate > recent[0].rate && recent[2].rate > 2;
-    return { weeks, trending };
-  }, [data.ops, period]);
-
-  // Chart.js для Парето
-  useEffect(() => {
-    if (!canvasRef1.current || !window.Chart || paretoData.length === 0) return;
-    if (chartRef1.current) chartRef1.current.destroy();
-    chartRef1.current = new Chart(canvasRef1.current, {
-      type: 'bar',
-      data: { labels: paretoData.map(d => d.reason.length > 15 ? d.reason.slice(0, 15) + '…' : d.reason), datasets: [
-        { label: 'Часы простоя', data: paretoData.map(d => d.totalHrs), backgroundColor: RD, borderRadius: 4, yAxisID: 'y' },
-        { label: 'Накопительный %', data: paretoData.map(d => d.cumPct), type: 'line', borderColor: AM, pointBackgroundColor: AM, yAxisID: 'y1', tension: 0.3 }
-      ]},
-      options: { responsive: true, plugins: { legend: { display: true, position: 'bottom', labels: { font: { size: 10 } } } }, scales: { y: { beginAtZero: true, title: { display: true, text: 'Часы' } }, y1: { position: 'right', min: 0, max: 100, title: { display: true, text: '%' }, grid: { display: false } } } }
-    });
-    return () => { if (chartRef1.current) chartRef1.current.destroy(); };
-  }, [paretoData]);
-
-  // Chart.js для трендов качества
-  useEffect(() => {
-    if (!canvasRef2.current || !window.Chart || qualityTrends.weeks.length === 0) return;
-    if (chartRef2.current) chartRef2.current.destroy();
-    chartRef2.current = new Chart(canvasRef2.current, {
-      type: 'bar',
-      data: { labels: qualityTrends.weeks.map(w => w.label), datasets: [
-        { label: 'Выполнено', data: qualityTrends.weeks.map(w => w.done), backgroundColor: GN, borderRadius: 4, stack: 'a' },
-        { label: 'Брак', data: qualityTrends.weeks.map(w => w.defect), backgroundColor: RD, borderRadius: 4, stack: 'a' },
-        { label: 'Брак %', data: qualityTrends.weeks.map(w => w.rate), type: 'line', borderColor: AM, pointBackgroundColor: AM, yAxisID: 'y1', tension: 0.3 }
-      ]},
-      options: { responsive: true, plugins: { legend: { display: true, position: 'bottom', labels: { font: { size: 10 } } } }, scales: { y: { beginAtZero: true, stacked: true, title: { display: true, text: 'Операций' } }, y1: { position: 'right', min: 0, title: { display: true, text: 'Брак %' }, grid: { display: false } } } }
-    });
-    return () => { if (chartRef2.current) chartRef2.current.destroy(); };
-  }, [qualityTrends]);
-
-  return h('div', null,
-    // Период
-    h('div', { style: { display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap', alignItems:'center' } },
-      [7, 14, 30, 60, 90].map(d => h('button', { key: d, style: period === d ? abtn({ fontSize: 11 }) : gbtn({ fontSize: 11 }), onClick: () => setPeriod(d) }, `${d} дней`)),
-      archiveLoading && h('span', { style: { fontSize: 11, color: '#EF9F27' } }, '⏳ архив...')
-    ),
-
-    // AI-аналитик
-    h(AiAnalyst, { data, period, allData }),
-
-    // Алерт: тренд качества
-    qualityTrends.trending && h('div', { role: 'alert', style: { ...S.card, background: RD3, border: `0.5px solid ${RD}`, marginBottom: 12, padding: 12 } },
-      h('div', { style: { fontSize: 12, color: RD, fontWeight: 500 } }, '⚠ Брак растёт 3 недели подряд! Возможна системная проблема — проверьте оборудование и материалы.')
-    ),
-
-    // Такт производства
-    h('div', { style: { ...S.card, marginBottom: 12 } },
-      h('div', { style: S.sec }, 'Такт производства'),
-      h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 10, marginBottom: 8 } },
-        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: GN } }, taktData.completedInPeriod), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, `Завершено за ${period}д`)),
-        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: AM } }, taktData.pendingOrders), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'В очереди')),
-        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: taktData.taktOk ? GN : RD } }, `${taktData.actualRate}`), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Факт (заказов/день)')),
-        h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 28, fontWeight: 500, color: taktData.taktOk ? GN : RD } }, `${taktData.requiredRate}`), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Нужно (заказов/день)'))
-      ),
-      !taktData.taktOk && taktData.requiredRate > 0 && h('div', { style: { fontSize: 11, color: RD, fontWeight: 500, marginTop: 4 } }, `⚠ Производство не успевает: нужно ${taktData.requiredRate} заказов/день, факт ${taktData.actualRate}. Среднее время до дедлайна: ${taktData.avgDaysToDeadline} дней.`)
-    ),
-
-    // Lead Time
-    h('div', { style: { ...S.card, marginBottom: 12 } },
-      h('div', { style: S.sec }, 'Lead Time — время прохождения заказа'),
-      leadTimeData.length === 0 ? h('div', { style: { padding: 12, color: 'var(--muted)', textAlign: 'center' } }, 'Нет завершённых операций') : h('div', null,
-        h('div', { style: { display: 'flex', gap: 16, marginBottom: 12 } },
-          h('div', null, h('div', { style: { fontSize: 24, fontWeight: 500, color: AM } }, fmtDur(avgLeadTime)), h('div', { style: { fontSize: 10, color: 'var(--muted)' } }, 'Средний Lead Time')),
-          h('div', null, h('div', { style: { fontSize: 24, fontWeight: 500, color: avgWaitingPct > 50 ? RD : AM } }, `${avgWaitingPct}%`), h('div', { style: { fontSize: 10, color: 'var(--muted)' } }, 'Среднее ожидание'))
-        ),
-        h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null, ['Заказ', 'Изделие', 'Lead Time', 'В работе', 'Ожидание', '% ожид.', 'Операций'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
-          h('tbody', null, leadTimeData.slice(0, 15).map(d => h('tr', { key: d.id },
-            h('td', { style: { ...S.td, color: AM, fontWeight: 500 } }, d.number),
-            h('td', { style: S.td }, d.product),
-            h('td', { style: { ...S.td, fontFamily: 'monospace' } }, fmtDur(d.totalElapsed)),
-            h('td', { style: { ...S.td, fontFamily: 'monospace', color: GN } }, fmtDur(d.workingTime)),
-            h('td', { style: { ...S.td, fontFamily: 'monospace', color: d.waitingPct > 50 ? RD : '#888' } }, fmtDur(d.waitingTime)),
-            h('td', { style: { ...S.td, color: d.waitingPct > 50 ? RD : d.waitingPct > 30 ? AM : GN, fontWeight: 500 } }, `${d.waitingPct}%`),
-            h('td', { style: S.td }, `${d.opsDone}/${d.opsTotal}`)
-          )))
-        ))
-      )
-    ),
-
-    // Тренды качества (график)
-    h('div', { style: { ...S.card, marginBottom: 12 } },
-      h('div', { style: S.sec }, 'Тренды качества (по неделям)'),
-      qualityTrends.weeks.length === 0 ? h('div', { style: { padding: 12, color: 'var(--muted)', textAlign: 'center' } }, 'Нет данных') : h('canvas', { ref: canvasRef2 })
-    ),
-
-    // Парето-анализ простоев (график + таблица)
-    h('div', { style: { ...S.card, marginBottom: 12 } },
-      h('div', { style: S.sec }, 'Парето-анализ простоев'),
-      paretoData.length === 0 ? h('div', { style: { padding: 12, color: 'var(--muted)', textAlign: 'center' } }, 'Нет простоев за период') : h('div', null,
-        h('canvas', { ref: canvasRef1, style: { marginBottom: 12 } }),
-        h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null, ['Причина', 'Кол-во', 'Потеряно (ч)', 'Доля', 'Накопит.'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
-          h('tbody', null, paretoData.map((d, i) => h('tr', { key: i, style: { background: d.cumPct <= 80 ? '#FFF8E1' : 'transparent' } },
-            h('td', { style: { ...S.td, fontWeight: d.cumPct <= 80 ? 500 : 400 } }, d.reason),
-            h('td', { style: { ...S.td, textAlign: 'center' } }, d.count),
-            h('td', { style: { ...S.td, fontFamily: 'monospace', color: RD } }, `${d.totalHrs}`),
-            h('td', { style: { ...S.td, textAlign: 'center' } }, `${d.pct}%`),
-            h('td', { style: { ...S.td, textAlign: 'center', fontWeight: 500, color: d.cumPct <= 80 ? RD : '#888' } }, `${d.cumPct}%`)
-          )))
-        )),
-        h('div', { style: { fontSize: 10, color: 'var(--muted)', marginTop: 6 } }, 'Жёлтым выделены причины, дающие 80% потерь (правило Парето)')
-      )
-    ),
-
-    // Автонормирование
-    h('div', { style: { ...S.card, marginBottom: 12 } },
-      h('div', { style: S.sec }, 'Нормирование операций (факт vs план)'),
-      normSuggestions.length === 0 ? h('div', { style: { padding: 12, color: 'var(--muted)', textAlign: 'center' } }, 'Недостаточно данных (нужно ≥3 завершённых операций каждого типа)') :
-        h('div', { className: 'table-responsive' }, h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-          h('thead', null, h('tr', null, ['Операция', 'Замеров', 'Текущая норма', 'Медиана факт', 'Мин', 'Макс', 'Отклонение', 'Рекомендация'].map((t, i) => h('th', { key: i, style: S.th }, t)))),
-          h('tbody', null, normSuggestions.map((s, i) => h('tr', { key: i, style: { background: s.deviation && Math.abs(s.deviation) > 30 ? '#FFF8E1' : 'transparent' } },
-            h('td', { style: S.td }, s.name),
-            h('td', { style: { ...S.td, textAlign: 'center' } }, s.count),
-            h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'center' } }, s.current ? `${s.current}ч` : '—'),
-            h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'center', fontWeight: 500 } }, `${s.median}ч`),
-            h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'center', color: 'var(--muted)' } }, `${s.min}ч`),
-            h('td', { style: { ...S.td, fontFamily: 'monospace', textAlign: 'center', color: 'var(--muted)' } }, `${s.max}ч`),
-            h('td', { style: { ...S.td, textAlign: 'center', color: s.deviation === null ? '#888' : Math.abs(s.deviation) > 30 ? RD : GN, fontWeight: 500 } }, s.deviation !== null ? `${s.deviation > 0 ? '+' : ''}${s.deviation}%` : '—'),
-            h('td', { style: { ...S.td, fontSize: 11 } }, s.deviation !== null && Math.abs(s.deviation) > 20 ? `Обновить до ${s.suggested}ч` : '✓ Норма актуальна')
-          )))
-        ))
-    )
-  );
-});
-
-// ==================== ReportsBuilder (конструктор дашборда) ====================
-// Метрики доступные для виджетов
-const WIDGET_METRICS = [
-  { id:'done_day',       cat:'Производство', name:'Выработка по дням',         types:['bar','line','area'],              color: GN },
-  { id:'defect_reason',  cat:'Производство', name:'Брак по причинам',           types:['bar','horizontalBar','doughnut'], color: RD },
-  { id:'worker_output',  cat:'Производство', name:'Выработка по сотрудникам',   types:['bar','horizontalBar','doughnut'], color: BL },
-  { id:'quality_trend',  cat:'Качество',     name:'Качество (тренд)',            types:['line','area','bar'],              color: GN },
-  { id:'defect_worker',  cat:'Качество',     name:'Брак по исполнителям',        types:['bar','horizontalBar','doughnut'], color: RD },
-  { id:'downtime_cat',   cat:'Простои',      name:'Простои по категориям',       types:['doughnut','bar','horizontalBar'], color: AM },
-  { id:'downtime_equip', cat:'Простои',      name:'Простои по оборудованию',     types:['bar','horizontalBar'],           color: AM4 },
-  { id:'orders_prog',    cat:'Заказы',       name:'Прогресс заказов',            types:['bar','horizontalBar'],           color: '#7F77DD' },
-  { id:'leadtime',       cat:'Заказы',       name:'Lead Time по заказам',        types:['bar','line'],                    color: '#7F77DD' },
-  { id:'mat_consume',    cat:'Склад',        name:'Расход материалов',           types:['bar','horizontalBar','doughnut'],color: BL },
-  { id:'mat_critical',   cat:'Склад',        name:'Критичные остатки',           types:['horizontalBar','bar'],           color: RD },
-  { id:'worker_status',  cat:'HR',           name:'Статус сотрудников',          types:['doughnut','bar'],                color: GN },
-  { id:'ops_status',     cat:'Производство', name:'Статус операций',             types:['doughnut','bar'],                color: AM },
-  { id:'shift_output',   cat:'Производство', name:'Выработка по сменам',         types:['bar','line'],                    color: GN },
-];
-
-const CHART_TYPE_LABELS = { bar:'Столбцы', line:'Линия', area:'Область', doughnut:'Круговая', horizontalBar:'Горизонт.' };
-const CHART_TYPE_ICONS  = { bar:'▊', line:'∿', area:'◭', doughnut:'◉', horizontalBar:'▬' };
-const LAYOUT_STORAGE_KEY = 'teploros_dashboard_layout_v1';
-const DEFAULT_LAYOUT = [
-  { id:'w1', metric:'done_day',      type:'bar',          title:'Выработка по дням',     period:7  },
-  { id:'w2', metric:'defect_reason', type:'doughnut',     title:'Брак по причинам',      period:30 },
-  { id:'w3', metric:'quality_trend', type:'line',         title:'Качество (тренд, %)',   period:7  },
-  { id:'w4', metric:'worker_output', type:'horizontalBar',title:'Топ сотрудников',       period:30 },
-];
-
-// Вычислить данные для метрики из реальных данных Firebase
-const computeWidgetData = (metricId, data, periodDays) => {
-  const periodStart = now() - periodDays * 86400000;
-  const DAY_LABELS = (n) => Array.from({ length: n }, (_, i) => {
-    const d = new Date(now() - (n - 1 - i) * 86400000);
-    return d.toLocaleDateString('ru-RU', { weekday: 'short' });
-  });
-
-  switch (metricId) {
-    case 'done_day': {
-      const n = Math.min(periodDays, 14);
-      const labels = DAY_LABELS(n);
-      const values = Array.from({ length: n }, (_, i) => {
-        const s = now() - (n - i) * 86400000, e = now() - (n - 1 - i) * 86400000;
-        return data.ops.filter(o => o.finishedAt >= s && o.finishedAt < e && o.status === 'done').length;
-      });
-      return { labels, values };
-    }
-    case 'defect_reason': {
-      const map = {};
-      data.ops.filter(o => o.status === 'defect' && o.finishedAt >= periodStart).forEach(o => {
-        const k = data.defectReasons?.find(r => r.id === o.defectReasonId)?.name || 'Прочее';
-        map[k] = (map[k] || 0) + 1;
-      });
-      const sorted = Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 6);
-      return { labels: sorted.map(x => x[0]), values: sorted.map(x => x[1]) };
-    }
-    case 'worker_output': {
-      const map = {};
-      data.ops.filter(o => o.status === 'done' && o.finishedAt >= periodStart).forEach(o => {
-        (o.workerIds || []).forEach(wid => {
-          const name = data.workers.find(w => w.id === wid)?.name?.split(' ')[0] || '?';
-          map[name] = (map[name] || 0) + 1;
-        });
-      });
-      const sorted = Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 7);
-      return { labels: sorted.map(x => x[0]), values: sorted.map(x => x[1]) };
-    }
-    case 'quality_trend': {
-      const n = Math.min(periodDays, 14);
-      const labels = DAY_LABELS(n);
-      const values = Array.from({ length: n }, (_, i) => {
-        const s = now() - (n - i) * 86400000, e = now() - (n - 1 - i) * 86400000;
-        const dn = data.ops.filter(o => o.finishedAt >= s && o.finishedAt < e && o.status === 'done').length;
-        const df = data.ops.filter(o => o.finishedAt >= s && o.finishedAt < e && o.status === 'defect').length;
-        return dn + df > 0 ? Math.round(dn / (dn + df) * 100) : 100;
-      });
-      return { labels, values };
-    }
-    case 'defect_worker': {
-      const map = {};
-      data.ops.filter(o => o.status === 'defect' && o.finishedAt >= periodStart).forEach(o => {
-        (o.workerIds || []).forEach(wid => {
-          const name = data.workers.find(w => w.id === wid)?.name?.split(' ')[0] || '?';
-          map[name] = (map[name] || 0) + 1;
-        });
-      });
-      const sorted = Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 6);
-      return { labels: sorted.map(x => x[0]), values: sorted.map(x => x[1]) };
-    }
-    case 'downtime_cat': {
-      const map = { 'Оборудование': 0, 'Материалы': 0, 'Организация': 0, 'Прочее': 0 };
-      data.events.filter(e => e.type === 'downtime' && e.ts >= periodStart).forEach(e => {
-        const reason = data.downtimeTypes?.find(d => d.id === e.downtimeTypeId)?.name || '';
-        const cat = reason.toLowerCase().includes('обор') ? 'Оборудование'
-          : reason.toLowerCase().includes('матер') ? 'Материалы'
-          : reason.toLowerCase().includes('орган') ? 'Организация' : 'Прочее';
-        map[cat] += Math.round((e.duration || 0) / 3600000 * 10) / 10;
-      });
-      const entries = Object.entries(map).filter(x => x[1] > 0);
-      return { labels: entries.map(x => x[0]), values: entries.map(x => x[1]) };
-    }
-    case 'downtime_equip': {
-      const map = {};
-      data.events.filter(e => e.type === 'downtime' && e.ts >= periodStart && e.equipmentId).forEach(e => {
-        const eq = data.equipment?.find(x => x.id === e.equipmentId)?.name || 'Неизвестно';
-        map[eq] = (map[eq] || 0) + Math.round((e.duration || 0) / 3600000 * 10) / 10;
-      });
-      const sorted = Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 6);
-      return { labels: sorted.map(x => x[0]), values: sorted.map(x => x[1]) };
-    }
-    case 'orders_prog': {
-      const orders = data.orders.filter(o => !o.archived).slice(0, 6);
-      const labels = orders.map(o => o.number || o.id.slice(0, 6));
-      const values = orders.map(o => {
-        const ops = data.ops.filter(op => op.orderId === o.id);
-        const done = ops.filter(op => op.status === 'done').length;
-        return ops.length > 0 ? Math.round(done / ops.length * 100) : 0;
-      });
-      return { labels, values };
-    }
-    case 'leadtime': {
-      const orders = data.orders.filter(o => !o.archived).slice(0, 6);
-      const labels = orders.map(o => o.number || o.id.slice(0, 6));
-      const values = orders.map(o => {
-        const ops = data.ops.filter(op => op.orderId === o.id && op.startedAt);
-        if (!ops.length) return 0;
-        const start = Math.min(...ops.map(op => op.startedAt));
-        const end = Math.max(...ops.filter(op => op.finishedAt).map(op => op.finishedAt));
-        return end > start ? Math.round((end - start) / 86400000) : 0;
-      });
-      return { labels, values };
-    }
-    case 'mat_consume': {
-      const map = {};
-      (data.materialConsumptions || []).filter(mc => mc.ts >= periodStart).forEach(mc => {
-        const m = data.materials.find(x => x.id === mc.materialId);
-        if (m) { const k = m.name.length > 16 ? m.name.slice(0, 16) + '…' : m.name; map[k] = (map[k] || 0) + mc.qty; }
-      });
-      const sorted = Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 6);
-      return { labels: sorted.map(x => x[0]), values: sorted.map(x => Math.round(x[1] * 10) / 10) };
-    }
-    case 'mat_critical': {
-      const crit = data.materials.filter(m => m.minStock && m.quantity <= m.minStock).slice(0, 6);
-      return { labels: crit.map(m => m.name.length > 14 ? m.name.slice(0, 14) + '…' : m.name), values: crit.map(m => m.quantity) };
-    }
-    case 'worker_status': {
-      const active = data.workers.filter(w => !w.archived);
-      const groups = { 'На смене': 0, 'Отсутствует': 0, 'Больничный': 0, 'Отпуск': 0 };
-      active.forEach(w => {
-        const s = getWorkerStatusToday(w.id, data.timesheet) || w.status || 'working';
-        if (s === 'working') groups['На смене']++;
-        else if (s === 'absent') groups['Отсутствует']++;
-        else if (s === 'sick') groups['Больничный']++;
-        else if (s === 'vacation') groups['Отпуск']++;
-      });
-      const entries = Object.entries(groups).filter(x => x[1] > 0);
-      return { labels: entries.map(x => x[0]), values: entries.map(x => x[1]) };
-    }
-    case 'ops_status': {
-      const active = data.ops.filter(o => !o.archived);
-      const g = { 'Выполнено': 0, 'В работе': 0, 'Ожидание': 0, 'Брак': 0 };
-      active.forEach(o => {
-        if (o.status === 'done') g['Выполнено']++;
-        else if (o.status === 'in_progress') g['В работе']++;
-        else if (o.status === 'pending') g['Ожидание']++;
-        else if (o.status === 'defect' || o.status === 'rework') g['Брак']++;
-      });
-      const entries = Object.entries(g).filter(x => x[1] > 0);
-      return { labels: entries.map(x => x[0]), values: entries.map(x => x[1]) };
-    }
-    case 'shift_output': {
-      const map = {};
-      data.events.filter(e => e.type === 'done' && e.ts >= periodStart).forEach(e => {
-        const k = e.shift || 'Смена ?'; map[k] = (map[k] || 0) + 1;
-      });
-      const entries = Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]));
-      return { labels: entries.map(x => x[0]), values: entries.map(x => x[1]) };
-    }
-    default: return { labels: [], values: [] };
-  }
-};
-
-// Компонент одного виджета с Chart.js
-const DashWidget = memo(({ widget, data, editMode, onChangeType, onRemove, onEdit }) => {
-  const canvasRef = useRef(null);
-  const chartRef  = useRef(null);
-  const m = WIDGET_METRICS.find(x => x.id === widget.metric);
-  const color = m?.color || AM;
-  const PIE_COLORS = [AM, BL, GN, RD, '#7F77DD', '#1D9E75', '#D85A30'];
-
-  const chartData = useMemo(() => computeWidgetData(widget.metric, data, widget.period || 30), [widget.metric, widget.period, data]);
-
-  useEffect(() => {
-    if (!canvasRef.current || !window.Chart || !chartData.labels.length) return;
-    if (chartRef.current) { try { chartRef.current.destroy(); } catch(e) {} chartRef.current = null; }
-    const type = widget.type;
-    const isDonut = type === 'doughnut';
-    const isHBar  = type === 'horizontalBar';
-    const isArea  = type === 'area';
-    const isLine  = type === 'line';
-
-    const datasets = isDonut
-      ? [{ data: chartData.values, backgroundColor: PIE_COLORS, borderWidth: 0 }]
-      : [{
-          data: chartData.values,
-          backgroundColor: isArea ? color + '33' : color,
-          borderColor: color,
-          fill: isArea,
-          tension: isArea || isLine ? 0.4 : 0,
-          borderRadius: (!isLine && !isArea) ? 3 : 0,
-          borderWidth: isLine || isArea ? 2 : 0,
-          pointRadius: isLine || isArea ? 3 : 0,
-          pointBackgroundColor: color,
-        }];
-
-    try {
-      chartRef.current = new Chart(canvasRef.current, {
-        type: isHBar ? 'bar' : isDonut ? 'doughnut' : isArea ? 'line' : type,
-        data: { labels: chartData.labels, datasets },
-        options: {
-          responsive: true, maintainAspectRatio: false,
-          indexAxis: isHBar ? 'y' : undefined,
-          plugins: {
-            legend: { display: isDonut, position: 'right', labels: { font: { size: 10 }, boxWidth: 10 } },
-            tooltip: { enabled: true }
-          },
-          scales: isDonut ? {} : {
-            x: { display: true, grid: { display: false }, ticks: { font: { size: 10 }, maxTicksLimit: 8 } },
-            y: { display: true, beginAtZero: true, ticks: { font: { size: 10 } }, grid: { color: 'rgba(0,0,0,0.04)' } }
-          },
-          animation: { duration: 300 }
-        }
-      });
-    } catch(e) { console.warn('Chart error:', e); }
-    return () => { if (chartRef.current) { try { chartRef.current.destroy(); } catch(e) {} } };
-  }, [chartData, widget.type, color]);
-
-  return h('div', { style: { background: 'var(--card-solid,#fff)', border: '0.5px solid rgba(0,0,0,0.08)', borderRadius: 10, overflow: 'hidden' } },
-    // Заголовок виджета
-    h('div', { style: { padding: '10px 12px 8px', display: 'flex', alignItems: 'center', gap: 6, borderBottom: '0.5px solid rgba(0,0,0,0.05)' } },
-      h('span', { style: { fontSize: 12, fontWeight: 500, color: 'var(--fg)', flex: 1 } }, widget.title),
-      h('span', { style: { fontSize: 10, color: 'var(--muted)', marginRight: 4 } }, `${widget.period}д`),
-      // В режиме редактирования — кнопки типов
-      editMode && m?.types.map(t => h('button', { key: t, title: CHART_TYPE_LABELS[t],
-        style: { ...( widget.type === t ? abtn({ fontSize: 10, padding: '2px 7px' }) : gbtn({ fontSize: 10, padding: '2px 7px' }) ) },
-        onClick: () => onChangeType(widget.id, t)
-      }, CHART_TYPE_ICONS[t])),
-      // Кнопка настройки
-      h('button', { title: 'Настроить виджет', style: gbtn({ fontSize: 10, padding: '2px 8px' }), onClick: () => onEdit(widget.id) }, '⚙'),
-      // Удалить (только в режиме редактирования)
-      editMode && h('button', { title: 'Удалить', style: { ...rbtn({ fontSize: 10, padding: '2px 7px' }) }, onClick: () => onRemove(widget.id) }, '✕')
-    ),
-    // График
-    h('div', { style: { padding: '8px 12px 12px', height: 160 } },
-      chartData.labels.length === 0
-        ? h('div', { style: { height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', fontSize: 12 } }, 'Нет данных за период')
-        : h('canvas', { ref: canvasRef, style: { width: '100%', height: '100%' } })
-    )
-  );
-});
-
-// Панель редактирования одного виджета
-const WidgetEditPanel = memo(({ widget, onUpdate, onClose }) => {
-  const [form, setForm] = useState({ ...widget });
-  const m = WIDGET_METRICS.find(x => x.id === form.metric);
-
-  return h('div', { style: { background: 'var(--card-solid,#fff)', border: `1.5px solid ${AM}`, borderRadius: 10, padding: 16, marginBottom: 14 } },
-    h('div', { style: { fontSize: 13, fontWeight: 500, marginBottom: 14, color: 'var(--fg)' } }, '⚙ Настройка виджета'),
-    // Метрика
-    h('div', { style: { marginBottom: 10 } },
-      h('label', { style: S.lbl }, 'Метрика'),
-      h('select', { style: S.inp, value: form.metric, onChange: e => {
-        const nm = WIDGET_METRICS.find(x => x.id === e.target.value);
-        setForm(p => ({ ...p, metric: e.target.value, type: nm?.types[0] || 'bar', title: nm?.name || p.title }));
-      }},
-        WIDGET_METRICS.map(x => h('option', { key: x.id, value: x.id }, `${x.cat}: ${x.name}`))
-      )
-    ),
-    // Тип графика
-    h('div', { style: { marginBottom: 10 } },
-      h('label', { style: S.lbl }, 'Тип графика'),
-      h('div', { style: { display: 'flex', gap: 5, flexWrap: 'wrap' } },
-        (m?.types || ['bar']).map(t => h('button', { key: t,
-          style: form.type === t ? abtn({ fontSize: 11, padding: '5px 12px' }) : gbtn({ fontSize: 11, padding: '5px 12px' }),
-          onClick: () => setForm(p => ({ ...p, type: t }))
-        }, `${CHART_TYPE_ICONS[t]} ${CHART_TYPE_LABELS[t]}`))
-      )
-    ),
-    // Период
-    h('div', { style: { marginBottom: 10 } },
-      h('label', { style: S.lbl }, 'Период'),
-      h('div', { style: { display: 'flex', gap: 5 } },
-        [7, 14, 30, 90].map(d => h('button', { key: d,
-          style: form.period === d ? abtn({ fontSize: 11, padding: '4px 10px' }) : gbtn({ fontSize: 11, padding: '4px 10px' }),
-          onClick: () => setForm(p => ({ ...p, period: d }))
-        }, `${d}д`))
-      )
-    ),
-    // Название
-    h('div', { style: { marginBottom: 14 } },
-      h('label', { style: S.lbl }, 'Название'),
-      h('input', { style: S.inp, value: form.title, onChange: e => setForm(p => ({ ...p, title: e.target.value })) })
-    ),
-    h('div', { style: { display: 'flex', gap: 8 } },
-      h('button', { style: { ...abtn({ flex: 1 }), background: GN, color: '#fff' }, onClick: () => { onUpdate(form); onClose(); } }, '✓ Применить'),
-      h('button', { style: gbtn({ flex: 1 }), onClick: onClose }, 'Отмена')
-    )
-  );
-});
-
-const ReportsBuilder = memo(({ data }) => {
-  const [layout, setLayout] = useState(() => {
-    try {
-      const saved = localStorage.getItem(LAYOUT_STORAGE_KEY);
-      return saved ? JSON.parse(saved) : DEFAULT_LAYOUT;
-    } catch(e) { return DEFAULT_LAYOUT; }
-  });
-  const [editMode, setEditMode]   = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [showLibrary, setShowLibrary] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  const saveLayout = useCallback((newLayout) => {
-    try { localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(newLayout)); } catch(e) {}
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  }, []);
-
-  const addWidget = useCallback((metricId) => {
-    const m = WIDGET_METRICS.find(x => x.id === metricId);
-    if (!m) return;
-    const w = { id: 'w' + uid(), metric: metricId, type: m.types[0], title: m.name, period: 30 };
-    setLayout(prev => { const nl = [...prev, w]; saveLayout(nl); return nl; });
-    setShowLibrary(false);
-  }, [saveLayout]);
-
-  const removeWidget = useCallback((id) => {
-    setLayout(prev => { const nl = prev.filter(w => w.id !== id); saveLayout(nl); return nl; });
-    if (editingId === id) setEditingId(null);
-  }, [saveLayout, editingId]);
-
-  const changeType = useCallback((id, type) => {
-    setLayout(prev => { const nl = prev.map(w => w.id === id ? { ...w, type } : w); saveLayout(nl); return nl; });
-  }, [saveLayout]);
-
-  const updateWidget = useCallback((updated) => {
-    setLayout(prev => { const nl = prev.map(w => w.id === updated.id ? updated : w); saveLayout(nl); return nl; });
-  }, [saveLayout]);
-
-  const resetLayout = useCallback(() => {
-    setLayout(DEFAULT_LAYOUT);
-    saveLayout(DEFAULT_LAYOUT);
-    setEditingId(null);
-  }, [saveLayout]);
-
-  const editingWidget = layout.find(w => w.id === editingId);
-
-  return h('div', null,
-    // Шапка с инструкцией
-    h('div', { style: { ...S.card, marginBottom: 14, padding: '12px 16px', background: AM3, border: `0.5px solid ${AM4}` } },
-      h('div', { style: { fontSize: 13, fontWeight: 500, color: AM2, marginBottom: 4 } }, '📊 Конструктор дашборда'),
-      h('div', { style: { fontSize: 11, color: AM4, lineHeight: 1.6 } },
-        '⚙ Настроить — переключить тип графика и удалить виджеты  ·  ',
-        '+ Добавить — выбрать метрику из библиотеки  ·  ',
-        'Нажмите ⚙ на карточке — сменить метрику, период, название  ·  ',
-        '↺ — вернуть стандартный вид'
-      )
-    ),
-    // Шапка конструктора
-    h('div', { style: { display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' } },
-      h('span', { style: { fontSize: 13, fontWeight: 500, flex: 1 } }, 'Конструктор дашборда'),
-      saved && h('span', { style: { fontSize: 11, color: GN2, background: GN3, padding: '3px 10px', borderRadius: 20 } }, '✓ Сохранено'),
-      h('button', { style: editMode ? abtn({ fontSize: 11 }) : gbtn({ fontSize: 11 }), onClick: () => { setEditMode(v => !v); setShowLibrary(false); setEditingId(null); } },
-        editMode ? '✓ Готово' : '✏️ Настроить'
-      ),
-      h('button', { style: gbtn({ fontSize: 11 }), onClick: () => { setShowLibrary(v => !v); setEditMode(true); } }, '+ Добавить'),
-      h('button', { style: gbtn({ fontSize: 11 }), onClick: resetLayout, title: 'Сбросить к стандартному виду' }, '↺'),
-      h('button', { style: gbtn({ fontSize: 11 }), onClick: () => {
-        const wb = XLSX.utils.book_new();
-        layout.forEach(w => {
-          const d = computeWidgetData(w.metric, data, w.period);
-          if (d.labels.length) {
-            const rows = d.labels.map((l, i) => ({ Метрика: l, Значение: d.values[i] }));
-            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), w.title.slice(0, 31));
-          }
-        });
-        XLSX.writeFile(wb, `dashboard_${new Date().toISOString().slice(0, 10)}.xlsx`);
-      }}, '📥 Excel')
-    ),
-
-    // Библиотека метрик
-    showLibrary && h('div', { style: { background: 'var(--card-2)', border: '0.5px solid rgba(0,0,0,0.08)', borderRadius: 10, padding: 14, marginBottom: 14 } },
-      h('div', { style: { fontSize: 11, fontWeight: 500, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 } }, 'Выберите метрику для добавления'),
-      h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6 } },
-        WIDGET_METRICS.map(m => h('button', { key: m.id,
-          style: { ...gbtn(), textAlign: 'left', padding: '8px 10px', lineHeight: 1.4 },
-          onClick: () => addWidget(m.id)
-        },
-          h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 } }, m.cat),
-          h('div', { style: { fontSize: 12 } }, m.name)
-        ))
-      )
-    ),
-
-    // Панель редактирования конкретного виджета
-    editingWidget && h(WidgetEditPanel, { widget: editingWidget, onUpdate: updateWidget, onClose: () => setEditingId(null) }),
-
-    // Сетка виджетов
-    layout.length === 0
-      ? h('div', { style: { ...S.card, textAlign: 'center', color: 'var(--muted)', padding: 40 } },
-          h('div', { style: { fontSize: 24, marginBottom: 8 } }, '📊'),
-          h('div', { style: { marginBottom: 12 } }, 'Дашборд пустой — добавьте виджеты'),
-          h('button', { style: abtn(), onClick: () => { setShowLibrary(true); setEditMode(true); } }, '+ Добавить виджет')
-        )
-      : h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 } },
-          layout.map(w => h(DashWidget, {
-            key: w.id, widget: w, data, editMode,
-            onChangeType: changeType,
-            onRemove: removeWidget,
-            onEdit: (id) => setEditingId(prev => prev === id ? null : id)
-          }))
-        )
-  );
-});
-
-
-// ==================== OrderLifecycle ====================
-// Вкладка «Этапы заказов» у начальника цеха.
-// Показывает: KPI-метрики, таймлайны по каждому заказу, воронку этапов.
-// Поддерживает выгрузку в Excel.
-const OrderLifecycle = memo(({ data, onUpdate, addToast }) => {
-  const [filterStatus, setFilterStatus] = React.useState('active');
-  const [sortBy, setSortBy] = React.useState('contractDate');
-
-  const DAY = 86400000;
-
-  // Вычисляем метрики по заказу
-  const enrichOrder = React.useCallback((ord) => {
-    const ops = (data.ops || []).filter(o => o.orderId === ord.id && !o.archived);
-    const c  = ord.contractDate   || ord.createdAt || null;
-    const cu = ord.cuttingArrivedAt || null;
-    const s  = ord.factStartedAt  || null;
-    const f  = ord.factFinishedAt || null;
-    const sh = ord.shippedAt      || null;
-
-    const waitCuttingDays  = (c  && cu) ? Math.round((cu - c)  / DAY) : (c && !cu ? Math.round((Date.now() - c) / DAY) : null);
-    const waitStartDays    = (cu && s)  ? Math.round((s  - cu) / DAY) : null;
-    const productionDays   = (s  && f)  ? Math.round((f  - s)  / DAY) : (s ? Math.round((Date.now() - s) / DAY) : null);
-    const totalDays        = (c  && (f || sh)) ? Math.round(((f || sh) - c) / DAY) : (c ? Math.round((Date.now() - c) / DAY) : null);
-
-    const stage = !c ? 'unknown'
-      : !cu ? 'waiting_cutting'
-      : !s  ? 'ready_to_start'
-      : !f  ? 'in_production'
-      : !sh ? 'finished'
-      : 'shipped';
-
-    const warnCutting = stage === 'waiting_cutting' && waitCuttingDays !== null && waitCuttingDays > 5;
-
-    return { ...ord, _ops: ops, _c: c, _cu: cu, _s: s, _f: f, _sh: sh,
-      waitCuttingDays, waitStartDays, productionDays, totalDays, stage, warnCutting };
-  }, [data.ops]);
-
-  const orders = React.useMemo(() => {
-    const base = (data.orders || []).filter(o => !o.archived && !o.parentOrderId);
-    const enriched = base.map(enrichOrder);
-    const filtered = filterStatus === 'all' ? enriched
-      : filterStatus === 'active' ? enriched.filter(o => o.stage !== 'shipped')
-      : enriched.filter(o => o.stage === filterStatus);
-    return [...filtered].sort((a, b) => {
-      if (sortBy === 'contractDate') return (b._c || 0) - (a._c || 0);
-      if (sortBy === 'waitCutting')  return (b.waitCuttingDays || 0) - (a.waitCuttingDays || 0);
-      if (sortBy === 'stage') {
-        const order = ['waiting_cutting','ready_to_start','in_production','finished','shipped','unknown'];
-        return order.indexOf(a.stage) - order.indexOf(b.stage);
-      }
-      return 0;
-    });
-  }, [data.orders, data.ops, filterStatus, sortBy, enrichOrder]);
-
-  // KPI
-  const kpi = React.useMemo(() => {
-    const all = (data.orders || []).filter(o => !o.archived && !o.parentOrderId).map(enrichOrder);
-    const avgWait = (arr, field) => {
-      const vals = arr.map(o => o[field]).filter(v => v !== null && v >= 0);
-      return vals.length ? Math.round(vals.reduce((s,v) => s+v, 0) / vals.length * 10) / 10 : null;
-    };
-    return {
-      waitCutting:   avgWait(all, 'waitCuttingDays'),
-      waitStart:     avgWait(all, 'waitStartDays'),
-      production:    avgWait(all, 'productionDays'),
-      warnCount:     all.filter(o => o.warnCutting).length,
-      byStage: {
-        waiting_cutting: all.filter(o => o.stage === 'waiting_cutting').length,
-        ready_to_start:  all.filter(o => o.stage === 'ready_to_start').length,
-        in_production:   all.filter(o => o.stage === 'in_production').length,
-        finished:        all.filter(o => o.stage === 'finished').length,
-        shipped:         all.filter(o => o.stage === 'shipped').length,
-      }
-    };
-  }, [data.orders, data.ops, enrichOrder]);
-
-  const fmt = ts => ts ? new Date(ts).toLocaleDateString('ru-RU', { day:'2-digit', month:'2-digit' }) : '—';
-  const fmtFull = ts => ts ? new Date(ts).toLocaleDateString('ru-RU') : '—';
-
-  // Выгрузка в Excel
-  const exportXLSX = React.useCallback(() => {
-    const allEnriched = (data.orders || []).filter(o => !o.archived && !o.parentOrderId).map(enrichOrder);
-    const rows = allEnriched.map(o => ({
-      'Номер заказа':        o.number || '',
-      'Изделие':             o.product || '',
-      'Кол-во':              o.qty || 1,
-      'Приоритет':           o.priority || '',
-      'Дата договора':       fmtFull(o._c),
-      'Раскрой получен':     fmtFull(o._cu),
-      'Факт. старт':         fmtFull(o._s),
-      'Факт. завершение':    fmtFull(o._f),
-      'Отгружен':            fmtFull(o._sh),
-      'Ожидание раскроя (дн.)':   o.waitCuttingDays !== null ? o.waitCuttingDays : '',
-      'Лаг до старта (дн.)':      o.waitStartDays   !== null ? o.waitStartDays   : '',
-      'Производство (дн.)':        o.productionDays  !== null ? o.productionDays  : '',
-      'Итого (дн.)':               o.totalDays       !== null ? o.totalDays       : '',
-      'Этап':               ({
-        waiting_cutting: 'Ожидание раскроя',
-        ready_to_start:  'Готов к старту',
-        in_production:   'В производстве',
-        finished:        'Завершён',
-        shipped:         'Отгружен',
-        unknown:         'Не определён',
-      }[o.stage] || o.stage),
-      '⚠ Задержка раскроя': o.warnCutting ? 'Да' : '',
-    }));
-
-    const kpiRows = [
-      { 'Показатель': 'Ср. ожидание раскроя (дн.)', 'Значение': kpi.waitCutting ?? '' },
-      { 'Показатель': 'Ср. лаг до старта (дн.)',    'Значение': kpi.waitStart   ?? '' },
-      { 'Показатель': 'Ср. время производства (дн.)','Значение': kpi.production  ?? '' },
-      { 'Показатель': 'Заказов с задержкой раскроя', 'Значение': kpi.warnCount         },
-    ];
-
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows),    'Этапы заказов');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(kpiRows), 'KPI');
-    XLSX.writeFile(wb, `lifecycle_${new Date().toISOString().slice(0,10)}.xlsx`);
-    addToast('Файл Excel скачан', 'success');
-  }, [data.orders, data.ops, kpi, enrichOrder]);
-
-  const STAGE_LABELS = {
-    waiting_cutting: '⏳ Ожидание раскроя',
-    ready_to_start:  '✅ Готов к старту',
-    in_production:   '⚙ В производстве',
-    finished:        '✓ Завершён',
-    shipped:         '🚚 Отгружен',
-    unknown:         '○ Новый',
-  };
-  const STAGE_COLORS = {
-    waiting_cutting: '#eda100',
-    ready_to_start:  '#2a78d6',
-    in_production:   '#4a3aa7',
-    finished:        '#1baf7a',
-    shipped:         '#52514e',
-    unknown:         '#b4b2a9',
-  };
-  const DOT_COLORS = ['#2a78d6','#4a3aa7','#eda100','#1baf7a'];
-
-  const cardStyle = { background: 'var(--card)', border: '0.5px solid var(--border)', borderRadius: 12, padding: '14px 16px', marginBottom: 10 };
-
-  return h('div', null,
-
-    // Toolbar
-    h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 16 } },
-      h('select', { value: filterStatus, onChange: e => setFilterStatus(e.target.value), style: { fontSize: 12, padding: '6px 10px', borderRadius: 7, border: '0.5px solid var(--border)', background: 'var(--card)', color: 'var(--text)', cursor: 'pointer' } },
-        h('option', { value: 'active' },           'Активные'),
-        h('option', { value: 'all' },              'Все заказы'),
-        h('option', { value: 'waiting_cutting' },  '⏳ Ожидают раскрой'),
-        h('option', { value: 'ready_to_start' },   '✅ Готовы к старту'),
-        h('option', { value: 'in_production' },    '⚙ В производстве'),
-        h('option', { value: 'finished' },         '✓ Завершённые'),
-        h('option', { value: 'shipped' },          '🚚 Отгруженные'),
-      ),
-      h('select', { value: sortBy, onChange: e => setSortBy(e.target.value), style: { fontSize: 12, padding: '6px 10px', borderRadius: 7, border: '0.5px solid var(--border)', background: 'var(--card)', color: 'var(--text)', cursor: 'pointer' } },
-        h('option', { value: 'contractDate' }, 'По дате договора'),
-        h('option', { value: 'waitCutting' },  'По ожиданию раскроя'),
-        h('option', { value: 'stage' },        'По этапу'),
-      ),
-      h('button', { style: { ...gbtn({ marginLeft: 'auto' }), display: 'flex', alignItems: 'center', gap: 6 }, onClick: exportXLSX },
-        '📥 Скачать Excel'
-      )
-    ),
-
-    // KPI-строка
-    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 16 } },
-      [
-        { label: 'Ср. ожидание раскроя', value: kpi.waitCutting !== null ? `${kpi.waitCutting} дн` : '—', warn: kpi.waitCutting > 7 },
-        { label: 'Ср. лаг до старта',    value: kpi.waitStart   !== null ? `${kpi.waitStart} дн`   : '—', warn: false },
-        { label: 'Ср. производство',      value: kpi.production  !== null ? `${kpi.production} дн`  : '—', warn: false },
-        { label: 'Задержка раскроя',      value: kpi.warnCount,                                             warn: kpi.warnCount > 0 },
-      ].map((k, i) => h('div', { key: i, style: { background: 'var(--card)', border: `0.5px solid var(--border)`, borderRadius: 8, padding: '10px 12px' } },
-        h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 4 } }, k.label),
-        h('div', { style: { fontSize: 20, fontWeight: 500, color: k.warn ? '#e34948' : 'var(--text)' } }, k.value)
-      ))
-    ),
-
-    // Воронка
-    h('div', { style: { ...cardStyle, marginBottom: 16 } },
-      h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 12 } }, 'Воронка этапов'),
-      ['waiting_cutting','ready_to_start','in_production','finished','shipped'].map(stage => {
-        const count = kpi.byStage[stage];
-        const max   = Math.max(...Object.values(kpi.byStage), 1);
-        return h('div', { key: stage, style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 7 } },
-          h('div', { style: { fontSize: 11, color: 'var(--text-secondary)', width: 160, flexShrink: 0 } }, STAGE_LABELS[stage]),
-          h('div', { style: { flex: 1, height: 18, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' } },
-            h('div', { style: { height: '100%', width: `${Math.round(count / max * 100)}%`, background: STAGE_COLORS[stage], borderRadius: 3, transition: 'width .3s' } })
-          ),
-          h('div', { style: { fontSize: 13, fontWeight: 500, color: 'var(--text)', width: 20, textAlign: 'right' } }, count)
-        );
-      })
-    ),
-
-    // Таймлайны заказов
-    orders.length === 0
-      ? h('div', { style: cardStyle }, h('div', { style: { fontSize: 13, color: 'var(--muted)', textAlign: 'center', padding: 24 } }, 'Нет заказов для выбранного фильтра'))
-      : orders.map(ord => {
-          const milestones = [
-            { label: 'Договор', ts: ord._c  },
-            { label: 'Раскрой', ts: ord._cu },
-            { label: 'Старт',   ts: ord._s  },
-            { label: 'Готов',   ts: ord._f || (ord.shipped ? ord._sh : null) },
-          ];
-          const doneCount = milestones.filter(m => m.ts).length;
-          const stageColor = STAGE_COLORS[ord.stage] || '#b4b2a9';
-
-          return h('div', { key: ord.id, style: cardStyle },
-            // Шапка
-            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 } },
-              h('div', null,
-                h('div', { style: { fontSize: 14, fontWeight: 500 } }, `№ ${ord.number} — ${ord.product || ''}`),
-                h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 2 } },
-                  [ord.qty > 1 && `${ord.qty} шт`, ord.deadline && `срок ${ord.deadline}`].filter(Boolean).join(' · ')
-                )
-              ),
-              h('span', { style: { fontSize: 11, padding: '3px 8px', borderRadius: 4, background: stageColor + '22', color: stageColor, fontWeight: 500, flexShrink: 0 } },
-                STAGE_LABELS[ord.stage] || ord.stage
-              )
-            ),
-
-            // Шкала
-            h('div', { style: { position: 'relative', height: 46 } },
-              h('div', { style: { position: 'absolute', top: 10, left: '12.5%', right: '12.5%', height: 2, background: 'var(--border)', borderRadius: 1 } }),
-              doneCount > 1 && h('div', { style: {
-                position: 'absolute', top: 10, left: '12.5%',
-                width: `${Math.min(((doneCount-1)/3) * 75, 75)}%`, height: 2,
-                background: stageColor, borderRadius: 1
-              } }),
-              milestones.map((m, i) => h('div', { key: i, style: {
-                position: 'absolute', left: `${12.5 + i * 25}%`, top: 0,
-                transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1
-              } },
-                h('div', { style: {
-                  width: 20, height: 20, borderRadius: '50%',
-                  background: m.ts ? DOT_COLORS[i] : 'var(--border-strong)',
-                  border: '2px solid var(--card)',
-                  boxShadow: (!m.ts && milestones[i-1]?.ts) ? `0 0 0 3px ${DOT_COLORS[i]}33` : 'none',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 9, color: '#fff', fontWeight: 700,
-                } }, m.ts ? '✓' : (milestones[i-1]?.ts ? '·' : '')),
-                h('div', { style: { fontSize: 9, color: 'var(--muted)', marginTop: 2, whiteSpace: 'nowrap' } }, m.label),
-                h('div', { style: { fontSize: 9, color: m.ts ? 'var(--text-secondary)' : 'var(--muted)', fontWeight: m.ts ? 500 : 400 } }, fmt(m.ts))
-              ))
-            ),
-
-            // Метрики под шкалой
-            h('div', { style: { display: 'flex', gap: 6, marginTop: 4 } },
-              ord.waitCuttingDays !== null && h('div', { style: { flex: 1, fontSize: 10, color: ord.warnCutting ? '#e34948' : 'var(--muted)' } },
-                `${ord.waitCuttingDays} дн${ord.warnCutting ? ' ⚠' : ''} — раскрой`),
-              ord.waitStartDays !== null && h('div', { style: { flex: 1, fontSize: 10, color: 'var(--muted)' } },
-                `${ord.waitStartDays} дн — до старта`),
-              ord.productionDays !== null && h('div', { style: { flex: 1, fontSize: 10, color: 'var(--muted)' } },
-                `${ord.productionDays} дн — произв.`),
-            ),
-
-            // Предупреждение
-            ord.warnCutting && h('div', { style: { marginTop: 8, padding: '5px 10px', background: 'var(--bg-danger)', borderRadius: 6, fontSize: 11, color: 'var(--text-danger)' } },
-              `⚠ Раскрой ожидается ${ord.waitCuttingDays} дней — операции не могут начаться`
-            )
-          );
-        })
-  );
-});
-
-// ==================== ProductionReports (Сводки для руководства) ====================
-// Три отчёта из запроса руководства: загрузка цеха, просроченные/горящие, сроки (lead-time).
-const ProductionReports = memo(({ data, onUpdate, addToast }) => {
-  const DAY = 86400000;
-  const wName = React.useCallback(id => (data.workers.find(w => w.id === id)?.name) || '', [data.workers]);
-  const sName = React.useCallback(id => (data.sections.find(s => s.id === id)?.name) || '', [data.sections]);
-
-  const overdueList = React.useMemo(() => {
-    const active = data.orders.filter(o => !o.archived && !o.shipped && !o.parentOrderId);
-    return active.map(o => ({ o, dl: o.deadline ? Math.ceil((new Date(o.deadline) - Date.now()) / DAY) : null }))
-      .filter(x => x.dl !== null && x.dl <= 3)
-      .sort((a, b) => a.dl - b.dl);
-  }, [data.orders]);
-  const overdueCount = overdueList.filter(x => x.dl < 0).length;
-  const burningCount = overdueList.filter(x => x.dl >= 0).length;
-
-  const workloadPreview = React.useMemo(() => {
-    const activeOps = data.ops.filter(o => !o.archived && (o.status === 'in_progress' || o.status === 'pending' || o.status === 'on_check' || o.status === 'rework'));
-    const workers = new Set();
-    activeOps.forEach(op => (op.workerIds || []).forEach(id => workers.add(id)));
-    return { ops: activeOps.length, workers: workers.size };
-  }, [data.ops]);
-
-  // — Отчёт «Загрузка цеха» —
-  const exportWorkload = React.useCallback(async () => {
-    try {
-      await ensureCdn('xlsx');
-      const activeOps = data.ops.filter(o => !o.archived && (o.status === 'in_progress' || o.status === 'pending' || o.status === 'on_check' || o.status === 'rework'));
-      const statusRu = { in_progress: 'в работе', pending: 'в очереди', on_check: 'на ОТК', rework: 'переделка' };
-
-      const bySection = {};
-      activeOps.forEach(op => {
-        const s = sName(op.sectionId) || 'Без участка';
-        if (!bySection[s]) bySection[s] = { 'Участок': s, 'В работе': 0, 'В очереди': 0, 'Плановые часы': 0 };
-        if (op.status === 'in_progress') bySection[s]['В работе']++; else bySection[s]['В очереди']++;
-        bySection[s]['Плановые часы'] += (op.plannedHours || 0);
-      });
-      const sectionRows = Object.values(bySection)
-        .map(r => ({ ...r, 'Плановые часы': Math.round(r['Плановые часы'] * 10) / 10 }))
-        .sort((a, b) => (b['В работе'] + b['В очереди']) - (a['В работе'] + a['В очереди']));
-
-      const byWorker = {};
-      activeOps.forEach(op => (op.workerIds || []).forEach(id => {
-        if (!byWorker[id]) byWorker[id] = { 'Сотрудник': wName(id) || id, 'Участок': sName(data.workers.find(w => w.id === id)?.sectionId), 'В работе': 0, 'В очереди': 0, 'Плановые часы': 0 };
-        if (op.status === 'in_progress') byWorker[id]['В работе']++; else byWorker[id]['В очереди']++;
-        byWorker[id]['Плановые часы'] += (op.plannedHours || 0);
-      }));
-      const workerRows = Object.values(byWorker)
-        .map(r => ({ ...r, 'Плановые часы': Math.round(r['Плановые часы'] * 10) / 10 }))
-        .sort((a, b) => (b['В работе'] + b['В очереди']) - (a['В работе'] + a['В очереди']));
-
-      const opRows = activeOps.map(op => ({
-        'Заказ': data.orders.find(o => o.id === op.orderId)?.number || '',
-        'Операция': op.name || '',
-        'Состояние': statusRu[op.status] || op.status,
-        'Участок': sName(op.sectionId),
-        'Плановые часы': op.plannedHours != null ? op.plannedHours : '',
-        'Исполнители': (op.workerIds || []).map(wName).filter(Boolean).join(', '),
-      }));
-
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sectionRows.length ? sectionRows : [{ 'Участок': 'нет активных операций' }]), 'По участкам');
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(workerRows.length ? workerRows : [{ 'Сотрудник': 'нет активных операций' }]), 'По сотрудникам');
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(opRows.length ? opRows : [{ 'Заказ': 'нет активных операций' }]), 'Операции');
-      XLSX.writeFile(wb, 'zagruzka_' + new Date().toISOString().slice(0, 10) + '.xlsx');
-      addToast('Отчёт по загрузке готов', 'success');
-    } catch (e) { addToast('Ошибка экспорта: ' + e.message, 'error'); }
-  }, [data, wName, sName, addToast]);
-
-  // — Отчёт «Просроченные и горящие» —
-  const exportOverdue = React.useCallback(async () => {
-    try {
-      await ensureCdn('xlsx');
-      const rows = overdueList.map(({ o, dl }) => {
-        const ops = data.ops.filter(x => x.orderId === o.id && !x.archived);
-        const total = ops.length, done = ops.filter(x => x.status === 'done').length;
-        const cur = ops.find(x => x.status === 'in_progress') || ops.find(x => x.status === 'pending');
-        const execs = [...new Set(ops.flatMap(x => (x.workerIds || []).map(wName)).filter(Boolean))].join(', ');
-        return {
-          'Номер': o.number || '',
-          'Заказчик': o.customer || '',
-          'Изделие': o.product || '',
-          'Кол-во': o.qty || 1,
-          'Плановый срок': o.deadline || '',
-          'Состояние': dl < 0 ? ('просрочен на ' + Math.abs(dl) + ' дн') : dl === 0 ? 'срок сегодня' : ('горит, ' + dl + ' дн'),
-          'Готовность, %': total ? Math.round(done / total * 100) : 0,
-          'Текущая операция': cur ? cur.name : (total > 0 && done === total ? 'все операции завершены' : '—'),
-          'Исполнители': execs,
-          'Приоритет': (PRIORITY[o.priority] && PRIORITY[o.priority].label) || o.priority || '',
-        };
-      });
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{ 'Номер': 'нет просроченных и горящих заказов' }]), 'Просрочка и риски');
-      XLSX.writeFile(wb, 'prosrochka_' + new Date().toISOString().slice(0, 10) + '.xlsx');
-      addToast('Просроченных/горящих: ' + rows.length, 'success');
-    } catch (e) { addToast('Ошибка экспорта: ' + e.message, 'error'); }
-  }, [overdueList, data.ops, wName, addToast]);
-
-  const card = { ...S.card, marginBottom: 12, padding: '14px 16px' };
-  const hTitle = { fontSize: 14, fontWeight: 600, marginBottom: 4 };
-  const sub = { fontSize: 12, color: 'var(--muted)', lineHeight: 1.5, marginBottom: 10 };
-
-  return h('div', null,
-    h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 12 } },
-      'Готовые выгрузки для руководства. Каждая кнопка сразу отдаёт файл Excel.'),
-
-    h('div', { style: card },
-      h('div', { style: hTitle }, '🏭 Загрузка цеха'),
-      h('div', { style: sub }, 'Активных операций: ' + workloadPreview.ops + ', задействовано рабочих: ' + workloadPreview.workers + '. Выгрузка: сколько операций и плановых часов в работе и в очереди — по участкам, по сотрудникам и детализация.'),
-      h('button', { style: abtn(), onClick: exportWorkload }, '📥 Скачать «Загрузка цеха»')
-    ),
-
-    h('div', { style: card },
-      h('div', { style: hTitle }, '⏰ Просроченные и горящие заказы'),
-      h('div', { style: sub }, 'Просрочено: ' + overdueCount + ', горит (≤3 дней): ' + burningCount + '. Выгрузка: заказчик, изделие, срок, насколько просрочен, готовность, текущая операция, исполнители.'),
-      h('button', { style: abtn(), onClick: exportOverdue }, '📥 Скачать «Просрочка и риски»')
-    ),
-
-    h('div', { style: { ...S.card, padding: '14px 16px' } },
-      h('div', { style: hTitle }, '📅 Сроки производства (lead-time)'),
-      h('div', { style: sub }, 'По каждому заказу этапы и длительности — ожидание раскроя, лаг до старта, время производства, фактические даты. Внизу отчёта — кнопка выгрузки в Excel.'),
-      h(OrderLifecycle, { data, onUpdate, addToast })
-    )
-  );
-});
+  html+=`<div style="position:relative;height:0"><div style="position:absolute;left:calc(140px + (100% - 140px)*${today/100});top:-${rows.length*23+6}px;height:${rows.length*23}px;border-left:2px dashed var(--red)"></div></div>`;
+  el.innerHTML=html;
+}
+
+/* ============ RISK ============ */
+function buildRisk(){
+  const risk=active.filter(o=>o.overdue||(typeof o.daysLeft==='number'&&o.daysLeft<7));
+  const riskKw=risk.reduce((s,o)=>s+kw(o),0);
+  const overdue=ORDERS.filter(o=>o.overdue&&typeof o.daysLeft==='number');
+  const soon=active.filter(o=>!o.overdue&&typeof o.daysLeft==='number'&&o.daysLeft>=0&&o.daysLeft<7);
+  const avgLate=overdue.length?Math.round(overdue.reduce((s,o)=>s+Math.abs(o.daysLeft),0)/overdue.length):0;
+  const set=(id,v)=>{const[n,u]=kwU(v);document.getElementById(id).innerHTML=n+'<span class="u">'+u+'</span>'};
+  set('r_pw',riskKw);
+  document.getElementById('r_late').textContent=overdue.length;
+  document.getElementById('r_soon').textContent=soon.length;
+  document.getElementById('r_days').textContent=avgLate;
+  document.getElementById('r_rts').textContent=ORDERS.filter(o=>o.readyShip).length;
+  const rs=[...risk].sort((a,b)=>kw(b)-kw(a)).slice(0,10);
+  const col=o=>o.overdue?(o.daysLeft<-20?P.red:P.coral):P.yellow;
+  charts.rb=new Chart(r_bar,{type:'bar',data:{labels:rs.map(o=>o.num),datasets:[{data:rs.map(o=>kw(o)),backgroundColor:rs.map(col),borderRadius:3}]},options:{indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>Math.round(c.parsed.x)+' кВт'}}},scales:{x:axis(),y:{grid:{display:false},ticks:{color:themeColor('soft')}}},maintainAspectRatio:false}});
+  charts.rr=new Chart(r_ready,{type:'bar',data:{labels:overdue.slice(0,8).map(o=>o.num),datasets:[{data:overdue.slice(0,8).map(o=>o.ready),backgroundColor:overdue.slice(0,8).map(o=>o.ready>60?P.emer:o.ready>30?P.yellow:P.red),borderRadius:3,barThickness:22}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.parsed.y+'% готовности'}}},scales:{y:{max:100,...axis()},x:{grid:{display:false},ticks:{color:themeColor('soft')}}},maintainAspectRatio:false}});
+  r_tbody.innerHTML=rs.map(o=>{const dl=o.daysLeft;const dcol=dl<0?'color:var(--red);font-weight:700':dl<7?'color:var(--yellow);font-weight:600':'';
+    return `<tr><td><b>${o.num}</b></td><td>${short(o.cust)}</td><td>${prod(o.prod).slice(0,28)}</td><td class="num">${Math.round(kw(o))}</td><td class="num" style="${dcol}">${dl}</td><td><span class="databar" style="width:${o.ready}px;background:${o.ready>60?P.emer:o.ready>30?P.yellow:P.red}"></span> ${o.ready}%</td><td style="color:var(--soft)">${(o.op||'—').slice(0,22)}</td></tr>`}).join('');
+}
+
+/* ============ router ============ */
+const builders={overview:buildOverview,production:buildProduction,risk:buildRisk};
+let current='overview';
+function render(stage){destroyAll();builders[stage]();current=stage;}
+
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.stage').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active');document.getElementById('stage-'+t.dataset.stage).classList.add('active');
+  render(t.dataset.stage);
+  try{localStorage.setItem('teploros_analytics_layout',t.dataset.stage)}catch(e){}
+}));
+
+/* theme */
+function setTheme(th){
+  document.body.setAttribute('data-theme',th);
+  document.querySelectorAll('[data-theme-opt]').forEach(o=>o.classList.toggle('on',o.dataset.themeOpt===th));
+  try{localStorage.setItem('teploros_analytics_theme',th)}catch(e){}
+  render(current); // перерисовать графики под цвета темы
+}
+document.querySelectorAll('[data-theme-opt]').forEach(o=>o.addEventListener('click',()=>setTheme(o.dataset.themeOpt)));
+
+/* restore saved prefs */
+let savedTheme='light',savedLayout='overview';
+try{savedTheme=localStorage.getItem('teploros_analytics_theme')||'light';savedLayout=localStorage.getItem('teploros_analytics_layout')||'overview'}catch(e){}
+document.body.setAttribute('data-theme',savedTheme);
+document.querySelectorAll('[data-theme-opt]').forEach(o=>o.classList.toggle('on',o.dataset.themeOpt===savedTheme));
+if(savedLayout!=='overview'){document.querySelector('.tab[data-stage="'+savedLayout+'"]')?.click();}
+else render('overview');
+window.addEventListener('resize',()=>render(current));
+</script>
+</body>
+</html>
