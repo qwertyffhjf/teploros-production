@@ -273,7 +273,7 @@
     var rev = theme + ':' + layout; // ключ пересборки графиков
 
     var T = THEME[theme] || THEME.light;
-    var soft = T.soft, grid = T.grid, tile = T.tile;
+    var soft = T.soft, grid = T.grid, tileC = T.tile;
 
     function chooseTheme(t) { setTheme(t); try { localStorage.setItem('teploros_an_theme', t); } catch (e) { } }
     function chooseLayout(l) { setLayout(l); try { localStorage.setItem('teploros_an_layout', l); } catch (e) { } }
@@ -323,7 +323,7 @@
         rev: rev, config: function () {
           return {
             type: 'doughnut',
-            data: { labels: stK, datasets: [{ data: stK.map(function (k) { return st[k]; }), backgroundColor: [PBI.navy, PBI.blue, PBI.teal, PBI.grey, PBI.coral, PBI.purple], borderWidth: 2, borderColor: tile }] },
+            data: { labels: stK, datasets: [{ data: stK.map(function (k) { return st[k]; }), backgroundColor: [PBI.navy, PBI.blue, PBI.teal, PBI.grey, PBI.coral, PBI.purple], borderWidth: 2, borderColor: tileC }] },
             options: { cutout: '60%', maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: soft } }, tooltip: { callbacks: { label: function (c) { return c.label + ': ' + Math.round(c.parsed) + ' кВт'; } } } } }
           };
         }
@@ -425,7 +425,7 @@
       var opChart = h(ChartBox, {
         rev: rev, config: function () {
           return {
-            type: 'doughnut', data: { labels: osK, datasets: [{ data: osK.map(function (k) { return os[k]; }), backgroundColor: [PBI.navy, PBI.grey, PBI.coral, PBI.teal, PBI.blue], borderWidth: 2, borderColor: tile }] },
+            type: 'doughnut', data: { labels: osK, datasets: [{ data: osK.map(function (k) { return os[k]; }), backgroundColor: [PBI.navy, PBI.grey, PBI.coral, PBI.teal, PBI.blue], borderWidth: 2, borderColor: tileC }] },
             options: { cutout: '60%', maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: soft } } } }
           };
         }
