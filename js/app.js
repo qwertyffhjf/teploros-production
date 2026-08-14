@@ -3182,14 +3182,12 @@ function App() {
         if (result.type === 'order') {
           setSelectedOrderId(result.id);
         } else if (result.type === 'op') {
-          // операция/этап открывается через карточку своего заказа (внутри видны все операции)
           const oid = result.data && result.data.orderId;
           if (oid) { setSelectedOrderId(oid); }
           else { addToast('Операция без привязанного заказа: ' + result.title, 'warning'); }
         } else if (result.type === 'worker') {
           setSelectedWorkerId(result.id);
         } else {
-          // material / section / equipment — отдельного экрана-приёмника пока нет, показываем найденное
           addToast(result.title + ' · ' + result.sub, 'info');
         }
       }
