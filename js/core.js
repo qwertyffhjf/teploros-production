@@ -521,19 +521,6 @@ const initializeFirebaseAuth = () => {
 initializeFirebaseAuth();
 }
 const firestore = typeof firebase !== 'undefined' ? firebase.firestore() : null;
-// ── Авто-фолбэк на long-polling ──────────────────────────────────────────────
-// На части сетей (корпоративные фаерволы/прокси, антивирусы) рвётся HTTP/2-канал
-// Firestore — в консоли ERR_HTTP2_PING_FAILED на /Write/channel и /Listen/channel:
-// Auth работает, а чтение/запись висят в offline. Симптом: «с телефона сохраняет,
-// с ноутбука нет». Форсим long-polling — SDK уходит с постоянного HTTP/2-стрима на
-// обычные короткие запросы и обходит проблему с PING. merge:true — чтобы не
-// перезаписывать host (иначе warning "overriding the original host" и настройка
-// может не примениться). Обязательно ДО первого обращения к firestore.
-if (firestore) {
-  try {
-    firestore.settings({ experimentalForceLongPolling: true, merge: true });
-  } catch (e) { console.warn('Firestore settings() failed:', e); }
-}
 // ── ONLINE-ONLY режим ───────────────────────────────────────────────────────
 // Локальная персистентность Firestore (IndexedDB) в compat SDK не включается
 // без явного enablePersistence() — а мы его не вызываем. Дополнительно online-
