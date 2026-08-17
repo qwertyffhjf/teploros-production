@@ -3077,7 +3077,8 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
       )
     ),
     tab === 'ops' && h('div', null,
-      h(SectionAnalytics, { section: 'production', data }),
+      // Стартовая страница цеха: Power BI дашборд заказов (window.AnalyticsDashboard)
+      h(AnalyticsDashboard, { data, onWorkerClick }),
       // Сводка мастера
       (() => {
         const { activeOps, pendingOps, defectOps, onCheckOps, wipOrders, freeWorkers } = masterSummary;
