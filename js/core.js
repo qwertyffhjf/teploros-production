@@ -19,7 +19,7 @@ const AM  = 'var(--c-am,  #EF9F27)', AM2 = 'var(--c-am2, #412402)';
 const AM3 = 'var(--c-am3, #FAEEDA)', AM4 = 'var(--c-am4, #BA7517)';
 const GN  = 'var(--c-gn,  #1D9E75)', GN2 = 'var(--c-gn2, #04342C)', GN3 = 'var(--c-gn3, #E1F5EE)';
 const RD  = 'var(--c-rd,  #E24B4A)', RD2 = 'var(--c-rd2, #501313)', RD3 = 'var(--c-rd3, #FCEBEB)';
-const BL  = 'var(--c-bl,  #378ADD)';
+const BL  = 'var(--c-bl,  #378ADD)', BL2 = 'var(--c-bl2, #0A2E52)', BL3 = 'var(--c-bl3, #EAF3FC)';
 
 const PRIORITY = {
   low: { label: 'Низкий', color: 'var(--muted)' },
