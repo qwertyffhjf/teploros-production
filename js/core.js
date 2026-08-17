@@ -420,6 +420,24 @@ const uid = (() => {
   };
 })();
 const now = () => Date.now();
+
+// ── Мощность изделия (кВт) ───────────────────────────────────────────────────
+// Единый источник: явное поле powerKw / «Мощность, кВт», иначе парсим последнее
+// 2–4-значное число из названия модели (V2-D 300 → 300). Используется в списке
+// заказов ОТК и у рабочих рядом с № заказа — чтобы быстрее находить заказ.
+const orderPowerKw = (o) => {
+  if (!o) return 0;
+  const explicit = Number(o.powerKw || o['Мощность, кВт']);
+  if (explicit) return explicit;
+  const m = String(o.product || '').match(/(\d{2,4})(?!.*\d)/);
+  return m ? parseFloat(m[1]) : 0;
+};
+const fmtPowerKw = (kw) => {
+  const v = Number(kw) || 0;
+  if (!v) return '';
+  return v >= 1000 ? (v / 1000).toFixed(1) + ' МВт' : Math.round(v) + ' кВт';
+};
+
 // Вынесена общая функция смены
 const getCurrentShift = () => {
   const d = new Date();
