@@ -913,7 +913,7 @@ const GreetingBanner = memo(({ role, name, data, workerId }) => {
 });
 
 // ==================== Dashboard (Цеховое табло) ====================
-const Dashboard = memo(({ data, addToast, onOrderClick }) => {
+const Dashboard = memo(({ data, addToast, onOrderClick, onTabChange }) => {
   const [, setTick] = useState(0);
   const [onlineUsers, setOnlineUsers] = useState([]);
   useEffect(() => { const t = setInterval(() => setTick(n => n + 1), 15000); return () => clearInterval(t); }, []);
