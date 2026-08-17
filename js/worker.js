@@ -665,7 +665,7 @@ const WorkerOpsHistoryBlock = memo(({ workerId, data }) => {
               ),
               h('div', { className:'op-card-meta', style:{ display:'flex', gap:10, color:'var(--muted)', flexWrap:'wrap' } },
                 order
-                  ? h('span', null, `Заказ №${order.number}${order.product ? ` · ${order.product}` : ''}`)
+                  ? h('span', null, `Заказ №${order.number}${orderPowerKw(order) ? ` · ${fmtPowerKw(orderPowerKw(order))}` : ''}${order.product ? ` · ${order.product}` : ''}`)
                   : h('span', null, '— без заказа —'),
                 ts > 0 && h('span', null, `${fmtDate(ts)} в ${fmtTime(ts)}`),
                 durMin && h('span', null, `⏱ ${fmtDurLocal(durMin)}`)
@@ -823,7 +823,7 @@ const WorkerSalaryBlock = memo(({ workerId, data }) => {
               h('div', { key:id, style:{ padding:'6px 10px', borderRadius:6, background:'var(--card-2)', fontSize:13 } },
                 h('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:6 } },
                   h('span', { style:{ color:'var(--muted)', flexShrink:0 } }, date),
-                  h('span', { style:{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, `№${number} ${product}`),
+                  h('span', { style:{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, `№${number}${orderPowerKw({ product }) ? ` · ${fmtPowerKw(orderPowerKw({ product }))}` : ''} ${product}`),
                   h('span', { style:{ color:'var(--muted)', flexShrink:0 } }, `${qty}шт`),
                   h('span', { style:{ fontWeight:500, color:GN2, flexShrink:0 } }, `${fmt(earn)} ₽`)
                 ),
