@@ -1,6 +1,86 @@
 // teploros · quality.js
 // Автоматически извлечено из монолита
 
+// ── ОТК · Заказы ─────────────────────────────────────────────────────────────
+// Список заказов для контролёра: только просмотр (импорт из общего data.orders),
+// поиск по номеру / мощности / изделию / заказчику. Клик открывает карточку
+// заказа (canEdit:false) через модалку родителя. Мощность (кВт) показана рядом
+// с номером, чтобы быстрее находить нужный заказ.
+const ControllerOrders = memo(({ data, onOpen }) => {
+  const [q, setQ] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
+
+  const orderState = (o) => o.archived ? { t: 'Архив', bg: 'var(--card-2)', cl: 'var(--muted)' }
+    : o.shipped ? { t: 'Отгружен', bg: GN3, cl: GN2 }
+    : { t: 'В работе', bg: AM3, cl: AM4 };
+
+  const rows = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return (data.orders || [])
+      .filter(o => showArchived ? true : !o.archived)
+      .map(o => ({ o, kw: orderPowerKw(o) }))
+      .filter(({ o, kw }) => {
+        if (!needle) return true;
+        const hay = [
+          String(o.number || ''),
+          String(kw || ''), fmtPowerKw(kw),
+          o.product || '', o.customer || '', o.serialNumber || ''
+        ].join(' ').toLowerCase();
+        return hay.includes(needle);
+      })
+      .sort((a, b) => {
+        // Активные выше отгруженных/архивных, внутри — по номеру (свежие сверху)
+        const rank = x => x.o.archived ? 2 : x.o.shipped ? 1 : 0;
+        const dr = rank(a) - rank(b);
+        if (dr !== 0) return dr;
+        return String(b.o.number || '').localeCompare(String(a.o.number || ''), 'ru', { numeric: true });
+      });
+  }, [data.orders, q, showArchived]);
+
+  return h('div', null,
+    h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' } },
+      h('input', {
+        value: q, onChange: e => setQ(e.target.value),
+        placeholder: '🔍 Поиск: № заказа, мощность, изделие, заказчик',
+        style: { flex: 1, minWidth: 220, padding: '9px 12px', fontSize: 14, borderRadius: 8, border: '0.5px solid var(--border)', background: 'var(--card)', color: 'var(--text)' }
+      }),
+      h('button', {
+        onClick: () => setShowArchived(v => !v),
+        style: { padding: '8px 12px', fontSize: 12, borderRadius: 8, cursor: 'pointer', border: '0.5px solid var(--border)', background: showArchived ? BL3 : 'var(--card)', color: showArchived ? BL2 : 'var(--muted)', whiteSpace: 'nowrap' }
+      }, showArchived ? '✓ С архивом' : 'С архивом')
+    ),
+    h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 8 } }, `Найдено заказов: ${rows.length}`),
+    rows.length === 0
+      ? h('div', { style: { ...S.card, textAlign: 'center', color: 'var(--muted)', fontSize: 13, padding: '24px 0' } }, q.trim() ? 'Ничего не найдено' : 'Заказов пока нет')
+      : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+          rows.map(({ o, kw }) => {
+            const st = orderState(o);
+            return h('div', {
+              key: o.id,
+              onClick: () => onOpen && onOpen(o.id),
+              style: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, background: 'var(--card)', border: '0.5px solid var(--border)', cursor: 'pointer' }
+            },
+              // Номер + мощность
+              h('div', { style: { display: 'flex', flexDirection: 'column', gap: 3, flexShrink: 0, minWidth: 92 } },
+                h('span', { style: { fontSize: 15, fontWeight: 600, color: 'var(--text)' } }, `№${o.number || '—'}`),
+                kw
+                  ? h('span', { style: { fontSize: 11, fontWeight: 600, color: BL2, background: BL3, borderRadius: 6, padding: '1px 6px', alignSelf: 'flex-start' } }, fmtPowerKw(kw))
+                  : null
+              ),
+              // Изделие + заказчик
+              h('div', { style: { flex: 1, overflow: 'hidden' } },
+                h('div', { style: { fontSize: 13, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, o.product || '—'),
+                (o.customer || o.qty) && h('div', { style: { fontSize: 11, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+                  [o.customer, o.qty ? `${o.qty} шт` : null].filter(Boolean).join(' · '))
+              ),
+              // Состояние
+              h('span', { style: { fontSize: 11, fontWeight: 500, color: st.cl, background: st.bg, borderRadius: 8, padding: '3px 8px', flexShrink: 0, whiteSpace: 'nowrap' } }, st.t)
+            );
+          })
+        )
+  );
+});
+
 const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorkerClick }) => {
   const pendingQC = useMemo(() => data.ops.filter(o => o.status === 'on_check' && !o.archived), [data.ops]);
   const pendingPT = useMemo(() => (data.pressureTests || []).filter(t => t.status === 'pending_qc'), [data.pressureTests]);
@@ -201,7 +281,7 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
 
     // Вкладка «Заказы» — тот же MasterOrders, что у начальника цеха (read-only режим не нужен,
     // контролёр видит полный список заказов для контекста при проверке операций).
-    tab === 'orders' && h(MasterOrders, { data, onUpdate, addToast, onOrderClick })
+    tab === 'orders' && h(ControllerOrders, { data, onOpen: setViewOrderId })
   );
 });
 
