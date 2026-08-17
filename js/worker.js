@@ -819,7 +819,7 @@ const WorkerSalaryBlock = memo(({ workerId, data }) => {
       salaryData.pieceRows.length === 0
         ? h('div', { style:{ fontSize:13, color:'var(--muted)', textAlign:'center', padding:'12px 0' } }, 'Нет отгруженных изделий в этом месяце')
         : h('div', { style:{ display:'flex', flexDirection:'column', gap:3 } },
-            salaryData.pieceRows.map(({ id, number, product, qty, earn, date }) =>
+            salaryData.pieceRows.map(({ id, number, product, qty, earn, date, breakdown }) =>
               h('div', { key:id, style:{ padding:'6px 10px', borderRadius:6, background:'var(--card-2)', fontSize:13 } },
                 h('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:6 } },
                   h('span', { style:{ color:'var(--muted)', flexShrink:0 } }, date),
