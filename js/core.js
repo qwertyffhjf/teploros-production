@@ -521,6 +521,17 @@ const initializeFirebaseAuth = () => {
 initializeFirebaseAuth();
 }
 const firestore = typeof firebase !== 'undefined' ? firebase.firestore() : null;
+// ── Авто-фолбэк на long-polling ──────────────────────────────────────────────
+// На части сетей (корпоративные фаерволы/прокси, некоторые расширения) не встаёт
+// стриминговый канал Firestore (WebChannel) — Auth работает, а чтение/запись
+// висят в offline. Симптом: «с телефона сохраняет, с ноутбука нет». Включаем
+// авто-детект: на нормальных сетях остаётся стриминг, на «плохих» SDK сам
+// переключается на long-polling. Обязательно ДО первого обращения к firestore.
+if (firestore) {
+  try {
+    firestore.settings({ experimentalAutoDetectLongPolling: true });
+  } catch (e) { console.warn('Firestore settings() failed:', e); }
+}
 // ── ONLINE-ONLY режим ───────────────────────────────────────────────────────
 // Локальная персистентность Firestore (IndexedDB) в compat SDK не включается
 // без явного enablePersistence() — а мы его не вызываем. Дополнительно online-
