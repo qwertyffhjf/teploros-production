@@ -813,6 +813,10 @@ const findPieceworkRate = (data, boilerType, powerKw) => {
 const calcPieceworkEarnings = (data, workerId, orderId, skipFields = null) => {
   const order = data.orders.find(o => o.id === orderId);
   if (!order) return null;
+  // БМК/КНР оплачивается по смете через приёмку мастером (op.earning source:'bmk');
+  // котловой прайс (теплообменник/крышки/вальцовка) к БМК не применяется — защита
+  // от двойного начисления при отгрузке.
+  if (order.productType === 'bmk') return null;
 
   const boilerType  = order.boilerType || null;   // 'v2d' | 'v3d'
   const powerKw     = order.powerKw || 0;

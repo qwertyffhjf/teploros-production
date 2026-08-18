@@ -716,6 +716,7 @@ const WorkerSalaryBlock = memo(({ workerId, data }) => {
 
     // Для каждого заказа считаем сдельный заработок через прайс
     const pieceRows = shippedOrders.map(o => {
+      if (o.productType === 'bmk') return null; // БМК начисляется приёмкой мастера — см. секцию «Работы БМК»
       const earnings = calcPieceworkEarnings(data, workerId, o.id);
       if (!earnings || earnings.total === 0) {
         // Fallback: старая логика — pieceRate × qty если нет прайса
@@ -732,11 +733,27 @@ const WorkerSalaryBlock = memo(({ workerId, data }) => {
         breakdown: earnings };
     }).filter(Boolean);
 
+    // Работы БМК: приняты мастером (op.bmkPayout), earning.amount — доля работника
+    // при делении суммы приёмки поровну на бригаду (этап 4 плана БМК).
+    const bmkRows = (data.ops || []).filter(op => {
+      if (!op.earning || op.earning.source !== 'bmk' || !(op.earning.amount > 0)) return false;
+      if (!(op.workerIds || []).includes(workerId)) return false;
+      const ts = op.finishedAt || (op.bmkPayout && op.bmkPayout.acceptedAt) || 0;
+      return ts >= monthStart && ts <= monthEnd;
+    }).map(op => {
+      const o = (data.orders || []).find(x => x.id === op.orderId);
+      const ts = op.finishedAt || (op.bmkPayout && op.bmkPayout.acceptedAt) || 0;
+      return { id: op.id, number: o ? o.number : '—', stage: op.name, earn: op.earning.amount,
+        date: ts ? new Date(ts).toLocaleDateString('ru-RU', { day:'2-digit', month:'2-digit' }) : '' };
+    });
+    const bmkTotal = bmkRows.reduce((s, r) => s + r.earn, 0);
+
     const hourlyTotal  = Math.round(totalHours * hourlyRate);
     const pieceTotal   = pieceRows.reduce((s, r) => s + r.earn, 0);
-    const grandTotal   = payType === 'hourly' ? hourlyTotal : pieceTotal;
+    // БМК-начисления добавляются к итогу независимо от типа оплаты (как в HR-выгрузке)
+    const grandTotal   = (payType === 'hourly' ? hourlyTotal : pieceTotal) + bmkTotal;
 
-    return { totalHours, dayRows, pieceRows, hourlyTotal, pieceTotal, grandTotal };
+    return { totalHours, dayRows, pieceRows, bmkRows, bmkTotal, hourlyTotal, pieceTotal, grandTotal };
   }, [workerId, viewYear, viewMonth, data, payType, hourlyRate, pieceRate]);
 
   const noRate = payType === 'hourly' ? !hourlyRate : !pieceRate;
@@ -840,6 +857,24 @@ const WorkerSalaryBlock = memo(({ workerId, data }) => {
               h('span', { style:{ color:GN2 } }, `${fmt(salaryData.pieceTotal)} ₽`)
             )
           )
+    ),
+
+    // Работы БМК — приняты мастером, сумма приёмки делится поровну на бригаду
+    expanded && salaryData.bmkRows.length > 0 && h('div', { style:{ marginTop:8 } },
+      h('div', { style:{ fontSize:11, fontWeight:600, color:'var(--muted)', marginBottom:4 } }, '🏭 Работы БМК (принято мастером)'),
+      h('div', { style:{ display:'flex', flexDirection:'column', gap:3 } },
+        salaryData.bmkRows.map(r =>
+          h('div', { key:r.id, style:{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:6, padding:'6px 10px', borderRadius:6, background:'var(--card-2)', fontSize:13 } },
+            h('span', { style:{ color:'var(--muted)', flexShrink:0 } }, r.date),
+            h('span', { style:{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, `№${r.number} · ${r.stage}`),
+            h('span', { style:{ fontWeight:500, color:GN2, flexShrink:0 } }, `${fmt(r.earn)} ₽`)
+          )
+        ),
+        h('div', { style:{ display:'flex', justifyContent:'space-between', padding:'7px 10px', borderTop:`0.5px solid rgba(0,0,0,0.08)`, marginTop:4, fontSize:13, fontWeight:500 } },
+          h('span', { style:{ color:'var(--muted)' } }, 'Итого БМК'),
+          h('span', { style:{ color:GN2 } }, `${fmt(salaryData.bmkTotal)} ₽`)
+        )
+      )
     )
   );
 });
