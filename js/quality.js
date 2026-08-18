@@ -84,6 +84,8 @@ const ControllerOrders = memo(({ data, onOpen }) => {
 const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorkerClick }) => {
   const pendingQC = useMemo(() => data.ops.filter(o => o.status === 'on_check' && !o.archived), [data.ops]);
   const pendingPT = useMemo(() => (data.pressureTests || []).filter(t => t.status === 'pending_qc'), [data.pressureTests]);
+  // Этап 5 плана БМК: очередь приёмки сварочных работ главным сварщиком
+  const pendingWeld = useMemo(() => data.ops.filter(o => o.status === 'weld_check' && !o.archived), [data.ops]);
   const [tab, setControllerTab] = useState('qc');
   const [rejectModal, setRejectModal] = useState(null); // { op } | null
   const [rejectNote, setRejectNote] = useState('');
@@ -103,6 +105,24 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
     )};
     onUpdate(updated); DB.save(updated).catch(() => onUpdate(data));
     addToast('Протокол ГИ — направлен на доработку', 'info');
+  }, [data, onUpdate, addToast]);
+
+  // Приёмка сварки главным сварщиком: дальше — ОТК (если требуется) или готово
+  const acceptWeld = useCallback((op) => {
+    const next = op.requiresQC ? 'on_check' : 'done';
+    const updated = { ...data,
+      ops: data.ops.map(o => o.id === op.id ? { ...o, status: next, weldAccepted: true, weldAcceptedAt: now() } : o),
+      events: [...data.events, { id: uid(), type: 'weld_accept', opId: op.id, ts: now() }] };
+    onUpdate(updated); DB.save(updated).catch(() => onUpdate(data));
+    addToast(next === 'on_check' ? 'Сварка принята — передано в ОТК ✓' : 'Сварка принята ✓', 'success');
+  }, [data, onUpdate, addToast]);
+
+  const rejectWeld = useCallback((op) => {
+    const updated = { ...data,
+      ops: data.ops.map(o => o.id === op.id ? { ...o, status: 'defect', defectNote: 'Сварка не принята главным сварщиком' } : o),
+      events: [...data.events, { id: uid(), type: 'weld_reject', opId: op.id, ts: now() }] };
+    onUpdate(updated); DB.save(updated).catch(() => onUpdate(data));
+    addToast('Сварка направлена на доработку', 'info');
   }, [data, onUpdate, addToast]);
 
   const acceptOp = useCallback(async (op) => {
@@ -125,6 +145,7 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
     h(TabBar, { tabs: [
       ['qc', `🔍 Контроль (${pendingQC.length})`],
       ['pressure', `💧 Протоколы ГИ (${pendingPT.length})`],
+      ['weld', `🔥 Сварка (${pendingWeld.length})`],
       ['orders', '📋 Заказы'],
     ], tab, setTab: setControllerTab }),
     // Панель уведомлений ОТК
@@ -281,6 +302,32 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
 
     // Вкладка «Заказы» — тот же MasterOrders, что у начальника цеха (read-only режим не нужен,
     // контролёр видит полный список заказов для контекста при проверке операций).
+    // Приёмка сварочных работ главным сварщиком (этап 5 плана БМК)
+    tab === 'weld' && h('div', { style: S.card },
+      h('div', { style: { fontSize: 13, fontWeight: 600, marginBottom: 2 } }, '🔥 Приёмка сварочных работ'),
+      h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 10 } },
+        'Работы по сварке принимает главный сварщик — требование прайс-листа на котельные.'),
+      pendingWeld.length === 0
+        ? h('div', { style: { textAlign: 'center', color: 'var(--muted)', fontSize: 13, padding: '20px 0' } }, 'Нет работ, ожидающих приёмки сварки')
+        : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+            pendingWeld.map(op => {
+              const ord = data.orders.find(o => o.id === op.orderId);
+              const crew = (op.workerIds || []).map(wid => (data.workers || []).find(w => w.id === wid)).filter(Boolean);
+              return h('div', { key: op.id, style: { border: '0.5px solid var(--border)', borderRadius: 10, padding: '10px 12px' } },
+                h('div', { style: { fontSize: 14, fontWeight: 600, marginBottom: 2 } }, op.name),
+                h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 8 } },
+                  (ord ? 'Заказ №' + (ord.number || '') + (orderPowerKw(ord) ? ' · ' + fmtPowerKw(orderPowerKw(ord)) : '') : '— без заказа —')
+                  + (crew.length ? ' · ' + crew.map(w => w.name).join(', ') : '')),
+                h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+                  h('button', { style: { ...abtn({ padding: '7px 14px', fontSize: 12, minHeight: 0 }), background: GN, color: '#fff' }, onClick: () => acceptWeld(op) },
+                    '✓ Принять сварку' + (op.requiresQC ? ' → ОТК' : '')),
+                  h('button', { style: { padding: '7px 14px', fontSize: 12, borderRadius: 10, border: '0.5px solid ' + RD, background: 'transparent', color: RD, cursor: 'pointer' }, onClick: () => rejectWeld(op) }, '✕ На доработку'),
+                  ord && h('button', { style: { padding: '7px 14px', fontSize: 12, borderRadius: 10, border: '0.5px solid var(--border)', background: 'var(--card-2)', color: 'var(--text)', cursor: 'pointer' }, onClick: () => setViewOrderId(ord.id) }, '📋 Заказ')
+                )
+              );
+            })
+          )
+    ),
     tab === 'orders' && h(ControllerOrders, { data, onOpen: setViewOrderId })
   );
 });
