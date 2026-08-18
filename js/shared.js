@@ -315,9 +315,9 @@ const makeItem  = ()      => ({
 // Статус → цвет и текст
 const STATUS_MAP = {
   pending:  { label: 'Ожидается', color: 'var(--muted)',    bg: 'rgba(0,0,0,0.05)'       },
-  ordered:  { label: 'Заказано',  color: '#185FA5', bg: 'rgba(24,95,165,0.1)'   },
-  partial:  { label: 'Частично',  color: '#BA7517', bg: 'rgba(239,159,39,0.12)' },
-  received: { label: 'Получено',  color: '#0F6E56', bg: 'rgba(15,110,86,0.1)'   },
+  ordered:  { label: 'Заказано',  color: BL2, bg: 'rgba(24,95,165,0.1)'   },
+  partial:  { label: 'Частично',  color: AM2, bg: 'rgba(239,159,39,0.12)' },
+  received: { label: 'Получено',  color: GN2, bg: 'rgba(15,110,86,0.1)'   },
 };
 
 // Экспорт в Excel через SheetJS
@@ -577,7 +577,7 @@ const MaterialGroup = memo(({ group, onUpdateGroup, onDeleteGroup, onUpdateItem,
       // Счётчики
       total > 0 && h('div', { style: { display: 'flex', gap: 6, fontSize: 11 } },
         pendingCount  > 0 && h('span', { style: { color: 'var(--muted)'    } }, `⏳ ${pendingCount}`),
-        orderedCount  > 0 && h('span', { style: { color: '#185FA5' } }, `📦 ${orderedCount}`),
+        orderedCount  > 0 && h('span', { style: { color: BL2 } }, `📦 ${orderedCount}`),
         receivedCount > 0 && h('span', { style: { color: GN        } }, `✓ ${receivedCount}`),
       ),
       // Номер заявки в шапке группы
@@ -1020,7 +1020,7 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
         [
           { label: 'Всего',    val: stats.total,    color: 'var(--fg-muted)'    },
           { label: '⏳ Ожид.', val: stats.pending,  color: 'var(--muted)'    },
-          { label: '📦 Заказ.', val: stats.ordered,  color: '#185FA5' },
+          { label: '📦 Заказ.', val: stats.ordered,  color: BL2 },
           { label: '✓ Получ.', val: stats.received, color: GN        },
         ].map((s, i) => h('div', { key: i, style: { display: 'flex', alignItems: 'baseline', gap: 4 } },
           h('span', { style: { fontSize: 18, fontWeight: 700, color: s.color } }, s.val),
@@ -1290,7 +1290,7 @@ const OrderEarningsRecalc = memo(({ ord, data, onUpdate, onClose }) => {
               })
             )
           ),
-          h('div', { style: { marginTop: 12, padding: 10, background: 'rgba(226,75,74,0.06)', border: '0.5px solid rgba(226,75,74,0.3)', borderRadius: 6, fontSize: 11, color: '#a03030' } },
+          h('div', { style: { marginTop: 12, padding: 10, background: 'rgba(226,75,74,0.06)', border: '0.5px solid rgba(226,75,74,0.3)', borderRadius: 6, fontSize: 11, color: RD2 } },
             '⚠ Действие изменяет уже начисленные суммы. Если работникам уже выплачены деньги по старым цифрам — пересчёт создаст расхождение с бухгалтерией. Убедитесь что действие согласовано.'
           )
         ),
@@ -1522,9 +1522,9 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
 
           const showMaterialsReady = matPoints.length > 0;
           const milestones = [
-            { key: 'contract',  label: 'Запуск',     ts: ord.contractDate || ord.createdAt, color: '#2a78d6' },
-            ...matPoints.map(mp => ({ key: `mat_${mp.materialId}`, label: mp.isCutting ? `✂ ${mp.name}` : mp.name, ts: mp.confirmedAt, color: '#4a3aa7', partial: mp.status === 'partial' })),
-            ...(showMaterialsReady ? [{ key: 'materials', label: 'Материалы', ts: ord.materialsReadyAt, color: '#059669' }] : []),
+            { key: 'contract',  label: 'Запуск',     ts: ord.contractDate || ord.createdAt, color: BL2 },
+            ...matPoints.map(mp => ({ key: `mat_${mp.materialId}`, label: mp.isCutting ? `✂ ${mp.name}` : mp.name, ts: mp.confirmedAt, color: AM2, partial: mp.status === 'partial' })),
+            ...(showMaterialsReady ? [{ key: 'materials', label: 'Материалы', ts: ord.materialsReadyAt, color: GN2 }] : []),
             { key: 'factStart', label: 'Старт',      ts: aggStart, color: '#eda100' },
             { key: 'factFinish',label: 'Готов',      ts: aggFinish, color: '#1baf7a' },
           ];
@@ -1538,7 +1538,7 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
           const warnMaterials = waitDays !== null && waitDays > 5;
 
           return h('div', { style: { marginBottom: 14 } },
-            h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: '#999', textTransform: 'uppercase', marginBottom: 10 } }, '📦 Этапы производства'),
+            h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 10 } }, '📦 Этапы производства'),
 
             // Flexbox-шкала: точки занимают равные доли, линия между ними встроена
             h('div', { style: { display: 'flex', alignItems: 'flex-start' } },
@@ -1556,7 +1556,7 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
                     h('div', { style: {
                       width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
                       background: bg,
-                      border: `2px solid ${isDone ? m.color : '#ccc'}`,
+                      border: `2px solid ${isDone ? m.color : 'var(--muted)'}`,
                       boxShadow: isNext ? `0 0 0 3px ${m.color}40` : 'none',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       fontSize: 8, color: '#fff', fontWeight: 700,
@@ -1627,7 +1627,7 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
                   h('span', { style: { fontSize: 11, color: 'var(--muted)', minWidth: 40, textAlign: 'right' } }, `${subDone}/${subOps.length}`),
                   sub.serialNumber
                     ? h('span', { style: { fontSize: 11, fontFamily: 'monospace', color: AM2, fontWeight: 500, minWidth: 80 } }, `🏷 ${sub.serialNumber}`)
-                    : h('span', { style: { fontSize: 11, color: '#ccc', minWidth: 80 } }, 'нет шильдика')
+                    : h('span', { style: { fontSize: 11, color: 'var(--muted)', minWidth: 80 } }, 'нет шильдика')
                 );
               })
             )
@@ -1984,7 +1984,7 @@ const generateFullPassport = async (order, data) => {
       }, layout: 'noBorders', margin: [0, 0, 0, 16] },
 
       // ═══ ФУТЕР ═══
-      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, color: '#ccc' }] },
+      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, color: 'var(--muted)' }] },
       { text: `Дата формирования паспорта: ${new Date().toLocaleString('ru')}   |   ООО НТ   |   Заказ №${order.number}`, fontSize: 8, color: 'var(--muted)', margin: [0, 6, 0, 0], alignment: 'center' }
     ].filter(Boolean),
     styles: {
@@ -2291,8 +2291,8 @@ const wcBadge = (daysLeft, label) => {
 // Хелпер: строка в таблице компетенций
 const wcCompRow = (opName, level, certifiedAt, expiresAt, canTeach) => {
   const levelMap = {
-    0: { label:'Нет допуска', bg:'#f5f5f2',  cl:'#aaa'   },
-    1: { label:'Новичок',     bg:'#FFF8E1',  cl:'#F57F17' },
+    0: { label:'Нет допуска', bg:'var(--card-2)', cl:'var(--muted)'   },
+    1: { label:'Новичок',     bg:'var(--st-warn-bg)', cl:'var(--st-warn-cl)' },
     2: { label:'Компетентен', bg:AM3,        cl:AM2       },
     3: { label:'Эксперт',     bg:GN3,        cl:GN2       },
   };
@@ -2308,10 +2308,10 @@ const wcCompRow = (opName, level, certifiedAt, expiresAt, canTeach) => {
   const certColor = expiredCert ? RD2 : expiringSoon ? AM2 : '#888';
 
   return h('div', { style: { display:'flex', alignItems:'center', gap:8, padding:'7px 0', borderBottom:`0.5px solid ${S.card.border || '#e8e6df'}`, flexWrap:'wrap' } },
-    h('span', { style: { flex:1, fontSize:13, color: level === 0 ? '#aaa' : '#222' } }, opName),
+    h('span', { style: { flex:1, fontSize:13, color: level === 0 ? 'var(--muted)' : 'var(--fg)' } }, opName),
     h('span', { style: { display:'inline-flex', alignItems:'center', padding:'3px 9px', borderRadius:20, fontSize:11, fontWeight:500, background:lc.bg, color:lc.cl, flexShrink:0 } }, lc.label),
     h('span', { style: { fontSize:11, color:certColor, minWidth:90, textAlign:'right' } }, certLabel),
-    canTeach && h('span', { style: { display:'inline-flex', alignItems:'center', padding:'3px 9px', borderRadius:20, fontSize:11, background:'#f5f5f2', color:'var(--fg-muted)', flexShrink:0 } }, 'Может обучать')
+    canTeach && h('span', { style: { display:'inline-flex', alignItems:'center', padding:'3px 9px', borderRadius:20, fontSize:11, background:'var(--card-2)', color:'var(--fg-muted)', flexShrink:0 } }, 'Может обучать')
   );
 };
 
@@ -2325,11 +2325,11 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
   const tsStatus  = (() => {
     if (!todayCell) return null;
     if (todayCell.code === 'ОТ') return { label:'В отпуске',          bg:'#E6F1FB', cl:'#0C447C', br:'#90CAF9' };
-    if (todayCell.code === 'Б')  return { label:'Больничный',          bg:'#FCEBEB', cl:'#791F1F', br:'#F48FB1' };
-    if (todayCell.code === 'ОЗ') return { label:'Отпуск за свой счёт', bg:'#FFF3E0', cl:'#E65100', br:'#FFB74D' };
+    if (todayCell.code === 'Б')  return { label:'Больничный',          bg:RD3, cl:'#791F1F', br:'#F48FB1' };
+    if (todayCell.code === 'ОЗ') return { label:'Отпуск за свой счёт', bg:'var(--st-warn-bg)', cl:'#E65100', br:'#FFB74D' };
     if (todayCell.code === 'К')  return { label:'Командировка',        bg:'#F3E5F5', cl:'#6A1B9A', br:'#CE93D8' };
-    if (todayCell.code === 'НН') return { label:'Неявка',             bg:'#F1EFE8', cl:'#888',    br:'#ccc'    };
-    if (todayCell.code === 'У')  return { label:'Уволен',             bg:'#E0E0E0', cl:'#444',    br:'#bbb'    };
+    if (todayCell.code === 'НН') return { label:'Неявка',             bg:'#F1EFE8', cl:'var(--muted)',    br:'#ccc'    };
+    if (todayCell.code === 'У')  return { label:'Уволен',             bg:'#E0E0E0', cl:'var(--muted)',    br:'#bbb'    };
     if (todayCell.code === 'СД') return { label:'Сдельная',           bg:'#EDE7F6', cl:'#4527A0', br:'#B39DDB' };
     if (todayCell.h > 0)         return { label:`На смене · ${todayCell.h}ч`, bg:GN3, cl:GN2, br:GN };
     return null;
@@ -2457,10 +2457,10 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
     role:'dialog', 'aria-modal':'true',
     style:{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100 }
   },
-    h('div', { className:'modal-content modal-animated', style:{ background:'#faf9f6', borderRadius:14, padding:20, width:'min(700px, calc(100vw - 24px))', maxHeight:'90vh', overflowY:'auto', position:'relative' } },
+    h('div', { className:'modal-content modal-animated', style:{ background:'var(--card-solid)', borderRadius:14, padding:20, width:'min(700px, calc(100vw - 24px))', maxHeight:'90vh', overflowY:'auto', position:'relative' } },
 
       // ── Кнопка закрытия (вне шапки, всегда поверх) ──
-      h('button', { onClick:onClose, 'aria-label':'Закрыть', style:{ position:'sticky', top:0, float:'right', zIndex:10, background:'var(--card-solid,#fff)', border:'1px solid #ccc', borderRadius:'50%', width:32, height:32, fontSize:18, lineHeight:'30px', textAlign:'center', cursor:'pointer', color:'#444', marginBottom:-32, marginRight:0 } }, '×'),
+      h('button', { onClick:onClose, 'aria-label':'Закрыть', style:{ position:'sticky', top:0, float:'right', zIndex:10, background:'var(--card-solid,#fff)', border:'1px solid #ccc', borderRadius:'50%', width:32, height:32, fontSize:18, lineHeight:'30px', textAlign:'center', cursor:'pointer', color:'var(--muted)', marginBottom:-32, marginRight:0 } }, '×'),
 
       // ── ШАПКА ──
       h('div', { style:{ ...cardSt } },
@@ -2469,7 +2469,7 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
             (worker.name || '?').charAt(0)
           ),
           h('div', { style:{ flex:1, minWidth:0 } },
-            h('div', { style:{ fontSize:17, fontWeight:500, color:'#1a1a1a', marginBottom:3 } }, worker.name),
+            h('div', { style:{ fontSize:17, fontWeight:500, color:'var(--fg)', marginBottom:3 } }, worker.name),
             h('div', { style:{ fontSize:12, color:'var(--muted)', marginBottom:8 } },
               [worker.position, worker.grade ? `${worker.grade} разряд` : null, worker.tabNumber ? `Таб. №${worker.tabNumber}` : null, section?.name].filter(Boolean).join(' · ') || '—'
             ),
@@ -2494,11 +2494,11 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
         ),
 
         // Прогресс уровня
-        h('div', { style:{ display:'flex', alignItems:'center', gap:12, padding:'10px 14px', background:'#f5f1eb', borderRadius:8, marginBottom:12 } },
+        h('div', { style:{ display:'flex', alignItems:'center', gap:12, padding:'10px 14px', background:'var(--card-2)', borderRadius:8, marginBottom:12 } },
           h('div', { style:{ fontSize:26, fontWeight:500, color:AM } }, `${level}`),
           h('div', { style:{ flex:1 } },
             h('div', { style:{ fontSize:13, fontWeight:500, color:'var(--fg)', marginBottom:4 } }, `${getLevelTitle(level)} · ${allDone} операций всего`),
-            h('div', { style:{ height:6, background:'#dedad3', borderRadius:3, overflow:'hidden' } },
+            h('div', { style:{ height:6, background:'var(--card-stroke)', borderRadius:3, overflow:'hidden' } },
               h('div', { style:{ width:`${progress * 100}%`, height:6, background:AM, borderRadius:3 } })
             )
           ),
@@ -2553,7 +2553,7 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
                 const order = data.orders.find(o => o.id === op.orderId);
                 const isLast = i === arr.slice(0, opsLimit).length - 1;
                 return h('div', { key:op.id, style:{ display:'grid', gridTemplateColumns:'2fr 1.1fr 0.9fr 0.8fr', gap:8, padding:'6px 0', borderBottom: isLast ? 'none' : '0.5px solid #ede9e2', fontSize:12, alignItems:'center' } },
-                  h('span', { style:{ color:'#222' } }, op.name),
+                  h('span', { style:{ color:'var(--fg)' } }, op.name),
                   h('span', { style:{ color:AM2 } }, order?.number || '—'),
                   h(Badge, { st:op.status }),
                   h('span', { style:{ color:'var(--muted)', fontFamily:'monospace' } }, op.startedAt && op.finishedAt ? fmtDur(op.finishedAt - op.startedAt) : '—')
@@ -2606,7 +2606,7 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
           const d = Math.ceil((new Date(worker.medicalExamNextDate).getTime() - Date.now()) / 86400000);
           const label = d < 0 ? `Просрочен ${Math.abs(d)} дн.` : d <= 30 ? `Через ${d} дн.` : new Date(worker.medicalExamNextDate).toLocaleDateString('ru');
           return h('div', { style:rowSt },
-            h('span', { style:{ flex:1, fontSize:13, color:'#222' } }, '🏥 Медицинский осмотр'),
+            h('span', { style:{ flex:1, fontSize:13, color:'var(--fg)' } }, '🏥 Медицинский осмотр'),
             wcBadge(d, label)
           );
         })(),
@@ -2616,7 +2616,7 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
               const d = lic.expiryDate ? Math.ceil((new Date(lic.expiryDate).getTime() - Date.now()) / 86400000) : null;
               const label = d === null ? 'Бессрочно' : d < 0 ? `Просрочен ${Math.abs(d)} дн.` : d <= 30 ? `Через ${d} дн.` : `до ${new Date(lic.expiryDate).toLocaleDateString('ru')}`;
               return h('div', { key:lic.name, style: i < arr.length - 1 ? rowSt : lastRow },
-                h('span', { style:{ flex:1, fontSize:13, color:'#222' } }, `🎖 ${lic.name}`),
+                h('span', { style:{ flex:1, fontSize:13, color:'var(--fg)' } }, `🎖 ${lic.name}`),
                 wcBadge(d, label)
               );
             })
@@ -2633,7 +2633,7 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
               ),
               downtimeByReason.map(([reason, stat], i, arr) =>
                 h('div', { key:reason, style:{ display:'grid', gridTemplateColumns:'2fr 0.7fr 0.9fr', gap:8, padding:'6px 0', borderBottom: i < arr.length - 1 ? '0.5px solid #ede9e2' : 'none', fontSize:12, alignItems:'center' } },
-                  h('span', { style:{ color:'#222' } }, reason),
+                  h('span', { style:{ color:'var(--fg)' } }, reason),
                   h('span', { style:{ textAlign:'center', color:'var(--fg-muted)' } }, `${stat.count}×`),
                   h('span', { style:{ textAlign:'right', color:RD2, fontFamily:'monospace' } }, stat.total > 0 ? fmtDur(stat.total) : '—')
                 )
@@ -2649,9 +2649,9 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
           : thanks.map((ev, i) => {
               const from = data.workers.find(w => w.id === ev.fromWorkerId);
               const fromLabel = from ? from.name : ev.fromWorkerId === null ? 'Мастер' : 'Коллега';
-              return h('div', { key:ev.id, style:{ padding:'8px 12px', background:'#f5f5f2', borderRadius:8, marginBottom: i < thanks.length - 1 ? 6 : 0, borderLeft:`2px solid ${GN}` } },
+              return h('div', { key:ev.id, style:{ padding:'8px 12px', background:'var(--card-2)', borderRadius:8, marginBottom: i < thanks.length - 1 ? 6 : 0, borderLeft:`2px solid ${GN}` } },
                 h('div', { style:{ fontSize:11, color:'var(--muted)', marginBottom:3 } }, `от ${fromLabel} · ${ev.ts ? new Date(ev.ts).toLocaleDateString('ru') : ''}`),
-                h('div', { style:{ fontSize:13, color:'#222' } }, ev.note || '—')
+                h('div', { style:{ fontSize:13, color:'var(--fg)' } }, ev.note || '—')
               );
             })
       ),
@@ -2890,8 +2890,8 @@ const BmkAcceptButton = memo(({ op, order, data, onUpdate }) => {
           onClick: openModal,
           style: { fontSize: 10, padding: '2px 8px', borderRadius: 6, border: '0.5px solid ' + AM4, background: AM3, color: AM2, cursor: 'pointer', fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap' }
         }, '💰 Принять'),
-    open && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }, onClick: () => setOpen(false) },
-      h('div', { style: { background: 'var(--card)', borderRadius: 14, padding: 18, maxWidth: 560, width: '100%', maxHeight: '85vh', overflowY: 'auto' }, onClick: e => e.stopPropagation() },
+    open && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }, onClick: () => setOpen(false) },
+      h('div', { className: 'modal-animated', style: { background: 'var(--card-solid)', border: '1px solid var(--card-stroke)', boxShadow: '0 24px 60px rgba(0,0,0,0.5)', borderRadius: 14, padding: 18, maxWidth: 560, width: '100%', maxHeight: '85vh', overflowY: 'auto' }, onClick: e => e.stopPropagation() },
         h('div', { style: { fontSize: 15, fontWeight: 600, marginBottom: 2 } }, '💰 Приёмка работ — ' + op.name),
         h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 10 } },
           'Заказ №' + (order.number || '') + (kind === 'knr' ? ' · КНР (обвязка −60%)' : ' · БМК')),
@@ -2906,9 +2906,9 @@ const BmkAcceptButton = memo(({ op, order, data, onUpdate }) => {
                 h('span', { style: { width: 70, textAlign: 'right' } }, 'Цена'),
                 h('span', { style: { width: 80, textAlign: 'right' } }, 'Сумма')
               ),
-              rowsCalc.map(x => h('div', { key: x.r.id, style: { display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, padding: '4px 0' } },
-                h('span', { style: { flex: 1 } }, x.r.name,
-                  h('span', { style: { color: 'var(--muted)', fontSize: 10 } }, ' · по смете ' + (Number(x.r.qty) || 0))),
+              rowsCalc.map(x => h('div', { key: x.r.id, style: { display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, padding: '6px 0', borderBottom: '0.5px solid var(--border)' } },
+                h('span', { style: { flex: 1, lineHeight: 1.35, minWidth: 0 } }, x.r.name,
+                  h('span', { style: { color: 'var(--muted)', fontSize: 10, whiteSpace: 'nowrap' } }, ' · по смете ' + (Number(x.r.qty) || 0))),
                 h('input', { type: 'number', min: 0, step: 'any', style: { ...S.inp, width: 70, padding: '4px 6px', minHeight: 0, textAlign: 'center' }, value: facts[x.r.id], onChange: e => setFacts(p => ({ ...p, [x.r.id]: e.target.value })) }),
                 h('span', { style: { width: 34, color: 'var(--muted)' } }, x.r.unit || 'шт'),
                 h('span', { style: { width: 70, textAlign: 'right' } }, money(x.price)),

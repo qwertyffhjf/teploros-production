@@ -163,7 +163,7 @@ const WorkerNotificationsBlock = memo(({ workerId, data }) => {
   if (notifs.length === 0) return null;
 
   const sevStyle = (sev) => ({
-    danger:  { bg: '#FCEBEB', border: '#E24B4A', icon: '#A32D2D', text: '#501313' },
+    danger:  { bg: RD3, border: '#E24B4A', icon: '#A32D2D', text: '#501313' },
     warn:    { bg: '#FAEEDA', border: '#BA7517', icon: '#854F0B', text: '#412402' },
     info:    { bg: '#E6F1FB', border: '#378ADD', icon: '#185FA5', text: '#042C53' },
     success: { bg: '#E1F5EE', border: '#1D9E75', icon: '#0F6E56', text: '#04342C' },
@@ -1356,7 +1356,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     return h('div', { className: 'action-btns', style: { display: 'flex', gap: 8 } },
       h('button', { style: { ...abtn({ flex: 1 }), background: GN, color: GN2 }, onClick: () => doFinish(op) }, '✓ Завершить'),
       h('button', { style: rbtn({ flex: 1 }), onClick: () => { setShowDefForm(true); setDefectFromPrev(true); } }, '⚠ Брак с пред. уч.'),
-      h('button', { style: { ...rbtn({ flex: 1 }), background: '#FFF0F0', color: RD2, borderColor: '#F09595' }, onClick: () => { setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
+      h('button', { style: { ...rbtn({ flex: 1 }), background: RD3, color: RD2, borderColor: '#F09595' }, onClick: () => { setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
       h('button', { style: gbtn({ flex: 1 }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
     );
   };
@@ -1589,8 +1589,8 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     !showOnboarding && h('div', null,
 
     // ── Уведомления (поверх обеих вкладок) ──────────────────────────────
-    myStats.newThanks.length > 0 && h('div', { style: { ...S.card, background: '#FFF8E1', border: '0.5px solid #FFC107', marginBottom: 12, padding: 12, marginTop: 12 } },
-      h('div', { style: { fontSize: 13, fontWeight: 500, color: '#F57F17', marginBottom: 4 } },
+    myStats.newThanks.length > 0 && h('div', { style: { ...S.card, background: 'var(--st-warn-bg)', border: '0.5px solid #FFC107', marginBottom: 12, padding: 12, marginTop: 12 } },
+      h('div', { style: { fontSize: 13, fontWeight: 500, color: AM2, marginBottom: 4 } },
         `🤝 Вы получили ${myStats.newThanks.length} ${myStats.newThanks.length === 1 ? 'благодарность' : 'благодарностей'}!`
       ),
       myStats.newThanks.map((t, i) => h('div', { key: i, style: { fontSize: 12, color: 'var(--fg-muted)' } },
@@ -1599,7 +1599,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
     ),
     levelUpMsg && h('div', { style: { ...S.card, background: 'var(--st-ok-bg)', border: '0.5px solid #4CAF50', marginBottom: 12, padding: 12, textAlign: 'center' } },
       h('div', { style: { fontSize: 24, marginBottom: 4 } }, '🎉'),
-      h('div', { style: { fontSize: 14, fontWeight: 500, color: '#2E7D32' } }, levelUpMsg)
+      h('div', { style: { fontSize: 14, fontWeight: 500, color: GN2 } }, levelUpMsg)
     ),
 
     // ── Вкладки ──────────────────────────────────────────────────────────
@@ -1775,10 +1775,10 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
               if (!instrUrl && !drawUrl) return null;
               return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 } },
                 instrUrl && h('a', { href: instrUrl, target: '_blank', rel: 'noopener',
-                  style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#0F6E56', textDecoration: 'none', padding: '6px 10px', background: '#E1F5EE', borderRadius: 6 } },
+                  style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: GN2, textDecoration: 'none', padding: '6px 10px', background: GN3, borderRadius: 6 } },
                   '📄 Инструкция по операции'),
                 drawUrl && h('a', { href: drawUrl, target: '_blank', rel: 'noopener',
-                  style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: BL, textDecoration: 'none', padding: '6px 10px', background: '#E3F2FD', borderRadius: 6 } },
+                  style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: BL, textDecoration: 'none', padding: '6px 10px', background: BL3, borderRadius: 6 } },
                   '📐 Чертёж изделия')
               );
             })(),
@@ -1884,7 +1884,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
             h('label', { style: S.lbl }, 'Исполнители'),
             h('div', { style: { fontSize: 11, color:'var(--muted)', marginBottom: 6 } },
               'Отметьте кто участвовал. Сумма делится поровну между ними. По умолчанию — только вы.'),
-            h('div', { style: { maxHeight: 160, overflowY:'auto', border:'0.5px solid rgba(0,0,0,0.1)', borderRadius: 6, background:'#fafafa', padding: 6 } },
+            h('div', { style: { maxHeight: 160, overflowY:'auto', border:'0.5px solid rgba(0,0,0,0.1)', borderRadius: 6, background:'var(--card-2)', padding: 6 } },
               (data.workers || [])
                 .filter(w => !w.archived && (w.role === 'worker' || !w.role))
                 .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
@@ -1925,7 +1925,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
             const total = extraPriceMatch.price * qty;
             const execCount = 1 + (extraForm.executors || []).filter(id => id !== workerId).length;
             const perPerson = Math.round(total / execCount);
-            return h('div', { style: { marginBottom: 12, padding: 10, background:'#f5f5f2', borderRadius: 6 } },
+            return h('div', { style: { marginBottom: 12, padding: 10, background:'var(--card-2)', borderRadius: 6 } },
               h('div', { style: { fontSize: 12, color:'var(--fg-muted)', marginBottom: 2 } },
                 `Всего: ${extraPriceMatch.price.toLocaleString('ru-RU')} × ${qty} = ${total.toLocaleString('ru-RU')} ₽`),
               execCount > 1 && h('div', { style: { fontSize: 13, fontWeight: 500 } },
@@ -1965,7 +1965,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
               .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
               .slice(0, 5);
             if (lastAuxWorks.length === 0) return null;
-            return h('div', { style: { marginBottom: 12, padding: 12, background: '#F5F5F2', borderRadius: 8, border: '0.5px solid rgba(0,0,0,0.08)' } },
+            return h('div', { style: { marginBottom: 12, padding: 12, background: 'var(--card-2)', borderRadius: 8, border: '0.5px solid rgba(0,0,0,0.08)' } },
               h('div', { style: { fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 8, fontWeight: 500 } }, '⚡ Последние работы'),
               h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
                 lastAuxWorks.map(op => h('button', {
@@ -2133,7 +2133,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
             [worker?.position, worker?.grade ? `разряд ${worker.grade}` : null].filter(Boolean).join(' · ') || getLevelTitle(lvl)
           ),
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-            h('div', { style: { flex: 1, height: 6, background: '#eee', borderRadius: 3, overflow: 'hidden' } },
+            h('div', { style: { flex: 1, height: 6, background: 'var(--card-2)', borderRadius: 3, overflow: 'hidden' } },
               h('div', { style: { width: `${prog * 100}%`, height: 6, background: AM, borderRadius: 3 } })
             ),
             h('div', { style: { fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' } }, `→ Ур.${lvl + 1}`)
@@ -2163,7 +2163,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
             h('div', { style: { fontSize: 12, fontWeight: 600, color: 'var(--fg,#222)' } }, 'Прогресс дня'),
             h('div', { style: { fontSize: 13, fontWeight: 700, color: barColor } }, `${doneToday} / ${totalToday}`)
           ),
-          h('div', { style: { height: 8, background: '#eee', borderRadius: 4, overflow: 'hidden', marginBottom: 6 } },
+          h('div', { style: { height: 8, background: 'var(--card-2)', borderRadius: 4, overflow: 'hidden', marginBottom: 6 } },
             h('div', { style: {
               height: 8, borderRadius: 4,
               width: `${pct * 100}%`,
@@ -2179,20 +2179,20 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
 
       // Индикатор офлайн-очереди
       offlineCount > 0 && h('div', {
-        style: { marginBottom: 12, padding: '10px 14px', background: '#FFF8E1', border: '0.5px solid #FFC107',
+        style: { marginBottom: 12, padding: '10px 14px', background: 'var(--st-warn-bg)', border: '0.5px solid #FFC107',
           borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' },
         onClick: syncOfflineQueue
       },
         h('span', { style: { fontSize: 18 } }, syncing ? '🔄' : '📴'),
         h('div', { style: { flex: 1 } },
-          h('div', { style: { fontSize: 13, fontWeight: 600, color: '#7B5800' } },
+          h('div', { style: { fontSize: 13, fontWeight: 600, color: AM2 } },
             syncing ? 'Синхронизация...' : `${offlineCount} операций ждут отправки`
           ),
-          h('div', { style: { fontSize: 11, color: '#A07000' } },
+          h('div', { style: { fontSize: 11, color: AM2 } },
             syncing ? 'Отправляем данные в систему...' : 'Нажмите чтобы отправить сейчас'
           )
         ),
-        !syncing && h('span', { style: { fontSize: 12, color: '#A07000', fontWeight: 500 } }, '↑ Sync')
+        !syncing && h('span', { style: { fontSize: 12, color: AM2, fontWeight: 500 } }, '↑ Sync')
       ),
 
       // KPI — 2×2 сетка

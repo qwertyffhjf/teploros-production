@@ -90,7 +90,7 @@ const PasteImportWidget = memo(({ columns, onImport, addToast, hint }) => {
         step === 'map'     ? '📋 Настройте колонки' :
                              `📋 Превью — ${mappedRows.length} строк`
       ),
-      h('button', { style: { background: 'none', border: 'none', color: '#999', cursor: 'pointer', fontSize: 18 }, onClick: reset }, '×')
+      h('button', { style: { background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 18 }, onClick: reset }, '×')
     ),
 
     // Шаг 1: зона вставки
@@ -276,7 +276,7 @@ const MasterSections = memo(({ data, onUpdate, addToast }) => {
 
 // ==================== MasterEquipment ====================
 const MasterEquipment = memo(({ data, onUpdate, addToast }) => {
-  const EQ_STATUS = { active: { label: 'Работает', bg: GN3, cl: GN2 }, maintenance: { label: 'На ТО', bg: AM3, cl: AM2 }, repair: { label: 'Ремонт', bg: RD3, cl: RD2 }, decommissioned: { label: 'Списано', bg: '#f0f0f0', cl: '#888' } };
+  const EQ_STATUS = { active: { label: 'Работает', bg: GN3, cl: GN2 }, maintenance: { label: 'На ТО', bg: AM3, cl: AM2 }, repair: { label: 'Ремонт', bg: RD3, cl: RD2 }, decommissioned: { label: 'Списано', bg: 'var(--card-2)', cl: 'var(--muted)' } };
   const [form, setForm] = useState({ name: '', type: '', inventoryNo: '', status: 'active' });
   const { ask: askConfirm, confirmEl } = useConfirm();
   const [editingId, setEditingId] = useState(null);
@@ -1078,10 +1078,10 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
   const shareIssues = [];
 
   const sharesHeader = shareIssues.length > 0 ? h('div', {
-    style: { marginBottom: 12, padding: '10px 14px', background: '#fffbea',
+    style: { marginBottom: 12, padding: '10px 14px', background: 'var(--st-warn-bg)',
       border: '0.5px solid #e0c060', borderRadius: 8 }
   },
-    h('div', { style: { fontSize: 11, fontWeight: 600, color: '#8b6d00', marginBottom: 8 } },
+    h('div', { style: { fontSize: 11, fontWeight: 600, color: AM2, marginBottom: 8 } },
       '💰 Проверка распределения долей оплаты по сдельным участкам'
     ),
     h('div', { style: { display: 'grid', gap: 6, fontSize: 12 } },
@@ -1167,7 +1167,7 @@ const MasterProductionStages = memo(({ data, onUpdate, addToast }) => {
                   )
                 ),
               // Редактор материалов
-              editingMaterials === stage.id && h('div', { style: { marginTop: 8, padding: '10px 12px', background: '#f0f8f0', borderRadius: 8, border: `1px solid ${GN}` } },
+              editingMaterials === stage.id && h('div', { style: { marginTop: 8, padding: '10px 12px', background: GN3, borderRadius: 8, border: `1px solid ${GN}` } },
                 h('div', { style: { fontSize: 10, color: GN2, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8, fontWeight: 500 } }, '📦 Материалы необходимые для начала этого этапа'),
                 h('div', { style: { fontSize: 11, color: 'var(--fg-muted)', marginBottom: 8 } }, 'Отмеченные материалы должны поступить на склад прежде чем операция станет доступна рабочему'),
                 (data.materials || []).length === 0
@@ -1680,10 +1680,10 @@ const StorageMonitor = memo(({ data, addToast }) => {
         ),
         h('div', { style: { flex:1, minWidth:150 } },
           h('div', { style: { fontSize:10, color:'var(--muted)', textTransform:'uppercase', marginBottom:4 } }, 'Прогресс'),
-          h('div', { style: { height:8, background:'#f0f0f0', borderRadius:4, overflow:'hidden' } },
+          h('div', { style: { height:8, background:'var(--card-2)', borderRadius:4, overflow:'hidden' } },
             h('div', { style: { height:'100%', background: isCritical ? '#d32f2f' : AM, width:`${Math.min(percentFilled, 100)}%`, transition:'width 0.3s' } })
           ),
-          isCritical && h('div', { style: { fontSize:11, color:'#d32f2f', marginTop:4, fontWeight:500 } }, '⚠️ Критичное заполнение! Старые данные будут архивированы.')
+          isCritical && h('div', { style: { fontSize:11, color:RD2, marginTop:4, fontWeight:500 } }, '⚠️ Критичное заполнение! Старые данные будут архивированы.')
         )
       ),
       showAnalysis && h('div', null,
@@ -1694,13 +1694,13 @@ const StorageMonitor = memo(({ data, addToast }) => {
             h('span', { style: { fontWeight:500, color:AM } }, `${Math.round(item.size / 1024)} КБ`)
           ))
         ),
-        h('div', { style: { marginBottom:12, padding:10, background:'#fef8f5', borderRadius:8 } },
+        h('div', { style: { marginBottom:12, padding:10, background:'var(--st-warn-bg)', borderRadius:8 } },
           h('div', { style: { fontSize:12, fontWeight:500, marginBottom:8, color:'var(--fg)' } }, 'Целостность данных:'),
           checkIntegrity.map((issue, i) => h('div', { key:i, style: { fontSize:11, padding:'3px 0', color: issue.startsWith('✅') ? '#2e7d32' : '#d32f2f', fontFamily:'monospace', wordBreak:'break-word' } }, issue))
         ),
-        findDuplicates.length > 0 && h('div', { style: { padding:10, background:'#fff3e0', borderRadius:8 } },
+        findDuplicates.length > 0 && h('div', { style: { padding:10, background:'var(--st-warn-bg)', borderRadius:8 } },
           h('div', { style: { fontSize:12, fontWeight:500, marginBottom:8, color:'var(--fg)' } }, `⚠️ Найдено ${findDuplicates.length} дубликатов событий:`),
-          findDuplicates.map(([key, count], i) => h('div', { key:i, style: { fontSize:10, padding:'2px 0', color:'#e65100' } }, `${key}: ${count}x`))
+          findDuplicates.map(([key, count], i) => h('div', { key:i, style: { fontSize:10, padding:'2px 0', color:AM2 } }, `${key}: ${count}x`))
         )
       )
     )
@@ -2112,7 +2112,7 @@ const MasterAdmin = memo(({ data, onUpdate, addToast }) => {
             h('span', { style: { fontSize: 12, color: 'var(--fg-muted)' } }, `Занято: ${sizeKb} КБ из ${limitKb} КБ`),
             h('span', { style: { fontSize: 14, fontWeight: 500, color: pctColor } }, `${pct}%`)
           ),
-          h('div', { style: { height: 8, background: '#eee', borderRadius: 4, overflow:'hidden' } },
+          h('div', { style: { height: 8, background: 'var(--card-2)', borderRadius: 4, overflow:'hidden' } },
             h('div', { style: { height: '100%', width: `${Math.min(pct, 100)}%`, background: pctColor, transition: 'width 0.3s' } })
           )
         ),
@@ -2630,7 +2630,7 @@ const StagePaymentBinding = memo(({ data, onUpdate, addToast }) => {
               h('td', { style: { padding: '7px 8px', fontWeight: paid ? 500 : 400,
                 color: paid ? 'var(--fg)' : 'var(--muted)' } },
                 stage.name,
-                isLegacy && h('span', { style: { fontSize: 10, color: '#a60', background: '#fff3e0',
+                isLegacy && h('span', { style: { fontSize: 10, color: AM2, background: 'var(--st-warn-bg)',
                   padding: '1px 5px', borderRadius: 4, marginLeft: 6 } }, '⚠ платит через участок')
               ),
 
@@ -2670,8 +2670,8 @@ const StagePaymentBinding = memo(({ data, onUpdate, addToast }) => {
 
     // ── Контроль сумм по колонкам ────────────────────────────────────────
     Object.keys(sums).length > 0 && h('div', { style: { marginTop: 14, padding: '10px 12px',
-      background: '#fffbea', border: '0.5px solid #e0c060', borderRadius: 8 } },
-      h('div', { style: { fontSize: 11, fontWeight: 600, color: '#8b6d00', marginBottom: 8 } },
+      background: 'var(--st-warn-bg)', border: '0.5px solid #e0c060', borderRadius: 8 } },
+      h('div', { style: { fontSize: 11, fontWeight: 600, color: AM2, marginBottom: 8 } },
         '💰 Контроль распределения — сумма долей по каждой колонке прайса'),
       h('div', { style: { display: 'grid', gap: 5, fontSize: 12 } },
         PIECEWORK_FIELDS.filter(f => sums[f.id] != null).map(f => {
@@ -2692,7 +2692,7 @@ const StagePaymentBinding = memo(({ data, onUpdate, addToast }) => {
         })
       ),
       legacy.length > 0 && h('div', { style: { marginTop: 8, paddingTop: 8,
-        borderTop: '0.5px solid #e0c060', fontSize: 11, color: '#a60', lineHeight: 1.5 } },
+        borderTop: '0.5px solid #e0c060', fontSize: 11, color: AM2, lineHeight: 1.5 } },
         '⚠ ' + legacy.length + ' этап(ов) без колонки платят по старой логике через участок. Выберите им колонку или «не оплачивается», чтобы убрать неявность.'
       )
     ),
@@ -2881,30 +2881,30 @@ const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
     ),
 
     // ---------- Превью импорта ----------
-    importPreview && h('div', { style: { background:'#fffbea', border:'1px solid #f0c419', borderRadius:8, padding:12, marginBottom:16 } },
-      h('div', { style: { fontSize:13, fontWeight:500, marginBottom:8, color:'#8b6d00' } },
+    importPreview && h('div', { style: { background:'var(--st-warn-bg)', border:'1px solid #f0c419', borderRadius:8, padding:12, marginBottom:16 } },
+      h('div', { style: { fontSize:13, fontWeight:500, marginBottom:8, color:AM2 } },
         `📥 Импорт прайса (${importPreview.source === 'premium' ? 'цены с премией' : 'базовые цены'})`
       ),
       h('div', { style: { fontSize:12, marginBottom:10, display:'flex', gap:16, flexWrap:'wrap' } },
         h('span', { style: { color:'#0a7' } }, `+ ${previewCounts.add} новых`),
-        h('span', { style: { color:'#a70' } }, `↻ ${previewCounts.update} обновится`),
+        h('span', { style: { color:AM2 } }, `↻ ${previewCounts.update} обновится`),
         h('span', { style: { color:'var(--muted)' } }, `= ${previewCounts.skip} без изменений`),
-        (previewCounts.extrasAdd + previewCounts.extrasUpdate > 0) && h('span', { style: { color:'#8b4d00', marginLeft:'auto' } },
+        (previewCounts.extrasAdd + previewCounts.extrasUpdate > 0) && h('span', { style: { color:AM2, marginLeft:'auto' } },
           `допы: +${previewCounts.extrasAdd}, ↻${previewCounts.extrasUpdate}`)
       ),
       // Предупреждения парсера
-      importPreview.warnings.length > 0 && h('div', { style: { background:'#ffe8e8', padding:8, borderRadius:6, marginBottom:10, fontSize:11 } },
+      importPreview.warnings.length > 0 && h('div', { style: { background:RD3, padding:8, borderRadius:6, marginBottom:10, fontSize:11 } },
         importPreview.warnings.map((w, i) => h('div', { key: i, style: { marginBottom: 2 } }, '⚠ ' + w))
       ),
       // Предупреждение об отсутствующих крышках
-      previewCounts.noCovers > 0 && h('div', { style: { background:'#fff2e0', padding:8, borderRadius:6, marginBottom:10, fontSize:11, color:'#8b4d00' } },
+      previewCounts.noCovers > 0 && h('div', { style: { background:'var(--st-warn-bg)', color:'var(--st-warn-cl)', padding:8, borderRadius:6, marginBottom:10, fontSize:11, color:AM2 } },
         `⚠ Для ${previewCounts.noCovers} диапазонов в прайсе не нашлось крышек (пропуск в таблице «Все водогрейные»). Крышки будут = 0, впишите вручную.`
       ),
       // Таблица превью — основные расценки
-      h('div', { style: { fontSize:11, fontWeight:500, color:'#8b6d00', marginBottom:4 } }, 'Основные расценки (теплообменник + крышки):'),
+      h('div', { style: { fontSize:11, fontWeight:500, color:AM2, marginBottom:4 } }, 'Основные расценки (теплообменник + крышки):'),
       h('div', { style: { maxHeight: 200, overflowY:'auto', border:'0.5px solid #d4b83a', borderRadius: 6, background:'var(--card-solid,#fff)', marginBottom: 10 } },
         h('table', { style: { width:'100%', borderCollapse:'collapse', fontSize:11 } },
-          h('thead', { style: { position:'sticky', top:0, background:'#fffbea' } },
+          h('thead', { style: { position:'sticky', top:0, background:'var(--st-warn-bg)' } },
             h('tr', null, ['', 'Тип', 'Мощность', 'Теплообм.', 'Крышка пер.', 'Крышка зад.', 'Вальц.'].map(col =>
               h('th', { key: col, style: { textAlign:'left', padding:'4px 6px', fontWeight:500, color:'var(--fg-muted)', fontSize:10 } }, col)
             ))
@@ -2934,7 +2934,7 @@ const PieceworkRatesEditor = memo(({ data, onUpdate, addToast }) => {
 
       // Превью допрасценок
       importPreview.extras && importPreview.extras.length > 0 && [
-        h('div', { key:'extra-h', style: { fontSize:11, fontWeight:500, color:'#8b6d00', marginBottom:4 } },
+        h('div', { key:'extra-h', style: { fontSize:11, fontWeight:500, color:AM2, marginBottom:4 } },
           `Доп. расценки (${importPreview.extras.filter(e => e.action !== 'skip').length} категорий с изменениями из ${importPreview.extras.length}):`
         ),
         h('div', { key:'extra-b', style: { border:'0.5px solid #d4b83a', borderRadius: 6, background:'var(--card-solid,#fff)', padding: 8 } },
@@ -3101,7 +3101,7 @@ const ExtraWorksEditor = memo(({ data, onUpdate, addToast }) => {
     ),
 
     // Форма новой категории
-    newCatForm && h('div', { style: { background:'#f5f5f2', padding: 12, borderRadius: 6, marginBottom: 12, border:'0.5px solid rgba(0,0,0,0.08)' } },
+    newCatForm && h('div', { style: { background:'var(--card-2)', padding: 12, borderRadius: 6, marginBottom: 12, border:'0.5px solid rgba(0,0,0,0.08)' } },
       h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr 100px auto auto', gap: 6, alignItems: 'end' } },
         h('div', null, h('label', { style: S.lbl }, 'Название категории'),
           h('input', { style: { ...S.inp, width:'100%' }, placeholder:'Например: Пескоструйка', value: newCatForm.name,
@@ -3374,8 +3374,8 @@ const BmkRatesEditor = memo(({ data, onUpdate, addToast }) => {
         )
       );
     }),
-    preview && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }, onClick: () => setPreview(null) },
-      h('div', { style: { background: 'var(--card)', borderRadius: 14, padding: 18, maxWidth: 560, width: '100%', maxHeight: '80vh', overflowY: 'auto' }, onClick: e => e.stopPropagation() },
+    preview && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }, onClick: () => setPreview(null) },
+      h('div', { className: 'modal-animated', style: { background: 'var(--card-solid)', border: '1px solid var(--card-stroke)', boxShadow: '0 24px 60px rgba(0,0,0,0.5)', borderRadius: 14, padding: 18, maxWidth: 560, width: '100%', maxHeight: '80vh', overflowY: 'auto' }, onClick: e => e.stopPropagation() },
         h('div', { style: { fontSize: 15, fontWeight: 600, marginBottom: 8 } }, '📤 Импорт прайса БМК — предпросмотр'),
         h('div', { style: { fontSize: 12, marginBottom: 10, color: 'var(--muted)' } },
           'Новых: ' + preview.add.length + ' · Обновится: ' + preview.update.length + ' · Без изменений: ' + preview.same.length + (preview.missing.length ? ' · Нет в файле (останутся): ' + preview.missing.length : '')),

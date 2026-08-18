@@ -344,7 +344,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
         return h('button', {
           style: isActive
             ? { ...abtn(), background: '#c99a00', borderColor: '#c99a00' }
-            : { ...gbtn(), background: '#fffbea', borderColor: '#e0c060', color: '#8b6d00', fontWeight: 500 },
+            : { ...gbtn(), background: 'var(--st-warn-bg)', borderColor: '#e0c060', color: AM2, fontWeight: 500 },
           onClick: () => setFilt(isActive ? 'all' : 'pending_approval')
         }, `🔔 На согласовании${pendingApprCount > 0 ? ` (${pendingApprCount})` : ''}`);
       })(),
@@ -386,7 +386,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
       return h('div', { style: { display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' } },
         h('span', { style: { fontSize: 12, color: 'var(--muted)' } }, `Заказ ${ord.number} · ${orderOpsCount} операций`),
         h('button', {
-          style: { ...rbtn({ fontSize: 12, padding: '5px 12px' }), background: '#fff3f3' },
+          style: { ...rbtn({ fontSize: 12, padding: '5px 12px' }), background: RD3 },
           title: 'Архивировать заказ и все его операции',
           onClick: async () => {
             await archiveOrder(ord.id);
@@ -558,7 +558,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
                 h('button', { key: 'qr', style: gbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => onShowQR(op, data.workers.find(w => w.id === op.workerIds?.[0])) }, 'QR'),
                 h('button', { key: 'edit', style: (editingId === op.id ? abtn : gbtn)({ fontSize: 11, padding: '4px 8px' }), onClick: () => editingId === op.id ? resetForm() : edit(op) }, editingId === op.id ? '✕' : '✎'),
                 editingId !== op.id && h('button', { key: 'del', style: rbtn({ fontSize: 11, padding: '4px 8px' }), title: 'Архивировать операцию', onClick: () => del(op.id) }, '✕'),
-                editingId !== op.id && h('button', { key: 'delOrder', style: rbtn({ fontSize: 11, padding: '4px 8px', background: '#fff3f3' }), title: 'Архивировать весь заказ и все его операции', onClick: e => { e.stopPropagation(); archiveOrder(op.orderId); } }, '📦')
+                editingId !== op.id && h('button', { key: 'delOrder', style: rbtn({ fontSize: 11, padding: '4px 8px', background: RD3 }), title: 'Архивировать весь заказ и все его операции', onClick: e => { e.stopPropagation(); archiveOrder(op.orderId); } }, '📦')
               ] : h('button', { style: gbtn({ fontSize: 11, padding: '4px 8px' }), onClick: () => restore(op.id) }, '↩')
             ) },
         ],
@@ -695,9 +695,9 @@ const DepsScreen = memo(({ data, onUpdate, addToast }) => {
 
   return h('div', { style: { padding: '12px 0 80px' } },
     // Легенда использования
-    h('div', { style: { ...S.card, marginBottom: 12, padding: '10px 14px', background: '#E3F2FD', border: '0.5px solid #90CAF9' } },
-      h('div', { style: { fontWeight: 500, fontSize: 12, color: '#1565C0', marginBottom: 6 } }, 'ℹ Как использовать взаимосвязи операций'),
-      h('div', { style: { fontSize: 11, color: '#1976D2', lineHeight: 1.6 } },
+    h('div', { style: { ...S.card, marginBottom: 12, padding: '10px 14px', background: BL3, border: '0.5px solid #90CAF9' } },
+      h('div', { style: { fontWeight: 500, fontSize: 12, color: BL2, marginBottom: 6 } }, 'ℹ Как использовать взаимосвязи операций'),
+      h('div', { style: { fontSize: 11, color: BL2, lineHeight: 1.6 } },
         h('div', null, '✓ в ячейке — строка ЖДЁТ завершения колонки (зависит от неё)'),
         h('div', null, '⇉ синий фон — операция параллельная (начинается сразу)'),
         h('div', null, '↓ — операция последовательная (после другой)'),
@@ -1825,7 +1825,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
             const GROUP_LABELS = {
               0: { label: '🔴 Просрочено', bg: 'var(--st-al-bg)', color: RD2 },
               1: { label: '🟡 Горит (≤ 3 дня)', bg: 'var(--st-warn-bg)', color: AM2 },
-              2: { label: '🔵 В работе', bg: 'transparent', color: '#0C447C' },
+              2: { label: '🔵 В работе', bg: 'transparent', color: BL2 },
               3: { label: '⚪ Ожидает', bg: 'transparent', color: 'var(--muted)' },
               4: { label: '✅ Выполнено', bg: 'transparent', color: GN2 },
               5: { label: '📦 Отгружено / Архив', bg: 'transparent', color: 'var(--muted)' },
@@ -1877,7 +1877,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
             // Умный дедлайн — дата + сколько дней
             const dlLabel = ord.deadline
               ? (() => {
-                  if (allDone) return h('span', { style: { color: '#3B6D11', fontWeight: 500 } }, '✓ ' + ord.deadline);
+                  if (allDone) return h('span', { style: { color: GN2, fontWeight: 500 } }, '✓ ' + ord.deadline);
                   if (dlDays === null) return '—';
                   const sub = dlDays < 0
                     ? h('div', { style: { fontSize: 10, color: '#E24B4A', fontWeight: 500 } }, 'просрочен ' + Math.abs(dlDays) + ' дн.')
@@ -1987,7 +1987,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
                 : AM3;
               const subDlLabel = sub.deadline
                 ? (() => {
-                    if (subAllDone) return h('span', { style: { color: '#3B6D11', fontSize: 12 } }, '✓ ' + sub.deadline);
+                    if (subAllDone) return h('span', { style: { color: GN2, fontSize: 12 } }, '✓ ' + sub.deadline);
                     if (subDlDays === null) return sub.deadline || '—';
                     const s = subDlDays < 0
                       ? h('div', { style: { fontSize: 10, color: '#E24B4A', fontWeight: 500 } }, 'просрочен ' + Math.abs(subDlDays) + ' дн.')
@@ -2777,11 +2777,11 @@ const MasterKanban = memo(({ data, onUpdate, addToast }) => {
         h('div', { style: { display:'flex', gap:4, flexWrap:'wrap', marginBottom:8 } },
           col.pending.length>0 && h('span', { style:{ padding:'2px 6px', fontSize:10, borderRadius:6, background:'var(--st-pending-bg)', color:'var(--fg-muted)' } }, `⏳ ${col.pending.length}`),
           col.in_progress.length>0 && h('span', { style:{ padding:'2px 6px', fontSize:10, borderRadius:6, background:AM3, color:AM2 } }, `▶ ${col.in_progress.length}`),
-          col.on_check.length>0 && h('span', { style:{ padding:'2px 6px', fontSize:10, borderRadius:6, background:'var(--st-chk-bg)', color:'#0277BD' } }, `🔍 ${col.on_check.length}`),
+          col.on_check.length>0 && h('span', { style:{ padding:'2px 6px', fontSize:10, borderRadius:6, background:'var(--st-chk-bg)', color:BL2 } }, `🔍 ${col.on_check.length}`),
           col.done.length>0 && h('span', { style:{ padding:'2px 6px', fontSize:10, borderRadius:6, background:GN3, color:GN2 } }, `✓ ${col.done.length}`),
           col.defect.length>0 && h('span', { style:{ padding:'2px 6px', fontSize:10, borderRadius:6, background:RD3, color:RD2 } }, `⚠ ${col.defect.length}`)
         ),
-        col.total>0 && h('div', { style: { height:4, background:'#eee', borderRadius:2, overflow:'hidden', marginBottom:6 } }, h('div', { style: { width: `${(col.done.length/col.total)*100}%`, height:4, background:GN, borderRadius:2 } })),
+        col.total>0 && h('div', { style: { height:4, background:'var(--card-2)', borderRadius:2, overflow:'hidden', marginBottom:6 } }, h('div', { style: { width: `${(col.done.length/col.total)*100}%`, height:4, background:GN, borderRadius:2 } })),
         col.in_progress.map(op => { const order = data.orders.find(o => o.id === op.orderId); const workerNames = op.workerIds?.map(id => data.workers.find(w => w.id === id)?.name).filter(Boolean).join(', ') || '—'; return h('div', { key: op.id, style: { padding:'6px 8px', background:AM3, borderRadius:6, marginBottom:4, borderLeft:`3px solid ${AM}` } }, h('div', { style: { fontSize:11, fontWeight:500, color:AM2 } }, order?.number || '—'), workerNames && h('div', { style: { fontSize:10, color:AM4 } }, workerNames), op.startedAt && h('div', { style: { fontSize:9, color:'var(--muted)' } }, fmtDur(now() - op.startedAt))); }),
         col.defect.map(op => { const order = data.orders.find(o => o.id === op.orderId); return h('div', { key: op.id, style: { padding:'6px 8px', background:RD3, borderRadius:6, marginBottom:4, borderLeft:`3px solid ${RD}` } }, h('div', { style: { fontSize:11, fontWeight:500, color:RD2 } }, order?.number || '—'), h('div', { style: { fontSize:10, color:RD } }, op.defectNote || 'Брак')); })
       ))
@@ -2916,7 +2916,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
     },
       h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 } },
         h('div', { style: { fontSize: 12, fontWeight: 500, color: AM2 } }, 'Горячие клавиши'),
-        h('button', { onClick: () => setShowKbHint(false), style: { background: 'none', border: 'none', cursor: 'pointer', color: '#999', fontSize: 16, lineHeight: 1, padding: '0 2px' } }, '×')
+        h('button', { onClick: () => setShowKbHint(false), style: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 16, lineHeight: 1, padding: '0 2px' } }, '×')
       ),
       // Группы
       h('div', { style: { marginBottom: 8 } },
@@ -3090,7 +3090,7 @@ const MasterScreen = memo(({ data, onUpdate, addToast, sectionId, onOrderClick, 
         return h('div', { className: 'metrics-grid', style: { display: 'grid', gap: 8, marginBottom: 16 } },
           h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500, color: AM } }, activeOps.length), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'В работе')),
           h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500, color: BL } }, pendingOps.length), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Ожидают')),
-          h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500, color: '#0277BD' } }, onCheckOps.length), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Контроль')),
+          h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500, color: BL2 } }, onCheckOps.length), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Контроль')),
           h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500, color: RD } }, defectOps.length), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Проблемы')),
           h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500, color: AM4 } }, wipOrders.length), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'НЗП')),
           h('div', { style: { ...S.card, textAlign: 'center', padding: 10, marginBottom: 0 } }, h('div', { style: { fontSize: 22, fontWeight: 500, color: GN } }, freeWorkers.length), h('div', { style: { fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Свободны'))
@@ -3147,19 +3147,19 @@ const MasterActionDashboard = memo(({ summary, data, onTabSwitch }) => {
       text: freeWorkers.length + ' свободных рабочих, ' + pendingUrgent.length + ' горящих операций без исполнителей — нужно назначение',
       tab: 'recommend' });
   if (defectOps.length > 0)
-    actions.push({ icon: 'ti-alert-triangle', color: '#E24B4A', bg: '#FCEBEB',
+    actions.push({ icon: 'ti-alert-triangle', color: '#E24B4A', bg: RD3,
       text: defectOps.length + ' операций с браком ожидают решения',
       tab: 'ops' });
   if (onCheckOps.length > 0)
-    actions.push({ icon: 'ti-eye-check', color: '#185FA5', bg: '#E6F1FB',
+    actions.push({ icon: 'ti-eye-check', color: BL2, bg: '#E6F1FB',
       text: onCheckOps.length + ' операций ожидают проверки ОТК',
       tab: 'ops' });
   if (bottlenecks.length > 0)
-    actions.push({ icon: 'ti-clock-exclamation', color: '#854F0B', bg: '#FAEEDA',
+    actions.push({ icon: 'ti-clock-exclamation', color: AM2, bg: '#FAEEDA',
       text: bottlenecks.length + ' операций превышают нормативное время — возможны задержки',
       tab: 'ops' });
   if (urgentOrders.length === 0 && freeWorkers.length === 0 && bottlenecks.length === 0 && defectOps.length === 0)
-    actions.push({ icon: 'ti-circle-check', color: '#3B6D11', bg: '#EAF3DE',
+    actions.push({ icon: 'ti-circle-check', color: GN2, bg: '#EAF3DE',
       text: 'Всё в порядке — проблем не обнаружено', tab: null });
 
   const secStyle = { marginBottom: 16 };
@@ -3202,7 +3202,7 @@ const MasterActionDashboard = memo(({ summary, data, onTabSwitch }) => {
             )
           ),
           h('div', { style: { marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 } },
-            h('div', { style: { flex: 1, height: 4, background: '#eee', borderRadius: 2, overflow: 'hidden' } },
+            h('div', { style: { flex: 1, height: 4, background: 'var(--card-2)', borderRadius: 2, overflow: 'hidden' } },
               h('div', { style: { width: ord.pct + '%', height: '100%', background: accent, borderRadius: 2, transition: 'width 0.3s' } })
             ),
             h('div', { style: { fontSize: 11, color: 'var(--muted)', flexShrink: 0 } },
@@ -3250,7 +3250,7 @@ const MasterActionDashboard = memo(({ summary, data, onTabSwitch }) => {
       ),
       h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
         freeWorkers.map(w => h('div', { key: w.id,
-          style: { padding: '4px 10px', background: '#EAF3DE', border: '0.5px solid #C0DD97', borderRadius: 14, fontSize: 12, color: '#3B6D11', fontWeight: 500 }
+          style: { padding: '4px 10px', background: GN3, color: GN2, border: `0.5px solid ${GN}`, borderRadius: 14, fontSize: 12, color: GN2, fontWeight: 500 }
         }, w.name))
       )
     )
@@ -3354,7 +3354,7 @@ const QMSScreen = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
                   h('span', { style: { fontWeight: 500 } }, item.type),
                   h('span', { style: { color: 'var(--muted)' } }, `${item.count} (${item.percent}%) → ${item.cumulative}%`)
                 ),
-                h('div', { style: { background: '#f0f0f0', height: 8, borderRadius: 4, overflow: 'hidden' } },
+                h('div', { style: { background: 'var(--card-2)', height: 8, borderRadius: 4, overflow: 'hidden' } },
                   h('div', { style: { background: item.cumulative > 80 ? GN : AM, height: 8, width: `${item.cumulative}%`, borderRadius: 4 } })
                 )
               )
@@ -3411,12 +3411,12 @@ const QMSScreen = memo(({ data, onUpdate, addToast, onWorkerClick }) => {
                   )
                 ),
                 h('div', { style: { fontSize: 11, color: 'var(--fg-muted)', marginBottom: 8, lineHeight: 1.4 } }, d.description),
-                h('div', { style: { fontSize: 10, color: '#999', marginBottom: 8 } },
+                h('div', { style: { fontSize: 10, color: 'var(--muted)', marginBottom: 8 } },
                   `Источник: ${d.source === 'previous_stage' ? '🔙 С предыдущего' : '👤 Мой брак'} • ${new Date(d.createdAt).toLocaleString('ru')}`
                 ),
                 
                 isInvestigating
-                  ? h('div', { style: { background: '#f9f9f9', padding: '10px', borderRadius: 6, marginTop: 8 } },
+                  ? h('div', { style: { background: 'var(--card-2)', padding: '10px', borderRadius: 6, marginTop: 8 } },
                       h('div', { style: { fontSize: 11, fontWeight: 500, marginBottom: 8 } }, 'Разбор дефекта'),
                       h('textarea', { style: { ...S.inp, width: '100%', minHeight: 60, marginBottom: 8, fontSize: 12 }, placeholder: 'Первопричина...', value: rootCause, onChange: e => setRootCause(e.target.value) }),
                       h('textarea', { style: { ...S.inp, width: '100%', minHeight: 60, marginBottom: 8, fontSize: 12 }, placeholder: 'Какие меры принять чтобы не повторилось?', value: preventiveMeasure, onChange: e => setPreventiveMeasure(e.target.value) }),
@@ -3577,7 +3577,7 @@ const QRScreen = memo(({ data, opId, onUpdate, addToast }) => {
       op.status === 'pending' && workerNames && h('button', { style: abtn({ flex:1, padding:'12px' }), onClick: handleStart }, '▶ Старт'),
       op.status === 'in_progress' && h('button', { style: { ...abtn({ flex:1 }), background:GN, color:GN2 }, onClick: () => handleFinish() }, '✓ Завершить'),
       op.status === 'in_progress' && h('button', { style: rbtn({ flex:1 }), onClick: () => { setShowDefForm(true); setDefectFromPrev(true); } }, '⚠ Брак с пред.'),
-      op.status === 'in_progress' && h('button', { style: { ...rbtn({ flex:1 }), background:'#FFF0F0', borderColor:'#F09595' }, onClick: () => { setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
+      op.status === 'in_progress' && h('button', { style: { ...rbtn({ flex:1 }), background:RD3, borderColor:'#F09595' }, onClick: () => { setShowDefForm(true); setDefectFromPrev(false); } }, '⚠ Мой брак'),
       (op.status === 'pending' || op.status === 'in_progress') && h('button', { style: gbtn({ flex:1 }), onClick: () => { setShowDowntimeModal(true); setDowntimeStartedAt(now()); } }, '⏸ Простой')
     );
   };

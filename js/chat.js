@@ -162,15 +162,18 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
   const unreadCount = useMemo(() => messages.filter(m => m.senderId !== myId && m.timestamp > lastReadTs).length, [messages, myId, lastReadTs]);
 
   // Стили сообщений по типу
+  // Пары «фон + текст» из адаптивных токенов темы: тинт фона и цвет текста
+  // меняются вместе со светлой/тёмной темой. Хардкод цвета здесь ломает
+  // читаемость (светлый фон + унаследованный светлый --fg = невидимый текст).
   const typeStyles = {
-    need_material: { bg: '#FFF3E0', border: '#FF9800', icon: '🔧' },
-    equipment_issue: { bg: RD3, border: RD, icon: '⚠️' },
-    drawing_question: { bg: '#E3F2FD', border: BL, icon: '📋' },
-    need_help: { bg: '#FCE4EC', border: '#E91E63', icon: '🆘' },
-    task_done: { bg: GN3, border: GN, icon: '✅' },
-    waiting: { bg: AM3, border: AM, icon: '⏸' },
-    thanks: { bg: '#FFF8E1', border: '#FFC107', icon: '🤝' },
-    achievement: { bg: 'var(--st-ok-bg)', border: '#4CAF50', icon: '🏆' }
+    need_material:    { bg: 'var(--st-warn-bg)', cl: 'var(--st-warn-cl)', border: 'var(--st-warn-br)', icon: '🔧' },
+    equipment_issue:  { bg: RD3, cl: RD2, border: RD, icon: '⚠️' },
+    drawing_question: { bg: BL3, cl: BL2, border: BL, icon: '📋' },
+    need_help:        { bg: 'var(--st-al-bg)', cl: 'var(--st-al-cl)', border: 'var(--st-al-br)', icon: '🆘' },
+    task_done:        { bg: GN3, cl: GN2, border: GN, icon: '✅' },
+    waiting:          { bg: AM3, cl: AM2, border: AM, icon: '⏸' },
+    thanks:           { bg: 'var(--st-warn-bg)', cl: 'var(--st-warn-cl)', border: 'var(--st-warn-br)', icon: '🤝' },
+    achievement:      { bg: 'var(--st-ok-bg)', cl: 'var(--st-ok-cl)', border: 'var(--st-ok-br)', icon: '🏆' }
   };
 
   return h('div', { style: { ...S.card, height: '100%', minHeight: 500, display: 'flex', flexDirection: 'column', padding: 12 } },
@@ -216,7 +219,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
     ),
 
     // Сообщения
-    h('div', { 'aria-live': 'polite', style: { flex: 1, overflowY: 'auto', padding: 8, background: '#fafaf8', borderRadius: 8, marginBottom: 8 } },
+    h('div', { 'aria-live': 'polite', style: { flex: 1, overflowY: 'auto', padding: 8, background: 'var(--card-2)', borderRadius: 8, marginBottom: 8 } },
       regularMessages.length === 0 && h('div', { style: { textAlign: 'center', color: 'var(--muted)', fontSize: 12, marginTop: 32 } }, 'Сообщений пока нет. Используйте быстрые кнопки для общения.'),
       regularMessages.map(m => {
         const ts = typeStyles[m.type];
@@ -229,7 +232,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
             m.orderNumber && h('span', { style: { fontSize: 9, color: AM } }, `📋 ${m.orderNumber}`),
             m.opName && h('span', { style: { fontSize: 9, color: 'var(--fg-muted)' } }, `→ ${m.opName}`),
             (canModerate || (m.senderId === myId && m.senderId !== 'system')) &&
-              h('button', { title: 'Удалить сообщение', style: { background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 12, padding: '0 2px', lineHeight: 1, marginLeft: 2 }, onClick: async () => {
+              h('button', { title: 'Удалить сообщение', style: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 12, padding: '0 2px', lineHeight: 1, marginLeft: 2 }, onClick: async () => {
                 if (canModerate && m.senderId !== myId) {
                   const who = m.senderId === 'system' ? 'системное сообщение' : `от ${m.senderName}`;
                   if (!confirm(`Удалить ${who}?`)) return;
@@ -238,8 +241,9 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
               } }, '×')
           ),
           h('div', { style: {
-            background: ts ? ts.bg : isMe ? AM3 : '#fff',
-            border: ts ? `1px solid ${ts.border}` : (m.mentions?.includes(myId) ? `1.5px solid ${AM}` : '0.5px solid rgba(0,0,0,0.1)'),
+            background: ts ? ts.bg : isMe ? AM3 : 'var(--card-solid)',
+            color: ts ? ts.cl : isMe ? AM2 : 'var(--fg)',
+            border: ts ? `1px solid ${ts.border}` : (m.mentions?.includes(myId) ? `1.5px solid ${AM}` : '0.5px solid var(--card-stroke)'),
             borderRadius: 12, padding: '8px 14px', maxWidth: '85%', fontSize: 13
           }},
             ts && h('span', { style: { marginRight: 6 } }, ts.icon),
@@ -260,7 +264,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
     // Быстрые действия (раскрывающиеся)
     showQuickActions && h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 8 } },
       quickActions.map(qa => h('button', { key: qa.type, type: 'button',
-        style: { padding: '10px 6px', fontSize: 12, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: (typeStyles[qa.type]?.bg) || '#fff', color: 'var(--fg)', cursor: 'pointer', textAlign: 'center', minHeight: 44 },
+        style: { padding: '10px 6px', fontSize: 12, borderRadius: 10, border: '1px solid var(--card-stroke)', background: (typeStyles[qa.type]?.bg) || 'var(--card-solid)', color: (typeStyles[qa.type]?.cl) || 'var(--fg)', cursor: 'pointer', textAlign: 'center', minHeight: 44 },
         onClick: () => sendMessage(`${qa.icon} ${qa.label}`, qa.type)
       }, `${qa.icon}\n${qa.label}`))
     ),
@@ -428,7 +432,7 @@ const ChatScreen = memo(({ data, onUpdate, addToast, currentUser, onBack }) => {
           h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, marginBottom: 12 } },
             h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500, color: AM } }, s.doneCount), h('div', { style: { fontSize: 8, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Операций')),
             h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500, color: quality >= 95 ? GN : AM } }, `${quality}%`), h('div', { style: { fontSize: 8, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Качество')),
-            h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500, color: '#F57F17' } }, s.thanksReceived), h('div', { style: { fontSize: 8, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Спасибо')),
+            h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500, color: AM2 } }, s.thanksReceived), h('div', { style: { fontSize: 8, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Спасибо')),
             h('div', { style: { ...S.card, textAlign: 'center', padding: 8, marginBottom: 0 } }, h('div', { style: { fontSize: 16, fontWeight: 500 } }, earned.length), h('div', { style: { fontSize: 8, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Наград'))
           ),
           // Достижения

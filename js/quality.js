@@ -344,9 +344,9 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
   const [d8Steps, setD8Steps] = useState({});
   const { ask: askConfirm, confirmEl } = useConfirm();
 
-  const severityStyle = { critical: { bg: RD3, cl: RD2, label: 'Критическая', border: RD }, major: { bg: '#FFF3E0', cl: '#E65100', label: 'Серьёзная', border: '#FF9800' }, minor: { bg: '#FFF8E1', cl: '#F57F17', label: 'Незначительная', border: '#FFC107' } };
+  const severityStyle = { critical: { bg: RD3, cl: RD2, label: 'Критическая', border: RD }, major: { bg: 'var(--st-warn-bg)', cl: '#E65100', label: 'Серьёзная', border: '#FF9800' }, minor: { bg: 'var(--st-warn-bg)', cl: AM2, label: 'Незначительная', border: '#FFC107' } };
   const statusStyle = { open: { bg: RD3, cl: RD, label: 'Открыта' }, in_work: { bg: AM3, cl: AM2, label: 'В работе' }, closed: { bg: GN3, cl: GN2, label: 'Закрыта' } };
-  const sourceStyle = { external: { bg: '#E3F2FD', cl: '#0277BD', label: '🌐 Внешняя' }, previous_stage: { bg: '#FFF3E0', cl: '#E65100', label: '🏭 С пред. участка' }, current: { bg: RD3, cl: RD2, label: '⚙ Текущий этап' } };
+  const sourceStyle = { external: { bg: BL3, cl: '#0277BD', label: '🌐 Внешняя' }, previous_stage: { bg: 'var(--st-warn-bg)', cl: '#E65100', label: '🏭 С пред. участка' }, current: { bg: RD3, cl: RD2, label: '⚙ Текущий этап' } };
 
   const D8_LABELS = ['D1 Команда', 'D2 Проблема', 'D3 Сдерживание', 'D4 Коренная причина', 'D5 Действия', 'D6 Проверка', 'D7 Предупреждение', 'D8 Закрытие'];
 
@@ -681,7 +681,7 @@ const MasterReclamations = memo(({ data, onUpdate, addToast, onWorkerClick }) =>
                 h('button', {
                   title: 'Удалить рекламацию',
                   onClick: (e) => { e.stopPropagation(); delRec(rec.id); },
-                  style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, color: '#ccc', padding: '2px 4px', borderRadius: 4, lineHeight: 1, transition: 'color 0.15s' },
+                  style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, color: 'var(--muted)', padding: '2px 4px', borderRadius: 4, lineHeight: 1, transition: 'color 0.15s' },
                   onMouseEnter: e => e.currentTarget.style.color = RD,
                   onMouseLeave: e => e.currentTarget.style.color = '#ccc',
                 }, '✕'),

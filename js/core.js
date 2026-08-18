@@ -146,7 +146,7 @@ const BMK_WORK_RATES = [
 
 const WORKER_STATUS = {
   working: { label: 'На смене', bg: GN3, cl: GN2, br: GN },
-  absent: { label: 'Отсутствует', bg: 'var(--st-pending-bg)', cl: '#666', br: '#ccc' },
+  absent: { label: 'Отсутствует', bg: 'var(--st-pending-bg)', cl: 'var(--muted)', br: '#ccc' },
   sick: { label: 'Больничный', bg: RD3, cl: RD2, br: RD },
   vacation: { label: 'Отпуск', bg: '#E6F1FB', cl: '#042C53', br: BL }
 };
@@ -1362,13 +1362,13 @@ const ReceiveDeliveryScreen = memo(({ deliveryId, data, onUpdate, currentUserId,
               // Шапка
               h('div', { style: { textAlign: 'center', marginBottom: 20 } },
                 h('div', { style: { fontSize: 32, marginBottom: 8 } }, '📦'),
-                h('div', { style: { fontSize: 18, fontWeight: 500, color: '#1a1a1a', marginBottom: 4 } }, 'Приёмка материала'),
+                h('div', { style: { fontSize: 18, fontWeight: 500, color: 'var(--fg)', marginBottom: 4 } }, 'Приёмка материала'),
                 delivery.status === 'partial' && h('div', { style: { fontSize: 12, color: AM2, background: AM3, padding: '3px 10px', borderRadius: 12, display: 'inline-block', marginBottom: 4 } }, '⚡ Частичная поставка — уже принято')
               ),
 
               // Информация о материале
-              h('div', { style: { background: '#f5f1eb', borderRadius: 10, padding: '14px 16px', marginBottom: 20 } },
-                h('div', { style: { fontSize: 15, fontWeight: 500, color: '#1a1a1a', marginBottom: 6 } }, mat?.name || delivery.materialId),
+              h('div', { style: { background: 'var(--card-2)', borderRadius: 10, padding: '14px 16px', marginBottom: 20 } },
+                h('div', { style: { fontSize: 15, fontWeight: 500, color: 'var(--fg)', marginBottom: 6 } }, mat?.name || delivery.materialId),
                 h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 13 } },
                   h('div', null, h('div', { style: { fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Заказ'), h('div', { style: { fontWeight: 500, color: AM2 } }, order?.number || delivery.orderId)),
                   h('div', null, h('div', { style: { fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase' } }, 'Этап'), h('div', { style: { fontWeight: 500 } }, delivery.stageName)),
@@ -3468,7 +3468,7 @@ const AchievementPopup = memo(({ achievement, onClose, workerName }) => {
       // Название
       h('div', {
         style: {
-          fontSize: 22, fontWeight: 600, color: '#1a1a1a',
+          fontSize: 22, fontWeight: 600, color: 'var(--fg)',
           marginBottom: 8, lineHeight: 1.2,
           animation: visible ? '_tpFadeIn 0.3s ease-out 0.35s both' : 'none',
         }

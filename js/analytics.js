@@ -310,7 +310,7 @@ const FullAnalyticsModal = memo(({ section, data, onClose }) => {
   const TITLES = { production: '⚙ Производство — полная аналитика', dashboard: '📊 Цех — полная аналитика', warehouse: '📦 Склад — полная аналитика', hr: '👥 Сотрудники — полная аналитика', quality: '🔍 Качество — полная аналитика' };
 
   return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 300, overflowY: 'auto', padding: '16px 8px' }, onClick: e => e.target === e.currentTarget && onClose() },
-    h('div', { style: { background: '#f5f5f2', borderRadius: 14, width: 'min(900px,100%)', margin: '0 auto', boxShadow: '0 8px 40px rgba(0,0,0,0.2)' } },
+    h('div', { style: { background: 'var(--card-2)', borderRadius: 14, width: 'min(900px,100%)', margin: '0 auto', boxShadow: '0 8px 40px rgba(0,0,0,0.2)' } },
       // Шапка
       h('div', { style: { background: 'var(--card-solid,#fff)', borderRadius: '14px 14px 0 0', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '0.5px solid rgba(0,0,0,0.08)' } },
         h('div', { style: { fontSize: 15, fontWeight: 500 } }, TITLES[section] || 'Аналитика'),

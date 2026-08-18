@@ -367,7 +367,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
         h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 } },
           h('div', { style: { fontSize:11, color:'var(--muted)' } }, 'Нажмите для выбора уровня'),
           h('div', { style: { display:'flex', gap:6, fontSize:10, color:'var(--muted)' } },
-            h('span', { style: { padding:'1px 6px', background:'#FFF8E1', color:'#F57F17', borderRadius:4 } }, 'Нов.'),
+            h('span', { style: { padding:'1px 6px', background:'var(--st-warn-bg)', color:AM2, borderRadius:4 } }, 'Нов.'),
             h('span', { style: { padding:'1px 6px', background:AM3, color:AM2, borderRadius:4 } }, 'Ком.'),
             h('span', { style: { padding:'1px 6px', background:GN3, color:GN2, borderRadius:4 } }, 'Эксп.')
           )
@@ -375,7 +375,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
         h('div', { style: { display:'flex', flexDirection:'column', gap:4 } }, stagesForMatrix.map(s => {
           const level     = (form.competenceLevels||{})[s.name] || 0;
           const meta      = (form.competenceMeta  ||{})[s.name] || {};
-          const levelColors = { 0:{ bg:'#fff', cl:'#888', border:'rgba(0,0,0,0.15)', label:'—' }, 1:{ bg:'#FFF8E1', cl:'#F57F17', border:'#F57F17', label:'Нов.' }, 2:{ bg:AM3, cl:AM2, border:AM, label:'Ком.' }, 3:{ bg:GN3, cl:GN2, border:GN, label:'Эксп.' } };
+          const levelColors = { 0:{ bg:'#fff', cl:'var(--muted)', border:'rgba(0,0,0,0.15)', label:'—' }, 1:{ bg:'var(--st-warn-bg)', cl:AM2, border:'#F57F17', label:'Нов.' }, 2:{ bg:AM3, cl:AM2, border:AM, label:'Ком.' }, 3:{ bg:GN3, cl:GN2, border:GN, label:'Эксп.' } };
           const lc        = levelColors[level];
           const expiresAt = meta.expiresAt ? new Date(meta.expiresAt) : null;
           const daysLeft  = expiresAt ? Math.ceil((expiresAt - Date.now()) / 86400000) : null;
@@ -491,7 +491,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
       h('button', { style: viewMode === 'list' ? abtn() : gbtn(), onClick: () => setViewMode('list') }, 'Список'),
       h('button', { style: viewMode === 'matrix' ? abtn() : gbtn(), onClick: () => setViewMode('matrix') }, 'Матрица компетенций'),
       viewMode === 'matrix' && h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', marginLeft: 8 } },
-        [{ label: 'Новичок', bg:'#FFF8E1', cl:'#F57F17' }, { label:'Компетентен', bg:AM3, cl:AM2 }, { label:'Эксперт', bg:GN3, cl:GN2 }].map(l =>
+        [{ label: 'Новичок', bg:'var(--st-warn-bg)', cl:AM2 }, { label:'Компетентен', bg:AM3, cl:AM2 }, { label:'Эксперт', bg:GN3, cl:GN2 }].map(l =>
           h('span', { key:l.label, style:{ padding:'2px 8px', fontSize:10, background:l.bg, color:l.cl, borderRadius:8 } }, l.label)
         )
       )
@@ -548,11 +548,11 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
             const tsStatus = (() => {
               if (!todayCell) return null;
               if (todayCell.code === 'ОТ') return { label: 'Отпуск', bg: '#E6F1FB', cl: '#0C447C', br: '#90CAF9' };
-              if (todayCell.code === 'Б')  return { label: 'Больничный', bg: '#FCEBEB', cl: '#791F1F', br: '#F48FB1' };
-              if (todayCell.code === 'ОЗ') return { label: 'ОЗ', bg: '#FFF3E0', cl: '#E65100', br: '#FFB74D' };
+              if (todayCell.code === 'Б')  return { label: 'Больничный', bg: RD3, cl: '#791F1F', br: '#F48FB1' };
+              if (todayCell.code === 'ОЗ') return { label: 'ОЗ', bg: 'var(--st-warn-bg)', cl: '#E65100', br: '#FFB74D' };
               if (todayCell.code === 'К')  return { label: 'Командировка', bg: '#F3E5F5', cl: '#6A1B9A', br: '#CE93D8' };
-              if (todayCell.code === 'НН') return { label: 'Неявка', bg: '#F1EFE8', cl: '#888', br: '#ccc' };
-              if (todayCell.code === 'У')  return { label: 'Уволен', bg: '#E0E0E0', cl: '#444', br: '#bbb' };
+              if (todayCell.code === 'НН') return { label: 'Неявка', bg: '#F1EFE8', cl: 'var(--muted)', br: '#ccc' };
+              if (todayCell.code === 'У')  return { label: 'Уволен', bg: '#E0E0E0', cl: 'var(--muted)', br: '#bbb' };
               if (todayCell.code === 'СД') return { label: 'Сдельная', bg: '#EDE7F6', cl: '#4527A0', br: '#B39DDB' };
               if (todayCell.h > 0) return { label: `На смене ${todayCell.h}ч`, bg: GN3, cl: GN2, br: GN };
               return null;
@@ -579,7 +579,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
                   ),
                   h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom:10 } },
                     h('div', { style: { fontSize:11, color:'var(--muted)', whiteSpace:'nowrap' } }, `${w.allTimeDone} оп.`),
-                    h('div', { style: { flex:1, height:5, background:'#eee', borderRadius:3, overflow:'hidden' } }, h('div', { style: { width: `${w.levelProgress*100}%`, height:5, background:AM, borderRadius:3 } })),
+                    h('div', { style: { flex:1, height:5, background:'var(--card-2)', borderRadius:3, overflow:'hidden' } }, h('div', { style: { width: `${w.levelProgress*100}%`, height:5, background:AM, borderRadius:3 } })),
                     h('div', { style: { fontSize:10, color:'var(--muted)', whiteSpace:'nowrap' } }, `→ Ур. ${w.level+1}`)
                   ),
                   h('div', { style: { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, marginBottom:10 } },
@@ -682,8 +682,8 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
       // Легенда уровней — ВВЕРХУ
       h('div', { style: { display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap', fontSize: 11 } },
         h('span', { style: { fontWeight: 500, color: 'var(--fg-muted)', marginRight: 4 } }, 'Уровни:'),
-        h('span', { style: { padding: '2px 8px', borderRadius: 4, background: '#f5f5f2', color: '#ccc', fontSize: 11 } }, '— нет допуска'),
-        h('span', { style: { padding: '2px 8px', borderRadius: 4, background: '#FFF8E1', color: '#F57F17', fontSize: 11 } }, 'Нов. — новичок'),
+        h('span', { style: { padding: '2px 8px', borderRadius: 4, background: 'var(--card-2)', color: 'var(--muted)', fontSize: 11 } }, '— нет допуска'),
+        h('span', { style: { padding: '2px 8px', borderRadius: 4, background: 'var(--st-warn-bg)', color: AM2, fontSize: 11 } }, 'Нов. — новичок'),
         h('span', { style: { padding: '2px 8px', borderRadius: 4, background: AM3, color: AM2, fontSize: 11 } }, 'Ком. — компетентен'),
         h('span', { style: { padding: '2px 8px', borderRadius: 4, background: GN3, color: GN2, fontSize: 11 } }, 'Эксп. — эксперт'),
         h('span', { style: { color: 'var(--muted)', fontSize: 10, alignSelf: 'center' } }, '· Нажмите ячейку для переключения')
@@ -706,7 +706,7 @@ const MasterWorkers = memo(({ data, onUpdate, addToast, focusWorkerId }) => {
               const meta = (w.competenceMeta || {})[s.name] || {};
               const expired = meta.expiresAt && meta.expiresAt < Date.now();
               const expiring = meta.expiresAt && !expired && Math.ceil((meta.expiresAt - Date.now()) / 86400000) <= 30;
-            const levelColors = { 0: { bg: '#f5f5f2', cl: '#ccc', label: '—' }, 1: { bg: '#FFF8E1', cl: '#F57F17', label: 'Нов.' }, 2: { bg: AM3, cl: AM2, label: 'Ком.' }, 3: { bg: GN3, cl: GN2, label: 'Эксп.' } };
+            const levelColors = { 0: { bg: 'var(--card-2)', cl: 'var(--muted)', label: '—' }, 1: { bg: 'var(--st-warn-bg)', cl: AM2, label: 'Нов.' }, 2: { bg: AM3, cl: AM2, label: 'Ком.' }, 3: { bg: GN3, cl: GN2, label: 'Эксп.' } };
             const lc = levelColors[level] || levelColors[0];
             return h('td', { key: s.id, style: { ...S.td, textAlign:'center', padding: '4px', cursor: 'pointer' }, onClick: () => {
               const newLevel = (level + 1) % 4;
@@ -795,7 +795,7 @@ const InstructionsTracker = memo(({ data, onUpdate, addToast }) => {
                 filter === 'expiring' ? workerSummary.filter(s => s.hasExpiring) :
                 workerSummary;
 
-  const statusStyle = { ok: { bg: GN3, cl: GN2, lbl: '✓' }, expiring: { bg: AM3, cl: AM2, lbl: '!' }, expired: { bg: '#FCEBEB', cl: RD2, lbl: '✕' }, none: { bg: '#f5f5f2', cl: '#ccc', lbl: '—' } };
+  const statusStyle = { ok: { bg: GN3, cl: GN2, lbl: '✓' }, expiring: { bg: AM3, cl: AM2, lbl: '!' }, expired: { bg: RD3, cl: RD2, lbl: '✕' }, none: { bg: 'var(--card-2)', cl: 'var(--muted)', lbl: '—' } };
 
   return h('div', null,
     confirmEl,
@@ -905,7 +905,7 @@ const InstructionsTracker = memo(({ data, onUpdate, addToast }) => {
             h('span', { style:{ color:'var(--muted)', marginLeft:6, fontSize:11 } }, instr.date)
           ),
           st !== 'ok' && h('span', { style:{ fontSize:10, padding:'1px 6px', borderRadius:4, background: st==='expired'?'#FCEBEB':AM3, color: st==='expired'?RD2:AM2 } }, st==='expired'?'Просрочен':'Истекает'),
-          h('button', { style:{ background:'none', border:'none', color:'#ccc', cursor:'pointer', fontSize:14 }, onClick:() => del(instr.id) }, '×')
+          h('button', { style:{ background:'none', border:'none', color:'var(--muted)', cursor:'pointer', fontSize:14 }, onClick:() => del(instr.id) }, '×')
         );
       })
     )
@@ -1025,7 +1025,7 @@ const VacationPlanner = memo(({ data, onUpdate, addToast }) => {
           { key: 'approved', label: 'Утверждён', center: true, sortValue: v => v.approved ? 1 : 0,
             render: v => h('input', { type:'checkbox', checked:v.approved, onChange:()=>toggle(v.id), style:{ accentColor:GN, width:16, height:16 } }) },
           { key: 'act', label: '', sortable: false, width: 36,
-            render: v => h('button', { style:{ background:'none', border:'none', color:'#ccc', cursor:'pointer' }, onClick:()=>del(v.id) }, '×') },
+            render: v => h('button', { style:{ background:'none', border:'none', color:'var(--muted)', cursor:'pointer' }, onClick:()=>del(v.id) }, '×') },
         ],
       });
     })()
@@ -1149,7 +1149,7 @@ const MonthlyReport = memo(({ data }) => {
         h('div', { style:{ width:20, height:20, borderRadius:'50%', background:AM3, display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:500, color:AM2 } }, i+1),
         h('div', { style:{ flex:1, fontSize:13 } }, w.name),
         h('div', { style:{ fontSize:12, color:GN2, fontWeight:500 } }, `${w.done} оп.`),
-        w.defects > 0 && h('div', { style:{ fontSize:11, color:RD2, background:'#FCEBEB', padding:'1px 6px', borderRadius:4 } }, `${w.defects} брак`)
+        w.defects > 0 && h('div', { style:{ fontSize:11, color:RD2, background:RD3, padding:'1px 6px', borderRadius:4 } }, `${w.defects} брак`)
       ))
     ),
 
@@ -1236,7 +1236,7 @@ const VacationTimeline = memo(({ data }) => {
     // Полоса перекрытий
     stats.overlapDays > 0 && h('div', { style: { ...S.card, padding: 10, marginBottom: 12 } },
       h('div', { style: { fontSize: 10, color: RD, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, fontWeight: 500 } }, '⚠ Пересечения отпусков'),
-      h('div', { style: { display: 'flex', height: 16, borderRadius: 4, overflow: 'hidden', background: '#f5f5f2' } },
+      h('div', { style: { display: 'flex', height: 16, borderRadius: 4, overflow: 'hidden', background: 'var(--card-2)' } },
         overlapDays.map((cnt, i) => h('div', { key: i, style: {
           flex: 1, background: cnt >= 3 ? RD : cnt >= 2 ? AM : 'transparent',
           opacity: cnt >= 2 ? 0.7 : 0
