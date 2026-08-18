@@ -1446,8 +1446,8 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
   const daysLeft   = ord.deadline ? Math.ceil((new Date(ord.deadline) - Date.now()) / 86400000) : null;
   const deadlineColor = daysLeft === null ? '#888' : daysLeft < 0 ? '#E24B4A' : daysLeft <= 3 ? '#EF9F27' : '#888';
 
-  const ST_COLORS = { pending: '#888', in_progress: '#EF9F27', on_check: '#378ADD', done: '#1D9E75', defect: '#E24B4A' };
-  const ST_LABELS = { pending: 'Ожидает', in_progress: 'В работе', on_check: 'Контроль', done: 'Выполнено', defect: 'Дефект' };
+  const ST_COLORS = { pending: '#888', in_progress: '#EF9F27', on_check: '#378ADD', weld_check: '#7E57C2', done: '#1D9E75', defect: '#E24B4A' };
+  const ST_LABELS = { pending: 'Ожидает', in_progress: 'В работе', on_check: 'Контроль', weld_check: 'Сварщик', done: 'Выполнено', defect: 'Дефект' };
 
   return h('div', {
     role: 'dialog', 'aria-modal': 'true',
@@ -1678,6 +1678,8 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
                     h('span', { style: { fontSize: 10, minWidth: 18, color: 'var(--muted)', flexShrink: 0 } }, i + 1),
                     h('span', { style: { flex: 1, textDecoration: op.status === 'done' ? 'line-through' : 'none', color: op.status === 'done' ? 'var(--muted)' : 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, op.name),
                     workers.length > 0 && h('span', { style: { fontSize: 11, color: 'var(--muted)', flexShrink: 0, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, workers.join(', ')),
+                    // Приёмка работ БМК мастером (этап 4): факт объёмов + начисление бригаде поровну
+                    canEdit && ord.productType === 'bmk' && op.status === 'done' && h(BmkAcceptButton, { op, order: ord, data, onUpdate }),
                     h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 6, background: `${ST_COLORS[op.status] || '#888'}18`, color: ST_COLORS[op.status] || '#888', fontWeight: 500, flexShrink: 0, whiteSpace: 'nowrap' } }, ST_LABELS[op.status] || op.status)
                   );
                 })
@@ -2817,6 +2819,120 @@ const BmkEstimateEditor = memo(({ order, data, onUpdate, canEdit, addToast }) =>
         h('span', { style: { fontWeight: 600, flexShrink: 0 } }, w.price == null ? (w.note || '—') : money(w.price) + ' ₽/' + (w.unit || 'шт'))
       )),
       pickList.length > 60 && h('div', { style: { fontSize: 10, color: 'var(--muted)', padding: 4 } }, 'Показаны первые 60 — уточните поиск')
+    )
+  );
+});
+
+
+// ==================== BmkAcceptButton ====================
+// Этап 4 плана БМК: приёмка работ мастером и сдельное начисление бригаде.
+// Кнопка на завершённой БМК-операции в карточке заказа: мастер подтверждает или
+// корректирует фактические объёмы по строкам сметы этого этапа, сумма делится
+// ПОРОВНУ между участниками операции (op.workerIds) и замораживается:
+//   op.bmkPayout — акт приёмки (строки факта, итог, доля, дата);
+//   op.earning   — { amount: доля работника, source:'bmk' } → автоматически
+//                  подхватывается HR-выгрузкой (PayrollExport суммирует
+//                  op.earning.amount) и зарплатным блоком рабочего.
+// Повторная приёмка перезаписывает начисление (пересчёт).
+// Отдельный компонент со своими хуками — OrderCardModal без хуков (early return).
+const BmkAcceptButton = memo(({ op, order, data, onUpdate }) => {
+  const [open, setOpen] = useState(false);
+  const [facts, setFacts] = useState({});
+  const kind = order.bmkKind || 'bmk';
+  const estRows = (order.bmkEstimate || []).filter(r => r.stage === op.name);
+  const crew = (op.workerIds || []).map(wid => (data.workers || []).find(x => x.id === wid)).filter(Boolean);
+  const money = (v) => (Number(v) || 0).toLocaleString('ru-RU');
+
+  const openModal = () => {
+    const f = {};
+    estRows.forEach(r => { f[r.id] = Number(r.qty) || 0; });
+    if (op.bmkPayout && op.bmkPayout.rows) op.bmkPayout.rows.forEach(pr => { if (pr.id in f) f[pr.id] = pr.qty; });
+    setFacts(f);
+    setOpen(true);
+  };
+
+  const rowsCalc = estRows.map(r => {
+    const qty = facts[r.id] === '' ? 0 : (Number(facts[r.id]) || 0);
+    const price = bmkRowEffPrice(r, kind);
+    return { r, qty, price, sum: Math.round(price * qty) };
+  });
+  const total = rowsCalc.reduce((s, x) => s + x.sum, 0);
+  const n = crew.length;
+  const perWorker = n > 0 ? Math.round(total / n) : 0;
+  const canAccept = n > 0 && estRows.length > 0;
+
+  const accept = () => {
+    if (!canAccept) return;
+    const acceptedAt = now();
+    const payout = {
+      total, perWorker, workerIds: crew.map(x => x.id), acceptedAt,
+      rows: rowsCalc.filter(x => x.qty > 0).map(x => ({ id: x.r.id, name: x.r.name, unit: x.r.unit || 'шт', qty: x.qty, price: x.price, sum: x.sum })),
+    };
+    const earning = { amount: perWorker, workerCount: n, source: 'bmk', field: 'bmk', totalAmount: total };
+    const d = { ...data,
+      ops: data.ops.map(o => o.id === op.id ? { ...o, bmkPayout: payout, earning } : o),
+      events: [...(data.events || []), { id: uid(), type: 'bmk_accept', opId: op.id, orderId: order.id, ts: acceptedAt, total, workerIds: payout.workerIds }],
+    };
+    onUpdate(d);
+    DB.save(d).catch(() => onUpdate(data));
+    setOpen(false);
+  };
+
+  return h(React.Fragment, null,
+    op.bmkPayout
+      ? h('button', {
+          title: 'Принято ' + new Date(op.bmkPayout.acceptedAt).toLocaleDateString('ru-RU') + ' — открыть / пересчитать',
+          onClick: openModal,
+          style: { fontSize: 10, padding: '2px 8px', borderRadius: 6, border: '0.5px solid ' + GN, background: GN3, color: GN2, cursor: 'pointer', fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap' }
+        }, '💰 ' + money(op.bmkPayout.total) + ' ₽')
+      : h('button', {
+          title: 'Принять работы и начислить бригаде',
+          onClick: openModal,
+          style: { fontSize: 10, padding: '2px 8px', borderRadius: 6, border: '0.5px solid ' + AM4, background: AM3, color: AM2, cursor: 'pointer', fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap' }
+        }, '💰 Принять'),
+    open && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }, onClick: () => setOpen(false) },
+      h('div', { style: { background: 'var(--card)', borderRadius: 14, padding: 18, maxWidth: 560, width: '100%', maxHeight: '85vh', overflowY: 'auto' }, onClick: e => e.stopPropagation() },
+        h('div', { style: { fontSize: 15, fontWeight: 600, marginBottom: 2 } }, '💰 Приёмка работ — ' + op.name),
+        h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 10 } },
+          'Заказ №' + (order.number || '') + (kind === 'knr' ? ' · КНР (обвязка −60%)' : ' · БМК')),
+        estRows.length === 0
+          ? h('div', { style: { fontSize: 12, color: AM2, background: AM3, borderRadius: 8, padding: '10px 12px', marginBottom: 10 } },
+              'В смете заказа нет работ этапа «' + op.name + '». Заполните смету в карточке заказа и вернитесь к приёмке.')
+          : h('div', { style: { marginBottom: 10 } },
+              h('div', { style: { display: 'flex', gap: 6, fontSize: 10, fontWeight: 600, color: 'var(--muted)', padding: '2px 0', borderBottom: '0.5px solid var(--border)' } },
+                h('span', { style: { flex: 1 } }, 'Работа'),
+                h('span', { style: { width: 70, textAlign: 'center' } }, 'Факт'),
+                h('span', { style: { width: 34 } }, 'Ед.'),
+                h('span', { style: { width: 70, textAlign: 'right' } }, 'Цена'),
+                h('span', { style: { width: 80, textAlign: 'right' } }, 'Сумма')
+              ),
+              rowsCalc.map(x => h('div', { key: x.r.id, style: { display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, padding: '4px 0' } },
+                h('span', { style: { flex: 1 } }, x.r.name,
+                  h('span', { style: { color: 'var(--muted)', fontSize: 10 } }, ' · по смете ' + (Number(x.r.qty) || 0))),
+                h('input', { type: 'number', min: 0, step: 'any', style: { ...S.inp, width: 70, padding: '4px 6px', minHeight: 0, textAlign: 'center' }, value: facts[x.r.id], onChange: e => setFacts(p => ({ ...p, [x.r.id]: e.target.value })) }),
+                h('span', { style: { width: 34, color: 'var(--muted)' } }, x.r.unit || 'шт'),
+                h('span', { style: { width: 70, textAlign: 'right' } }, money(x.price)),
+                h('span', { style: { width: 80, textAlign: 'right', fontWeight: 600 } }, money(x.sum))
+              ))
+            ),
+        h('div', { style: { fontSize: 12, marginBottom: 4 } },
+          h('span', { style: { color: 'var(--muted)' } }, 'Бригада (' + n + '): '),
+          n > 0 ? crew.map(x => x.name).join(', ') : h('span', { style: { color: RD, fontWeight: 600 } }, 'на операции нет исполнителей — начислять некому')),
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700, padding: '8px 0', borderTop: '1px solid var(--border)', marginTop: 6 } },
+          h('span', null, 'Итого за работы'), h('span', null, money(total) + ' ₽')),
+        n > 0 && h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 12, color: GN2, fontWeight: 600, marginBottom: 8 } },
+          h('span', null, 'Каждому участнику (поровну)'), h('span', null, money(perWorker) + ' ₽')),
+        h('div', { style: { fontSize: 10, color: 'var(--muted)', marginBottom: 10 } },
+          'За брак не платят — забракованные объёмы в факт не включаются. Повторная приёмка перезапишет начисление.'),
+        h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
+          h('button', { style: { padding: '8px 14px', fontSize: 13, borderRadius: 10, border: '0.5px solid var(--border)', background: 'var(--card-2)', color: 'var(--text)', cursor: 'pointer' }, onClick: () => setOpen(false) }, 'Отмена'),
+          h('button', {
+            disabled: !canAccept,
+            style: { padding: '8px 14px', fontSize: 13, borderRadius: 10, border: 'none', background: canAccept ? GN : 'var(--card-2)', color: canAccept ? '#fff' : 'var(--muted)', cursor: canAccept ? 'pointer' : 'default', fontWeight: 600 },
+            onClick: accept
+          }, op.bmkPayout ? '✓ Пересчитать: ' + money(total) + ' ₽' : '✓ Начислить ' + money(total) + ' ₽')
+        )
+      )
     )
   );
 });

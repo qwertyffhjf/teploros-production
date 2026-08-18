@@ -554,6 +554,24 @@ const bmkRowEffPrice = (row, kind) => {
 const bmkEstimateTotal = (order) => ((order && order.bmkEstimate) || [])
   .reduce((s, r) => s + bmkRowEffPrice(r, order && order.bmkKind) * (Number(r.qty) || 0), 0);
 
+// ── Флаги контроля качества этапа (этап 5 плана БМК) ────────────────────────
+// Явные флаги этапа (настраиваются в Администратор → Этапы) имеют приоритет;
+// если не заданы — старая эвристика по названию («свар»/«опресс»), чтобы
+// котловые этапы продолжали работать как раньше.
+// requiresWeldAcceptance — «работы по сварке принимает главный сварщик»
+// (требование прайс-листа по котельным).
+const stageQCFlags = (stage) => {
+  const name = String((stage && stage.name) || '').toLowerCase();
+  const isWeld  = name.includes('свар');
+  const isPress = name.includes('опресс');
+  const s = stage || {};
+  return {
+    requiresQC: s.requiresQC != null ? !!s.requiresQC : (isWeld || isPress),
+    requiresPressureTest: s.requiresPressureTest != null ? !!s.requiresPressureTest : isPress,
+    requiresWeldAcceptance: s.requiresWeldAcceptance != null ? !!s.requiresWeldAcceptance : false,
+  };
+};
+
 // Вынесена общая функция смены
 const getCurrentShift = () => {
   const d = new Date();
@@ -4286,7 +4304,10 @@ const buildFinishUpdate = (data, op, workerId, params = {}) => {
   let updatedOp = { ...op, finishedAt, defectNote: defNote || undefined };
   if (isDefect) { updatedOp.defectSource = source; updatedOp.defectReasonId = defectReasonId; }
   if (isRework) updatedOp.defectSource = source;
-  if (op.requiresQC && status === 'done') { status = 'on_check'; }
+  // Сварочные работы принимает главный сварщик — отдельная очередь до ОТК
+  // (требование прайс-листа: «работы по сварке принимает главный сварщик»).
+  if (op.requiresWeldAcceptance && status === 'done' && !updatedOp.weldAccepted) { status = 'weld_check'; }
+  else if (op.requiresQC && status === 'done') { status = 'on_check'; }
   if (op.name.includes('свар') && weldParams?.seamNumber && weldParams?.electrode) {
     updatedOp.weldParams = { seamNumber: weldParams.seamNumber, electrode: weldParams.electrode, result: weldParams.result };
     if (weldParams.result === 'fail') { status = 'defect'; updatedOp.defectNote = 'Сварка забракована'; }

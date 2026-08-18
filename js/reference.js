@@ -1246,6 +1246,9 @@ const StageDefaultsEditor = memo(({ stage, data, onSave, onClose }) => {
     equipmentId:  stage.equipmentId  || '',
     plannedHours: stage.plannedHours ? String(stage.plannedHours) : '',
     drawingUrl:   stage.drawingUrl   || '',
+    requiresQC:             stage.requiresQC             != null ? !!stage.requiresQC             : stageQCFlags(stage).requiresQC,
+    requiresPressureTest:   stage.requiresPressureTest   != null ? !!stage.requiresPressureTest   : stageQCFlags(stage).requiresPressureTest,
+    requiresWeldAcceptance: !!stage.requiresWeldAcceptance,
   });
 
   const handleSave = () => {
@@ -1256,6 +1259,9 @@ const StageDefaultsEditor = memo(({ stage, data, onSave, onClose }) => {
       equipmentId:  form.equipmentId  || null,
       plannedHours: form.plannedHours ? Number(form.plannedHours) : null,
       drawingUrl:   form.drawingUrl.trim() || null,
+      requiresQC:             !!form.requiresQC,
+      requiresPressureTest:   !!form.requiresPressureTest,
+      requiresWeldAcceptance: !!form.requiresWeldAcceptance,
     });
   };
 
@@ -1338,6 +1344,17 @@ const StageDefaultsEditor = memo(({ stage, data, onSave, onClose }) => {
             )
           : h('span', null, '💰 Этап не оплачивается сдельно. Настроить — в разделе «Расценки» → «Привязка этапов к расценкам».')
       )
+    ),
+    // Контроль качества этапа (этап 5 плана БМК): явные флаги вместо эвристики по названию
+    h('div', { style: { marginBottom: 10, padding: '8px 10px', background: 'var(--card)', borderRadius: 8, border: '0.5px solid var(--border)' } },
+      h('div', { style: { fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6, fontWeight: 600 } }, '🔍 Контроль качества'),
+      [['requiresQC', 'Требует приёмки ОТК', 'операция уходит на проверку вместо «выполнено»'],
+       ['requiresWeldAcceptance', 'Сварку принимает главный сварщик', 'по требованию прайс-листа на котельные'],
+       ['requiresPressureTest', 'Требует опрессовки / протокола ГИ', 'запрашивает протокол гидроиспытаний']
+      ].map(f => h('label', { key: f[0], style: { display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12, padding: '3px 0', cursor: 'pointer' } },
+        h('input', { type: 'checkbox', checked: !!form[f[0]], style: { marginTop: 2 }, onChange: () => setForm(p => ({ ...p, [f[0]]: !p[f[0]] })) }),
+        h('span', null, f[1], h('span', { style: { color: 'var(--muted)', fontSize: 10, display: 'block' } }, f[2]))
+      ))
     ),
     h('div', { style: { display: 'flex', gap: 6 } },
       h('button', { style: abtn({ fontSize: 11, padding: '5px 12px' }), onClick: handleSave }, '✓ Сохранить'),

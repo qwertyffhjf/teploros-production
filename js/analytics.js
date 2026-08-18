@@ -2161,6 +2161,13 @@ const ProductionReports = memo(({ data, onUpdate, addToast }) => {
         pw: pwUnit,
         kw: pwUnit * qty,
         prio: o.priority || '',
+        // Этап 7 плана БМК: тип изделия и деньги по смете/приёмке
+        ptype: o.productType === 'bmk' ? 'bmk' : 'boiler',
+        bmkKind: o.productType === 'bmk' ? (o.bmkKind === 'knr' ? 'КНР' : 'БМК') : null,
+        estSum: o.productType === 'bmk' ? bmkEstimateTotal(o) : 0,
+        factSum: o.productType === 'bmk'
+          ? mine.reduce(function (s, op) { return s + ((op.bmkPayout && op.bmkPayout.total) || 0); }, 0)
+          : 0,
         status: status,
         ready: ready,
         daysLeft: dl,
@@ -2293,6 +2300,21 @@ const ProductionReports = memo(({ data, onUpdate, addToast }) => {
     var lateRows = rows.filter(function (o) { return o.overdue; });
     var lateKw = lateRows.reduce(function (s, o) { return s + o.kw; }, 0);
     var rtsN = rows.filter(function (o) { return o.readyShip; }).length;
+
+    // ---- Аналитика БМК/КНР (этап 7 плана): портфель, план/факт по сметам ----
+    var bmkRows  = rows.filter(function (o) { return o.ptype === 'bmk'; });
+    var bmkAct   = bmkRows.filter(function (o) { return o.status !== 'Отгружен'; });
+    var bmkEst   = bmkRows.reduce(function (s, o) { return s + o.estSum; }, 0);
+    var bmkFact  = bmkRows.reduce(function (s, o) { return s + o.factSum; }, 0);
+    var bmkKnrN  = bmkRows.filter(function (o) { return o.bmkKind === 'КНР'; }).length;
+    var bmkLate  = bmkRows.filter(function (o) { return o.overdue; }).length;
+    var bmkNoEst = bmkAct.filter(function (o) { return o.estSum === 0; }).length;
+    var rub = function (v) {
+      var n = Math.round(Number(v) || 0);
+      if (n >= 1000000) return (n / 1000000).toFixed(1) + ' млн ₽';
+      if (n >= 1000) return Math.round(n / 1000) + ' тыс ₽';
+      return n + ' ₽';
+    };
 
     // ---- KPI нода ----
     function kpi(cls, label, valNode, sub) {
@@ -2433,6 +2455,106 @@ const ProductionReports = memo(({ data, onUpdate, addToast }) => {
         tile('s5', 'Операции по статусам', 'весь пул ' + model.opsTotal, cw(opChart)));
     }
 
+    // ============ РАСКЛАДКА: БМК / КНР (этап 7 плана БМК) ============
+    function layoutBmk() {
+      if (!bmkRows.length) {
+        return h('div', { className: 'an-grid' },
+          tile('s12', 'Нет заказов БМК', 'портфель блочно-модульных котельных пуст',
+            h('div', { style: { padding: '18px 4px', color: soft, fontSize: '12px' } },
+              'Заказы с типом изделия «БМК» здесь появятся автоматически. Смета работ заполняется в карточке заказа.')));
+      }
+      // Портфель по видам БМК/КНР
+      var kindMap = {};
+      bmkRows.forEach(function (o) { kindMap[o.bmkKind] = (kindMap[o.bmkKind] || 0) + 1; });
+      var kindChart = h(ChartBox, {
+        rev: rev, config: function () {
+          return {
+            type: 'doughnut',
+            data: { labels: Object.keys(kindMap), datasets: [{ data: Object.keys(kindMap).map(function (k) { return kindMap[k]; }), backgroundColor: [PBI.blue, PBI.teal, PBI.coral] }] },
+            options: { cutout: '60%', maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: soft } } } }
+          };
+        }
+      });
+      // План (смета) против факта (принято мастером) — топ-10 по смете
+      var money = bmkRows.slice().sort(function (x, y) { return y.estSum - x.estSum; }).slice(0, 10);
+      var moneyChart = h(ChartBox, {
+        rev: rev, config: function () {
+          return {
+            type: 'bar',
+            data: {
+              labels: money.map(function (o) { return o.num; }),
+              datasets: [
+                { label: 'Смета', data: money.map(function (o) { return o.estSum; }), backgroundColor: PBI.blue, barThickness: 14 },
+                { label: 'Принято', data: money.map(function (o) { return o.factSum; }), backgroundColor: PBI.teal, barThickness: 14 }
+              ]
+            },
+            options: {
+              maintainAspectRatio: false,
+              plugins: { legend: { labels: { color: soft } }, tooltip: { callbacks: { label: function (c) { return c.dataset.label + ': ' + Math.round(c.parsed.y).toLocaleString('ru-RU') + ' ₽'; } } } },
+              scales: { y: axis(soft, grid), x: axis(soft, null) }
+            }
+          };
+        }
+      });
+      // Стоимость работ по этапам (из принятых приёмок)
+      var stageMap = {};
+      var _d = props.data || {};
+      (_d.ops || []).forEach(function (op) {
+        if (!op.bmkPayout || !(op.bmkPayout.total > 0)) return;
+        var o = (_d.orders || []).find(function (x) { return x.id === op.orderId; });
+        if (!o || o.productType !== 'bmk') return;
+        stageMap[op.name] = (stageMap[op.name] || 0) + op.bmkPayout.total;
+      });
+      var stageKeys = Object.keys(stageMap).sort(function (x, y) { return stageMap[y] - stageMap[x]; });
+      var stageChart = stageKeys.length ? h(ChartBox, {
+        rev: rev, config: function () {
+          return {
+            type: 'bar',
+            data: { labels: stageKeys, datasets: [{ data: stageKeys.map(function (k) { return stageMap[k]; }), backgroundColor: PBI.coral, borderRadius: 3, barThickness: 16 }] },
+            options: {
+              indexAxis: 'y', maintainAspectRatio: false,
+              plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { return Math.round(c.parsed.x).toLocaleString('ru-RU') + ' ₽'; } } } },
+              scales: { x: axis(soft, grid), y: axis(soft, null) }
+            }
+          };
+        }
+      }) : h('div', { style: { padding: '16px 4px', color: soft, fontSize: '12px' } }, 'Пока нет принятых мастером работ');
+      // Таблица заказов БМК
+      var tb = bmkRows.slice().sort(function (x, y) { return y.estSum - x.estSum; }).map(function (o) {
+        var pct = o.estSum > 0 ? Math.round(o.factSum / o.estSum * 100) : 0;
+        return h('tr', { key: o.num },
+          h('td', null, o.num),
+          h('td', null, h('span', { style: { color: o.bmkKind === 'КНР' ? PBI.teal : PBI.blue, fontWeight: 600 } }, o.bmkKind)),
+          h('td', null, shortCust(o.cust)),
+          h('td', { className: 'an-num' }, Math.round(o.kw) || '—'),
+          h('td', { className: 'an-num' }, o.estSum ? Math.round(o.estSum).toLocaleString('ru-RU') : '—'),
+          h('td', { className: 'an-num' }, o.factSum ? Math.round(o.factSum).toLocaleString('ru-RU') : '—'),
+          h('td', { className: 'an-num', style: { color: pct > 100 ? PBI.red : soft } }, o.estSum ? pct + '%' : '—'),
+          h('td', null, h('span', { className: 'an-databar', style: { width: o.ready + 'px', background: o.overdue ? PBI.red : PBI.teal } }), ' ' + o.ready + '%'),
+          h('td', { style: { color: o.overdue ? PBI.red : soft } }, o.status));
+      });
+      return h('div', { className: 'an-grid' },
+        tile('s4', 'Вид изделия', 'БМК против КНР', cw(kindChart)),
+        tile('s8', 'Смета против принятого', 'топ-10 заказов по стоимости работ', cw(moneyChart)),
+        tile('s6', 'Стоимость работ по этапам', 'из приёмок мастера', cw(stageChart)),
+        tile('s6', 'Заказы без сметы', 'требуют заполнения',
+          h('div', { style: { padding: '10px 4px', fontSize: '12px', color: soft } },
+            bmkNoEst === 0
+              ? 'Все активные заказы БМК имеют смету ✓'
+              : h('div', null,
+                  h('div', { style: { fontSize: '26px', fontWeight: 700, color: PBI.yellow } }, String(bmkNoEst)),
+                  'активных заказов БМК без заполненной сметы — по ним не начислить работы бригадам.'))),
+        tile('s12', 'Портфель БМК / КНР', 'смета, принято, готовность',
+          h('div', { className: 'an-scroll', style: { maxHeight: '260px' } },
+            h('table', { className: 'an-tbl' },
+              h('thead', null, h('tr', null,
+                h('th', null, '№'), h('th', null, 'Вид'), h('th', null, 'Заказчик'),
+                h('th', { className: 'an-num' }, 'кВт'),
+                h('th', { className: 'an-num' }, 'Смета, ₽'), h('th', { className: 'an-num' }, 'Принято, ₽'),
+                h('th', { className: 'an-num' }, '%'), h('th', null, 'Готовность'), h('th', null, 'Статус'))),
+              h('tbody', null, tb)))));
+    }
+
     // ============ РАСКЛАДКА: РИСК ============
     function layoutRisk() {
       var risk = active.filter(function (o) { return o.overdue || (o.daysLeft != null && o.daysLeft < 7); });
@@ -2504,6 +2626,15 @@ const ProductionReports = memo(({ data, onUpdate, addToast }) => {
         kpi('k5', 'Ср. готовность', [String(avgReady), h('u', { key: 'u' }, '%')], 'активных заказов'),
         kpi('k4', 'Готовы к отгрузке', [String(rtsN)], 'ждут отгрузки'));
       bodyNode = layoutProduction();
+    } else if (layout === 'bmk') {
+      titleNode = ['БМК / КНР', 'портфель котельных, сметы и принятые работы'];
+      kpisNode = h('div', { className: 'an-kpis' },
+        kpi('', 'Заказов БМК', [String(bmkRows.length)], bmkAct.length + ' в производстве'),
+        kpi('k2', 'Сметы работ', [rub(bmkEst)], 'плановая стоимость'),
+        kpi('k3', 'Принято мастером', [rub(bmkFact)], bmkEst > 0 ? Math.round(bmkFact / bmkEst * 100) + '% от сметы' : 'нет приёмок'),
+        kpi('k5', 'КНР', [String(bmkKnrN)], 'наружное размещение'),
+        kpi('k4', 'Просрочено', [String(bmkLate)], 'заказов БМК'));
+      bodyNode = layoutBmk();
     } else {
       var overdue = rows.filter(function (o) { return o.overdue && o.daysLeft != null; });
       var soon = active.filter(function (o) { return !o.overdue && o.daysLeft != null && o.daysLeft >= 0 && o.daysLeft < 7; });
@@ -2528,6 +2659,7 @@ const ProductionReports = memo(({ data, onUpdate, addToast }) => {
         h('div', { className: 'an-tabs' },
           tabBtn('overview', '📊 Обзор'),
           tabBtn('production', '🏭 Производство'),
+          tabBtn('bmk', '🏗 БМК'),
           tabBtn('risk', '⚠️ Риск')),
         h('div', { className: 'an-spacer' }),
         h('div', { className: 'an-toggle' },

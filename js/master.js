@@ -55,7 +55,7 @@ const MasterOps = memo(({ data, onUpdate, onShowQR, addToast, onOrderClick, onWo
       DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
     } else {
       const _matchedStage = (data.productionStages || []).find(s => s.name === form.name.trim());
-      const op = { id: uid(), orderId: form.orderId, name: form.name.trim(), stageId: _matchedStage?.id || null, workerIds: form.workerIds, status: 'pending', createdAt: now(), plannedHours: form.plannedHours ? Number(form.plannedHours) : undefined, archived: false, sectionId: form.sectionId || null, equipmentId: form.equipmentId || null, plannedStartDate: form.plannedStartDate ? new Date(form.plannedStartDate).getTime() : undefined, drawingUrl: form.drawingUrl.trim() || undefined, requiresQC: form.name.toLowerCase().includes('свар') || form.name.toLowerCase().includes('опресс'), requiresPressureTest: form.name.toLowerCase().includes('опресс') };
+      const op = { id: uid(), orderId: form.orderId, name: form.name.trim(), stageId: _matchedStage?.id || null, workerIds: form.workerIds, status: 'pending', createdAt: now(), plannedHours: form.plannedHours ? Number(form.plannedHours) : undefined, archived: false, sectionId: form.sectionId || null, equipmentId: form.equipmentId || null, plannedStartDate: form.plannedStartDate ? new Date(form.plannedStartDate).getTime() : undefined, drawingUrl: form.drawingUrl.trim() || undefined, ...stageQCFlags(_matchedStage || { name: form.name }) };
       const d = { ...data, ops: [...data.ops, op] };
       onUpdate(d); resetForm(); addToast('Операция добавлена', 'success');
       DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
@@ -1083,7 +1083,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     // не подтягиваются — у каждого типа изделия свой набор этапов.
     const effType = productType || 'boiler';
     const stages = (data.productionStages || []).filter(s => (s.productType || 'boiler') === effType);
-    return stages.map(stage => ({ id: uid(), orderId, name: stage.name, qty: orderQty, workerIds: [], workerQty: {}, status: 'pending', createdAt: now(), plannedHours: stage.plannedHours || undefined, archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null, plannedStartDate: undefined, drawingUrl: drawingUrl || stage.drawingUrl || undefined, requiresQC: stage.name.includes('свар') || stage.name.includes('Опресс') || stage.name.toLowerCase().includes('опресс'), requiresPressureTest: stage.name.toLowerCase().includes('опресс') }));
+    return stages.map(stage => ({ id: uid(), orderId, name: stage.name, qty: orderQty, workerIds: [], workerQty: {}, status: 'pending', createdAt: now(), plannedHours: stage.plannedHours || undefined, archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null, plannedStartDate: undefined, drawingUrl: drawingUrl || stage.drawingUrl || undefined, ...stageQCFlags(stage) }));
   }, [data.productionStages]);
 
   // Восстановление осиротевшего родителя как обычного рабочего заказа.

@@ -1413,8 +1413,7 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
       workerIds: [], workerQty: {}, status: 'pending', createdAt: now(),
       archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null,
       plannedHours: stage.plannedHours || undefined, drawingUrl: stage.drawingUrl || undefined,
-      requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.toLowerCase().includes('опресс'),
-      requiresPressureTest: stage.name.toLowerCase().includes('опресс'),
+      ...stageQCFlags(stage),
     }));
 
     // Поставки материалов — всегда у родителя
@@ -1696,8 +1695,7 @@ const SubOrderSplitStep = memo(({ data, onUpdate, addToast, onClose, parentOrder
             plannedHours: stage.plannedHours || undefined,
             // Чертёж: приоритет у родительского заказа, потом у этапа
             drawingUrl: parentOrder.drawingUrl || stage.drawingUrl || undefined,
-            requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.toLowerCase().includes('опресс'),
-            requiresPressureTest: stage.name.toLowerCase().includes('опресс'),
+            ...stageQCFlags(stage),
           });
         });
       });
@@ -1741,8 +1739,7 @@ const SubOrderSplitStep = memo(({ data, onUpdate, addToast, onClose, parentOrder
         plannedHours: stage.plannedHours || undefined,
         // Чертёж: приоритет у заказа, потом у этапа
         drawingUrl: parentOrder?.drawingUrl || stage.drawingUrl || undefined,
-        requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.toLowerCase().includes('опресс'),
-        requiresPressureTest: stage.name.toLowerCase().includes('опресс'),
+        ...stageQCFlags(stage),
       }));
 
       const d = {
@@ -3154,7 +3151,7 @@ function App() {
       if (hasLive) { /* есть операции */ }
       else if (archivedOwn.length > 0) { ops = data.ops.map(o => (o.orderId === id && o.archived) ? { ...o, archived: false } : o); }
       else {
-        const newOps = stages.map(stage => ({ id: uid(), orderId: id, name: stage.name, stageId: stage.id, qty: Number(order.qty) || 1, workerIds: [], workerQty: {}, status: 'pending', createdAt: now(), archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null, plannedHours: stage.plannedHours || undefined, drawingUrl: order.drawingUrl || stage.drawingUrl || undefined, requiresQC: stage.name.toLowerCase().includes('свар') || stage.name.toLowerCase().includes('опресс'), requiresPressureTest: stage.name.toLowerCase().includes('опресс') }));
+        const newOps = stages.map(stage => ({ id: uid(), orderId: id, name: stage.name, stageId: stage.id, qty: Number(order.qty) || 1, workerIds: [], workerQty: {}, status: 'pending', createdAt: now(), archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null, plannedHours: stage.plannedHours || undefined, drawingUrl: order.drawingUrl || stage.drawingUrl || undefined, ...stageQCFlags(stage) }));
         ops = [...data.ops, ...newOps];
       }
       let d = { ...data, orders: data.orders.map(o => o.id === id ? { ...o, isParentOrder: false } : o), ops };
