@@ -536,6 +536,24 @@ const fmtPowerKw = (kw) => {
   return v >= 1000 ? (v / 1000).toFixed(1) + ' МВт' : Math.round(v) + ' кВт';
 };
 
+// ── Смета работ БМК/КНР (этап 3 плана БМК) ──────────────────────────────────
+// Строка сметы заказа (order.bmkEstimate[]):
+//   { id, workId?, stage, name, unit, basePrice, qty, priceOverride?, noAnchor? }
+// Вид изделия order.bmkKind: 'bmk' (блочно-модульная котельная) | 'knr' (котёл
+// наружного размещения). Модификаторы из прайс-листа:
+//   • КНР: обвязка котла −60% от прайса котельной;
+//   • мачта без анкерной группы: −15%.
+// Ручная цена (priceOverride) отключает модификаторы — задана финальная цена.
+const bmkRowEffPrice = (row, kind) => {
+  if (row.priceOverride != null && row.priceOverride !== '') return Number(row.priceOverride) || 0;
+  let p = Number(row.basePrice) || 0;
+  if (kind === 'knr' && /^обвязка/i.test(row.name || '')) p *= 0.4;
+  if (row.noAnchor) p *= 0.85;
+  return Math.round(p);
+};
+const bmkEstimateTotal = (order) => ((order && order.bmkEstimate) || [])
+  .reduce((s, r) => s + bmkRowEffPrice(r, order && order.bmkKind) * (Number(r.qty) || 0), 0);
+
 // Вынесена общая функция смены
 const getCurrentShift = () => {
   const d = new Date();

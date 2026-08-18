@@ -1616,6 +1616,19 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
                 }, '📐 Чертёж');
               })()
             ),
+            // Объёмы работ по смете БМК для этого этапа (order.bmkEstimate)
+            (() => {
+              if (!order || order.productType !== 'bmk') return null;
+              const rows = (order.bmkEstimate || []).filter(r => r.stage === active.name && (Number(r.qty) || 0) > 0);
+              if (!rows.length) return null;
+              return h('div', { style: { background: 'var(--card)', borderRadius: 10, padding: '8px 10px', marginBottom: 14, border: `0.5px solid ${AM4}` } },
+                h('div', { style: { fontSize: 10, fontWeight: 700, color: AM4, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 } }, '📋 Объём работ по смете'),
+                rows.map(r => h('div', { key: r.id, style: { display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, padding: '2px 0', color: AM2 } },
+                  h('span', { style: { flex: 1 } }, r.name),
+                  h('span', { style: { fontWeight: 600, flexShrink: 0 } }, (Number(r.qty) || 0) + ' ' + (r.unit || 'шт'))
+                ))
+              );
+            })(),
             h(ElapsedTimer, { startedAt: active.startedAt, style: { fontSize: 36, fontWeight: 600, color: AM2, marginBottom: 14, display: 'block', fontFamily: 'monospace', letterSpacing: '-0.02em' } }),
             idx === 0 && h('div', { style: { display: 'flex', gap: 6, marginBottom: 14 } },
               h('input', { style: { ...S.inp, flex: 1, fontSize: 14 }, placeholder: 'Комментарий к операции...', value: opComment, onChange: e => setOpComment(e.target.value), onKeyDown: e => e.key === 'Enter' && saveComment(active.id) }),

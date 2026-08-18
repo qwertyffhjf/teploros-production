@@ -1653,6 +1653,9 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
           h(OrderComponentsBlock, { order: ord, data, onUpdate, userRole })
         ),
 
+        // Смета работ БМК/КНР (этап 3 плана БМК): состав работ × объёмы × расценки
+        ord.productType === 'bmk' && h(BmkEstimateEditor, { order: ord, data, onUpdate, canEdit }),
+
         // Операции
         h('div', { style: { marginBottom: 14 } },
           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 } },
@@ -2668,6 +2671,152 @@ const WorkerCardModal = memo(({ worker, data, onClose }) => {
         )
       )
 
+    )
+  );
+});
+
+
+// ==================== BmkEstimateEditor ====================
+// Этап 3 плана БМК: смета (состав работ) заказа БМК/КНР в карточке заказа.
+// Мастер набирает работы из справочника bmkWorkRates и объёмы (м², м.п., шт);
+// заказ получает расчётную стоимость работ; рабочий видит объёмы своего этапа.
+// Вид (БМК/КНР) переключается здесь же; правила цен — см. bmkRowEffPrice (core).
+const BmkEstimateEditor = memo(({ order, data, onUpdate, canEdit, addToast }) => {
+  const toast = addToast || (() => {});
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [editRow, setEditRow] = useState(null); // { id, price }
+  const est = order.bmkEstimate || [];
+  const kind = order.bmkKind || 'bmk';
+  const rates = data.bmkWorkRates || [];
+  const money = (v) => (Number(v) || 0).toLocaleString('ru-RU');
+
+  const patchOrder = useCallback((patch, msg) => {
+    const d = { ...data, orders: data.orders.map(o => o.id === order.id ? { ...o, ...patch } : o) };
+    onUpdate(d);
+    DB.save(d).catch(() => { onUpdate(data); toast('Ошибка сохранения', 'error'); });
+    if (msg) toast(msg, 'success');
+  }, [data, order.id, onUpdate]);
+  const setRows = (rows, msg) => patchOrder({ bmkEstimate: rows }, msg);
+
+  const addWork = (w) => {
+    setRows([...est, { id: uid(), workId: w.id, stage: w.stage, name: w.name, unit: w.unit || 'шт', basePrice: w.price == null ? 0 : w.price, qty: 1 }]);
+    if (w.price == null) toast('У позиции нет базовой цены (' + (w.note || '%') + ') — задайте цену кликом по ней', 'info');
+  };
+  const setQty = (id, v) => setRows(est.map(r => r.id === id ? { ...r, qty: v === '' ? '' : Number(v) } : r));
+  const removeRow = (id) => setRows(est.filter(r => r.id !== id));
+  const toggleAnchor = (id) => setRows(est.map(r => r.id === id ? { ...r, noAnchor: !r.noAnchor } : r));
+  const commitPrice = () => {
+    if (!editRow) return;
+    const v = editRow.price === '' ? null : Number(editRow.price);
+    setRows(est.map(r => r.id === editRow.id
+      ? { ...r, priceOverride: (v == null || !isFinite(v) || v < 0) ? undefined : v }
+      : r), 'Цена обновлена');
+    setEditRow(null);
+  };
+
+  const stagesOrder = useMemo(() => {
+    const seen = [];
+    est.forEach(r => { if (!seen.includes(r.stage)) seen.push(r.stage); });
+    return [...BMK_STAGES.filter(s => seen.includes(s)), ...seen.filter(s => !BMK_STAGES.includes(s))];
+  }, [est]);
+
+  const total = bmkEstimateTotal({ bmkEstimate: est, bmkKind: kind });
+  const needle = q.trim().toLowerCase();
+  const pickList = needle ? rates.filter(w => (w.name + ' ' + w.stage).toLowerCase().includes(needle)) : rates;
+
+  const exportXlsx = () => {
+    const rows = [['Смета работ ' + (kind === 'knr' ? 'КНР' : 'БМК') + ' — заказ ' + (order.number || '')], []];
+    rows.push(['Этап', 'Работа', 'Ед.', 'Кол-во', 'Цена, руб', 'Сумма, руб']);
+    stagesOrder.forEach(st => {
+      est.filter(r => r.stage === st).forEach(r => {
+        const eff = bmkRowEffPrice(r, kind);
+        rows.push([st, r.name + (r.noAnchor ? ' (без анкерной группы −15%)' : ''), r.unit || 'шт', Number(r.qty) || 0, eff, eff * (Number(r.qty) || 0)]);
+      });
+    });
+    rows.push([]);
+    rows.push(['', '', '', '', 'Итого:', total]);
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{ wch: 24 }, { wch: 54 }, { wch: 6 }, { wch: 8 }, { wch: 10 }, { wch: 12 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Смета');
+    XLSX.writeFile(wb, 'Смета_' + (order.number || 'БМК') + '.xlsx');
+  };
+
+  return h('div', { style: { marginBottom: 14 } },
+    h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 6 } },
+      '📋 Смета работ' + (est.length ? ' (' + est.length + ' поз.)' : '')),
+    h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' } },
+      h('span', { style: { fontSize: 11, color: 'var(--muted)' } }, 'Вид:'),
+      [['bmk', 'БМК'], ['knr', 'КНР (наружное размещение)']].map(kv =>
+        h('button', {
+          key: kv[0],
+          disabled: !canEdit,
+          onClick: () => canEdit && kv[0] !== kind && patchOrder({ bmkKind: kv[0] }, 'Вид изделия: ' + kv[1]),
+          style: { padding: '4px 10px', fontSize: 11, borderRadius: 8, cursor: canEdit ? 'pointer' : 'default', border: '0.5px solid ' + (kind === kv[0] ? BL : 'var(--border)'), background: kind === kv[0] ? BL3 : 'var(--card)', color: kind === kv[0] ? BL2 : 'var(--muted)', fontWeight: kind === kv[0] ? 600 : 400 }
+        }, kv[1])
+      ),
+      kind === 'knr' && h('span', { style: { fontSize: 10, color: AM4 } }, 'обвязка котла −60% от прайса')
+    ),
+    est.length === 0 && h('div', { style: { fontSize: 12, color: 'var(--muted)', padding: '4px 0 8px' } },
+      canEdit ? 'Смета пуста — добавьте работы из справочника расценок.' : 'Смета не заполнена.'),
+    stagesOrder.map(st => {
+      const rows = est.filter(r => r.stage === st);
+      const stSum = rows.reduce((s, r) => s + bmkRowEffPrice(r, kind) * (Number(r.qty) || 0), 0);
+      const isMast = /^мачта/i.test(st || '');
+      return h('div', { key: st, style: { marginBottom: 8 } },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 11, fontWeight: 600, color: 'var(--muted)', padding: '3px 0', borderBottom: '0.5px solid var(--border)' } },
+          h('span', null, st), h('span', null, money(stSum) + ' ₽')),
+        rows.map(r => {
+          const eff = bmkRowEffPrice(r, kind);
+          const isOb = kind === 'knr' && /^обвязка/i.test(r.name || '') && r.priceOverride == null;
+          return h('div', { key: r.id, style: { display: 'flex', gap: 6, alignItems: 'center', padding: '4px 0', fontSize: 12, flexWrap: 'wrap' } },
+            h('span', { style: { flex: '1 1 170px', minWidth: 140 } },
+              r.name,
+              isOb && h('span', { style: { fontSize: 9, color: BL2, background: BL3, borderRadius: 5, padding: '1px 5px', marginLeft: 5, whiteSpace: 'nowrap' } }, '−60% КНР'),
+              r.noAnchor && r.priceOverride == null && h('span', { style: { fontSize: 9, color: AM2, background: AM3, borderRadius: 5, padding: '1px 5px', marginLeft: 5, whiteSpace: 'nowrap' } }, '−15% без анкера'),
+              r.priceOverride != null && h('span', { style: { fontSize: 9, color: 'var(--muted)', marginLeft: 5, whiteSpace: 'nowrap' } }, '(цена вручную)')
+            ),
+            canEdit
+              ? h('input', { type: 'number', min: 0, step: 'any', style: { ...S.inp, width: 72, padding: '4px 8px', minHeight: 0 }, value: r.qty, onChange: e => setQty(r.id, e.target.value) })
+              : h('span', { style: { fontWeight: 600 } }, Number(r.qty) || 0),
+            h('span', { style: { color: 'var(--muted)', minWidth: 32 } }, r.unit || 'шт'),
+            (editRow && editRow.id === r.id)
+              ? h(React.Fragment, null,
+                  h('input', { type: 'number', min: 0, autoFocus: true, style: { ...S.inp, width: 92, padding: '4px 8px', minHeight: 0 }, value: editRow.price, placeholder: 'база ' + money(r.basePrice), onChange: e => setEditRow(p => ({ ...p, price: e.target.value })), onKeyDown: e => e.key === 'Enter' && commitPrice() }),
+                  h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }, onClick: commitPrice }, '✓'),
+                  h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }, onClick: () => setEditRow(null) }, '✕'))
+              : h('span', {
+                  style: { minWidth: 78, textAlign: 'right', cursor: canEdit ? 'pointer' : 'default', textDecoration: canEdit ? 'underline dotted' : 'none' },
+                  title: canEdit ? 'Изменить цену (пустое поле — вернуть расчётную)' : (r.priceOverride != null ? 'Цена задана вручную' : ''),
+                  onClick: () => canEdit && setEditRow({ id: r.id, price: r.priceOverride == null ? '' : String(r.priceOverride) })
+                }, money(eff) + ' ₽'),
+            h('span', { style: { minWidth: 86, textAlign: 'right', fontWeight: 600 } }, money(eff * (Number(r.qty) || 0)) + ' ₽'),
+            canEdit && isMast && h('label', { style: { fontSize: 10, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer', whiteSpace: 'nowrap' } },
+              h('input', { type: 'checkbox', checked: !!r.noAnchor, onChange: () => toggleAnchor(r.id) }), 'без анкера'),
+            canEdit && h('button', { title: 'Удалить строку', style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, padding: '0 2px' }, onClick: () => removeRow(r.id) }, '🗑')
+          );
+        })
+      );
+    }),
+    est.length > 0 && h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 700, padding: '6px 0', borderTop: '1px solid var(--border)' } },
+      h('span', null, 'Итого работы'), h('span', null, money(total) + ' ₽')),
+    h('div', { style: { display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' } },
+      canEdit && h('button', { style: { fontSize: 12, padding: '5px 10px', borderRadius: 8, border: '1px dashed var(--border)', background: 'none', cursor: 'pointer', color: 'var(--muted)' }, onClick: () => setPickerOpen(v => !v) }, pickerOpen ? '✕ Закрыть подбор' : '+ Работа из справочника'),
+      est.length > 0 && h('button', { style: { fontSize: 12, padding: '5px 10px', borderRadius: 8, border: '0.5px solid var(--border)', background: 'var(--card)', cursor: 'pointer', color: 'var(--text)' }, onClick: exportXlsx }, '⬇ Смета в Excel')
+    ),
+    pickerOpen && canEdit && h('div', { style: { marginTop: 8, border: '0.5px solid var(--border)', borderRadius: 10, padding: 8, maxHeight: 260, overflowY: 'auto', background: 'var(--card-2)' } },
+      h('input', { style: { ...S.inp, width: '100%', marginBottom: 6, boxSizing: 'border-box' }, placeholder: '🔍 Поиск работы в справочнике', value: q, onChange: e => setQ(e.target.value), autoFocus: true }),
+      rates.length === 0 && h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, 'Справочник расценок БМК пуст (HR → Расценки).'),
+      pickList.slice(0, 60).map(w => h('div', {
+        key: w.id,
+        onClick: () => addWork(w),
+        style: { display: 'flex', justifyContent: 'space-between', gap: 8, padding: '5px 6px', fontSize: 11, borderRadius: 6, cursor: 'pointer' }
+      },
+        h('span', { style: { flex: 1 } }, w.name, h('span', { style: { color: 'var(--muted)' } }, ' · ' + w.stage)),
+        h('span', { style: { fontWeight: 600, flexShrink: 0 } }, w.price == null ? (w.note || '—') : money(w.price) + ' ₽/' + (w.unit || 'шт'))
+      )),
+      pickList.length > 60 && h('div', { style: { fontSize: 10, color: 'var(--muted)', padding: 4 } }, 'Показаны первые 60 — уточните поиск')
     )
   );
 });
