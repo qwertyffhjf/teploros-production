@@ -1374,7 +1374,7 @@ const Import1CModal = memo(({ data, onUpdate, addToast, onClose }) => {
   const buildOrderFromProduct = (p, number) => {
     const orderId = uid();
     const productType = _detectProductType(p.product);
-    const stages = (data.productionStages || []).filter(s => !s.productType || s.productType === productType);
+    const stages = (data.productionStages || []).filter(s => (s.productType || 'boiler') === productType);
 
     const newOrder = {
       id: orderId,
@@ -1638,7 +1638,7 @@ const SubOrderSplitStep = memo(({ data, onUpdate, addToast, onClose, parentOrder
   const baseNumber = parentOrder?.number || '';
   // Берём productType из parentOrder (уже определён при импорте) или fallback
   const productType = parentOrder?.productType || data.settings?.productTypes?.[0]?.id || 'boiler';
-  const stages = (data.productionStages || []).filter(s => !s.productType || s.productType === productType);
+  const stages = (data.productionStages || []).filter(s => (s.productType || 'boiler') === productType);
 
   // Инициализируем подзаказы: номер авто, шильдик пустой
   const initSubs = () => Array.from({ length: qty }, (_, i) => ({
@@ -2427,7 +2427,8 @@ const HRScreen = memo(({ data, onUpdate, addToast }) => {
     tab === 'kpi'          && h(KPIReport,             { data }),
     tab === 'rates'        && h(React.Fragment, null,
       h(PieceworkRatesEditor, { data, onUpdate, addToast }),
-      h(ExtraWorksEditor,     { data, onUpdate, addToast })
+      h(ExtraWorksEditor,     { data, onUpdate, addToast }),
+      h(BmkRatesEditor,       { data, onUpdate, addToast })
     ),
     tab === 'payroll'      && h(PayrollExport,          { data }),
     tab === 'reports'      && h(ReportsBuilder,        { data })
@@ -3148,7 +3149,7 @@ function App() {
       if (!order) return;
       const archivedOwn = data.ops.filter(o => o.orderId === id && o.archived);
       const hasLive = data.ops.some(o => o.orderId === id && !o.archived);
-      const stages = (data.productionStages || []).filter(s => !order.productType || s.productType === order.productType);
+      const stages = (data.productionStages || []).filter(s => (s.productType || 'boiler') === (order.productType || 'boiler'));
       let ops = data.ops;
       if (hasLive) { /* есть операции */ }
       else if (archivedOwn.length > 0) { ops = data.ops.map(o => (o.orderId === id && o.archived) ? { ...o, archived: false } : o); }
