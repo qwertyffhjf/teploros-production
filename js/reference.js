@@ -3160,3 +3160,228 @@ const ExtraWorksEditor = memo(({ data, onUpdate, addToast }) => {
         })
   );
 });
+
+
+// ==================== BmkRatesEditor ====================
+// Этап 2 плана БМК: живой справочник сдельных расценок на работы БМК
+// (data.bmkWorkRates). Источник — «Прайс-лист на изготовление котельной и КНР»:
+// разделы прайса = этапы БМК, позиции = работы с ценой за единицу (м², м.п., шт).
+// Реимпорт того же Excel обновляет цены по ключу «этап + название» с превью
+// изменений; позиции, добавленные вручную, импортом НЕ удаляются.
+const BMK_UNITS = ['шт', 'м²', 'м.п.'];
+
+// Заголовок раздела прайса → каноническое имя этапа БМК
+const normalizeBmkStage = (header) => {
+  const low = String(header || '').trim().toLowerCase();
+  for (const canon of BMK_STAGES) {
+    const stem = canon.toLowerCase().split(' (')[0];
+    if (low.startsWith(stem)) return canon;
+  }
+  return String(header || '').trim();
+};
+
+// Парсер листа прайса (массив строк из sheet_to_json {header:1}).
+// Раздел:  [текст, пусто, 'Цена, руб' | 'За 1м2' | 'За 1 м.п.']
+// Позиция: [номер, название, цена]
+// Примечания и шапки таблицы пропускаются.
+const parseBmkPriceSheet = (rows) => {
+  const items = [];
+  let stage = null, defUnit = 'шт';
+  for (const r of (rows || [])) {
+    const c0 = r[0];
+    const c1txt = (r[1] === undefined || r[1] === null) ? '' : String(r[1]).trim();
+    const c2raw = r[2];
+    const c2txt = (c2raw === undefined || c2raw === null) ? '' : String(c2raw).trim();
+    // Заголовок раздела
+    if (!c1txt && typeof c0 === 'string' && c0.trim() && c2txt) {
+      stage = normalizeBmkStage(c0);
+      const u = c2txt.toLowerCase();
+      defUnit = u.includes('м2') ? 'м²' : (u.includes('м.п') ? 'м.п.' : 'шт');
+      continue;
+    }
+    // Позиция
+    const num = Number(c0);
+    if (stage && c1txt && isFinite(num) && num > 0) {
+      const name = c1txt.replace('клапансвыше', 'клапан свыше'); // опечатка исходника
+      const lown = name.toLowerCase();
+      let unit = defUnit;
+      if (/за\s*1\s*м2/.test(lown)) unit = 'м²';
+      else if (/за\s*1\s*м\.?\s*п/.test(lown)) unit = 'м.п.';
+      else if (/за\s*1\s*шт/.test(lown)) unit = 'шт';
+      const p = Number(c2raw);
+      if (c2txt && isFinite(p) && p > 0) items.push({ stage, name, unit, price: Math.round(p) });
+      else if (c2txt) items.push({ stage, name, unit, price: null, note: c2txt.includes('%') ? c2txt + ' к цене соответствующей горелки' : c2txt });
+    }
+  }
+  return items;
+};
+
+// Сверка импорта с существующим справочником. Ключ: этап + название.
+const buildBmkImportPreview = (incoming, existing) => {
+  const key = (w) => (w.stage + '|' + w.name).toLowerCase();
+  const exMap = new Map(existing.map(w => [key(w), w]));
+  const inKeys = new Set(incoming.map(key));
+  const add = [], update = [], same = [];
+  for (const inc of incoming) {
+    const ex = exMap.get(key(inc));
+    if (!ex) { add.push(inc); continue; }
+    const samePrice = (ex.price == null ? null : ex.price) === (inc.price == null ? null : inc.price);
+    const sameUnit = (ex.unit || 'шт') === inc.unit;
+    if (samePrice && sameUnit) same.push(inc); else update.push({ inc, ex });
+  }
+  const missing = existing.filter(w => !inKeys.has(key(w)));
+  return { add, update, same, missing };
+};
+
+const BmkRatesEditor = memo(({ data, onUpdate, addToast }) => {
+  const rates = data.bmkWorkRates || [];
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState({});
+  const [editId, setEditId] = useState(null);
+  const [editForm, setEditForm] = useState({ name: '', unit: 'шт', price: '' });
+  const [addStage, setAddStage] = useState(null);
+  const [addForm, setAddForm] = useState({ name: '', unit: 'шт', price: '' });
+  const [preview, setPreview] = useState(null);
+
+  const money = (v) => (Number(v) || 0).toLocaleString('ru-RU');
+  const save = useCallback((d, msg) => {
+    onUpdate(d);
+    DB.save(d).catch(() => { onUpdate(data); addToast('Ошибка сохранения', 'error'); });
+    if (msg) addToast(msg, 'success');
+  }, [data, onUpdate, addToast]);
+
+  const stagesOrder = useMemo(() => {
+    const known = BMK_STAGES.filter(s => rates.some(w => w.stage === s));
+    const extra = [...new Set(rates.map(w => w.stage))].filter(s => !BMK_STAGES.includes(s)).sort();
+    return [...known, ...extra];
+  }, [rates]);
+
+  const needle = q.trim().toLowerCase();
+  const filtered = needle ? rates.filter(w => (w.name + ' ' + w.stage).toLowerCase().includes(needle)) : rates;
+
+  const startEdit = (w) => { setEditId(w.id); setEditForm({ name: w.name, unit: w.unit || 'шт', price: w.price == null ? '' : String(w.price) }); };
+  const commitEdit = () => {
+    if (!editForm.name.trim()) { addToast('Название не может быть пустым', 'error'); return; }
+    const price = editForm.price === '' ? null : Number(editForm.price);
+    if (editForm.price !== '' && (!isFinite(price) || price < 0)) { addToast('Некорректная цена', 'error'); return; }
+    const d = { ...data, bmkWorkRates: rates.map(w => w.id === editId ? { ...w, name: editForm.name.trim(), unit: editForm.unit, price } : w) };
+    save(d, 'Расценка обновлена'); setEditId(null);
+  };
+  const removeWork = (w) => {
+    const d = { ...data, bmkWorkRates: rates.filter(x => x.id !== w.id) };
+    save(d, 'Позиция удалена');
+  };
+  const commitAdd = () => {
+    if (!addForm.name.trim()) { addToast('Введите название работы', 'error'); return; }
+    const price = addForm.price === '' ? null : Number(addForm.price);
+    if (addForm.price !== '' && (!isFinite(price) || price < 0)) { addToast('Некорректная цена', 'error'); return; }
+    const d = { ...data, bmkWorkRates: [...rates, { id: uid(), stage: addStage, name: addForm.name.trim(), unit: addForm.unit, price }] };
+    save(d, 'Позиция добавлена'); setAddStage(null); setAddForm({ name: '', unit: 'шт', price: '' });
+  };
+
+  const importExcel = useCallback((ev) => {
+    const file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+        const incoming = parseBmkPriceSheet(rows);
+        if (!incoming.length) { addToast('В файле не найдено позиций прайса БМК', 'error'); return; }
+        setPreview(buildBmkImportPreview(incoming, rates));
+      } catch (err) { console.error(err); addToast('Не удалось прочитать файл', 'error'); }
+    };
+    reader.readAsArrayBuffer(file);
+  }, [rates, addToast]);
+
+  const applyImport = () => {
+    if (!preview) return;
+    const upMap = new Map(preview.update.map(u => [u.ex.id, u.inc]));
+    const next = rates.map(w => upMap.has(w.id) ? { ...w, price: upMap.get(w.id).price, unit: upMap.get(w.id).unit, note: upMap.get(w.id).note } : w);
+    const added = preview.add.map(w => ({ id: uid(), ...w }));
+    save({ ...data, bmkWorkRates: [...next, ...added] }, 'Импорт: +' + added.length + ' новых, обновлено ' + preview.update.length);
+    setPreview(null);
+  };
+
+  return h('div', { style: { ...S.card, marginTop: 14 } },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 10 } },
+      h('div', null,
+        h('div', { style: { fontSize: 15, fontWeight: 600 } }, '🏭 Расценки на работы БМК'),
+        h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, rates.length + ' позиций · разделы = этапы производства БМК')
+      ),
+      h('div', null,
+        h('button', { style: abtn(), onClick: () => document.getElementById('bmk-rates-import').click() }, '📤 Импорт из Excel'),
+        h('input', { type: 'file', id: 'bmk-rates-import', style: { display: 'none' }, accept: '.xlsx,.xls', onChange: importExcel })
+      )
+    ),
+    h('input', { style: { ...S.inp, width: '100%', marginBottom: 10, boxSizing: 'border-box' }, placeholder: '🔍 Поиск по названию работы', value: q, onChange: e => setQ(e.target.value) }),
+    rates.length === 0 && h('div', { style: { textAlign: 'center', color: 'var(--muted)', fontSize: 13, padding: '16px 0' } }, 'Справочник пуст. Импортируйте прайс из Excel.'),
+    stagesOrder.map(stName => {
+      const works = filtered.filter(w => w.stage === stName);
+      if (!works.length && needle) return null;
+      const isOpen = !!needle || !!open[stName];
+      return h('div', { key: stName, style: { marginBottom: 8, border: '0.5px solid var(--border)', borderRadius: 10, overflow: 'hidden' } },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 12px', background: 'var(--card-2)', cursor: 'pointer' }, onClick: () => setOpen(p => ({ ...p, [stName]: !p[stName] })) },
+          h('span', { style: { fontSize: 13, fontWeight: 600 } }, (isOpen ? '▾ ' : '▸ ') + stName),
+          h('span', { style: { fontSize: 11, color: 'var(--muted)' } }, works.length + ' поз.')
+        ),
+        isOpen && h('div', { style: { padding: '4px 10px 10px' } },
+          works.map(w => editId === w.id
+            ? h('div', { key: w.id, style: { display: 'flex', gap: 6, alignItems: 'center', padding: '4px 0', flexWrap: 'wrap' } },
+                h('input', { style: { ...S.inp, flex: 2, minWidth: 160 }, value: editForm.name, onChange: e => setEditForm(p => ({ ...p, name: e.target.value })) }),
+                h('select', { style: { ...S.inp, width: 76 }, value: editForm.unit, onChange: e => setEditForm(p => ({ ...p, unit: e.target.value })) }, BMK_UNITS.map(u => h('option', { key: u, value: u }, u))),
+                h('input', { type: 'number', style: { ...S.inp, width: 96 }, placeholder: 'Цена', value: editForm.price, onChange: e => setEditForm(p => ({ ...p, price: e.target.value })) }),
+                h('button', { style: { ...abtn({ padding: '6px 12px', minHeight: 34 }), background: GN, color: '#fff' }, onClick: commitEdit }, '✓'),
+                h('button', { style: abtn({ padding: '6px 12px', minHeight: 34 }), onClick: () => setEditId(null) }, '✕')
+              )
+            : h('div', { key: w.id, style: { display: 'flex', gap: 8, alignItems: 'center', padding: '5px 0', fontSize: 12, borderBottom: '0.5px solid var(--border)' } },
+                h('span', { style: { flex: 1 } }, w.name),
+                h('span', { style: { color: 'var(--muted)', flexShrink: 0, minWidth: 38, textAlign: 'right' } }, w.unit || 'шт'),
+                h('span', { style: { fontWeight: 600, flexShrink: 0, minWidth: 86, textAlign: 'right', color: w.price == null ? AM4 : 'var(--text)' }, title: w.price == null ? (w.note || '') : '' }, w.price == null ? (w.note || '—') : money(w.price) + ' ₽'),
+                h('button', { title: 'Изменить', style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: '2px 6px' }, onClick: () => startEdit(w) }, '✎'),
+                h('button', { title: 'Удалить', style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: '2px 6px' }, onClick: () => removeWork(w) }, '🗑')
+              )
+          ),
+          addStage === stName
+            ? h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' } },
+                h('input', { style: { ...S.inp, flex: 2, minWidth: 160 }, placeholder: 'Название работы', value: addForm.name, onChange: e => setAddForm(p => ({ ...p, name: e.target.value })) }),
+                h('select', { style: { ...S.inp, width: 76 }, value: addForm.unit, onChange: e => setAddForm(p => ({ ...p, unit: e.target.value })) }, BMK_UNITS.map(u => h('option', { key: u, value: u }, u))),
+                h('input', { type: 'number', style: { ...S.inp, width: 96 }, placeholder: 'Цена, ₽', value: addForm.price, onChange: e => setAddForm(p => ({ ...p, price: e.target.value })) }),
+                h('button', { style: { ...abtn({ padding: '6px 12px', minHeight: 34 }), background: GN, color: '#fff' }, onClick: commitAdd }, '✓ Добавить'),
+                h('button', { style: abtn({ padding: '6px 12px', minHeight: 34 }), onClick: () => setAddStage(null) }, '✕')
+              )
+            : h('button', { style: { background: 'none', border: '1px dashed var(--border)', borderRadius: 8, cursor: 'pointer', fontSize: 12, padding: '5px 10px', marginTop: 8, color: 'var(--muted)' }, onClick: () => { setAddStage(stName); setAddForm({ name: '', unit: 'шт', price: '' }); } }, '+ Позиция')
+        )
+      );
+    }),
+    preview && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }, onClick: () => setPreview(null) },
+      h('div', { style: { background: 'var(--card)', borderRadius: 14, padding: 18, maxWidth: 560, width: '100%', maxHeight: '80vh', overflowY: 'auto' }, onClick: e => e.stopPropagation() },
+        h('div', { style: { fontSize: 15, fontWeight: 600, marginBottom: 8 } }, '📤 Импорт прайса БМК — предпросмотр'),
+        h('div', { style: { fontSize: 12, marginBottom: 10, color: 'var(--muted)' } },
+          'Новых: ' + preview.add.length + ' · Обновится: ' + preview.update.length + ' · Без изменений: ' + preview.same.length + (preview.missing.length ? ' · Нет в файле (останутся): ' + preview.missing.length : '')),
+        preview.update.length > 0 && h('div', { style: { marginBottom: 10 } },
+          h('div', { style: { fontSize: 12, fontWeight: 600, marginBottom: 4 } }, 'Изменение цен:'),
+          preview.update.slice(0, 40).map((u, i) => h('div', { key: i, style: { fontSize: 11, padding: '2px 0' } },
+            u.inc.name + ': ',
+            h('span', { style: { textDecoration: 'line-through', color: 'var(--muted)' } }, u.ex.price == null ? '—' : money(u.ex.price)),
+            ' → ',
+            h('span', { style: { fontWeight: 600, color: GN2 } }, u.inc.price == null ? (u.inc.note || '—') : money(u.inc.price) + ' ₽')
+          )),
+          preview.update.length > 40 && h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, '… и ещё ' + (preview.update.length - 40))
+        ),
+        preview.add.length > 0 && h('div', { style: { marginBottom: 10 } },
+          h('div', { style: { fontSize: 12, fontWeight: 600, marginBottom: 4 } }, 'Новые позиции:'),
+          preview.add.slice(0, 40).map((w, i) => h('div', { key: i, style: { fontSize: 11, padding: '2px 0', color: GN2 } }, '+ ' + w.stage + ' · ' + w.name + (w.price != null ? ' — ' + money(w.price) + ' ₽' : ''))),
+          preview.add.length > 40 && h('div', { style: { fontSize: 11, color: 'var(--muted)' } }, '… и ещё ' + (preview.add.length - 40))
+        ),
+        h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 } },
+          h('button', { style: abtn({ background: 'var(--card-2)', color: 'var(--text)' }), onClick: () => setPreview(null) }, 'Отмена'),
+          h('button', { style: { ...abtn(), background: GN, color: '#fff' }, onClick: applyImport }, '✓ Применить')
+        )
+      )
+    )
+  );
+});
