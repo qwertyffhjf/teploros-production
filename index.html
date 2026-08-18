@@ -94,7 +94,7 @@
       --c-am: #8FA0FF;  --c-am2: #C7CEFF;  --c-am3: rgba(124,140,255,0.16);  --c-am4: rgba(150,165,255,0.45);
       --c-gn: #5FE3B3;  --c-gn2: #B9F2DE;  --c-gn3: rgba(95,227,179,0.14);
       --c-rd: #FF6B7A;  --c-rd2: #FFC2C9;  --c-rd3: rgba(255,107,122,0.16);
-      --c-bl: #6CB8FF;
+      --c-bl: #6CB8FF;  --c-bl2: #B9D8FF;  --c-bl3: rgba(108,184,255,0.16);
 
       /* — Статусы (капсулы Badge) — */
       --st-pending-bg:#B7BED21A; --st-pending-cl:#B7BED2; --st-pending-br:rgba(255,255,255,0.20);
@@ -142,7 +142,7 @@
         --c-am: #5A6BE8;  --c-am2: #323E9E;  --c-am3: rgba(108,124,255,0.14);  --c-am4: rgba(108,124,255,0.45);
         --c-gn: #0FA878;  --c-gn2: #0A5C43;  --c-gn3: rgba(15,168,120,0.14);
         --c-rd: #E14B5A;  --c-rd2: #8C1F2B;  --c-rd3: rgba(225,75,90,0.12);
-        --c-bl: #2E7CD6;
+        --c-bl: #2E7CD6;  --c-bl2: #17457F;  --c-bl3: rgba(46,124,214,0.13);
         --st-pending-bg:rgba(98,107,138,0.12); --st-pending-cl:#4B5470; --st-pending-br:rgba(98,107,138,0.30);
         --st-run-bg:rgba(90,107,232,0.14); --st-run-cl:#323E9E; --st-run-br:rgba(90,107,232,0.40);
         --st-chk-bg:rgba(150,100,220,0.14); --st-chk-cl:#5B3A99; --st-chk-br:rgba(150,100,220,0.38);
@@ -770,11 +770,11 @@
 </script>
 
 <!-- Core: константы, DB, утилиты, общие компоненты, загрузчик office/field бандлов -->
-<script src="js/core.js?v=20261009"></script>
+<script src="js/core.js?v=20261011"></script>
 <!-- Shared: QR, PDF, LoadForecast, WorkerCardModal, MasterOnboarding -->
-<script defer src="js/shared.js?v=20261009"></script>
+<script defer src="js/shared.js?v=20261011"></script>
 <!-- Чат — общий для всех ролей, поэтому грузится статически -->
-<script defer src="js/chat.js?v=20261009"></script>
+<script defer src="js/chat.js?v=20261011"></script>
 <!--
   Ленивая подгрузка по роли (аудит, perf) — вместо статических тегов ниже.
   qms.js, analytics.js, timesheet.js, auxops.js, reference.js, quality.js, hr.js,
@@ -784,6 +784,6 @@
   так как master.js/hr.js/analytics.js и т.д. им никогда не нужны.
 -->
 <!-- Приложение: App, Login, Dashboard, роутинг, PWA -->
-<script defer src="js/app.js?v=20261009"></script>
+<script defer src="js/app.js?v=20261011"></script>
 </body>
 </html>
