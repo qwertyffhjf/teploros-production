@@ -1079,7 +1079,10 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   };
 
   const createDefaultOps = useCallback((orderId, productType, orderQty, drawingUrl) => {
-    const stages = (data.productionStages || []).filter(s => !productType || s.productType === productType);
+    // Строгая типизация: пустой тип = легаси-котёл. Этапы чужого типа (БМК/котёл)
+    // не подтягиваются — у каждого типа изделия свой набор этапов.
+    const effType = productType || 'boiler';
+    const stages = (data.productionStages || []).filter(s => (s.productType || 'boiler') === effType);
     return stages.map(stage => ({ id: uid(), orderId, name: stage.name, qty: orderQty, workerIds: [], workerQty: {}, status: 'pending', createdAt: now(), plannedHours: stage.plannedHours || undefined, archived: false, sectionId: stage.sectionId || null, equipmentId: stage.equipmentId || null, plannedStartDate: undefined, drawingUrl: drawingUrl || stage.drawingUrl || undefined, requiresQC: stage.name.includes('свар') || stage.name.includes('Опресс') || stage.name.toLowerCase().includes('опресс'), requiresPressureTest: stage.name.toLowerCase().includes('опресс') }));
   }, [data.productionStages]);
 
@@ -1115,7 +1118,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   // Создаём поставки материалов по всем этапам у которых есть requiredMaterialIds
   const createMaterialDeliveries = useCallback((orderId, productType, orderQty, bomId) => {
     const deliveries = [];
-    const stages = (data.productionStages || []).filter(s => !productType || s.productType === productType);
+    const stages = (data.productionStages || []).filter(s => (s.productType || 'boiler') === (productType || 'boiler'));
     const bom = bomId ? data.bomTemplates?.find(b => b.id === bomId) : null;
 
     stages.forEach(stage => {
@@ -1164,8 +1167,10 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       setEditingId(null); setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '', boilerType: '', powerKw: '' }); setFieldErrors({}); setShowForm(false);
       addToast(`Заказ ${form.number} обновлён`, 'success');
     } else {
-      const newOrder = { id: uid(), ...form, qty: Number(form.qty), powerKw: Number(form.powerKw) || 0, boilerType: form.boilerType || 'v2d', createdAt: now(), archived: false };
-      const newOps = createDefaultOps(newOrder.id, form.productType, Number(form.qty), form.drawingUrl.trim() || undefined);
+      // Тип изделия: из селекта, а если не выбран — по названию (БМК/котёл)
+      const effProductType = form.productType || (/бмк|блочно|bmk/i.test(form.product || '') ? 'bmk' : 'boiler');
+      const newOrder = { id: uid(), ...form, productType: effProductType, qty: Number(form.qty), powerKw: Number(form.powerKw) || 0, boilerType: form.boilerType || 'v2d', createdAt: now(), archived: false };
+      const newOps = createDefaultOps(newOrder.id, effProductType, Number(form.qty), form.drawingUrl.trim() || undefined);
       // BOM: предупреждение о дефиците (не блокирует создание)
       if (form.bomId) {
         const bom = data.bomTemplates.find(b => b.id === form.bomId);
@@ -1182,7 +1187,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
             qty: m.qty * qty, reservedAt: now()
           }));
           if (reservations.length > 0) {
-            const newDeliveries = createMaterialDeliveries(newOrder.id, form.productType, Number(form.qty), form.bomId);
+            const newDeliveries = createMaterialDeliveries(newOrder.id, effProductType, Number(form.qty), form.bomId);
             const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps], materialReservations: [...(data.materialReservations || []), ...reservations], materialDeliveries: [...(data.materialDeliveries || []), ...newDeliveries] };
             onUpdate(d);
             setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '', boilerType: '', powerKw: '' }); setFieldErrors({}); setShowForm(false);
@@ -1192,7 +1197,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
           }
         }
       }
-      const newDeliveries = createMaterialDeliveries(newOrder.id, form.productType, Number(form.qty), form.bomId);
+      const newDeliveries = createMaterialDeliveries(newOrder.id, effProductType, Number(form.qty), form.bomId);
       const d = { ...data, orders: [...data.orders, newOrder], ops: [...data.ops, ...newOps], materialDeliveries: [...(data.materialDeliveries || []), ...newDeliveries] };
       onUpdate(d);
       setForm({ number: '', product: '', qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '', serialNumber: '', boilerType: '', powerKw: '' }); setFieldErrors({}); setShowForm(false);
