@@ -692,11 +692,14 @@ if (firestore) {
   // (стриминг), который режут корпоративные прокси, DPI и часть провайдеров:
   // Auth проходит (обычный HTTPS), а Firestore виснет на 10 сек и уходит в offline.
   // forceLongPolling: принудительно, без попытки WebChannel. autoDetect не помогает
+  // при DPI и вдобавок КОНФЛИКТУЕТ с force: merge:true сохраняет дефолтный
+  // autoDetect:true, а SDK кидает 'cannot be used together' и settings() падает —
+  // из-за чего long-polling молча не включался. Поэтому autoDetect:false задаём явно.
   // при DPI-троттлинге: стрим формально открывается, и SDK не переключается. merge:true — не затирать остальные настройки
   // (именно отсутствие merge раньше давало warning "overriding the original host").
   // Вызывать строго ДО первого обращения к Firestore.
   try {
-    firestore.settings({ experimentalForceLongPolling: true, merge: true });
+    firestore.settings({ experimentalForceLongPolling: true, experimentalAutoDetectLongPolling: false, merge: true });
   } catch(e) { console.warn('Firestore settings failed:', e); }
 
   // Чистим любую IndexedDB-персистентность, оставшуюся от прежних версий,
