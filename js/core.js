@@ -684,12 +684,12 @@ if (firestore) {
   // Автоопределение long-polling. По умолчанию Firestore использует WebChannel
   // (стриминг), который режут корпоративные прокси, DPI и часть провайдеров:
   // Auth проходит (обычный HTTPS), а Firestore виснет на 10 сек и уходит в offline.
-  // autoDetectLongPolling: SDK сам пробует WebChannel и падает на long-polling,
-  // если стрим не устанавливается. merge:true — не затирать остальные настройки
+  // forceLongPolling: принудительно, без попытки WebChannel. autoDetect не помогает
+  // при DPI-троттлинге: стрим формально открывается, и SDK не переключается. merge:true — не затирать остальные настройки
   // (именно отсутствие merge раньше давало warning "overriding the original host").
   // Вызывать строго ДО первого обращения к Firestore.
   try {
-    firestore.settings({ experimentalAutoDetectLongPolling: true, merge: true });
+    firestore.settings({ experimentalForceLongPolling: true, merge: true });
   } catch(e) { console.warn('Firestore settings failed:', e); }
 
   // Чистим любую IndexedDB-персистентность, оставшуюся от прежних версий,
