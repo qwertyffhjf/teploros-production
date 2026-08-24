@@ -2723,7 +2723,10 @@ function App() {
     const attemptLoad = () => {
       const loadWithTimeout = Promise.race([
         DB.load(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+        // Таймаут 30с: forceLongPolling + 4 параллельных .get() при холодном
+        // старте могут не уложиться в 8с, из-за чего клиент сдавался раньше,
+        // чем реально вставало соединение, и уходил в вечную петлю offline.
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 30000))
       ]);
 
       loadWithTimeout.then(async d => {
