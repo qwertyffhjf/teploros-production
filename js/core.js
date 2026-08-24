@@ -592,6 +592,13 @@ const isShipmentNear = (deadline) => {
   const diffDays = Math.ceil(diffTime / (1000*60*60*24));
   return diffDays <= 2 && diffDays >= 0;
 };
+// Операции, относящиеся к заказу. У родительского заказа своих операций нет —
+// они висят на подзаказах через parentOrderId, поэтому агрегируем по ним.
+// Архивные ops исключаются (архивация заказа архивирует и его операции).
+// Единый источник правды для getUrgency / getUrgencyGroup / opsForProgress (master.js).
+const getOrderOps = (order, data) => order.isParentOrder
+  ? data.ops.filter(x => data.orders.some(s => s.parentOrderId === order.id && s.id === x.orderId) && !x.archived)
+  : data.ops.filter(x => x.orderId === order.id && !x.archived);
 // Хэширование PIN (DJB2 + salt)
 const hashPin = (pin) => {
   if (!pin) return '';
