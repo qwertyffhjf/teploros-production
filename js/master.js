@@ -1400,9 +1400,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     // 'urgency' — по критичности
     const getUrgency = (o) => {
       if (o.shipped || o.archived) return 5;
-      const ops_ = o.isParentOrder
-        ? data.ops.filter(x => data.orders.some(s => s.parentOrderId === o.id && s.id === x.orderId) && !x.archived)
-        : data.ops.filter(x => x.orderId === o.id && !x.archived);
+      const ops_ = getOrderOps(o, data);
       const allDone_ = ops_.length > 0 && ops_.every(x => x.status === 'done');
       if (allDone_) return 4;
       const dl = o.deadline ? Math.ceil((new Date(o.deadline) - Date.now()) / 86400000) : null;
@@ -1834,9 +1832,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
             };
             const getUrgencyGroup = (o) => {
               if (o.shipped || o.archived) return 5;
-              const ops_ = o.isParentOrder
-                ? data.ops.filter(x => data.orders.some(s => s.parentOrderId === o.id && s.id === x.orderId) && !x.archived)
-                : data.ops.filter(x => x.orderId === o.id && !x.archived);
+              const ops_ = getOrderOps(o, data);
               const allDone_ = ops_.length > 0 && ops_.every(x => x.status === 'done');
               if (allDone_) return 4;
               const dl = o.deadline ? Math.ceil((new Date(o.deadline) - Date.now()) / 86400000) : null;
@@ -1852,9 +1848,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
             const isExpanded = expandedParents[ord.id];
 
             // Для родительского заказа — агрегируем прогресс по всем подзаказам
-            const opsForProgress = ord.isParentOrder
-              ? data.ops.filter(o => subOrders.some(s => s.id === o.orderId) && !o.archived)
-              : data.ops.filter(o => o.orderId === ord.id && !o.archived);
+            const opsForProgress = getOrderOps(ord, data);
             const ops = data.ops.filter(o => o.orderId === ord.id);
             const done = opsForProgress.filter(o => o.status === 'done').length;
             const def = opsForProgress.filter(o => o.status === 'defect').length;
