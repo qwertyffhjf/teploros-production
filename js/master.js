@@ -1435,7 +1435,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       const opRows = [];
 
       ordersToShow.forEach(ord => {
-        const ops = data.ops.filter(o => o.orderId === ord.id && !o.archived);
+        const ops = getOrderOps(ord, data);
         const total = ops.length;
         const done = ops.filter(o => o.status === 'done').length;
         const inProgress = ops.filter(o => o.status === 'in_progress').length;
