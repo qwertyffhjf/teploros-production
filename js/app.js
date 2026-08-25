@@ -2110,8 +2110,41 @@ function pickRouteSheetMode() {
   });
 }
 
+// Загрузка qrcodejs (та же CDN, что в QRModal)
+function ensureQrLib() {
+  return new Promise((resolve) => {
+    if (window.QRCode) return resolve(true);
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+    s.onload = () => resolve(true);
+    s.onerror = () => resolve(false);
+    document.head.appendChild(s);
+  });
+}
+
+// QR-картинка (dataURL) со ссылкой на карточку заказа: ?order=<id>
+async function orderQrDataUrl(order) {
+  try {
+    const ok = await ensureQrLib();
+    if (!ok || !window.QRCode) return null;
+    const appUrl = window.location.origin + window.location.pathname + '?order=' + order.id;
+    const holder = document.createElement('div');
+    holder.style.cssText = 'position:absolute;left:-9999px;top:-9999px;';
+    document.body.appendChild(holder);
+    new window.QRCode(holder, { text: appUrl, width: 120, height: 120, colorDark: '#111111', colorLight: '#ffffff',
+      correctLevel: (window.QRCode.CorrectLevel ? window.QRCode.CorrectLevel.M : undefined) });
+    await new Promise(r => setTimeout(r, 30));
+    let dataUrl = null;
+    const canvas = holder.querySelector('canvas');
+    if (canvas) { try { dataUrl = canvas.toDataURL('image/png'); } catch (e) {} }
+    if (!dataUrl) { const img = holder.querySelector('img'); if (img && img.src) dataUrl = img.src; }
+    document.body.removeChild(holder);
+    return dataUrl;
+  } catch (e) { return null; }
+}
+
 // Маршрутный лист. mode: 'blank' (бланк-путёвка) | 'act' (акт приёмки ОТК).
-// Без mode — показывает выбор варианта. qty>1 => по одной странице на экземпляр (серийник).
+// Без mode — показывает выбор. Формируется по одной странице на изделие (order.qty), у каждого — свой серийник и своя приёмка.
 async function generateRouteSheet(order, data, mode) {
   await ensureCdn('pdfmake');
   await ensureCdn('vfsFonts');
@@ -2121,11 +2154,11 @@ async function generateRouteSheet(order, data, mode) {
     if (!mode) return;
   }
 
+  const qrDataUrl = await orderQrDataUrl(order);
   const orderOps = (data?.ops || []).filter(op => op.orderId === order.id && !op.archived);
   const workerName = (id) => (data?.workers || []).find(w => w.id === id)?.name || '—';
   const isControl = (op) => !!(op.requiresQC || op.requiresPressureTest);
 
-  // Отметка ОТК по операции (для режима 'act'): читает протоколы ГИ и поля приёмки операции
   const otkMark = (op, serialNumber) => {
     const pts = data?.pressureTests || [];
     if (op.requiresPressureTest) {
@@ -2140,13 +2173,14 @@ async function generateRouteSheet(order, data, mode) {
       return { kind: 'wait', text: 'ожидает ОТК' };
     }
     if (op.requiresQC) {
-      if (op.qcStatus === 'accepted') {
-        const who = workerName(op.qcAcceptedBy);
-        const stamp = op.qcStamp ? ('клеймо №' + op.qcStamp) : ((who && who !== '—') ? who : 'ОТК');
-        const d = op.qcAcceptedAt ? new Date(op.qcAcceptedAt).toLocaleDateString('ru') : '';
+      const rec = (op.qcBySerial && serialNumber && op.qcBySerial[serialNumber]) ? op.qcBySerial[serialNumber] : op;
+      if (rec.qcStatus === 'accepted') {
+        const who = workerName(rec.qcAcceptedBy);
+        const stamp = rec.qcStamp ? ('клеймо №' + rec.qcStamp) : ((who && who !== '—') ? who : 'ОТК');
+        const d = rec.qcAcceptedAt ? new Date(rec.qcAcceptedAt).toLocaleDateString('ru') : '';
         return { kind: 'ok', text: [stamp, d].filter(Boolean).join(' · ') };
       }
-      if (op.qcStatus === 'rejected') return { kind: 'bad', text: 'отклонено ОТК' };
+      if (rec.qcStatus === 'rejected') return { kind: 'bad', text: 'отклонено ОТК' };
       if (op.status === 'done' || op.finishedAt) return { kind: 'wait', text: 'ожидает ОТК' };
       return { kind: 'none', text: '' };
     }
@@ -2162,12 +2196,8 @@ async function generateRouteSheet(order, data, mode) {
   };
 
   const otkCell = (op, serialNumber) => {
-    if (!isControl(op)) {
-      return { text: '—', fontSize: 9, alignment: 'center', color: '#bbb', fillColor: '#f4f4f2' };
-    }
-    if (mode === 'blank') {
-      return { text: '', fontSize: 9 };
-    }
+    if (!isControl(op)) return { text: '—', fontSize: 9, alignment: 'center', color: '#bbb', fillColor: '#f4f4f2' };
+    if (mode === 'blank') return { text: '', fontSize: 9 };
     const m = otkMark(op, serialNumber) || { kind: 'none', text: '' };
     const c = markColors[m.kind] || markColors.none;
     const cell = { text: m.text || '—', fontSize: 8, alignment: 'center', color: c.color };
@@ -2214,17 +2244,20 @@ async function generateRouteSheet(order, data, mode) {
       ]} ];
     }
 
+    const headerCols = [
+      { width: '*', stack: [
+        { text: title, style: 'header' },
+        { text: 'Заказ №: ' + order.number, style: 'subheader' },
+        { text: 'Зав. № ' + (serialNumber || '—') + ' · экз. ' + (unitIndex + 1) + ' из ' + unitCount + ' · ' + new Date().toLocaleDateString('ru'), fontSize: 8, color: '#888', margin: [0, 2, 0, 0] },
+      ]},
+    ];
+    if (qrDataUrl) headerCols.push({ width: 'auto', stack: [
+      { image: qrDataUrl, width: 58, height: 58, alignment: 'right' },
+      { text: 'заказ 360°', fontSize: 7, color: '#888', alignment: 'center', margin: [0, 2, 0, 0] },
+    ]});
+
     const block = [
-      { columns: [
-        { width: '*', stack: [
-          { text: title, style: 'header' },
-          { text: 'Заказ №: ' + order.number, style: 'subheader' },
-        ]},
-        { width: 'auto', stack: [
-          { text: 'Дата: ' + new Date().toLocaleDateString('ru'), fontSize: 9, color: '#888' },
-          { text: 'Зав. № ' + (serialNumber || '—') + ' · экз. ' + (unitIndex + 1) + ' из ' + unitCount, fontSize: 9, color: '#888' },
-        ], alignment: 'right' }
-      ], margin: [0, 0, 0, 8] },
+      { columns: headerCols, margin: [0, 0, 0, 8] },
       { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1 }], margin: [0, 0, 0, 10] },
 
       { table: { widths: ['25%','25%','25%','25%'], body: [
