@@ -2081,46 +2081,163 @@ const OrderComponentsBlock = memo(({ order, data, onUpdate, userRole, addToast }
 // Вспомогательная функция маршрутного листа (вынесена наружу для переиспользования)
 
 
-async function generateRouteSheet(order, data) {
+// Выбор варианта маршрутного листа (plain DOM, без React)
+function pickRouteSheetMode() {
+  return new Promise((resolve) => {
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;';
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#fff;border-radius:12px;padding:20px 22px;max-width:430px;width:90%;font-family:inherit;box-shadow:0 10px 40px rgba(0,0,0,.25);';
+    box.innerHTML = '<div style="font-size:15px;font-weight:600;margin-bottom:4px;color:#222;">Маршрутный лист</div>'
+      + '<div style="font-size:13px;color:#666;margin-bottom:16px;">Выберите вариант документа</div>';
+    const mk = (title, desc, val, primary) => {
+      const b = document.createElement('button');
+      b.style.cssText = 'display:block;width:100%;text-align:left;border:0.5px solid ' + (primary ? '#2d6a2d' : '#ccc') + ';border-radius:8px;padding:10px 12px;margin-bottom:8px;background:' + (primary ? '#eaf4ea' : '#fafafa') + ';cursor:pointer;';
+      b.innerHTML = '<div style="font-size:13px;font-weight:600;color:#222;">' + title + '</div><div style="font-size:12px;color:#666;margin-top:2px;">' + desc + '</div>';
+      b.onclick = () => { document.body.removeChild(ov); resolve(val); };
+      return b;
+    };
+    box.appendChild(mk('Бланк-путёвка', 'Пустой лист под ручное заполнение, едет с изделием', 'blank', false));
+    box.appendChild(mk('Акт приёмки ОТК', 'Отметки ОТК из системы, заключение с вердиктом', 'act', true));
+    const cancel = document.createElement('button');
+    cancel.textContent = 'Отмена';
+    cancel.style.cssText = 'margin-top:2px;border:none;background:none;color:#888;font-size:12px;cursor:pointer;';
+    cancel.onclick = () => { document.body.removeChild(ov); resolve(null); };
+    box.appendChild(cancel);
+    ov.appendChild(box);
+    ov.addEventListener('click', (e) => { if (e.target === ov) { document.body.removeChild(ov); resolve(null); } });
+    document.body.appendChild(ov);
+  });
+}
+
+// Маршрутный лист. mode: 'blank' (бланк-путёвка) | 'act' (акт приёмки ОТК).
+// Без mode — показывает выбор варианта. qty>1 => по одной странице на экземпляр (серийник).
+async function generateRouteSheet(order, data, mode) {
   await ensureCdn('pdfmake');
   await ensureCdn('vfsFonts');
+
+  if (mode !== 'blank' && mode !== 'act') {
+    mode = await pickRouteSheetMode();
+    if (!mode) return;
+  }
+
   const orderOps = (data?.ops || []).filter(op => op.orderId === order.id && !op.archived);
   const workerName = (id) => (data?.workers || []).find(w => w.id === id)?.name || '—';
+  const isControl = (op) => !!(op.requiresQC || op.requiresPressureTest);
 
-  const docDefinition = {
-    content: [
-      // Шапка
+  // Отметка ОТК по операции (для режима 'act'): читает протоколы ГИ и поля приёмки операции
+  const otkMark = (op, serialNumber) => {
+    const pts = data?.pressureTests || [];
+    if (op.requiresPressureTest) {
+      const t = pts.find(p => p.opId === op.id && (!serialNumber || !p.serialNumber || p.serialNumber === serialNumber));
+      if (!t) return { kind: 'open', text: 'ГИ не оформлен' };
+      if (t.status === 'signed' || t.verdict === 'pass') {
+        const who = workerName(t.qcSignedBy);
+        const d = t.qcSignedAt ? new Date(t.qcSignedAt).toLocaleDateString('ru') : '';
+        return { kind: 'ok', text: ['ГИ выдержал', (who && who !== '—') ? who : '', d].filter(Boolean).join(' · ') };
+      }
+      if (t.status === 'rejected' || t.verdict === 'fail') return { kind: 'bad', text: 'ГИ не выдержал' };
+      return { kind: 'wait', text: 'ожидает ОТК' };
+    }
+    if (op.requiresQC) {
+      if (op.qcStatus === 'accepted') {
+        const who = workerName(op.qcAcceptedBy);
+        const stamp = op.qcStamp ? ('клеймо №' + op.qcStamp) : ((who && who !== '—') ? who : 'ОТК');
+        const d = op.qcAcceptedAt ? new Date(op.qcAcceptedAt).toLocaleDateString('ru') : '';
+        return { kind: 'ok', text: [stamp, d].filter(Boolean).join(' · ') };
+      }
+      if (op.qcStatus === 'rejected') return { kind: 'bad', text: 'отклонено ОТК' };
+      if (op.status === 'done' || op.finishedAt) return { kind: 'wait', text: 'ожидает ОТК' };
+      return { kind: 'none', text: '' };
+    }
+    return null;
+  };
+
+  const markColors = {
+    ok:   { color: '#2d6a2d', fill: '#eaf4ea' },
+    wait: { color: '#8a5a00', fill: '#faf0da' },
+    open: { color: '#a32d2d', fill: '#fbeaea' },
+    bad:  { color: '#a32d2d', fill: '#fbeaea' },
+    none: { color: '#aaa',    fill: null },
+  };
+
+  const otkCell = (op, serialNumber) => {
+    if (!isControl(op)) {
+      return { text: '—', fontSize: 9, alignment: 'center', color: '#bbb', fillColor: '#f4f4f2' };
+    }
+    if (mode === 'blank') {
+      return { text: '', fontSize: 9 };
+    }
+    const m = otkMark(op, serialNumber) || { kind: 'none', text: '' };
+    const c = markColors[m.kind] || markColors.none;
+    const cell = { text: m.text || '—', fontSize: 8, alignment: 'center', color: c.color };
+    if (c.fill) cell.fillColor = c.fill;
+    return cell;
+  };
+
+  const title = mode === 'act' ? 'МАРШРУТНЫЙ ЛИСТ · АКТ ПРИЁМКИ ОТК' : 'МАРШРУТНЫЙ ЛИСТ';
+  const otkHeader = mode === 'act' ? 'Отметка ОТК' : 'Отметка ОТК (клеймо · дата)';
+  const controlOps = orderOps.filter(isControl);
+
+  const unitContent = (unitIndex, unitCount, serialNumber, isLast) => {
+    let tail;
+    if (mode === 'act') {
+      const passed = controlOps.filter(op => (otkMark(op, serialNumber) || {}).kind === 'ok').length;
+      const total = controlOps.length;
+      const allOk = total > 0 && passed === total;
+      tail = [
+        { text: 'ЗАКЛЮЧЕНИЕ ОТК', bold: true, fontSize: 10, margin: [0, 0, 0, 4] },
+        { columns: [
+          { width: '*', text: [ { text: 'Заводской №: ', bold: true }, serialNumber || '—' ], fontSize: 9 },
+          { width: '*', text: [ { text: 'Контрольные точки: ', bold: true }, passed + ' из ' + total ], fontSize: 9 },
+        ], margin: [0, 0, 0, 3] },
+        { text: [ { text: 'Вердикт: ', bold: true },
+          { text: allOk ? 'ГОДЕН' : (total === 0 ? 'нет контрольных точек' : 'НЕ ПРИНЯТО — открыты контрольные точки'),
+            color: allOk ? '#2d6a2d' : '#a32d2d', bold: true } ], fontSize: 9, margin: [0, 0, 0, 2] },
+        { text: 'Основание: ФНП, паспорт котла', fontSize: 8, color: '#888', margin: [0, 0, 0, 10] },
+        { columns: [
+          { width: '*', text: 'Контролёр ОТК: _______________', fontSize: 9 },
+          { width: 'auto', text: '   Клеймо №: ______', fontSize: 9 },
+          { width: 'auto', text: '   Подпись / дата: _____________', fontSize: 9 },
+        ]},
+      ];
+    } else {
+      const sigCol = (label, hint) => ({ width: '33%', stack: [
+        { text: label, fontSize: 9, bold: true },
+        { text: '\n\n_________________________', fontSize: 9 },
+        { text: hint, fontSize: 8, color: '#888', margin: [0, 2, 0, 0] }
+      ]});
+      tail = [ { columns: [
+        sigCol('Выдал мастер:', '(подпись / дата)'),
+        sigCol('Принял рабочий:', '(подпись / дата)'),
+        sigCol('Заключение ОТК:', 'клеймо / подпись / дата'),
+      ]} ];
+    }
+
+    const block = [
       { columns: [
         { width: '*', stack: [
-          { text: 'МАРШРУТНЫЙ ЛИСТ', style: 'header' },
-          { text: `Заказ №: ${order.number}`, style: 'subheader' },
+          { text: title, style: 'header' },
+          { text: 'Заказ №: ' + order.number, style: 'subheader' },
         ]},
         { width: 'auto', stack: [
-          { text: `Дата выдачи: ${new Date().toLocaleDateString('ru')}`, fontSize: 9, color: 'var(--fg-muted)' },
-          { text: `Страниц: 1`, fontSize: 9, color: 'var(--fg-muted)' },
+          { text: 'Дата: ' + new Date().toLocaleDateString('ru'), fontSize: 9, color: '#888' },
+          { text: 'Зав. № ' + (serialNumber || '—') + ' · экз. ' + (unitIndex + 1) + ' из ' + unitCount, fontSize: 9, color: '#888' },
         ], alignment: 'right' }
       ], margin: [0, 0, 0, 8] },
       { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1 }], margin: [0, 0, 0, 10] },
 
-      // Данные изделия
       { table: { widths: ['25%','25%','25%','25%'], body: [
-        [
-          { text: 'Изделие:', bold: true, fontSize: 9 }, { text: order.product || '—', fontSize: 9, colSpan: 3 }, {}, {}
-        ],
-        [
-          { text: 'Заказчик:', bold: true, fontSize: 9 }, { text: order.customer || '—', fontSize: 9, colSpan: 3 }, {}, {}
-        ],
-        [
-          { text: 'Количество:', bold: true, fontSize: 9 }, { text: `${order.qty || 1} шт`, fontSize: 9 },
-          { text: 'Срок отгрузки:', bold: true, fontSize: 9 }, { text: order.deadline ? new Date(order.deadline).toLocaleDateString('ru') : '—', fontSize: 9 }
-        ],
+        [ { text: 'Изделие:', bold: true, fontSize: 9 }, { text: order.product || '—', fontSize: 9, colSpan: 3 }, {}, {} ],
+        [ { text: 'Заказчик:', bold: true, fontSize: 9 }, { text: order.customer || '—', fontSize: 9, colSpan: 3 }, {}, {} ],
+        [ { text: 'Количество:', bold: true, fontSize: 9 }, { text: (order.qty || 1) + ' шт', fontSize: 9 },
+          { text: 'Срок отгрузки:', bold: true, fontSize: 9 }, { text: order.deadline ? new Date(order.deadline).toLocaleDateString('ru') : '—', fontSize: 9 } ],
       ]}, layout: 'lightHorizontalLines', margin: [0, 0, 0, 16] },
 
-      // Таблица операций
       { text: 'ТЕХНОЛОГИЧЕСКИЙ МАРШРУТ', style: 'subheader', margin: [0, 0, 0, 6] },
       { table: {
         headerRows: 1,
-        widths: ['auto', '*', 'auto', 'auto', 'auto', 60],
+        widths: ['auto', '*', 'auto', 'auto', 'auto', 120],
         body: [
           [
             { text: '№', bold: true, fontSize: 9, alignment: 'center' },
@@ -2128,59 +2245,59 @@ async function generateRouteSheet(order, data) {
             { text: 'Исполнитель', bold: true, fontSize: 9 },
             { text: 'План. время', bold: true, fontSize: 9, alignment: 'center' },
             { text: 'Факт. время', bold: true, fontSize: 9, alignment: 'center' },
-            { text: 'Подпись / Дата', bold: true, fontSize: 9, alignment: 'center' }
+            { text: otkHeader, bold: true, fontSize: 9, alignment: 'center' }
           ],
           ...orderOps.map((op, i) => {
             const actualH = (op.finishedAt && op.startedAt)
               ? ((op.finishedAt - op.startedAt) / 3600000).toFixed(1) + ' ч'
               : '';
             const workers = (op.workerIds || []).map(id => workerName(id)).filter(Boolean).join(', ');
-            const statusMark = op.status === 'done' ? '✓' : op.status === 'defect' ? '✗' : '';
             return [
               { text: String(i + 1), fontSize: 9, alignment: 'center' },
               { text: op.name, fontSize: 9 },
               { text: workers || '—', fontSize: 8, color: workers ? '#000' : '#aaa' },
-              { text: op.plannedHours ? `${op.plannedHours} ч` : '—', fontSize: 9, alignment: 'center' },
+              { text: op.plannedHours ? (op.plannedHours + ' ч') : '—', fontSize: 9, alignment: 'center' },
               { text: actualH, fontSize: 9, alignment: 'center', color: actualH ? '#333' : '#aaa' },
-              { text: statusMark, fontSize: 14, alignment: 'center', color: op.status === 'done' ? '#2d6a2d' : op.status === 'defect' ? '#a32d2d' : '#aaa' }
+              otkCell(op, serialNumber)
             ];
           })
         ]
       }, layout: {
-        hLineWidth: (i) => i === 0 || i === 1 ? 1 : 0.5,
+        hLineWidth: (i) => (i === 0 || i === 1) ? 1 : 0.5,
         vLineWidth: () => 0.5,
         hLineColor: () => '#ccc',
         vLineColor: () => '#ccc',
-      }, margin: [0, 0, 0, 20] },
+      }, margin: [0, 0, 0, 16] },
 
-      // Подписи
-      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, color:'var(--muted)' }], margin: [0, 0, 0, 10] },
-      { columns: [
-        { width: '33%', stack: [
-          { text: 'Выдал мастер:', fontSize: 9, bold: true },
-          { text: '\n\n_________________________', fontSize: 9 },
-          { text: '(подпись / дата)', fontSize: 8, color: 'var(--muted)', margin: [0, 2, 0, 0] }
-        ]},
-        { width: '33%', stack: [
-          { text: 'Принял рабочий:', fontSize: 9, bold: true },
-          { text: '\n\n_________________________', fontSize: 9 },
-          { text: '(подпись / дата)', fontSize: 8, color: 'var(--muted)', margin: [0, 2, 0, 0] }
-        ]},
-        { width: '34%', stack: [
-          { text: 'Принял ОТК:', fontSize: 9, bold: true },
-          { text: '\n\n_________________________', fontSize: 9 },
-          { text: '(подпись / дата)', fontSize: 8, color: 'var(--muted)', margin: [0, 2, 0, 0] }
-        ]}
-      ]},
-    ],
+      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, color: '#bbb' }], margin: [0, 0, 0, 10] },
+      ...tail,
+    ];
+    if (!isLast) block.push({ text: '', pageBreak: 'after' });
+    return block;
+  };
+
+  const unitCount = Math.max(1, Math.min(order.qty || 1, 50));
+  const baseSerial = order.serialNumber || '';
+  const content = [];
+  for (let k = 0; k < unitCount; k++) {
+    const serial = baseSerial
+      ? (unitCount > 1 ? (baseSerial + '-' + String(k + 1).padStart(2, '0')) : baseSerial)
+      : '';
+    content.push(...unitContent(k, unitCount, serial, k === unitCount - 1));
+  }
+
+  const docDefinition = {
+    content,
     styles: {
       header:    { fontSize: 16, bold: true, margin: [0, 0, 0, 4] },
-      subheader: { fontSize: 11, bold: true, margin: [0, 4, 0, 4], color: 'var(--fg)' }
+      subheader: { fontSize: 11, bold: true, margin: [0, 4, 0, 4] }
     },
     defaultStyle: { fontSize: 9 },
     pageMargins: [36, 36, 36, 36]
   };
-  pdfMake.createPdf(docDefinition).download(`route_${order.number}.pdf`);
+  const safeNum = String(order.number).replace(/[^\w.-]+/g, '_');
+  const suffix = mode === 'act' ? 'akt' : 'blank';
+  pdfMake.createPdf(docDefinition).download('route_' + safeNum + '_' + suffix + '.pdf');
 }
 
 // ==================== ShopMasterScreen (Сменный мастер) ====================
