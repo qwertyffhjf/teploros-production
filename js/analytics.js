@@ -1936,7 +1936,7 @@ const ProductionReports = memo(({ data, onUpdate, addToast }) => {
     try {
       await ensureCdn('xlsx');
       const rows = overdueList.map(({ o, dl }) => {
-        const ops = data.ops.filter(x => x.orderId === o.id && !x.archived);
+        const ops = getOrderOps(o, data);
         const total = ops.length, done = ops.filter(x => x.status === 'done').length;
         const cur = ops.find(x => x.status === 'in_progress') || ops.find(x => x.status === 'pending');
         const execs = [...new Set(ops.flatMap(x => (x.workerIds || []).map(wName)).filter(Boolean))].join(', ');
@@ -1960,6 +1960,26 @@ const ProductionReports = memo(({ data, onUpdate, addToast }) => {
     } catch (e) { addToast('Ошибка экспорта: ' + e.message, 'error'); }
   }, [overdueList, data.ops, wName, addToast]);
 
+  // Отчёт о причинах отставания (Этап 1+3). Логика расчёта — в core.js
+  // (buildLagReport/buildLagSheets), здесь только обёртка в XLSX и скачивание.
+  const lagPreview = React.useMemo(() => {
+    try { return buildLagReport(data, { periodDays: 14 }); }
+    catch (e) { return null; }
+  }, [data]);
+
+  const exportLagReport = React.useCallback(async () => {
+    try {
+      await ensureCdn('xlsx');
+      const rep = buildLagReport(data, { periodDays: 14 });
+      const sheets = buildLagSheets(rep, data);
+      const wb = XLSX.utils.book_new();
+      sheets.forEach(s => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(s.rows), s.name));
+      XLSX.writeFile(wb, 'otstavanie_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+      addToast('Отстающих заказов: ' + rep.summary.ordersLagging +
+        (rep.summary.topCause ? ' · главная причина: ' + rep.summary.topCause : ''), 'success');
+    } catch (e) { addToast('Ошибка экспорта: ' + e.message, 'error'); }
+  }, [data, addToast]);
+
   const card = { ...S.card, marginBottom: 12, padding: '14px 16px' };
   const hTitle = { fontSize: 14, fontWeight: 600, marginBottom: 4 };
   const sub = { fontSize: 12, color: 'var(--muted)', lineHeight: 1.5, marginBottom: 10 };
@@ -1978,6 +1998,17 @@ const ProductionReports = memo(({ data, onUpdate, addToast }) => {
       h('div', { style: hTitle }, '⏰ Просроченные и горящие заказы'),
       h('div', { style: sub }, 'Просрочено: ' + overdueCount + ', горит (≤3 дней): ' + burningCount + '. Выгрузка: заказчик, изделие, срок, насколько просрочен, готовность, текущая операция, исполнители.'),
       h('button', { style: abtn(), onClick: exportOverdue }, '📥 Скачать «Просрочка и риски»')
+    ),
+
+    h('div', { style: card },
+      h('div', { style: hTitle }, '🔎 Причины отставания'),
+      h('div', { style: sub }, lagPreview
+        ? ('Отстают заказов: ' + lagPreview.summary.ordersLagging + ', суммарно ' + lagPreview.summary.totalDaysLate +
+           ' дн.' + (lagPreview.summary.topCause ? ' Главная причина: ' + lagPreview.summary.topCause + '.' : '') +
+           (lagPreview.summary.overloadedSections.length ? ' Перегружены участки: ' + lagPreview.summary.overloadedSections.join(', ') + '.' : '') +
+           ' Выгрузка: бюджет просрочки по причинам, блокирующая операция каждого заказа, узкие места и загрузка участков.')
+        : 'Анализ причин просрочки: что именно держит каждый заказ — кооперация, материалы, загрузка участка, люди, брак или нормы.'),
+      h('button', { style: abtn(), onClick: exportLagReport }, '📥 Скачать «Причины отставания»')
     ),
 
     h('div', { style: { ...S.card, padding: '14px 16px' } },
