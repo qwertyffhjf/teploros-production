@@ -592,6 +592,7 @@ const isShipmentNear = (deadline) => {
   const diffDays = Math.ceil(diffTime / (1000*60*60*24));
   return diffDays <= 2 && diffDays >= 0;
 };
+/* LAG-DEP:START */
 // Операции, относящиеся к заказу. У родительского заказа своих операций нет —
 // они висят на подзаказах через parentOrderId, поэтому агрегируем по ним.
 // Архивные ops исключаются (архивация заказа архивирует и его операции).
@@ -599,6 +600,7 @@ const isShipmentNear = (deadline) => {
 const getOrderOps = (order, data) => order.isParentOrder
   ? data.ops.filter(x => data.orders.some(s => s.parentOrderId === order.id && s.id === x.orderId) && !x.archived)
   : data.ops.filter(x => x.orderId === order.id && !x.archived);
+/* LAG-DEP:END */
 // Хэширование PIN (DJB2 + salt)
 const hashPin = (pin) => {
   if (!pin) return '';
@@ -4404,6 +4406,7 @@ if (typeof window !== 'undefined') {
   console.log('[Core] ErrorBoundary registered as window.ErrorBoundary');
 }
 
+/* LAG-MODULE:START */
 // ==================== Анализ отставания заказов (Этап 1) ====================
 // Единый источник правды для отчёта о причинах отставания. Используется и из UI
 // (кнопка «Сформировать отчёт»), и из внешнего cron-скрипта выгрузки на Google Drive.
@@ -4523,7 +4526,7 @@ const attributeLagCause = (order, blockOp, data, sectionLoad) => {
   const ev = [];
 
   // 1. Внешняя кооперация и материалы — незакрытые поставки по заказу
-  const dl = (data.deliveries || []).filter(d => d.orderId === order.id && d.status !== 'confirmed');
+  const dl = (data.materialDeliveries || []).filter(d => d.orderId === order.id && d.status !== 'confirmed');
   if (dl.length > 0) {
     const partial = dl.filter(d => d.status === 'partial');
     const stageNames = [...new Set(dl.map(d => d.stageName).filter(Boolean))];
@@ -4710,3 +4713,115 @@ if (typeof window !== 'undefined') {
   window.getBlockingOp  = getBlockingOp;
   window.LAG_CAUSE      = LAG_CAUSE;
 }
+
+// ── Листы отчёта об отставании (Этап 3) ─────────────────────────────────────
+// Чистая функция: возвращает [{ name, rows }] без зависимости от XLSX.
+// UI оборачивает это в XLSX.utils.json_to_sheet, cron-скрипт — в npm-пакет xlsx.
+// Так одна и та же структура отчёта используется и в браузере, и на сервере.
+const buildLagSheets = (rep, data) => {
+  const secName = id => (data.sections || []).find(s => s.id === id)?.name || '';
+  const fmtDate = ts => ts ? new Date(ts).toLocaleDateString('ru-RU') : '';
+  const CAUSE_ACTION = {
+    'Внешняя кооперация': 'Вне цеха: срок подрядчика, эскалация поставщику',
+    'Материалы':          'Снабжение: закрыть поставку',
+    'Перегрузка участка': 'Планирование: перераспределить или сдвинуть сроки',
+    'Нехватка людей':     'Назначить исполнителей / закрыть отсутствия',
+    'Оборудование':       'Развести операции по станкам',
+    'Брак и переделки':   'ОТК: разбор причины брака',
+    'Нереальные нормы':   'Пересмотреть нормативы этапа',
+    'Причина не определена': 'Не хватает данных — заполнять простои и причины'
+  };
+
+  // 1. Резюме
+  const s = rep.summary;
+  const summaryRows = [
+    { 'Показатель': 'Отчёт сформирован',        'Значение': new Date(rep.generatedAt).toLocaleString('ru-RU') },
+    { 'Показатель': 'Горизонт расчёта, дней',   'Значение': rep.periodDays },
+    { 'Показатель': 'Активных заказов',         'Значение': s.ordersActive },
+    { 'Показатель': 'Отстают',                  'Значение': s.ordersLagging },
+    { 'Показатель': 'Суммарная просрочка, дней','Значение': s.totalDaysLate },
+    { 'Показатель': 'Главная причина',          'Значение': s.topCause || '—' },
+    { 'Показатель': 'Перегруженные участки',    'Значение': s.overloadedSections.join(', ') || 'нет' }
+  ];
+  if (rep.ai && rep.ai.summary) {
+    summaryRows.push({ 'Показатель': '', 'Значение': '' });
+    summaryRows.push({ 'Показатель': 'Вывод ИИ', 'Значение': rep.ai.summary });
+    (rep.ai.recommendations || []).forEach((r, i) =>
+      summaryRows.push({ 'Показатель': 'Рекомендация ' + (i + 1), 'Значение': typeof r === 'string' ? r : (r.text || '') }));
+  }
+
+  // 2. Бюджет причин — главный лист для руководителя
+  const totalDays = rep.causeBudget.reduce((a, b) => a + b.days, 0) || 1;
+  const budgetRows = rep.causeBudget.map(b => ({
+    'Причина': b.cause,
+    'Дней просрочки': b.days,
+    'Доля, %': Math.round(b.days / totalDays * 100),
+    'Заказов': b.orders,
+    'Заблокировано операций': b.blockedOps,
+    'Что делать': CAUSE_ACTION[b.cause] || ''
+  }));
+
+  // 3. Отстающие заказы
+  const orderRows = rep.lagging.map(l => ({
+    'Заказ': l.number,
+    'Изделие': l.product,
+    'Срок': l.deadline || '',
+    'Просрочка, дней': l.daysLate,
+    'Отставание по объёму, п.п.': l.scheduleGap,
+    'Готовность, %': l.progress,
+    'Операций всего': l.opsTotal,
+    'Выполнено': l.opsDone,
+    'Блокирующая операция': l.blockingOp ? l.blockingOp.name : '—',
+    'Участок': l.blockingOp ? secName(l.blockingOp.sectionId) : '',
+    'Заблокировано операций': l.blockedOpsCount,
+    'Причина': l.cause,
+    'Пояснение': l.causeDetail,
+    'Основание': (l.evidence || []).join('; ')
+  }));
+
+  // 4. Системные блокировки — один этап держит несколько заказов
+  const blockRows = rep.systemicBlocks.map(b => ({
+    'Операция': b.name,
+    'Заказов заблокировано': b.orders.length,
+    'Заказы': b.orders.join(', '),
+    'Суммарно дней просрочки': b.totalDays
+  }));
+
+  // 5. Загрузка участков
+  const secRows = rep.sectionLoad.map(x => ({
+    'Участок': x.name,
+    'Рабочих': x.workers,
+    'Мощность, ч': x.capacityHours,
+    'Очередь, ч': x.queueHours,
+    'Загрузка, %': x.loadPct === Infinity ? '∞ (нет людей)' : x.loadPct,
+    'Операций в очереди': x.queueOps,
+    'Не назначено': x.unassignedOps,
+    'Дней отсутствий': x.absentDays,
+    'Коды отсутствий': Object.entries(x.absentCodes || {}).map(([k, v]) => k + '×' + v).join(', '),
+    'Статус': x.overloaded ? 'ПЕРЕГРУЗ' : 'в норме'
+  }));
+
+  // 6. Полнота данных — объясняет категорию «не определено»
+  const q = rep.dataQuality;
+  const pct = n => q.openOpsTotal ? Math.round(n / q.openOpsTotal * 100) + '%' : '—';
+  const qualityRows = [
+    { 'Проверка': 'Открытых операций всего',       'Кол-во': q.openOpsTotal,             'Доля': '' },
+    { 'Проверка': 'Без плановых часов',            'Кол-во': q.opsWithoutPlannedHours,   'Доля': pct(q.opsWithoutPlannedHours) },
+    { 'Проверка': 'Без участка',                   'Кол-во': q.opsWithoutSection,        'Доля': pct(q.opsWithoutSection) },
+    { 'Проверка': 'Без исполнителя',               'Кол-во': q.opsUnassigned,            'Доля': pct(q.opsUnassigned) },
+    { 'Проверка': 'Заказов без срока',             'Кол-во': q.ordersWithoutDeadline,    'Доля': '' }
+  ];
+
+  const empty = msg => [{ 'Результат': msg }];
+  return [
+    { name: 'Резюме',           rows: summaryRows },
+    { name: 'Бюджет причин',    rows: budgetRows.length ? budgetRows : empty('отстающих заказов нет') },
+    { name: 'Заказы',           rows: orderRows.length  ? orderRows  : empty('отстающих заказов нет') },
+    { name: 'Блокировки',       rows: blockRows.length  ? blockRows  : empty('системных блокировок нет') },
+    { name: 'Загрузка участков',rows: secRows.length    ? secRows    : empty('участки не заведены') },
+    { name: 'Полнота данных',   rows: qualityRows }
+  ];
+};
+
+if (typeof window !== 'undefined') window.buildLagSheets = buildLagSheets;
+/* LAG-MODULE:END */
