@@ -4403,3 +4403,310 @@ if (typeof window !== 'undefined') {
   window.ErrorBoundary = ErrorBoundary;
   console.log('[Core] ErrorBoundary registered as window.ErrorBoundary');
 }
+
+// ==================== Анализ отставания заказов (Этап 1) ====================
+// Единый источник правды для отчёта о причинах отставания. Используется и из UI
+// (кнопка «Сформировать отчёт»), и из внешнего cron-скрипта выгрузки на Google Drive.
+// Логика намеренно НЕ дублируется по модулям — см. историю с getUrgency/getUrgencyGroup.
+//
+// Принцип: заказ опаздывает не «целиком» — его держит конкретная блокирующая
+// операция. Всё, что стоит ниже по цепочке, — следствие, а не отдельная проблема.
+
+const LAG_CAUSE = {
+  COOP:      'Внешняя кооперация',   // лазерный раскрой и прочие подрядчики
+  MATERIAL:  'Материалы',            // закупка/поставка не закрыта
+  SECTION:   'Перегрузка участка',   // очередь превышает мощность участка
+  STAFF:     'Нехватка людей',       // отсутствия по табелю / некому назначить
+  EQUIPMENT: 'Оборудование',         // конкуренция за станок, простои
+  QUALITY:   'Брак и переделки',
+  NORM:      'Нереальные нормы',     // факт систематически выше plannedHours
+  UNKNOWN:   'Причина не определена' // честный пробел в данных, не размазываем
+};
+
+const LAG_DAY = 86400000;
+
+// ── Доступные человеко-часы работника за период (по табелю) ─────────────────
+// Опирается на ту же модель, что и timesheet.js: data.timesheet['ГГГГ-ММ'][id][день].
+// Коды Б/ОТ/ОЗ/НН = 0 часов. Нет записи — считаем плановую смену (8ч), т.к.
+// отсутствие отметки чаще означает «не заполнили табель», а не «не вышел».
+const getWorkerCapacity = (workerId, data, fromTs, toTs) => {
+  let hours = 0, absentDays = 0, codes = {};
+  const d = new Date(fromTs);
+  d.setHours(0, 0, 0, 0);
+  while (d.getTime() <= toTs) {
+    const y = d.getFullYear(), m = d.getMonth(), day = d.getDate();
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) { // выходные не считаем мощностью
+      const key = `${y}-${String(m + 1).padStart(2, '0')}`;
+      const val = (data.timesheet || {})[key]?.[workerId]?.[day];
+      if (val) {
+        const c = val.code;
+        if (c === 'Б' || c === 'ОТ' || c === 'ОЗ' || c === 'НН') {
+          absentDays++; codes[c] = (codes[c] || 0) + 1;
+        } else {
+          hours += (val.h != null && val.h > 0) ? val.h : 8;
+        }
+      } else {
+        const w = (data.workers || []).find(x => x.id === workerId);
+        if (w && (w.status === 'sick' || w.status === 'vacation')) {
+          absentDays++; codes[w.status === 'sick' ? 'Б' : 'ОТ'] = (codes[w.status === 'sick' ? 'Б' : 'ОТ'] || 0) + 1;
+        } else {
+          hours += 8;
+        }
+      }
+    }
+    d.setDate(d.getDate() + 1);
+  }
+  return { hours, absentDays, codes };
+};
+
+// ── Загрузка участков: очередь плановых часов против мощности ───────────────
+// Главная ВНУТРЕННЯЯ причина отставания. Если очередь участка больше, чем он
+// физически может отработать за период, — операции будут копиться независимо
+// от старательности людей, и виновато планирование, а не цех.
+const getSectionLoad = (data, periodDays = 14) => {
+  const from = Date.now(), to = from + periodDays * LAG_DAY;
+  const sections = data.sections || [];
+  return sections.map(sec => {
+    const secWorkers = (data.workers || []).filter(w => w.sectionId === sec.id && !w.archived);
+    let capacity = 0, absentDays = 0, absentCodes = {};
+    secWorkers.forEach(w => {
+      const c = getWorkerCapacity(w.id, data, from, to);
+      capacity += c.hours;
+      absentDays += c.absentDays;
+      Object.entries(c.codes).forEach(([k, v]) => { absentCodes[k] = (absentCodes[k] || 0) + v; });
+    });
+    const queueOps = (data.ops || []).filter(o =>
+      o.sectionId === sec.id && !o.archived &&
+      (o.status === 'pending' || o.status === 'in_progress'));
+    const queueHours = queueOps.reduce((s, o) => s + (Number(o.plannedHours) || 0), 0);
+    const unassigned = queueOps.filter(o => !o.workerIds || o.workerIds.length === 0).length;
+    const loadPct = capacity > 0 ? Math.round(queueHours / capacity * 100) : (queueHours > 0 ? Infinity : 0);
+    return {
+      id: sec.id, name: sec.name,
+      workers: secWorkers.length, capacityHours: Math.round(capacity),
+      queueOps: queueOps.length, queueHours: Math.round(queueHours),
+      unassignedOps: unassigned,
+      absentDays, absentCodes,
+      loadPct,
+      overloaded: capacity > 0 ? queueHours > capacity : queueHours > 0
+    };
+  }).sort((a, b) => (b.loadPct === Infinity ? 1e9 : b.loadPct) - (a.loadPct === Infinity ? 1e9 : a.loadPct));
+};
+
+// ── Блокирующая операция заказа ─────────────────────────────────────────────
+// Самая ранняя незакрытая операция: сначала явные связи dependsOn, затем порядок
+// по плановой дате старта. Именно она держит заказ; остальное — следствие.
+const getBlockingOp = (order, data) => {
+  const ops = getOrderOps(order, data).filter(o => o.status !== 'done');
+  if (ops.length === 0) return null;
+  const openIds = new Set(ops.map(o => o.id));
+  const parseDeps = (o) => {
+    let d = o.dependsOn;
+    if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e) { d = []; } }
+    return Array.isArray(d) ? d : [];
+  };
+  // операция, которая сама никого не ждёт из числа незакрытых
+  const roots = ops.filter(o => !parseDeps(o).some(id => openIds.has(id)));
+  const pool = roots.length > 0 ? roots : ops;
+  return pool.slice().sort((a, b) => {
+    const ap = a.plannedStartDate || a.createdAt || 0;
+    const bp = b.plannedStartDate || b.createdAt || 0;
+    return ap - bp;
+  })[0];
+};
+
+// ── Атрибуция причины блокировки ────────────────────────────────────────────
+// Возвращает {cause, detail, evidence}. Порядок проверок — от внешних факторов
+// к внутренним: сначала то, на что цех повлиять не может.
+const attributeLagCause = (order, blockOp, data, sectionLoad) => {
+  const ev = [];
+
+  // 1. Внешняя кооперация и материалы — незакрытые поставки по заказу
+  const dl = (data.deliveries || []).filter(d => d.orderId === order.id && d.status !== 'confirmed');
+  if (dl.length > 0) {
+    const partial = dl.filter(d => d.status === 'partial');
+    const stageNames = [...new Set(dl.map(d => d.stageName).filter(Boolean))];
+    const note = dl.map(d => d.note || '').join(' ').toLowerCase();
+    // подрядный раскрой/кооперация распознаётся по примечанию или названию этапа
+    const isCoop = /раскро|лазер|коопер|подряд|стороне/.test(note + ' ' + stageNames.join(' ').toLowerCase());
+    ev.push(`${dl.length} незакрытых поставок` + (partial.length ? `, из них частичных: ${partial.length}` : ''));
+    if (stageNames.length) ev.push(`этапы: ${stageNames.join(', ')}`);
+    return {
+      cause: isCoop ? LAG_CAUSE.COOP : LAG_CAUSE.MATERIAL,
+      detail: isCoop ? 'Ожидание внешнего подрядчика' : 'Материал не поставлен',
+      evidence: ev
+    };
+  }
+
+  if (!blockOp) return { cause: LAG_CAUSE.UNKNOWN, detail: 'Нет незакрытых операций', evidence: ev };
+
+  // 2. Брак и переделки
+  if (blockOp.status === 'defect' || blockOp.status === 'rework') {
+    const reason = (data.defectReasons || []).find(r => r.id === blockOp.defectReasonId)?.name;
+    return { cause: LAG_CAUSE.QUALITY, detail: reason || 'Переделка операции', evidence: ev };
+  }
+
+  // 3. Перегрузка участка
+  const sec = sectionLoad.find(s => s.id === blockOp.sectionId);
+  if (sec && sec.overloaded) {
+    ev.push(`участок «${sec.name}»: очередь ${sec.queueHours}ч при мощности ${sec.capacityHours}ч`);
+    if (sec.absentDays > 0) {
+      const codes = Object.entries(sec.absentCodes).map(([k, v]) => `${k}×${v}`).join(', ');
+      ev.push(`отсутствия: ${codes}`);
+    }
+    return {
+      cause: LAG_CAUSE.SECTION,
+      detail: `Загрузка ${sec.loadPct === Infinity ? '∞' : sec.loadPct}% — участок не успевает`,
+      evidence: ev
+    };
+  }
+
+  // 4. Нехватка людей: некому назначить или исполнители отсутствуют
+  if (!blockOp.workerIds || blockOp.workerIds.length === 0) {
+    if (sec) ev.push(`участок «${sec.name}», свободной мощности ${Math.max(0, sec.capacityHours - sec.queueHours)}ч`);
+    return { cause: LAG_CAUSE.STAFF, detail: 'Операция не назначена ни на кого', evidence: ev };
+  }
+  const from = Date.now() - 7 * LAG_DAY;
+  const absent = blockOp.workerIds.filter(id => getWorkerCapacity(id, data, from, Date.now()).absentDays > 0);
+  if (absent.length === blockOp.workerIds.length && absent.length > 0) {
+    const names = absent.map(id => (data.workers || []).find(w => w.id === id)?.name || '?').join(', ');
+    return { cause: LAG_CAUSE.STAFF, detail: `Исполнители отсутствовали: ${names}`, evidence: ev };
+  }
+
+  // 5. Оборудование: конкуренция за станок
+  if (blockOp.equipmentId) {
+    const competing = (data.ops || []).filter(o =>
+      o.equipmentId === blockOp.equipmentId && !o.archived &&
+      o.id !== blockOp.id && (o.status === 'pending' || o.status === 'in_progress'));
+    if (competing.length >= 3) {
+      const eqName = (data.equipment || []).find(e => e.id === blockOp.equipmentId)?.name || 'станок';
+      ev.push(`${competing.length} операций в очереди на «${eqName}»`);
+      return { cause: LAG_CAUSE.EQUIPMENT, detail: `Очередь на ${eqName}`, evidence: ev };
+    }
+  }
+
+  // 6. Нереальные нормы: факт по этому этапу систематически выше плана
+  if (blockOp.plannedHours > 0 && blockOp.stageId) {
+    const sameStage = (data.ops || []).filter(o =>
+      o.stageId === blockOp.stageId && o.status === 'done' && o.startedAt && o.finishedAt && o.plannedHours > 0);
+    if (sameStage.length >= 3) {
+      const avgFact = sameStage.reduce((s, o) => s + (o.finishedAt - o.startedAt) / 3600000, 0) / sameStage.length;
+      const avgPlan = sameStage.reduce((s, o) => s + o.plannedHours, 0) / sameStage.length;
+      if (avgPlan > 0 && avgFact > avgPlan * 1.2) {
+        ev.push(`по этапу факт ${Math.round(avgFact)}ч при норме ${Math.round(avgPlan)}ч (${sameStage.length} набл.)`);
+        return { cause: LAG_CAUSE.NORM, detail: 'Норма занижена — план изначально нереален', evidence: ev };
+      }
+    }
+  }
+
+  return { cause: LAG_CAUSE.UNKNOWN, detail: 'Данных для вывода недостаточно', evidence: ev };
+};
+
+// ── Главная функция: отчёт об отставании ────────────────────────────────────
+const buildLagReport = (data, opts = {}) => {
+  const periodDays = opts.periodDays || 14;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const todayTs = today.getTime();
+  const sectionLoad = getSectionLoad(data, periodDays);
+
+  const orders = (data.orders || []).filter(o => !o.archived);
+
+  const lagging = [];
+  orders.forEach(order => {
+    const ops = getOrderOps(order, data);
+    if (ops.length === 0) return;
+    const done = ops.filter(o => o.status === 'done').length;
+    if (done === ops.length) return; // выполнен — не отстаёт
+
+    const dl = order.deadline ? new Date(order.deadline).getTime() : null;
+    const daysLate = dl ? Math.ceil((todayTs - dl) / LAG_DAY) : 0;
+    const progress = Math.round(done / ops.length * 100);
+
+    // отставание по объёму: доля срока прошла, а работа не сделана
+    let scheduleGap = 0;
+    if (dl && order.createdAt) {
+      const total = dl - order.createdAt;
+      if (total > 0) {
+        const elapsedPct = Math.min(100, Math.round((todayTs - order.createdAt) / total * 100));
+        scheduleGap = elapsedPct - progress;
+      }
+    }
+
+    const isLate = daysLate > 0 || scheduleGap > 20;
+    if (!isLate) return;
+
+    const blockOp = getBlockingOp(order, data);
+    const attr = attributeLagCause(order, blockOp, data, sectionLoad);
+    const blockedCount = blockOp ? ops.filter(o => o.status !== 'done' && o.id !== blockOp.id).length : 0;
+
+    lagging.push({
+      orderId: order.id, number: order.number, product: order.product || '',
+      deadline: order.deadline || null,
+      daysLate: Math.max(0, daysLate), scheduleGap, progress,
+      opsTotal: ops.length, opsDone: done,
+      blockingOp: blockOp ? { id: blockOp.id, name: blockOp.name, status: blockOp.status, sectionId: blockOp.sectionId } : null,
+      blockedOpsCount: blockedCount,
+      cause: attr.cause, causeDetail: attr.detail, evidence: attr.evidence
+    });
+  });
+
+  lagging.sort((a, b) => (b.daysLate - a.daysLate) || (b.scheduleGap - a.scheduleGap));
+
+  // ── Бюджет причин: сколько дней отставания дала каждая категория ──
+  const budget = {};
+  lagging.forEach(l => {
+    if (!budget[l.cause]) budget[l.cause] = { cause: l.cause, orders: 0, days: 0, blockedOps: 0 };
+    budget[l.cause].orders++;
+    budget[l.cause].days += l.daysLate;
+    budget[l.cause].blockedOps += l.blockedOpsCount;
+  });
+  const causeBudget = Object.values(budget).sort((a, b) => b.days - a.days || b.orders - a.orders);
+
+  // ── Системные блокировки: один этап держит несколько заказов ──
+  const byStage = {};
+  lagging.forEach(l => {
+    if (!l.blockingOp) return;
+    const k = l.blockingOp.name || '—';
+    if (!byStage[k]) byStage[k] = { name: k, orders: [], totalDays: 0 };
+    byStage[k].orders.push(l.number);
+    byStage[k].totalDays += l.daysLate;
+  });
+  const systemicBlocks = Object.values(byStage)
+    .filter(b => b.orders.length > 1)
+    .sort((a, b) => b.orders.length - a.orders.length || b.totalDays - a.totalDays);
+
+  // ── Полнота данных: чтобы «не определено» можно было объяснить ──
+  const openOps = (data.ops || []).filter(o => !o.archived && o.status !== 'done');
+  const dataQuality = {
+    opsWithoutPlannedHours: openOps.filter(o => !o.plannedHours).length,
+    opsWithoutSection:      openOps.filter(o => !o.sectionId).length,
+    opsUnassigned:          openOps.filter(o => !o.workerIds || o.workerIds.length === 0).length,
+    ordersWithoutDeadline:  orders.filter(o => !o.deadline).length,
+    openOpsTotal:           openOps.length
+  };
+
+  return {
+    generatedAt: Date.now(),
+    periodDays,
+    summary: {
+      ordersActive: orders.length,
+      ordersLagging: lagging.length,
+      totalDaysLate: lagging.reduce((s, l) => s + l.daysLate, 0),
+      topCause: causeBudget[0]?.cause || null,
+      overloadedSections: sectionLoad.filter(s => s.overloaded).map(s => s.name)
+    },
+    causeBudget,
+    lagging,
+    sectionLoad,
+    systemicBlocks,
+    dataQuality
+  };
+};
+
+if (typeof window !== 'undefined') {
+  window.buildLagReport = buildLagReport;
+  window.getSectionLoad = getSectionLoad;
+  window.getBlockingOp  = getBlockingOp;
+  window.LAG_CAUSE      = LAG_CAUSE;
+}
