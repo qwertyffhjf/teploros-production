@@ -1426,7 +1426,7 @@ ${subOrders.length > 0 ? `
   iframe.onload = () => { iframe.contentWindow.print(); setTimeout(() => document.body.removeChild(iframe), 2000); };
 };
 
-const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false, onEditMaterials, onEditDeps, userRole, onOpenOrder, onRestoreAsSimple }) => {
+const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false, allowRouteSheet = false, onEditMaterials, onEditDeps, userRole, onOpenOrder, onRestoreAsSimple }) => {
   if (!orderId) return null;
   const ord = data.orders.find(o => o.id === orderId);
   if (!ord) return null;
@@ -1709,7 +1709,7 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
         // Кнопки — только для canEdit
         h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
           canEdit && !ord.isParentOrder && h('button', { onClick: () => { if (typeof generateFullPassport === 'function') generateFullPassport(ord, data); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '📄 Паспорт PDF'),
-          canEdit && !ord.isParentOrder && h('button', { onClick: () => { if (typeof generateRouteSheet === 'function') generateRouteSheet(ord, data); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '📋 Маршрутный лист'),
+          (canEdit || allowRouteSheet) && !ord.isParentOrder && h('button', { onClick: () => { if (typeof generateRouteSheet === 'function') generateRouteSheet(ord, data); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '📋 Маршрутный лист'),
           canEdit && onEditMaterials && h('button', { onClick: () => { onClose(); onEditMaterials(ord.id); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '🔩 Заявка на материалы'),
           h('button', {
             onClick: () => printOrderLabel(ord, data),
