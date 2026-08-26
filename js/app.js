@@ -2144,7 +2144,9 @@ async function orderQrDataUrl(order) {
 }
 
 // Маршрутный лист. mode: 'blank' (бланк-путёвка) | 'act' (акт приёмки ОТК).
-// Без mode — показывает выбор. Формируется по одной странице на изделие (order.qty), у каждого — свой серийник и своя приёмка.
+// Без mode — показывает выбор. По странице на изделие (order.qty).
+// Отметка ОТК берётся из реальной модели статусов: done = принято ОТК (+ событие qc_pass),
+// on_check = ожидает ОТК, weld_check = ожидает главного сварщика, defect = брак; опрессовка — из pressureTests.
 async function generateRouteSheet(order, data, mode) {
   await ensureCdn('pdfmake');
   await ensureCdn('vfsFonts');
@@ -2159,29 +2161,33 @@ async function generateRouteSheet(order, data, mode) {
   const workerName = (id) => (data?.workers || []).find(w => w.id === id)?.name || '—';
   const isControl = (op) => !!(op.requiresQC || op.requiresPressureTest);
 
+  const qcPassDate = (op) => {
+    const evs = (data?.events || []).filter(e => e.opId === op.id && e.type === 'qc_pass');
+    const ev = evs.sort((a, b) => (b.ts || 0) - (a.ts || 0))[0];
+    const ts = ev ? ev.ts : op.weldAcceptedAt;
+    return ts ? new Date(ts).toLocaleDateString('ru') : '';
+  };
+
   const otkMark = (op, serialNumber) => {
     const pts = data?.pressureTests || [];
     if (op.requiresPressureTest) {
       const t = pts.find(p => p.opId === op.id && (!serialNumber || !p.serialNumber || p.serialNumber === serialNumber));
       if (!t) return { kind: 'open', text: 'ГИ не оформлен' };
       if (t.status === 'signed' || t.verdict === 'pass') {
-        const who = workerName(t.qcSignedBy);
         const d = t.qcSignedAt ? new Date(t.qcSignedAt).toLocaleDateString('ru') : '';
-        return { kind: 'ok', text: ['ГИ выдержал', (who && who !== '—') ? who : '', d].filter(Boolean).join(' · ') };
+        return { kind: 'ok', text: ['ГИ выдержал', d].filter(Boolean).join(' · ') };
       }
       if (t.status === 'rejected' || t.verdict === 'fail') return { kind: 'bad', text: 'ГИ не выдержал' };
       return { kind: 'wait', text: 'ожидает ОТК' };
     }
     if (op.requiresQC) {
-      const rec = (op.qcBySerial && serialNumber && op.qcBySerial[serialNumber]) ? op.qcBySerial[serialNumber] : op;
-      if (rec.qcStatus === 'accepted') {
-        const who = workerName(rec.qcAcceptedBy);
-        const stamp = rec.qcStamp ? ('клеймо №' + rec.qcStamp) : ((who && who !== '—') ? who : 'ОТК');
-        const d = rec.qcAcceptedAt ? new Date(rec.qcAcceptedAt).toLocaleDateString('ru') : '';
-        return { kind: 'ok', text: [stamp, d].filter(Boolean).join(' · ') };
+      if (op.status === 'defect') return { kind: 'bad', text: 'отклонено ОТК' };
+      if (op.status === 'done') {
+        const d = qcPassDate(op);
+        return { kind: 'ok', text: 'принято ОТК' + (d ? ' · ' + d : '') };
       }
-      if (rec.qcStatus === 'rejected') return { kind: 'bad', text: 'отклонено ОТК' };
-      if (op.status === 'done' || op.finishedAt) return { kind: 'wait', text: 'ожидает ОТК' };
+      if (op.status === 'on_check') return { kind: 'wait', text: 'ожидает ОТК' };
+      if (op.status === 'weld_check') return { kind: 'wait', text: 'ожидает сварщика' };
       return { kind: 'none', text: '' };
     }
     return null;
