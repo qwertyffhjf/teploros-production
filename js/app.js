@@ -2097,7 +2097,7 @@ function pickRouteSheetMode() {
       b.onclick = () => { document.body.removeChild(ov); resolve(val); };
       return b;
     };
-    box.appendChild(mk('Бланк-путёвка', 'Пустой лист под ручное заполнение, едет с изделием', 'blank', false));
+    box.appendChild(mk('Бланк-путёвка', 'Пустые ячейки ОТК под ручную подпись', 'blank', false));
     box.appendChild(mk('Акт приёмки ОТК', 'Отметки ОТК из системы, заключение с вердиктом', 'act', true));
     const cancel = document.createElement('button');
     cancel.textContent = 'Отмена';
@@ -2144,9 +2144,9 @@ async function orderQrDataUrl(order) {
 }
 
 // Маршрутный лист. mode: 'blank' (бланк-путёвка) | 'act' (акт приёмки ОТК).
-// Без mode — показывает выбор. По странице на изделие (order.qty).
-// Отметка ОТК берётся из реальной модели статусов: done = принято ОТК (+ событие qc_pass),
-// on_check = ожидает ОТК, weld_check = ожидает главного сварщика, defect = брак; опрессовка — из pressureTests.
+// Две колонки ОТК: «конструктив» (сборочные операции + опрессовка/ГИ) и «сварка» (сварные операции).
+// Сварка тянется из модели статусов (done=принято + событие qc_pass, on_check=ожидает, weld_check=ожидает сварщика, defect=отклонено),
+// опрессовка — из pressureTests; конструктивный контроль сборки система пока не хранит — ячейка пустая под подпись.
 async function generateRouteSheet(order, data, mode) {
   await ensureCdn('pdfmake');
   await ensureCdn('vfsFonts');
@@ -2159,7 +2159,6 @@ async function generateRouteSheet(order, data, mode) {
   const qrDataUrl = await orderQrDataUrl(order);
   const orderOps = (data?.ops || []).filter(op => op.orderId === order.id && !op.archived);
   const workerName = (id) => (data?.workers || []).find(w => w.id === id)?.name || '—';
-  const isControl = (op) => !!(op.requiresQC || op.requiresPressureTest);
 
   const qcPassDate = (op) => {
     const evs = (data?.events || []).filter(e => e.opId === op.id && e.type === 'qc_pass');
@@ -2168,29 +2167,25 @@ async function generateRouteSheet(order, data, mode) {
     return ts ? new Date(ts).toLocaleDateString('ru') : '';
   };
 
-  const otkMark = (op, serialNumber) => {
+  // Отметка по сварке (из модели статусов)
+  const weldMark = (op) => {
+    if (op.status === 'defect') return { kind: 'bad', text: 'отклонено ОТК' };
+    if (op.status === 'done') { const d = qcPassDate(op); return { kind: 'ok', text: 'принято ОТК' + (d ? ' · ' + d : '') }; }
+    if (op.status === 'on_check') return { kind: 'wait', text: 'ожидает ОТК' };
+    if (op.status === 'weld_check') return { kind: 'wait', text: 'ожидает сварщика' };
+    return { kind: 'none', text: '' };
+  };
+  // Отметка по опрессовке (из pressureTests)
+  const ptMark = (op, serialNumber) => {
     const pts = data?.pressureTests || [];
-    if (op.requiresPressureTest) {
-      const t = pts.find(p => p.opId === op.id && (!serialNumber || !p.serialNumber || p.serialNumber === serialNumber));
-      if (!t) return { kind: 'open', text: 'ГИ не оформлен' };
-      if (t.status === 'signed' || t.verdict === 'pass') {
-        const d = t.qcSignedAt ? new Date(t.qcSignedAt).toLocaleDateString('ru') : '';
-        return { kind: 'ok', text: ['ГИ выдержал', d].filter(Boolean).join(' · ') };
-      }
-      if (t.status === 'rejected' || t.verdict === 'fail') return { kind: 'bad', text: 'ГИ не выдержал' };
-      return { kind: 'wait', text: 'ожидает ОТК' };
+    const t = pts.find(p => p.opId === op.id && (!serialNumber || !p.serialNumber || p.serialNumber === serialNumber));
+    if (!t) return { kind: 'open', text: 'ГИ не оформлен' };
+    if (t.status === 'signed' || t.verdict === 'pass') {
+      const d = t.qcSignedAt ? new Date(t.qcSignedAt).toLocaleDateString('ru') : '';
+      return { kind: 'ok', text: ['ГИ выдержал', d].filter(Boolean).join(' · ') };
     }
-    if (op.requiresQC) {
-      if (op.status === 'defect') return { kind: 'bad', text: 'отклонено ОТК' };
-      if (op.status === 'done') {
-        const d = qcPassDate(op);
-        return { kind: 'ok', text: 'принято ОТК' + (d ? ' · ' + d : '') };
-      }
-      if (op.status === 'on_check') return { kind: 'wait', text: 'ожидает ОТК' };
-      if (op.status === 'weld_check') return { kind: 'wait', text: 'ожидает сварщика' };
-      return { kind: 'none', text: '' };
-    }
-    return null;
+    if (t.status === 'rejected' || t.verdict === 'fail') return { kind: 'bad', text: 'ГИ не выдержал' };
+    return { kind: 'wait', text: 'ожидает ОТК' };
   };
 
   const markColors = {
@@ -2200,25 +2195,35 @@ async function generateRouteSheet(order, data, mode) {
     bad:  { color: '#a32d2d', fill: '#fbeaea' },
     none: { color: '#aaa',    fill: null },
   };
-
-  const otkCell = (op, serialNumber) => {
-    if (!isControl(op)) return { text: '—', fontSize: 9, alignment: 'center', color: '#bbb', fillColor: '#f4f4f2' };
-    if (mode === 'blank') return { text: '', fontSize: 9 };
-    const m = otkMark(op, serialNumber) || { kind: 'none', text: '' };
+  const greyCell  = () => ({ text: '—', fontSize: 9, alignment: 'center', color: '#bbb', fillColor: '#f4f4f2' });
+  const blankCell = () => ({ text: '', fontSize: 9 });
+  const markToCell = (m) => {
     const c = markColors[m.kind] || markColors.none;
     const cell = { text: m.text || '—', fontSize: 8, alignment: 'center', color: c.color };
     if (c.fill) cell.fillColor = c.fill;
     return cell;
   };
 
+  // Колонка «ОТК сварка»: активна на сварных операциях (requiresQC)
+  const weldCell = (op) => {
+    if (!op.requiresQC) return greyCell();
+    if (mode === 'blank') return blankCell();
+    return markToCell(weldMark(op));
+  };
+  // Колонка «ОТК конструктив»: сборочные операции + опрессовка; на сварных — прочерк
+  const constrCell = (op, serialNumber) => {
+    if (op.requiresQC) return greyCell();
+    if (op.requiresPressureTest) return mode === 'blank' ? blankCell() : markToCell(ptMark(op, serialNumber));
+    return blankCell(); // конструктивный контроль сборки — под ручную подпись
+  };
+
   const title = mode === 'act' ? 'МАРШРУТНЫЙ ЛИСТ · АКТ ПРИЁМКИ ОТК' : 'МАРШРУТНЫЙ ЛИСТ';
-  const otkHeader = mode === 'act' ? 'Отметка ОТК' : 'Отметка ОТК (клеймо · дата)';
-  const controlOps = orderOps.filter(isControl);
+  const controlOps = orderOps.filter(op => op.requiresQC || op.requiresPressureTest);
 
   const unitContent = (unitIndex, unitCount, serialNumber, isLast) => {
     let tail;
     if (mode === 'act') {
-      const passed = controlOps.filter(op => (otkMark(op, serialNumber) || {}).kind === 'ok').length;
+      const passed = controlOps.filter(op => (op.requiresQC ? weldMark(op).kind : ptMark(op, serialNumber).kind) === 'ok').length;
       const total = controlOps.length;
       const allOk = total > 0 && passed === total;
       tail = [
@@ -2232,9 +2237,9 @@ async function generateRouteSheet(order, data, mode) {
             color: allOk ? '#2d6a2d' : '#a32d2d', bold: true } ], fontSize: 9, margin: [0, 0, 0, 2] },
         { text: 'Основание: ФНП, паспорт котла', fontSize: 8, color: '#888', margin: [0, 0, 0, 10] },
         { columns: [
-          { width: '*', text: 'Контролёр ОТК: _______________', fontSize: 9 },
-          { width: 'auto', text: '   Клеймо №: ______', fontSize: 9 },
-          { width: 'auto', text: '   Подпись / дата: _____________', fontSize: 9 },
+          { width: '*', text: 'ОТК конструктив: _____________', fontSize: 9 },
+          { width: '*', text: 'ОТК сварка: _____________', fontSize: 9 },
+          { width: 'auto', text: 'Клеймо №: ______', fontSize: 9 },
         ]},
       ];
     } else {
@@ -2276,28 +2281,23 @@ async function generateRouteSheet(order, data, mode) {
       { text: 'ТЕХНОЛОГИЧЕСКИЙ МАРШРУТ', style: 'subheader', margin: [0, 0, 0, 6] },
       { table: {
         headerRows: 1,
-        widths: ['auto', '*', 'auto', 'auto', 'auto', 120],
+        widths: ['auto', '*', '*', 88, 88],
         body: [
           [
             { text: '№', bold: true, fontSize: 9, alignment: 'center' },
             { text: 'Операция', bold: true, fontSize: 9 },
             { text: 'Исполнитель', bold: true, fontSize: 9 },
-            { text: 'План. время', bold: true, fontSize: 9, alignment: 'center' },
-            { text: 'Факт. время', bold: true, fontSize: 9, alignment: 'center' },
-            { text: otkHeader, bold: true, fontSize: 9, alignment: 'center' }
+            { text: 'ОТК конструктив', bold: true, fontSize: 9, alignment: 'center' },
+            { text: 'ОТК сварка', bold: true, fontSize: 9, alignment: 'center' }
           ],
           ...orderOps.map((op, i) => {
-            const actualH = (op.finishedAt && op.startedAt)
-              ? ((op.finishedAt - op.startedAt) / 3600000).toFixed(1) + ' ч'
-              : '';
             const workers = (op.workerIds || []).map(id => workerName(id)).filter(Boolean).join(', ');
             return [
               { text: String(i + 1), fontSize: 9, alignment: 'center' },
               { text: op.name, fontSize: 9 },
               { text: workers || '—', fontSize: 8, color: workers ? '#000' : '#aaa' },
-              { text: op.plannedHours ? (op.plannedHours + ' ч') : '—', fontSize: 9, alignment: 'center' },
-              { text: actualH, fontSize: 9, alignment: 'center', color: actualH ? '#333' : '#aaa' },
-              otkCell(op, serialNumber)
+              constrCell(op, serialNumber),
+              weldCell(op)
             ];
           })
         ]
