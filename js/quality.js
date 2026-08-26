@@ -141,7 +141,7 @@ const ControllerScreen = memo(({ data, onUpdate, addToast, onOrderClick, onWorke
   }, [data, onUpdate, addToast, rejectModal, rejectNote]);
 
   return h('div', null,
-    viewOrderId && h(OrderCardModal, { orderId: viewOrderId, data, onUpdate, onClose: () => setViewOrderId(null), canEdit: false }),
+    viewOrderId && h(OrderCardModal, { orderId: viewOrderId, data, onUpdate, onClose: () => setViewOrderId(null), canEdit: false, allowRouteSheet: true }),
     h(TabBar, { tabs: [
       ['qc', `🔍 Контроль (${pendingQC.length})`],
       ['pressure', `💧 Протоколы ГИ (${pendingPT.length})`],
