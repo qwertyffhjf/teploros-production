@@ -567,7 +567,7 @@ const WorkerOpsHistoryBlock = memo(({ workerId, data }) => {
       if (filter !== 'all' && op.status !== filter) return false;
       if (search.trim()) {
         const q = search.trim().toLowerCase();
-        const orderNum = order ? String(order.number) : '';
+        const orderNum = order ? `${order.number} ${orderPowerKw(order) || ''}` : '';
         const product  = order ? (order.product || '').toLowerCase() : '';
         return op.name.toLowerCase().includes(q) || orderNum.includes(q) || product.includes(q);
       }
@@ -1640,7 +1640,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
             h('div', { style: { fontSize: 18, fontWeight: 600, color: AM2, marginBottom: 2, lineHeight: 1.3 } }, active.name),
             active.qty && h('div', { style: { fontSize: 13, color: AM4, fontWeight: 500, marginBottom: 4 } }, `📦 Ваша доля: ${active.workerQty?.[workerId] || '—'} из ${active.qty} шт`),
             h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom: 14 } },
-              h('div', { style: { fontSize: 12, color: AM4, opacity: .8, flex:1 } }, order?.number || ''),
+              h('div', { style: { fontSize: 12, color: AM4, opacity: .8, flex:1 } }, orderNumPower(order, '')),
               (() => {
                 const drawUrl = active.drawingUrl || order?.drawingUrl;
                 return drawUrl && h('a', {
@@ -1752,7 +1752,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
               h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' } },
                 h('div', { style: { flex: 1 } },
                   h('div', { style: { fontSize: 15, fontWeight: 500, marginBottom: 2 } }, op.name),
-                  h('div', { style: { fontSize: 11, color: AM4, cursor: order ? 'pointer' : 'default', textDecoration: order ? 'underline' : 'none', textDecorationStyle: 'dotted' }, onClick: () => order && setViewOrderId(order.id) }, order?.number || '—'),
+                  h('div', { style: { fontSize: 11, color: AM4, cursor: order ? 'pointer' : 'default', textDecoration: order ? 'underline' : 'none', textDecorationStyle: 'dotted' }, onClick: () => order && setViewOrderId(order.id) }, orderNumPower(order)),
                   blockReason && h('div', { style: { fontSize: 11, color: AM2, background: AM3, padding: '4px 8px', borderRadius: 4, marginTop: 4, display: 'inline-block', whiteSpace: 'pre-line', lineHeight: 1.6 } }, blockReason)
                 ),
                 op.isAuxiliary && op.addedByWorker === workerId && (op.status === 'pending' || op.status === 'in_progress') &&
@@ -2054,7 +2054,7 @@ const WorkerScreen = memo(({ data, workerId, sectionId, onUpdate, initialOpId, a
                 h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
                   h('div', null,
                     h('div', { style: { fontSize: 13, fontWeight: 500 } }, op.name),
-                    h('div', { style: { fontSize: 11, color: 'var(--muted)', cursor: order ? 'pointer' : 'default', textDecoration: order ? 'underline' : 'none', textDecorationStyle: 'dotted' }, onClick: () => order && setViewOrderId(order.id) }, `${order?.number || '—'} · ${dur}`)
+                    h('div', { style: { fontSize: 11, color: 'var(--muted)', cursor: order ? 'pointer' : 'default', textDecoration: order ? 'underline' : 'none', textDecorationStyle: 'dotted' }, onClick: () => order && setViewOrderId(order.id) }, `${orderNumPower(order)} · ${dur}`)
                   ),
                   h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } }, h(Badge, { st: op.status }), h('span', { style: { fontSize: 10, color: 'var(--muted)' } }, isExp ? '▾' : '▸'))
                 ),
