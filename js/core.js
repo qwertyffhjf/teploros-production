@@ -536,6 +536,15 @@ const fmtPowerKw = (kw) => {
   return v >= 1000 ? (v / 1000).toFixed(1) + ' МВт' : Math.round(v) + ' кВт';
 };
 
+// Номер заказа с мощностью для компактных строк списков: «49/26/1 · 2000 кВт».
+// Мощность в кВт без перевода в МВт — рабочие ищут заказ по числу из модели.
+const orderNumPower = (o, dash = '—') => {
+  if (!o) return dash;
+  const num = o.number || dash;
+  const kw = orderPowerKw(o);
+  return kw ? `${num} · ${Math.round(kw)} кВт` : String(num);
+};
+
 // ── Смета работ БМК/КНР (этап 3 плана БМК) ──────────────────────────────────
 // Строка сметы заказа (order.bmkEstimate[]):
 //   { id, workId?, stage, name, unit, basePrice, qty, priceOverride?, noAnchor? }
