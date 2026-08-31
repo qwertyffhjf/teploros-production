@@ -106,9 +106,13 @@ function dpParseSpecPage(pageItems, cols) {
       if (!isNaN(qn)) qty = qn;
     }
     if (qty === 0 && name) {
-      // Строго 1-2 цифры в конце: количество в спецификации не бывает >99
-      var m2 = name.match(/^(.+?)\s+(\d{1,2})$/);
-      if (m2) { name = m2[1]; qty = parseInt(m2[2]); }
+      // Кол-во из хвоста наименования, когда колонка «Кол.» не распозналась.
+      // Раньше стоял жёсткий лимит 1-2 цифры (>99 терялось). Снимаем до 4 цифр,
+      // но отрываем число как количество ТОЛЬКО если в остатке есть буквы —
+      // иначе можно срезать цифру из обозначения. Если так и не распознали —
+      // qty остаётся 0 («не распознано»), позиция уйдёт на подтверждение человеку.
+      var m2 = name.match(/^(.+?)\s+(\d{1,4})$/);
+      if (m2 && /[А-Яа-яЁёA-Za-z]/.test(m2[1])) { name = m2[1]; qty = parseInt(m2[2]); }
     }
 
     // Косметика: «М 12» → «М12»
@@ -512,11 +516,42 @@ async function parseDrawingFiles(files, onProgress) {
     if (!seen2[c.designation]) { seen2[c.designation] = 1; cDedup.push(c); }
   });
 
+  // ── Агрегация проката для закупки: суммарная длина и число хлыстов ──
+  // Прокат заказывают в метрах/хлыстах, а не «штуками заготовок». Сводим одинаковый
+  // профиль+материал в одну строку: пишем суммарную длину и округляем до хлыстов.
+  // PROFILE_STOCK_MM/CUT_ALLOWANCE_MM — бизнес-параметры, при необходимости вынести
+  // в справочник. Если длина заготовки не распозналась — метраж не считаем, а помечаем
+  // unknownLength=true, чтобы человек подтвердил вручную (эталон — 1С + подтверждение).
+  var PROFILE_STOCK_MM = 6000;   // длина хлыста по умолчанию, мм
+  var CUT_ALLOWANCE_MM = 0;      // припуск на рез на заготовку, мм
+  var pipeAgg = {};
+  pipes.forEach(function(d) {
+    var key = (d.name || '?') + ' | ' + (d.material || '');
+    if (!pipeAgg[key]) pipeAgg[key] = { name: d.name || '', material: d.material || '',
+      thickness: d.thickness || '', pieces: 0, totalLengthMm: 0, unknownLength: false };
+    var a = pipeAgg[key];
+    var q = d.qty || 0;
+    a.pieces += q;
+    var L = parseFloat(String(d.pipeLength).replace(',', '.'));
+    if (isFinite(L) && L > 0 && q > 0) a.totalLengthMm += (L + CUT_ALLOWANCE_MM) * q;
+    else a.unknownLength = true;   // длина/кол-во не распознаны — на подтверждение
+  });
+  var pipesAggregated = Object.keys(pipeAgg).map(function(k) {
+    var a = pipeAgg[k];
+    var bars = a.totalLengthMm > 0 ? Math.ceil(a.totalLengthMm / PROFILE_STOCK_MM) : 0;
+    return { name: a.name, material: a.material, thickness: a.thickness,
+      pieces: a.pieces, totalLengthMm: Math.round(a.totalLengthMm),
+      totalLengthM: Math.round(a.totalLengthMm / 10) / 100,
+      bars: bars, stockMm: PROFILE_STOCK_MM, unknownLength: a.unknownLength };
+  });
+
   console.log('[DrawingParser] ИТОГО: покупных=' + pDedup.length + ' раскрой=' + cDedup.length +
-    ' прокат=' + pipes.length + ' прочие=' + otherDetails.length + ' ошибок=' + errors.length);
+    ' прокат=' + pipes.length + ' (сводных=' + pipesAggregated.length + ')' +
+    ' прочие=' + otherDetails.length + ' ошибок=' + errors.length);
 
   onProgress(1, 'Готово');
-  return { purchased: pDedup, cutting: cDedup, pipes: pipes, otherDetails: otherDetails,
+  return { purchased: pDedup, cutting: cDedup, pipes: pipes,
+    pipesAggregated: pipesAggregated, otherDetails: otherDetails,
     errors: errors,
     stats: { specFiles: specPdfs.length, sbFiles: sbPdfs.length,
       detailFiles: detailPdfs.length, dxfFiles: Object.keys(dxfNames).length } };
