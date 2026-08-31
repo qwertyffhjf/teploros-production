@@ -1939,17 +1939,26 @@ const DB = {
             return;
           }
           try {
-            // ── Optimistic locking ──
+            // ── Optimistic locking: ВСЕГДА мержим, не полагаясь на версии/часы ──
+            let _remoteMainForGuard = null;
             const snap = await DOC_REF.get().catch(() => null);
             if (snap && snap.exists) {
               const remoteVersion = snap.data().updatedAt?.toMillis?.() || snap.data()._version || 0;
               const localVersion  = Number(localStorage.getItem(VERSION_KEY)) || 0;
               if (remoteVersion > localVersion && remoteVersion !== newVersion) {
-                console.log('📝 Conflict detected: remote version is newer — merging changes');
-                // ── Мержим вместо перезаписи: берём удалённые данные как базу, накладываем наши изменения ──
+                console.log('📝 Remote newer — merging (без этого сбитые часы клиента затирали всю базу)');
+              }
+              // ── ВСЕГДА сливаем с сервером, независимо от версий ──
+              // Причина инцидента: merge стоял под условием remoteVersion>localVersion,
+              // а localVersion брался из Date.now() КЛИЕНТА. Часы машины ушли вперёд →
+              // условие ложно → merge пропускался → устаревшее состояние перезаписывало
+              // production_v14 + timesheet_v1 + events_v1 целиком, у всех пользователей.
+              // Теперь merge выполняется всегда — чужие свежие правки затереть нельзя.
+              {
                 try {
                   let remoteData;
                   try { remoteData = typeof snap.data().payload === 'string' ? JSON.parse(snap.data().payload) : snap.data(); } catch(e) { remoteData = {}; }
+                  _remoteMainForGuard = remoteData;
                   // Складские поля (materials, materialConsumptions и т.д.) живут в ОТДЕЛЬНОМ документе warehouse_v1,
                   // не в production_v14 — нужно забрать его отдельно, иначе сравнение идёт с пустотой.
                   let remoteWh = {};
@@ -1986,8 +1995,11 @@ const DB = {
                   _mergeFullState(toSave, remoteData, remoteWh, remoteTs, remoteEv, DB._baseData || {});
                   DB._lastError = '⚠ Данные объединены с изменениями другого пользователя.';
                 } catch(mergeErr) {
-                  console.warn('Merge failed, using last-write-wins:', mergeErr);
-                  DB._lastError = '⚠ Данные обновились — ваши изменения применены поверх.';
+                  // КРИТИЧНО: раньше здесь был last-write-wins — устаревшие данные
+                  // перезаписывали всё. Теперь при сбое слияния НЕ пишем НИЧЕГО:
+                  // прерываем сохранение, данные на сервере остаются целыми.
+                  console.error('Merge failed — запись отменена ради сохранности данных:', mergeErr);
+                  throw new Error('MERGE_ABORTED: слияние не удалось, сохранение отменено');
                 }
               }
             }
@@ -2084,14 +2096,19 @@ const DB = {
               }).catch(e => console.warn('Backup write failed:', e));
             }
           } catch(e) {
+            const _mergeAbort = /MERGE_ABORTED/.test(e.message || '');
             console.error('Firebase save error:', e);
-            DB._lastError = 'Ошибка сохранения: ' + e.message + '. Изменения НЕ сохранены.';
-            DB._online = false;
-            // ONLINE-ONLY: не кладём в очередь — при ошибке записи сообщаем и
-            // отклоняем промис. Данные не теряются: они остались в UI-стейте,
-            // пользователь увидит блокирующий экран и повторит после сети.
+            // MERGE_ABORTED — это НЕ сетевая ошибка, а намеренное прерывание записи
+            // ради сохранности данных. Не помечаем офлайн и оставляем подробный _lastError.
+            if (!_mergeAbort) {
+              DB._lastError = 'Ошибка сохранения: ' + e.message + '. Изменения НЕ сохранены.';
+              DB._online = false;
+            } else {
+              DB._lastError = '⚠ Сохранение отменено: не удалось безопасно объединить с данными сервера. Обновите страницу и повторите.';
+            }
+            // ONLINE-ONLY: не кладём в очередь — при ошибке записи сообщаем и отклоняем промис.
             DB._saving = false;
-            const errSave = new Error('SAVE_FAILED: ' + e.message);
+            const errSave = new Error((_mergeAbort ? '' : 'SAVE_FAILED: ') + e.message);
             reject(errSave);
             DB._flushSaveWaiters(errSave);
             return;
