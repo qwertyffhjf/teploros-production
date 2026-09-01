@@ -765,7 +765,7 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
       // 1. Раскрой
       if (result.cutting && result.cutting.length > 0) {
         groups.push({
-          id: 'raskroj', name: 'Раскрой',
+          id: 'raskroj', name: 'Лазерный раскрой',
           items: result.cutting.map(function(c) { return {
             id: uid(), name: c.name, code: c.designation,
             material: c.material, thickness: c.thickness,
@@ -775,22 +775,42 @@ const OrderMaterialsEditor = memo(({ order, data, onUpdate, addToast, canEdit = 
           }; })
         });
       }
-      // 2. Профильный прокат (трубы, швеллеры)
-      if (result.pipes && result.pipes.length > 0) {
-        groups.push({
-          id: 'prokat', name: 'Профильный прокат',
-          items: result.pipes.map(function(p) { return {
-            id: uid(), name: p.name, code: p.designation || '',
-            material: p.material || '', thickness: p.thickness || '',
-            qty: p.qty || 1, unit: 'шт', length: p.pipeLength || '',
-            note: '', status: 'pending'
-          }; })
+      // 2. Прокат — в метрах и хлыстах (из pipesAggregated нового парсера).
+      //    Кол-во = число хлыстов к закупке, Ед. = «хлыст (6м)», Длина = суммарные метры,
+      //    Примечание = число заготовок. Если длина не распозналась — помечаем на
+      //    подтверждение человеком (кол-во показываем в штуках заготовок).
+      //    Fallback на поштучный result.pipes, если развёрнут ещё старый drawing-parser.
+      var prokatItems = null;
+      if (result.pipesAggregated && result.pipesAggregated.length > 0) {
+        prokatItems = result.pipesAggregated.map(function(a) {
+          var unknown = a.unknownLength || !a.totalLengthMm;
+          return {
+            id: uid(), name: a.name, code: '',
+            material: a.material || '', thickness: a.thickness || '',
+            qty: unknown ? (a.pieces || 0) : a.bars,
+            unit: unknown ? 'шт (?)' : ('хлыст (' + Math.round((a.stockMm || 6000) / 1000) + 'м)'),
+            length: unknown ? '' : a.totalLengthM,
+            note: unknown
+              ? '\u26a0 длина заготовки не распознана — уточнить; заготовок: ' + (a.pieces || 0)
+              : 'заготовок: ' + (a.pieces || 0),
+            status: 'pending'
+          };
         });
+      } else if (result.pipes && result.pipes.length > 0) {
+        prokatItems = result.pipes.map(function(p) { return {
+          id: uid(), name: p.name, code: p.designation || '',
+          material: p.material || '', thickness: p.thickness || '',
+          qty: p.qty || 1, unit: 'шт', length: p.pipeLength || '',
+          note: '', status: 'pending'
+        }; });
+      }
+      if (prokatItems && prokatItems.length > 0) {
+        groups.push({ id: 'prokat', name: 'Прокат', items: prokatItems });
       }
       // 3. Покупные (стандартные изделия)
       if (result.purchased && result.purchased.length > 0) {
         groups.push({
-          id: 'komplekt', name: 'Комплектация (покупные)',
+          id: 'komplekt', name: 'Покупные изделия',
           items: result.purchased.map(function(p) { return {
             id: uid(), name: p.name, code: p.designation || '',
             material: '', thickness: '',
