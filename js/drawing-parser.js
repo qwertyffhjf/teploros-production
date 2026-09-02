@@ -27,7 +27,7 @@ function dpNormDesig(s) {
   if (!s) return '';
   s = String(s).replace(/\s+/g, ' ').trim();
   s = s.split(' - ')[0];
-  s = s.replace(/\s+(?:СП|СБ|МЧ)\b.*$/i, '');
+  s = s.replace(/\s*(?:СП|СБ|МЧ)\s*$/i, '');  // отрез метки типа; без \b — в JS он не работает по кириллице
   return s.replace(/\s+/g, '').trim();
 }
 
