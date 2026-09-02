@@ -519,16 +519,45 @@ async function parseDrawingFiles(files, onProgress) {
     return d;
   });
 
-  // Дедупликация
-  var seen1 = {}, pDedup = [];
-  purchased.forEach(function(p) {
-    var k = p.name + '|' + p.qty + '|' + p.parent;
-    if (!seen1[k]) { seen1[k] = 1; pDedup.push(p); }
-  });
-  var seen2 = {}, cDedup = [];
-  cutting.forEach(function(c) {
-    if (!seen2[c.designation]) { seen2[c.designation] = 1; cDedup.push(c); }
-  });
+  // ── Консолидация: одна строка на обозначение, количества СУММИРУЮТСЯ ──
+  // Было: покупные дедупились по name|qty|parent (одна деталь из разных узлов →
+  // разные строки), раскрой — по обозначению с ПОТЕРЕЙ количеств, «прочие» — не
+  // дедупились вовсе. Снабженец видел, напр., «Полку двери» дважды. Теперь сводим
+  // по обозначению (без него — по имени+материалу), суммируя кол-во, и помечаем
+  // подозрительное на проверку человеку: одно обозначение из нескольких узлов и
+  // детали от другого изделия (кросс-ссылка, напр. КВК-800 в заказе КВК-1200).
+  var orderPrefixes = {};
+  roots.forEach(function(r) { var m = String(r).match(/^([A-Za-zА-Яа-яЁё]+-\d+)/); if (m) orderPrefixes[m[1]] = 1; });
+  function dpConsolidate(items, opts) {
+    opts = opts || {};
+    var map = {}, order = [];
+    items.forEach(function(it) {
+      var d = (it.designation || '').trim();
+      var key = d || ('name:' + (it.name || '').trim() + '|' + (it.material || ''));
+      if (!map[key]) { map[key] = { it: it, qty: 0, parents: [] }; order.push(key); }
+      var e = map[key];
+      e.qty += (it.qty || 0);
+      var par = it.parent || '';
+      if (par && e.parents.indexOf(par) === -1) e.parents.push(par);
+      if (!e.it.material && it.material) e.it.material = it.material;
+      if (!e.it.thickness && it.thickness) e.it.thickness = it.thickness;
+      if (it.pipeLength && !e.it.pipeLength) e.it.pipeLength = it.pipeLength;
+    });
+    return order.map(function(key) {
+      var e = map[key], it = e.it;
+      it.qty = e.qty;
+      var flags = [];
+      var pm = String(it.designation || '').match(/^([A-Za-zА-Яа-яЁё]+-\d+)/);
+      if (pm && !orderPrefixes[pm[1]]) flags.push('\u26a0 деталь от другого изделия (' + pm[1] + ')');
+      if (!opts.fastener && e.parents.length > 1) flags.push('\u26a0 из ' + e.parents.length + ' узлов — проверить кол-во');
+      if (flags.length) it.note = (it.note ? it.note + '; ' : '') + flags.join('; ');
+      return it;
+    });
+  }
+  var pDedup = dpConsolidate(purchased, { fastener: true });
+  var cDedup = dpConsolidate(cutting);
+  otherDetails = dpConsolidate(otherDetails);
+  pipes = dpConsolidate(pipes);
 
   // ── Агрегация проката для закупки: суммарная длина и число хлыстов ──
   // Прокат заказывают в метрах/хлыстах, а не «штуками заготовок». Сводим одинаковый
