@@ -18,6 +18,19 @@ function dpNormalize(s) {
   return s.replace(/\s+\./g, '.').replace(/\s+,/g, ',').replace(/\s{2,}/g, ' ').trim();
 }
 
+// Канонизация обозначения: pdf.js даёт «КВК -1200…» (пробел после префикса),
+// а имена DXF/файлов — «КВК-1200…» (без пробела). Плюс имя файла тянет хвост
+// « - Название» и метки СП/СБ/МЧ. Приводим к единому виду: префикс без пробела,
+// только код, без хвоста. Из-за рассинхрона этого обозначения раньше не
+// срабатывал матч DXF (раскрой=0), не привязывались материалы и ломалось дерево.
+function dpNormDesig(s) {
+  if (!s) return '';
+  s = String(s).replace(/\s+/g, ' ').trim();
+  s = s.split(' - ')[0];
+  s = s.replace(/\s+(?:СП|СБ|МЧ)\b.*$/i, '');
+  return s.replace(/\s+/g, '').trim();
+}
+
 // Группировка текстовых элементов в строки по Y
 function dpGroupRows(items, threshold) {
   if (!threshold) threshold = 8;
@@ -97,7 +110,7 @@ function dpParseSpecPage(pageItems, cols) {
     var m = bodyText.match(/^(\d{1,3})\s+((?:V3|КВК|КСВа|КВа)\s*-[\w.\-]+)?\s*(.*)$/);
     if (!m) return;
     var pos = parseInt(m[1]);
-    var designation = (m[2] || '').trim();
+    var designation = dpNormDesig(m[2] || '');
     var name = (m[3] || '').trim();
 
     var qty = 0;
@@ -336,8 +349,9 @@ async function parseDrawingFiles(files, onProgress) {
 
   function baseName(item) { return item.name.replace(/^.*[\/\\]/, ''); }
   function parentOf(name) {
-    var m = name.match(/^(V3-[^\s]+)/);
-    return m ? m[1] : name.replace(/\.pdf$/i, '');
+    // было: только префикс V3-. Для КВК-… возвращалось всё имя файла целиком,
+    // из-за чего ключи спецификаций/материалов не совпадали с обозначениями.
+    return dpNormDesig(name.replace(/\.pdf$/i, ''));
   }
 
   async function safeParse(item, label) {
@@ -464,7 +478,7 @@ async function parseDrawingFiles(files, onProgress) {
     // Детали — с множителем
     (sec.details || []).forEach(function(it) {
       var d = it.designation, hasDxf = false;
-      if (d) Object.keys(dxfNames).forEach(function(dn) { if (dn.indexOf(d) !== -1) hasDxf = true; });
+      if (d) Object.keys(dxfNames).forEach(function(dn) { if (dpNormDesig(dn).indexOf(d) !== -1) hasDxf = true; });
       var mi = detailMaterials[d] || {};
       allDetails.push({ pos: it.pos, designation: d, name: it.name || mi.name || '',
         qty: it.qty * multiplier, parent: specKey, material: mi.material || '',
