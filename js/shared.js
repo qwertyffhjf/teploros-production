@@ -329,17 +329,17 @@ const exportNeedsToExcel = async (order, needs) => {
       [`Заявка на материалы — Заказ ${order?.number || ''} — ${order?.product || ''}`],
       [`Группа: ${group.name}${group.requestNumber ? `   |   № Заявки: ${group.requestNumber}` : ''}`],
       [],
-      ['№', 'Наименование', 'Материал', 'Толщина, мм', 'Кол-во', 'Ед.', 'Длина, м', 'Статус', 'Примечание'],
+      ['№', 'Обозначение', 'Наименование', 'Материал', 'Толщина, мм', 'Кол-во', 'Ед.', 'Длина, м', 'Статус', 'Примечание'],
     ];
     (group.items || []).forEach((item, i) => {
       rows.push([
-        i + 1, item.name, item.material, item.thickness,
+        i + 1, item.code || '', item.name, item.material, item.thickness,
         item.qty, item.unit, item.length,
         STATUS_MAP[item.status]?.label || item.status, item.note,
       ]);
     });
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [4,30,20,16,10,8,6,8,12,24].map(w => ({ wch: w }));
+    ws['!cols'] = [4,22,30,20,16,10,8,6,8,12,24].map(w => ({ wch: w }));
     XLSX.utils.book_append_sheet(wb, ws, group.name.slice(0, 31));
   });
   XLSX.writeFile(wb, `Заявка_${order?.number || 'заказ'}.xlsx`);
