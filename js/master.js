@@ -1057,6 +1057,13 @@ const buildProductionWorkbook = (data) => {
   const workers  = data.workers || [];
   const events   = data.events || [];
   const sections = data.sections || [];
+  // Вспомогательные работы (уборка, обслуживание, помощь на другом участке)
+  // рабочий заводит себе сам, они могут быть вообще без заказа. В производственных
+  // счётчиках им не место: иначе «операций выполнено» по участку раздувается
+  // непроизводственной работой. Считаем их отдельным листом.
+  const prodOps = allOps.filter(o => !o.isAuxiliary);
+  const auxOps  = allOps.filter(o => o.isAuxiliary);
+  const parseDeps = (o) => { let d = o.dependsOn; if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e) { d = []; } } return Array.isArray(d) ? d : []; };
 
   const byId  = (arr, id) => (arr || []).find(x => x.id === id) || {};
   const sName = id => byId(sections, id).name || '';
@@ -1139,17 +1146,20 @@ const buildProductionWorkbook = (data) => {
   add('Мощность отгружено в этом месяце, кВт', Math.round(orders.filter(o => o.shippedAt && mKey(o.shippedAt) === curMonth).reduce((s, o) => s + info[o.id].kwTotal, 0)));
 
   sep('ПРОИЗВОДСТВО');
-  add('Операций всего', allOps.length);
+  add('Операций всего (производственных)', prodOps.length);
   ['done','in_progress','pending','on_check','weld_check','defect','rework'].forEach(st => {
-    const n = allOps.filter(o => o.status === st).length;
+    const n = prodOps.filter(o => o.status === st).length;
     if (n) add('— ' + (OPS[st] || st), n);
   });
-  const doneMonth = allOps.filter(o => o.status === 'done' && o.finishedAt && mKey(o.finishedAt) === curMonth);
+  const doneMonth = prodOps.filter(o => o.status === 'done' && o.finishedAt && mKey(o.finishedAt) === curMonth);
   add('Операций выполнено в этом месяце', doneMonth.length);
-  add('Операций выполнено в прошлом месяце', allOps.filter(o => o.status === 'done' && o.finishedAt && mKey(o.finishedAt) === prevMonth).length);
-  add('Фактических часов всего', r1(allOps.reduce((s, o) => s + factH(o), 0)));
+  add('Операций выполнено в прошлом месяце', prodOps.filter(o => o.status === 'done' && o.finishedAt && mKey(o.finishedAt) === prevMonth).length);
+  add('Фактических часов всего', r1(prodOps.reduce((s, o) => s + factH(o), 0)));
   add('Фактических часов в этом месяце', r1(doneMonth.reduce((s, o) => s + factH(o), 0)));
-  add('Плановых часов проставлено, операций', allOps.filter(o => o.plannedHours).length);
+  add('Плановых часов проставлено, операций', prodOps.filter(o => o.plannedHours).length);
+  add('Вспомогательных работ всего', auxOps.length);
+  add('— выполнено в этом месяце', auxOps.filter(o => o.status === 'done' && o.finishedAt && mKey(o.finishedAt) === curMonth).length);
+  add('— часов на вспомогательные работы', r1(auxOps.reduce((s, o) => s + factH(o), 0)));
 
   sep('ЛЮДИ');
   const liveWorkers = workers.filter(w => !w.archived);
@@ -1170,9 +1180,28 @@ const buildProductionWorkbook = (data) => {
   add('Простоев в этом месяце, ч', r1(dtMonth.reduce((s, e) => s + (e.duration || 0), 0) / HOUR));
   add('Случаев простоя в этом месяце', dtMonth.length);
 
+  sep('ДЕНЬГИ');
+  const econAll = orders.map(o => (typeof calcOrderEconomics === 'function' ? calcOrderEconomics(data, o.id) : null) || {});
+  const sumE = f => Math.round(econAll.reduce((a, e) => a + (e[f] || 0), 0));
+  add('Себестоимость всех заказов, ₽', sumE('totalCost'));
+  add('— труд, ₽', sumE('laborCost'));
+  add('— материалы, ₽', sumE('materialCost'));
+  const shipIds = {}; shippedOrders.forEach(o => { shipIds[o.id] = 1; });
+  add('Себестоимость отгруженного, ₽', Math.round(econAll.filter(e => shipIds[e.orderId]).reduce((a, e) => a + (e.totalCost || 0), 0)));
+  add('Стоимость остатков материалов, ₽', Math.round((data.materials || []).reduce((a, m) => a + (Number(m.quantity) || 0) * (Number(m.unitCost) || 0), 0)));
+  add('Инструмента на руках, ₽', Math.round((data.toolIssues || []).filter(t => t.status === 'active').reduce((a, t) => a + (Number(t.cost) || 0), 0)));
+
+  sep('ДОПУСКИ');
+  const dTo = ds => ds ? Math.ceil((new Date(ds) - nowTs) / DAY) : null;
+  const liveW = workers.filter(w => !w.archived);
+  add('Просроченных медосмотров', liveW.filter(w => { const d = dTo(w.medicalExamNextDate); return d !== null && d < 0; }).length);
+  add('Медосмотров истекает в 30 дней', liveW.filter(w => { const d = dTo(w.medicalExamNextDate); return d !== null && d >= 0 && d <= 30; }).length);
+  add('Просроченных удостоверений', liveW.reduce((a, w) => a + (w.licences || []).filter(l => { const d = dTo(l.expiryDate); return d !== null && d < 0; }).length, 0));
+  add('Просроченных инструктажей ОТ', (data.instructions || []).filter(x => { const d = dTo(x.nextDate); return d !== null && d < 0; }).length);
+
   sep('КАЧЕСТВО');
-  const defectAll = allOps.filter(o => o.status === 'defect').length;
-  const doneAll = allOps.filter(o => o.status === 'done').length;
+  const defectAll = prodOps.filter(o => o.status === 'defect').length;
+  const doneAll = prodOps.filter(o => o.status === 'done').length;
   add('Брак, операций всего', defectAll);
   add('Доля брака, %', doneAll + defectAll ? r1(defectAll / (doneAll + defectAll) * 100) : 0);
   add('Рекламаций всего', (data.reclamations || []).length);
@@ -1194,8 +1223,9 @@ const buildProductionWorkbook = (data) => {
     const started  = orders.filter(o => info[o.id].firstStart && mKey(info[o.id].firstStart) === k);
     const finished = orders.filter(o => info[o.id].allDone && info[o.id].lastFinish && mKey(info[o.id].lastFinish) === k);
     const shipped  = orders.filter(o => o.shippedAt && mKey(o.shippedAt) === k);
-    const opsDone  = allOps.filter(o => o.status === 'done' && o.finishedAt && mKey(o.finishedAt) === k);
-    const opsDef   = allOps.filter(o => o.status === 'defect' && o.finishedAt && mKey(o.finishedAt) === k);
+    const opsDone  = prodOps.filter(o => o.status === 'done' && o.finishedAt && mKey(o.finishedAt) === k);
+    const opsDef   = prodOps.filter(o => o.status === 'defect' && o.finishedAt && mKey(o.finishedAt) === k);
+    const auxDone  = auxOps.filter(o => o.status === 'done' && o.finishedAt && mKey(o.finishedAt) === k);
     const ts = (data.timesheet || {})[k] || {};
     let th = 0, ta = 0;
     Object.keys(ts).forEach(wid => Object.keys(ts[wid] || {}).forEach(d => {
@@ -1216,6 +1246,7 @@ const buildProductionWorkbook = (data) => {
       'Штук заведено': sum(created, i => i.qty),
       'Мощность заведена, кВт': Math.round(sum(created, i => i.kwTotal)),
       'Операций выполнено': opsDone.length,
+      'Вспомогательных работ': auxDone.length,
       'Брак, операций': opsDef.length,
       'Факт. часов по операциям': r1(opsDone.reduce((s, o) => s + factH(o), 0)),
       'Отработано по табелю, ч': r1(th),
@@ -1265,12 +1296,16 @@ const buildProductionWorkbook = (data) => {
       'Чертёж': ord.drawingUrl ? 'есть' : '',
       'Участки': i.sects,
       'Исполнители': i.execs,
+      'Себестоимость, ₽': (typeof calcOrderEconomics === 'function' ? (calcOrderEconomics(data, ord.id) || {}).totalCost : '') || '',
+      'Родительский заказ': (oById[ord.parentOrderId] || {}).number || '',
+      'Подзаказов': orders.filter(x => x.parentOrderId === ord.id).length || '',
       'Источник': ord.source === '1c_import' ? 'Импорт 1С' : 'Вручную',
       'В архиве': ord.archived ? 'Да' : '',
     };
   });
 
   // ══════════════ Лист 4. Операции ══════════════
+  const opById2 = {}; allOps.forEach(o => { opById2[o.id] = o; });
   const opRows = allOps.map(op => {
     const ord = oById[op.orderId] || {};
     const f = factH(op);
@@ -1296,6 +1331,12 @@ const buildProductionWorkbook = (data) => {
       'Опрессовка': op.requiresPressureTest ? 'Да' : '',
       'Причина брака': drName(op.defectReasonId),
       'Комментарий к браку': op.defectNote || '',
+      'Шов №': (op.weldParams && op.weldParams.seamNumber) || '',
+      'Электрод': (op.weldParams && op.weldParams.electrode) || '',
+      'Результат сварки': (op.weldParams && op.weldParams.result) === 'fail' ? 'брак' : (op.weldParams && op.weldParams.result) || '',
+      'Зависит от': parseDeps(op).map(id => (opById2[id] || {}).name).filter(Boolean).join('; '),
+      'Вспомогательная': op.isAuxiliary ? 'Да' : '',
+      'Категория доп. работ': op.isAuxiliary ? ((typeof AUX_CAT_LABELS !== 'undefined' && AUX_CAT_LABELS[op.auxCategory]) || op.auxCategory || 'прочее') : '',
       'В архиве': op.archived ? 'Да' : '',
     };
   });
@@ -1303,7 +1344,7 @@ const buildProductionWorkbook = (data) => {
   // ══════════════ Лист 5. Сотрудники ══════════════
   const wStat = {};
   const touch = id => wStat[id] || (wStat[id] = { done: 0, defect: 0, factH: 0, orders: {}, sects: {}, last: 0, ops: {} });
-  allOps.forEach(op => (op.workerIds || []).forEach(id => {
+  prodOps.forEach(op => (op.workerIds || []).forEach(id => {
     const s = touch(id);
     if (op.status === 'done') { s.done++; s.ops[op.name || '—'] = 1; }
     if (op.status === 'defect') s.defect++;
@@ -1334,6 +1375,8 @@ const buildProductionWorkbook = (data) => {
       'Доля брака, %': (s.done + s.defect) ? r1(s.defect / (s.done + s.defect) * 100) : 0,
       'Факт. часов по операциям': r1(s.factH),
       'Простои, ч': r1((dtByWorker[w.id] || 0) / HOUR),
+      'Вспомогательных работ': auxOps.filter(o => (o.workerIds || []).indexOf(w.id) >= 0 && o.status === 'done').length,
+      'Часов на вспом. работы': r1(auxOps.filter(o => (o.workerIds || []).indexOf(w.id) >= 0).reduce((a, o) => a + factH(o), 0)),
       'Заказов участвовал': Object.keys(s.orders).length,
       'Последняя операция': fmtD(s.last),
       'В архиве': w.archived ? 'Да' : '',
@@ -1343,7 +1386,7 @@ const buildProductionWorkbook = (data) => {
   // ══════════════ Лист 6. Сотрудник × месяц ══════════════
   const wm = {};
   const wmTouch = (id, k) => { const key = id + '|' + k; return wm[key] || (wm[key] = { id, k, done: 0, defect: 0, factH: 0, orders: {} }); };
-  allOps.forEach(op => { if (!op.finishedAt) return;
+  prodOps.forEach(op => { if (!op.finishedAt) return;
     const k = mKey(op.finishedAt);
     (op.workerIds || []).forEach(id => {
       const c = wmTouch(id, k);
@@ -1384,7 +1427,7 @@ const buildProductionWorkbook = (data) => {
   // ══════════════ Лист 7. Участки ══════════════
   const secAgg = {};
   const secTouch = id => secAgg[id] || (secAgg[id] = { name: sName(id) || 'Без участка', total: 0, done: 0, inProgress: 0, pending: 0, defect: 0, factH: 0, planH: 0, orders: {}, workers: {} });
-  allOps.forEach(op => {
+  prodOps.forEach(op => {
     const s = secTouch(op.sectionId || '-');
     s.total++;
     if (op.status === 'done') s.done++;
@@ -1561,11 +1604,344 @@ const buildProductionWorkbook = (data) => {
     'Заказ': (oById[e.orderId] || {}).number || '',
   }));
 
-  // ══════════════ Лист 17. О данных ══════════════
-  const opsNoSection = allOps.filter(o => !o.sectionId).length;
-  const opsNoPlan = allOps.filter(o => !o.plannedHours).length;
-  const doneNoDate = allOps.filter(o => o.status === 'done' && !o.finishedAt).length;
-  const doneNoStart = allOps.filter(o => o.status === 'done' && !o.startedAt).length;
+  // ══════════════ Деньги: себестоимость заказов ══════════════
+  const econ = {};
+  orders.forEach(o => { econ[o.id] = (typeof calcOrderEconomics === 'function' ? calcOrderEconomics(data, o.id) : null) || {}; });
+  const costRows = orders.map(ord => {
+    const e = econ[ord.id], i = info[ord.id];
+    return {
+      'Заказ': ord.number || '',
+      'Заказчик': ord.customer || '',
+      'Изделие': ord.product || '',
+      'Кол-во': i.qty,
+      'Мощность всего, кВт': i.kwTotal || '',
+      'Статус': ord.shipped ? 'Отгружен' : i.allDone ? 'Готов к отгрузке' : 'В производстве',
+      'Операций выполнено': e.opsDone || 0,
+      'Человеко-часов': e.manHours || 0,
+      'Труд, ₽': e.laborCost || 0,
+      'Материалы, ₽': e.materialCost || 0,
+      'Себестоимость, ₽': e.totalCost || 0,
+      'Себестоимость на изделие, ₽': i.qty ? Math.round((e.totalCost || 0) / i.qty) : '',
+      'Себестоимость на кВт, ₽': i.kwTotal ? Math.round((e.totalCost || 0) / i.kwTotal) : '',
+      'Списаний материала': e.materialItems || 0,
+      'Часов по ставке сотрудника': e.ratedHours || 0,
+      'Часов по ставке по умолчанию': e.unratedHours || 0,
+      'Цена заказа, ₽': e.price || '',
+      'Прибыль, ₽': e.price ? e.profit : '',
+      'Рентабельность, %': e.price ? e.margin : '',
+    };
+  }).sort((a, b) => b['Себестоимость, ₽'] - a['Себестоимость, ₽']);
+
+  // ══════════════ Расход материалов ══════════════
+  const opById = {}; allOps.forEach(o => { opById[o.id] = o; });
+  const consRows = (data.materialConsumptions || []).slice().sort((a, b) => (b.ts || 0) - (a.ts || 0)).map(mc => {
+    const op = opById[mc.opId] || {};
+    const ord = oById[op.orderId] || {};
+    const mat = byId(data.materials, mc.materialId);
+    const qty = Number(mc.qty) || 0;
+    return {
+      'Дата': fmtD(mc.ts),
+      'Месяц': mc.ts ? mKey(mc.ts) : '',
+      'Заказ': ord.number || '',
+      'Изделие': ord.product || '',
+      'Операция': op.name || '',
+      'Участок': sName(op.sectionId),
+      'Материал': mat.name || mc.materialId || '',
+      'Кол-во': qty,
+      'Ед.': mat.unit || '',
+      'Цена за ед., ₽': mat.unitCost || '',
+      'Сумма, ₽': Math.round(qty * (Number(mat.unitCost) || 0)),
+      'Исполнители': (op.workerIds || []).map(wName).filter(Boolean).join(', '),
+    };
+  });
+
+  // ══════════════ Вспомогательные работы ══════════════
+  const AUX = (typeof AUX_CAT_LABELS !== 'undefined') ? AUX_CAT_LABELS : {};
+  const auxRows = auxOps.slice().sort((a, b) => (b.finishedAt || b.startedAt || b.createdAt || 0) - (a.finishedAt || a.startedAt || a.createdAt || 0)).map(op => {
+    const ord = oById[op.orderId] || {};
+    const f = factH(op);
+    return {
+      'Дата завершения': fmtD(op.finishedAt),
+      'Месяц': op.finishedAt ? mKey(op.finishedAt) : '',
+      'Категория': AUX[op.auxCategory] || op.auxCategory || 'прочее',
+      'Работа': op.name || '',
+      'Статус': OPS[op.status] || op.status || '',
+      'Участок': sName(op.sectionId),
+      'Заказ': ord.number || '(без заказа)',
+      'Исполнители': (op.workerIds || []).map(wName).filter(Boolean).join(', '),
+      'Факт, ч': f ? r1(f) : '',
+      'Комментарий': op.comment || '',
+      'Кто завёл': wName(op.addedByWorker) || 'мастер',
+    };
+  });
+
+  // ══════════════ Компетенции ══════════════
+  const compMatrix = [];
+  workers.forEach(w => (w.competences || []).forEach(c => compMatrix.push({
+    'Сотрудник': w.name || '',
+    'Должность': w.position || '',
+    'Участок': sName(w.sectionId),
+    'Компетенция': c,
+    'Уровень': (w.competenceLevels || {})[c] || '',
+    'В архиве': w.archived ? 'Да' : '',
+  })));
+
+  // ══════════════ Взаимозаменяемость (по факту, а не по справочнику) ══════════════
+  // Идём по всем производственным операциям, а не только по выполненным:
+  // этап, который ещё ни разу никто не закрывал, — тоже риск, и его надо видеть.
+  const opSkill = {};
+  prodOps.forEach(op => {
+    const s = opSkill[op.name || '—'] || (opSkill[op.name || '—'] = { count: 0, planned: 0, workers: {}, sect: op.sectionId });
+    s.planned++;
+    if (op.sectionId && !s.sect) s.sect = op.sectionId;
+    if (op.status !== 'done') return;
+    s.count++;
+    (op.workerIds || []).forEach(id => { s.workers[id] = (s.workers[id] || 0) + 1; });
+  });
+  const skillRows = Object.keys(opSkill).map(name => {
+    const s = opSkill[name];
+    const ids = Object.keys(s.workers).sort((a, b) => s.workers[b] - s.workers[a]);
+    const live = ids.filter(id => !byId(workers, id).archived);
+    return {
+      'Операция': name,
+      'Участок': sName(s.sect),
+      'Всего в планах': s.planned,
+      'Выполнено раз': s.count,
+      'Людей умеют': ids.length,
+      'Из них работают сейчас': live.length,
+      'Риск': live.length === 0 ? (s.count ? 'НЕТ НОСИТЕЛЯ' : 'ни разу не выполнялась') : live.length === 1 ? 'ОДИН ЧЕЛОВЕК' : live.length === 2 ? 'узкое место' : '',
+      'Кто выполнял (по убыванию)': ids.map(id => wName(id) + ' (' + s.workers[id] + ')').join(', '),
+    };
+  }).sort((a, b) => a['Из них работают сейчас'] - b['Из них работают сейчас'] || b['Выполнено раз'] - a['Выполнено раз']);
+
+  // ══════════════ Допуски и медосмотры ══════════════
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const daysTo = ds => ds ? Math.ceil((new Date(ds) - today.getTime()) / DAY) : null;
+  const permitRows = [];
+  workers.filter(w => !w.archived).forEach(w => {
+    const med = daysTo(w.medicalExamNextDate);
+    if (w.medicalExamDate || w.medicalExamNextDate) permitRows.push({
+      'Сотрудник': w.name || '', 'Должность': w.position || '', 'Участок': sName(w.sectionId),
+      'Вид': 'Медосмотр', 'Наименование': '', 'Пройден': w.medicalExamDate || '',
+      'Действует до': w.medicalExamNextDate || '',
+      'Осталось дней': med !== null ? med : '',
+      'Состояние': med === null ? 'срок не указан' : med < 0 ? 'ПРОСРОЧЕН' : med <= 30 ? 'истекает' : 'действует',
+    });
+    (w.licences || []).forEach(l => {
+      const d = daysTo(l.expiryDate);
+      permitRows.push({
+        'Сотрудник': w.name || '', 'Должность': w.position || '', 'Участок': sName(w.sectionId),
+        'Вид': 'Удостоверение', 'Наименование': l.name || '', 'Пройден': '',
+        'Действует до': l.expiryDate || '',
+        'Осталось дней': d !== null ? d : '',
+        'Состояние': d === null ? 'срок не указан' : d < 0 ? 'ПРОСРОЧЕНО' : d <= 30 ? 'истекает' : 'действует',
+      });
+    });
+  });
+  permitRows.sort((a, b) => (a['Осталось дней'] === '' ? 1e9 : a['Осталось дней']) - (b['Осталось дней'] === '' ? 1e9 : b['Осталось дней']));
+
+  // ══════════════ Инструктажи по охране труда ══════════════
+  const instrRows = (data.instructions || []).slice().sort((a, b) => String(b.nextDate || '').localeCompare(String(a.nextDate || ''))).map(x => {
+    const d = daysTo(x.nextDate);
+    return {
+      'Сотрудник': wName(x.workerId) || x.workerId || '',
+      'Вид инструктажа': x.type || '',
+      'Проведён': x.date || '',
+      'Следующий': x.nextDate || '',
+      'Осталось дней': d !== null ? d : '',
+      'Состояние': d === null ? 'срок не указан' : d < 0 ? 'ПРОСРОЧЕН' : d <= 14 ? 'скоро' : 'действует',
+      'Провёл': wName(x.conductedBy) || x.conductedBy || '',
+      'Примечание': x.note || '',
+    };
+  });
+
+  // ══════════════ Отпуска и отсутствия ══════════════
+  const vacRows = (data.vacations || []).map(v => ({
+    'Сотрудник': wName(v.workerId) || v.workerId || '',
+    'Участок': sName(byId(workers, v.workerId).sectionId),
+    'Вид': 'Плановый отпуск',
+    'С': v.startDate || '', 'По': v.endDate || '',
+    'Дней': (v.startDate && v.endDate) ? Math.round((new Date(v.endDate) - new Date(v.startDate)) / DAY) + 1 : '',
+    'Согласован': v.approved ? 'Да' : '',
+    'Примечание': v.note || '',
+  })).concat((data.workerAvailabilities || []).map(a => ({
+    'Сотрудник': wName(a.workerId) || a.workerId || '',
+    'Участок': sName(byId(workers, a.workerId).sectionId),
+    'Вид': a.type || 'отсутствие',
+    'С': a.startDate || '', 'По': a.endDate || '',
+    'Дней': (a.startDate && a.endDate) ? Math.round((new Date(a.endDate) - new Date(a.startDate)) / DAY) + 1 : '',
+    'Согласован': '', 'Примечание': '',
+  }))).sort((a, b) => String(a['С']).localeCompare(String(b['С'])));
+
+  // ══════════════ Инструмент ══════════════
+  const toolRows = (data.toolIssues || []).slice().sort((a, b) => (b.issuedAt || 0) - (a.issuedAt || 0)).map(t => ({
+    'Инструмент': t.toolName || '',
+    'Инв. номер': t.invNumber || '',
+    'Категория': t.category || '',
+    'Стоимость, ₽': t.cost || '',
+    'Выдан': wName(t.workerId) || '',
+    'Дата выдачи': fmtD(t.issuedAt),
+    'Выдал': wName(t.issuedBy) || t.issuedBy || '',
+    'Состояние при выдаче': t.condition === 'new' ? 'новый' : t.condition === 'good' ? 'рабочий' : t.condition === 'worn' ? 'изношен' : (t.condition || ''),
+    'Статус': t.status === 'active' ? 'на руках' : t.status === 'returned' ? 'возвращён' : t.status === 'written_off' ? 'списан' : (t.status || ''),
+    'Дата возврата': fmtD(t.returnedAt),
+    'Состояние при возврате': t.returnCondition || '',
+    'Дней на руках': t.issuedAt ? Math.round(((t.returnedAt || nowTs) - t.issuedAt) / DAY) : '',
+    'Примечание': t.issuedNote || t.returnedNote || '',
+  }));
+
+  // ══════════════ Отметки о приходе ══════════════
+  // Система сама фиксирует первый запуск операции за день. Это независимая от
+  // табеля отметка о выходе — полезна ровно потому, что табель заполняют не всегда.
+  const checkins = events.filter(e => e.type === 'checkin_auto' && e.ts);
+  const ciAgg = {};
+  checkins.forEach(e => {
+    const k = e.workerId + '|' + mKey(e.ts);
+    const a = ciAgg[k] || (ciAgg[k] = { id: e.workerId, m: mKey(e.ts), days: 0, first: e.ts, sumMin: 0 });
+    a.days++;
+    const d = new Date(e.ts);
+    a.sumMin += d.getHours() * 60 + d.getMinutes();
+    if (e.ts < a.first) a.first = e.ts;
+  });
+  const checkinRows = Object.keys(ciAgg).map(k => {
+    const a = ciAgg[k];
+    const ts = ((data.timesheet || {})[a.m] || {})[a.id] || {};
+    let tsDays = 0;
+    Object.keys(ts).forEach(d => { const v = ts[d] || {}; if ((Number(v.h) || 0) > 0 || v.code === 'СД') tsDays++; });
+    const avg = a.days ? Math.round(a.sumMin / a.days) : 0;
+    return {
+      'Сотрудник': wName(a.id) || a.id,
+      'Месяц': mLabel(a.m),
+      'Ключ месяца': a.m,
+      'Дней с отметкой прихода': a.days,
+      'Дней в табеле': tsDays,
+      'Расхождение': tsDays - a.days,
+      'Средний час начала работы': String(Math.floor(avg / 60)).padStart(2, '0') + ':' + String(avg % 60).padStart(2, '0'),
+    };
+  }).sort((a, b) => a['Ключ месяца'] < b['Ключ месяца'] ? 1 : -1);
+
+  // ══════════════ Загрузка участков (очередь против мощности) ══════════════
+  let loadRows = [];
+  try {
+    loadRows = getSectionLoad(data, 14).map(s => ({
+      'Участок': s.name,
+      'Сотрудников': s.workers,
+      'Мощность на 14 дней, ч': s.capacityHours,
+      'Операций в очереди': s.queueOps,
+      'Плановых часов в очереди': s.queueHours,
+      'Загрузка, %': s.loadPct === Infinity ? 'нет мощности' : s.loadPct,
+      'Перегружен': s.overloaded ? 'ДА' : '',
+      'Операций без исполнителя': s.unassignedOps,
+      'Дней отсутствия': s.absentDays,
+      'Коды отсутствий': Object.keys(s.absentCodes || {}).map(c => c + '×' + s.absentCodes[c]).join(', '),
+    }));
+  } catch (e) { loadRows = [{ 'Участок': 'расчёт недоступен: ' + e.message }]; }
+
+  // ══════════════ Оборудование ══════════════
+  const eqDown = {};
+  events.filter(e => e.type === 'downtime' && e.equipmentId).forEach(e => {
+    const a = eqDown[e.equipmentId] || (eqDown[e.equipmentId] = { ms: 0, n: 0 });
+    a.ms += e.duration || 0; a.n++;
+  });
+  const eqRows = (data.equipment || []).map(eq => {
+    const list = prodOps.filter(o => o.equipmentId === eq.id);
+    const d = eqDown[eq.id] || { ms: 0, n: 0 };
+    return {
+      'Оборудование': eq.name || '',
+      'Тип': eq.type || '',
+      'Инв. номер': eq.inventoryNo || '',
+      'Статус': eq.status || '',
+      'Операций закреплено': list.length,
+      'Выполнено': list.filter(o => o.status === 'done').length,
+      'Наработка, ч': r1(list.reduce((s, o) => s + factH(o), 0)),
+      'Простоев, случаев': d.n,
+      'Простои, ч': r1(d.ms / HOUR),
+    };
+  });
+
+  // ══════════════ Спецификации BOM ══════════════
+  const bomRows = [];
+  (data.bomTemplates || []).forEach(b => (b.materials || []).forEach(m => {
+    const mat = byId(data.materials, m.materialId);
+    bomRows.push({
+      'Спецификация': b.name || '',
+      'Тип изделия': ptLabel(b.productType),
+      'Материал': mat.name || m.materialId || '',
+      'Норма на изделие': m.qty || '',
+      'Ед.': mat.unit || '',
+      'Цена за ед., ₽': mat.unitCost || '',
+      'Стоимость нормы, ₽': Math.round((Number(m.qty) || 0) * (Number(mat.unitCost) || 0)),
+    });
+  }));
+
+  // ══════════════ Материалы: остаток и резерв ══════════════
+  const matRows = (data.materials || []).map(m => {
+    const reserved = (data.materialReservations || []).filter(r => r.materialId === m.id).reduce((s, r) => s + (Number(r.qty) || 0), 0);
+    const used = (data.materialConsumptions || []).filter(c => c.materialId === m.id).reduce((s, c) => s + (Number(c.qty) || 0), 0);
+    const q = Number(m.quantity) || 0;
+    return {
+      'Материал': m.name || '',
+      'Ед.': m.unit || '',
+      'Остаток': q,
+      'Зарезервировано': reserved,
+      'Свободно': q - reserved,
+      'Минимальный запас': m.minStock || '',
+      'Ниже минимума': (m.minStock && q < m.minStock) ? 'ДА' : '',
+      'Цена за ед., ₽': m.unitCost || '',
+      'Стоимость остатка, ₽': Math.round(q * (Number(m.unitCost) || 0)),
+      'Списано за всё время': used,
+      'Партия': m.batch || '',
+      'Раскрой': m.isCutting ? 'Да' : '',
+    };
+  }).sort((a, b) => b['Стоимость остатка, ₽'] - a['Стоимость остатка, ₽']);
+
+  // ══════════════ Расценки ══════════════
+  const rateRows = [];
+  (data.pieceworkRates || []).forEach(r => rateRows.push({
+    'Вид': 'Сдельная расценка',
+    'Наименование': (r.type === 'v3d' ? 'Трёхходовой V3-D' : r.type === 'v2d' ? 'Двухходовой V2-D' : (r.type || '')),
+    'Диапазон': (r.powerMin || 0) + '–' + (r.powerMax || '∞') + ' кВт',
+    'Теплообменник, ₽': r.heatExchanger || '',
+    'Передняя крышка, ₽': r.coverFront || '',
+    'Задняя крышка, ₽': r.coverBack || '',
+    'Вальцовка, ₽': r.rolling || '',
+    'Цена, ₽': '', 'Параметр': '', 'Источник': '',
+  }));
+  (data.extraWorks || []).forEach(w => (w.tiers || []).forEach(t => rateRows.push({
+    'Вид': 'Доп. расценка',
+    'Наименование': w.name || w.key || '',
+    'Диапазон': (t.min || 0) + '–' + (t.max || '∞') + ' ' + (w.paramUnit || ''),
+    'Теплообменник, ₽': '', 'Передняя крышка, ₽': '', 'Задняя крышка, ₽': '', 'Вальцовка, ₽': '',
+    'Цена, ₽': t.price || '',
+    'Параметр': w.paramLabel || '',
+    'Источник': w.source === 'price' ? 'прайс-лист' : 'вручную',
+  })));
+  (data.bmkWorkRates || []).forEach(r => rateRows.push({
+    'Вид': 'Смета БМК',
+    'Наименование': r.name || r.key || '',
+    'Диапазон': '', 'Теплообменник, ₽': '', 'Передняя крышка, ₽': '', 'Задняя крышка, ₽': '', 'Вальцовка, ₽': '',
+    'Цена, ₽': r.price || r.rate || '',
+    'Параметр': r.unit || '',
+    'Источник': '',
+  }));
+
+  // ══════════════ Ставки сотрудников (обезличенно) ══════════════
+  // Персональные суммы не выгружаем, но без охвата ставками себестоимость
+  // нельзя проверить — поэтому показываем полноту, а не сами цифры.
+  const rateCoverage = [
+    { 'Показатель': 'Сотрудников со ставкой', 'Значение': workers.filter(w => Number(w.hourlyRate) > 0).length + ' из ' + workers.length },
+    { 'Показатель': 'На сдельной оплате', 'Значение': workers.filter(w => w.payType === 'piece').length },
+    { 'Показатель': 'На повременной', 'Значение': workers.filter(w => w.payType === 'hourly').length },
+    { 'Показатель': 'Ставка по умолчанию для расчёта, ₽/ч', 'Значение': 500 },
+    { 'Показатель': 'Часов посчитано по ставке по умолчанию', 'Значение': r1(orders.reduce((s, o) => s + ((econ[o.id] || {}).unratedHours || 0), 0)) },
+    { 'Показатель': 'Часов посчитано по реальным ставкам', 'Значение': r1(orders.reduce((s, o) => s + ((econ[o.id] || {}).ratedHours || 0), 0)) },
+  ];
+
+  // ══════════════ О данных ══════════════
+  const opsNoSection = prodOps.filter(o => !o.sectionId).length;
+  const opsNoPlan = prodOps.filter(o => !o.plannedHours).length;
+  const doneNoDate = prodOps.filter(o => o.status === 'done' && !o.finishedAt).length;
+  const doneNoStart = prodOps.filter(o => o.status === 'done' && !o.startedAt).length;
   const ordNoPower = orders.filter(o => !orderPowerKw(o)).length;
   // Мощность в карточке важнее названия, но если они разные — это ошибка ввода,
   // и цифры отчёта будут расходиться с тем, что цех видит на чертеже.
@@ -1588,10 +1964,17 @@ const buildProductionWorkbook = (data) => {
     { 'Раздел': 'Отработано по табелю', 'Значение': 'Сумма часов из табеля. Пустая клетка = 0, а не смена: незаполненный табель занижает цифру.' },
     { 'Раздел': 'Мощность', 'Значение': 'Из карточки заказа, при пустом поле — последнее число в названии модели. Мощность всего = мощность единицы × количество.' },
     { 'Раздел': 'Простои', 'Значение': 'События простоя, зафиксированные рабочим или мастером.' },
+    { 'Раздел': 'Себестоимость', 'Значение': 'Материалы — фактические списания рабочих × цена из справочника. Труд — часы каждого исполнителя × его ставка; где ставки нет, взято 500 ₽/ч, и такие часы показаны отдельной колонкой.' },
+    { 'Раздел': 'Вспомогательные работы', 'Значение': 'Уборка, обслуживание, помощь на другом участке. В производственные счётчики не входят — считаются отдельным листом, чтобы не завышать выработку участков.' },
+    { 'Раздел': 'Отметки о приходе', 'Значение': 'Система сама фиксирует первый запуск операции за день. Независимая от табеля отметка о выходе; расхождение с табелем показано колонкой.' },
+    { 'Раздел': 'Взаимозаменяемость', 'Значение': 'Считается по фактически выполненным операциям, а не по галочкам в карточке: кто действительно закрывал эту операцию.' },
     { 'Раздел': '', 'Значение': '' },
     { 'Раздел': 'ПОЛНОТА ДАННЫХ', 'Значение': '' },
-    { 'Раздел': 'Операций без участка', 'Значение': opsNoSection + ' из ' + allOps.length },
-    { 'Раздел': 'Операций без плановых часов', 'Значение': opsNoPlan + ' из ' + allOps.length },
+    { 'Раздел': 'Операций без участка', 'Значение': opsNoSection + ' из ' + prodOps.length },
+    { 'Раздел': 'Операций без плановых часов', 'Значение': opsNoPlan + ' из ' + prodOps.length },
+    { 'Раздел': 'Сотрудников без часовой ставки', 'Значение': workers.filter(w => !Number(w.hourlyRate)).length + ' из ' + workers.length },
+    { 'Раздел': 'Материалов без цены', 'Значение': (data.materials || []).filter(m => !Number(m.unitCost)).length + ' из ' + (data.materials || []).length },
+    { 'Раздел': 'Заказов с ценой продажи', 'Значение': orders.filter(o => Number(o.price)).length + ' из ' + orders.length + ' (без цены рентабельность не считается)' },
     { 'Раздел': 'Выполненных операций без даты завершения', 'Значение': doneNoDate },
     { 'Раздел': 'Выполненных операций без времени старта (факт. часы не посчитаны)', 'Значение': doneNoStart },
     { 'Раздел': 'Заказов без мощности', 'Значение': ordNoPower + ' из ' + orders.length },
@@ -1604,25 +1987,60 @@ const buildProductionWorkbook = (data) => {
     { 'Раздел': 'Журнал событий', 'Значение': 'Ограничен последними 2000 записями, чтобы файл оставался читаемым.' },
   ];
 
-  return [
-    { name: 'Сводка',              rows: S },
-    { name: 'Движение по месяцам', rows: movement },
-    { name: 'Заказы',              rows: orderRows },
-    { name: 'Операции',            rows: opRows },
-    { name: 'Сотрудники',          rows: workerRows },
-    { name: 'Сотрудник × месяц',   rows: workerMonthRows },
-    { name: 'Участки',             rows: sectionRows },
-    { name: 'Табель',              rows: tsRows },
-    { name: 'Простои',             rows: downRows },
-    { name: 'Брак и рекламации',   rows: reclRows },
-    { name: 'Протоколы ГИ',        rows: ptRows },
-    { name: 'Нормы операций',      rows: normRows },
-    { name: 'Комплектация',        rows: compRows },
-    { name: 'Поставки материалов', rows: delivRows },
-    { name: 'Этапы (маршрут)',     rows: stageRows },
-    { name: 'Журнал событий',      rows: evRows },
-    { name: 'О данных',            rows: about },
-  ];
+  // ══════════════ Причины отставания (расчёт живёт в core.js) ══════════════
+  let lagSheets = [];
+  try {
+    if (typeof buildLagReport === 'function' && typeof buildLagSheets === 'function') {
+      // Модуль отставания отдаёт свои листы с именами «Заказы» и «Загрузка
+      // участков» — они совпадают с нашими. Excel двух одинаковых вкладок не
+      // допускает, поэтому разводим их префиксом.
+      lagSheets = buildLagSheets(buildLagReport(data, { periodDays: 14 }), data)
+        .map(x => ({ name: ('Отставание · ' + x.name).slice(0, 31), rows: x.rows,
+                     desc: 'Причины отставания заказов: ' + x.name.toLowerCase() }));
+    }
+  } catch (e) { lagSheets = [{ name: 'Причины отставания', rows: [{ 'Ошибка': e.message }], desc: 'расчёт недоступен' }]; }
+
+  const sheets = [
+    { name: 'Сводка',              rows: S,               desc: 'Ключевые цифры на одной странице: заказы, производство, люди, деньги, допуски, качество' },
+    { name: 'Движение по месяцам', rows: movement,        desc: 'Заведено, запущено, завершено, отгружено по месяцам; штуки, мощность, часы, простои' },
+    { name: 'Заказы',              rows: orderRows,       desc: 'Реестр всех заказов с датами цикла, готовностью, комплектацией и себестоимостью' },
+    { name: 'Операции',            rows: opRows,          desc: 'Все операции: статус, участок, исполнители, даты, часы, сварочные параметры, зависимости' },
+    { name: 'Себестоимость',       rows: costRows,        desc: 'По каждому заказу: труд, материалы, итого, на изделие и на кВт' },
+    { name: 'Расход материалов',   rows: consRows,        desc: 'Фактические списания: что, сколько, на какую операцию и на какую сумму' },
+    { name: 'Материалы',           rows: matRows,         desc: 'Остаток, резерв, свободно, ниже минимума, стоимость запаса' },
+    { name: 'Сотрудники',          rows: workerRows,      desc: 'Карточка и выработка за всё время: операции, брак, часы, простои, заказы' },
+    { name: 'Сотрудник × месяц',   rows: workerMonthRows, desc: 'Выработка помесячно в сопоставлении с табелем' },
+    { name: 'Участки',             rows: sectionRows,     desc: 'Операции по статусам, заказы, штуки, мощность, часы по каждому участку' },
+    { name: 'Загрузка участков',   rows: loadRows,        desc: 'Очередь плановых часов против реальной мощности по табелю на 14 дней вперёд' },
+    { name: 'Табель',              rows: tsRows,          desc: 'Отработанные часы и коды отсутствий по сотрудникам и месяцам' },
+    { name: 'Отметки о приходе',   rows: checkinRows,     desc: 'Автоматические отметки выхода и расхождение с табелем' },
+    { name: 'Простои',             rows: downRows,        desc: 'Журнал простоев: причина, часы, оборудование, заказ' },
+    { name: 'Доп. работы',         rows: auxRows,         desc: 'Вспомогательные работы отдельно от производственных операций' },
+    { name: 'Компетенции',         rows: compMatrix,      desc: 'Что умеет каждый сотрудник по справочнику компетенций' },
+    { name: 'Взаимозаменяемость',  rows: skillRows,       desc: 'По каждой операции: сколько людей её реально выполняли и где носитель один' },
+    { name: 'Допуски и медосмотры', rows: permitRows,     desc: 'Удостоверения и медосмотры со сроками и признаком просрочки' },
+    { name: 'Инструктажи ОТ',      rows: instrRows,       desc: 'Инструктажи по охране труда и сроки следующих' },
+    { name: 'Отпуска и отсутствия', rows: vacRows,        desc: 'Плановые отпуска и заявленные отсутствия' },
+    { name: 'Инструмент',          rows: toolRows,        desc: 'Выдача инструмента: у кого, с какой стоимостью, возвращён или нет' },
+    { name: 'Брак и рекламации',   rows: reclRows,        desc: 'Рекламации с причиной, виновными и разбором 8D' },
+    { name: 'Протоколы ГИ',        rows: ptRows,          desc: 'Гидравлические испытания: параметры, заключение, подпись ОТК' },
+    { name: 'Оборудование',        rows: eqRows,          desc: 'Наработка и простои по каждой единице' },
+    { name: 'Нормы операций',      rows: normRows,        desc: 'Накопленные замеры длительности — основа для плановых часов' },
+    { name: 'Комплектация',        rows: compRows,        desc: 'Комплектующие по заказам и статус подтверждения' },
+    { name: 'Поставки материалов', rows: delivRows,       desc: 'Требуется и поставлено по заказам и этапам' },
+    { name: 'Спецификации BOM',    rows: bomRows,         desc: 'Нормы расхода материалов на изделие и их стоимость' },
+    { name: 'Расценки',            rows: rateRows,        desc: 'Сдельные расценки, допрасценки и сметы БМК' },
+    { name: 'Охват ставками',      rows: rateCoverage,    desc: 'Насколько себестоимость опирается на реальные ставки, а не на значение по умолчанию' },
+    { name: 'Этапы (маршрут)',     rows: stageRows,       desc: 'Шаблон операций с участком и планом по умолчанию' },
+    { name: 'Журнал событий',      rows: evRows,          desc: 'Последние 2000 записей журнала' },
+  ].concat(lagSheets).concat([
+    { name: 'О данных',            rows: about,           desc: 'Методика расчёта, полнота данных и что намеренно не выгружается' },
+  ]);
+
+  // Содержание — первым листом: в книге больше тридцати вкладок, без него
+  // читатель просто не найдёт нужное.
+  const toc = sheets.map((x, i) => ({ '№': i + 2, 'Лист': x.name, 'Строк': x.rows.length, 'Что внутри': x.desc }));
+  return [{ name: 'Содержание', rows: toc }].concat(sheets.map(x => ({ name: x.name, rows: x.rows })));
 };
 
 const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
@@ -2023,11 +2441,16 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       await ensureCdn('xlsx');
       const sheets = buildProductionWorkbook(data);
       const wb = XLSX.utils.book_new();
-      sheets.forEach(sh => XLSX.utils.book_append_sheet(
-        wb,
-        XLSX.utils.json_to_sheet(sh.rows.length ? sh.rows : [{ 'Нет данных': '—' }]),
-        sh.name.slice(0, 31)   // Excel не принимает имя листа длиннее 31 символа
-      ));
+      // Excel не принимает имя листа длиннее 31 символа и не допускает двух
+      // одинаковых имён — обрезаем и разводим дубли, иначе запись падает.
+      const used = {};
+      sheets.forEach(sh => {
+        let nm = String(sh.name).slice(0, 31);
+        if (used[nm]) { let i = 2; while (used[nm.slice(0, 28) + ' (' + i + ')']) i++; nm = nm.slice(0, 28) + ' (' + i + ')'; }
+        used[nm] = 1;
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
+          sh.rows.length ? sh.rows : [{ 'Нет данных': '—' }]), nm);
+      });
       XLSX.writeFile(wb, 'proizvodstvo_' + new Date().toISOString().slice(0, 10) + '.xlsx');
       const sh = n => (sheets.find(x => x.name === n) || { rows: [] }).rows.length;
       addToast('Выгружено: заказов ' + sh('Заказы') + ', операций ' + sh('Операции') +

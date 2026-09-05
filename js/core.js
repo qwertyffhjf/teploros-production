@@ -377,53 +377,87 @@ const scoreWorkerForOp = (worker, opName, data, opsByWorker) => {
   };
 };
 
-// 💰 Себестоимость заказа: материалы + рабочая сила
-const calcOrderCostDetail = (data, orderId) => {
-  const order = data.orders.find(o => o.id === orderId);
-  if (!order) return { error: 'Заказ не найден' };
-  
-  // Материалы: материал.цена × количество
-  let materialCost = 0;
-  (order.materialList || []).forEach(m => {
-    const material = data.materials?.find(mat => mat.id === m.materialId);
-    if (material && m.qty) {
-      materialCost += (material.unitPrice || 0) * m.qty;
-    }
+// 💰 Экономика заказа — единственный расчёт себестоимости в системе.
+// Материалы: фактические списания рабочих (materialConsumptions) × цена из
+// справочника материалов (unitCost). Раньше здесь смотрели order.materialList
+// и material.unitPrice — ни одно из этих полей нигде не заполняется, поэтому
+// материальная часть всегда получалась нулевой.
+// Труд: часы каждого исполнителя × его ставка. Где ставка не заведена — берём
+// fallbackRate, и эти часы возвращаются отдельным полем, чтобы цифру можно было
+// проверить, а не принимать на веру.
+const calcOrderEconomics = (data, orderId, fallbackRate = 500) => {
+  const order = (data.orders || []).find(o => o.id === orderId);
+  if (!order) return null;
+  const ops = (data.ops || []).filter(op => op.orderId === orderId && !op.archived);
+  const doneOps = ops.filter(op => op.status === 'done');
+  const opIds = {};
+  ops.forEach(op => { opIds[op.id] = 1; });
+
+  let materialCost = 0, materialItems = 0;
+  (data.materialConsumptions || []).forEach(mc => {
+    if (!opIds[mc.opId]) return;
+    const mat = (data.materials || []).find(m => m.id === mc.materialId) || {};
+    materialCost += (Number(mc.qty) || 0) * (Number(mat.unitCost) || 0);
+    materialItems++;
   });
-  
-  // Рабочая сила: сумма (часы × ставка) по каждому сотруднику
-  let laborCost = 0;
-  const ops = data.ops.filter(op => op.orderId === orderId && !op.archived && op.status === 'done');
-  const workerHours = {}; // workerId -> часы
-  
-  ops.forEach(op => {
-    if (op.workerIds) {
-      const opHours = op.finishedAt && op.startedAt ? (op.finishedAt - op.startedAt) / 3600000 : (op.plannedHours || 0);
-      op.workerIds.forEach(wid => {
-        workerHours[wid] = (workerHours[wid] || 0) + opHours;
-      });
-    }
+
+  const workerHours = {};
+  let laborHours = 0;
+  doneOps.forEach(op => {
+    const h = (op.startedAt && op.finishedAt > op.startedAt)
+      ? (op.finishedAt - op.startedAt) / 3600000
+      : (Number(op.plannedHours) || 0);
+    laborHours += h;
+    (op.workerIds || []).forEach(wid => { workerHours[wid] = (workerHours[wid] || 0) + h; });
   });
-  
-  Object.entries(workerHours).forEach(([wid, hours]) => {
-    const worker = data.workers?.find(w => w.id === wid);
-    if (worker) {
-      const rate = worker.hourlyRate || 200; // дефолт 200 руб/час
-      laborCost += hours * rate;
-    }
+  let laborCost = 0, ratedHours = 0, unratedHours = 0, manHours = 0;
+  Object.keys(workerHours).forEach(wid => {
+    const w = (data.workers || []).find(x => x.id === wid) || {};
+    const rate = Number(w.hourlyRate) || 0;
+    const h = workerHours[wid];
+    manHours += h;
+    if (rate) { laborCost += h * rate; ratedHours += h; }
+    else { laborCost += h * fallbackRate; unratedHours += h; }
   });
-  
+
+  const r1 = v => Math.round(v * 10) / 10;
   const totalCost = materialCost + laborCost;
-  const profit = (order.price || 0) - totalCost;
-  const margin = order.price > 0 ? Math.round((profit / order.price) * 100) : 0;
-  
-  return { orderId, materialCost: Math.round(materialCost), laborCost: Math.round(laborCost), totalCost: Math.round(totalCost), price: order.price, profit: Math.round(profit), margin, opsCount: ops.length, workerCount: Object.keys(workerHours).length };
+  const price = Number(order.price) || 0;
+  return {
+    orderId,
+    laborHours: r1(laborHours),      // календарные часы операций
+    manHours: r1(manHours),          // человеко-часы (операция на двоих считается дважды)
+    ratedHours: r1(ratedHours), unratedHours: r1(unratedHours), fallbackRate,
+    laborCost: Math.round(laborCost),
+    materialCost: Math.round(materialCost), materialItems,
+    totalCost: Math.round(totalCost),
+    price, profit: Math.round(price - totalCost),
+    margin: price > 0 ? Math.round((price - totalCost) / price * 100) : 0,
+    opsTotal: ops.length, opsDone: doneOps.length,
+    workerCount: Object.keys(workerHours).length,
+  };
 };
 
-// 📊 Отчёт себестоимости: все заказы с рентабельностью
+// Обёртка прежней формы — её ждёт экран «Рентабельность заказов» в master.js
+const calcOrderCostDetail = (data, orderId) => {
+  const e = calcOrderEconomics(data, orderId);
+  if (!e) return { error: 'Заказ не найден' };
+  return { orderId, materialCost: e.materialCost, laborCost: e.laborCost, totalCost: e.totalCost,
+    price: e.price, profit: e.profit, margin: e.margin, opsCount: e.opsDone, workerCount: e.workerCount };
+};
+
+// 📊 Отчёт себестоимости: заказы, производство по которым закончено.
+// Раньше фильтр смотрел order.status === 'done', но статус заказа в этой
+// системе не хранится — он выводится из операций, поэтому таблица всегда была
+// пустой. Считаем завершённым отгруженный заказ либо тот, где закрыты все операции.
 const getCostReport = (data) => {
-  const orders = data.orders.filter(o => !o.archived && o.status === 'done');
-  return orders.map(order => calcOrderCostDetail(data, order.id))
+  const done = (data.orders || []).filter(o => {
+    if (o.archived) return false;
+    if (o.shipped) return true;
+    const ops = (data.ops || []).filter(x => x.orderId === o.id && !x.archived);
+    return ops.length > 0 && ops.every(x => x.status === 'done');
+  });
+  return done.map(order => calcOrderCostDetail(data, order.id))
     .filter(r => !r.error)
     .sort((a, b) => b.margin - a.margin)
     .slice(0, 50);

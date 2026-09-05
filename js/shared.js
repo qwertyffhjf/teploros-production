@@ -191,19 +191,13 @@ const MaterialConsumptionModal = memo(({ data, opId, onSave, onSkip }) => {
 
 
 // ==================== Себестоимость заказа ====================
+// Тонкая обёртка над calcOrderEconomics (core.js) — чтобы карточка заказа и
+// выгрузка показывали одну и ту же цифру, а не два разных расчёта.
 const calcOrderCost = (order, data, hourlyRate = 500) => {
-  const ops = data.ops.filter(op => op.orderId === order.id);
-  const doneOps = ops.filter(op => op.status === 'done' && op.startedAt && op.finishedAt);
-  const laborHours = doneOps.reduce((s, op) => s + (op.finishedAt - op.startedAt) / 3600000, 0);
-  const laborCost = laborHours * hourlyRate;
-  
-  const materialCost = (data.materialConsumptions || [])
-    .filter(mc => ops.some(op => op.id === mc.opId))
-    .reduce((s, mc) => {
-      const mat = data.materials.find(m => m.id === mc.materialId);
-      return s + (mc.qty * (mat?.unitCost || 0));
-    }, 0);
-  return { laborHours: Math.round(laborHours * 10) / 10, laborCost: Math.round(laborCost), materialCost: Math.round(materialCost), totalCost: Math.round(laborCost + materialCost), opsTotal: ops.length, opsDone: doneOps.length };
+  const e = calcOrderEconomics(data, order.id, hourlyRate);
+  if (!e) return { laborHours: 0, laborCost: 0, materialCost: 0, totalCost: 0, opsTotal: 0, opsDone: 0 };
+  return { laborHours: e.laborHours, laborCost: e.laborCost, materialCost: e.materialCost,
+    totalCost: e.totalCost, opsTotal: e.opsTotal, opsDone: e.opsDone };
 };
 
 // ==================== PDF Паспорт изделия ====================
