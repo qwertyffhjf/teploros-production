@@ -2318,9 +2318,18 @@ const ProductionReports = memo(({ data, onUpdate, addToast }) => {
     var model = useMemo(function () { return buildModel(props.data || {}); }, [props.data]);
     var rows = model.rows;
 
+    // AI-аналитик: жил в AnalyticsDashboardLegacy, который перестал рендериться после
+    // перехода вкладки «Аналитика» на этот дашборд. Возвращён сюда первым блоком.
+    // AiAnalyst — const в области видимости файла, доступен по замыканию из IIFE.
+    var aiNode = (typeof AiAnalyst !== 'undefined')
+      ? h(AiAnalyst, { data: props.data, period: 30, allData: props.data })
+      : null;
+
     if (!rows.length) {
-      return h('div', { className: 'an-root', 'data-atheme': theme },
-        h('div', { className: 'an-canvas' }, h('div', { className: 'an-empty' }, 'Нет данных по заказам для аналитики.')));
+      return h(React.Fragment, null,
+        aiNode,
+        h('div', { className: 'an-root', 'data-atheme': theme },
+          h('div', { className: 'an-canvas' }, h('div', { className: 'an-empty' }, 'Нет данных по заказам для аналитики.'))));
     }
 
     // агрегаты
@@ -2685,7 +2694,9 @@ const ProductionReports = memo(({ data, onUpdate, addToast }) => {
       return h('button', { className: 'an-tab' + (layout === id ? ' on' : ''), onClick: function () { chooseLayout(id); } }, label);
     }
 
-    return h('div', { className: 'an-root', 'data-atheme': theme },
+    return h(React.Fragment, null,
+      aiNode,
+      h('div', { className: 'an-root', 'data-atheme': theme },
       h('div', { className: 'an-bar' },
         h('div', { className: 'an-tabs' },
           tabBtn('overview', '📊 Обзор'),
@@ -2699,7 +2710,7 @@ const ProductionReports = memo(({ data, onUpdate, addToast }) => {
       h('div', { className: 'an-canvas' },
         h('div', { className: 'an-title' }, titleNode[0], h('small', null, titleNode[1])),
         kpisNode,
-        bodyNode));
+        bodyNode)));
   }
 
   // экспорт как глобальный компонент (master.js: h(SectionAnalytics, { data }))
