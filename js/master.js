@@ -1032,6 +1032,599 @@ const OrdersDashboard = memo(({ data, duplicateGroups, dupSelected, onToggleDup,
   );
 });
 
+// ==================== Полная выгрузка производства ====================
+// Собирает в один файл всё, что лежит в основном документе production_v14:
+// заказы, операции, люди, табель, простои, брак, протоколы ГИ, нормы,
+// комплектацию и поставки. Возвращает [{ name, rows }] — лист за листом,
+// в порядке чтения: сначала сводка для руководства, затем реестры, затем
+// первичные данные и справочники.
+// НЕ выгружаются: PIN-коды и ставки оплаты (учётные данные и персональные
+// выплаты не место в отчёте, который ходит по рукам), а также остатки склада
+// и заявки на материалы — они лежат в отдельных документах Firestore и
+// выгружаются своими кнопками в разделе «Склад».
+const buildProductionWorkbook = (data) => {
+  const DAY = 86400000;
+  const HOUR = 3600000;
+  const r1 = v => Math.round((Number(v) || 0) * 10) / 10;
+  const fmtD  = ts => ts ? new Date(ts).toLocaleDateString('ru-RU') : '';
+  const fmtDT = ts => ts ? new Date(ts).toLocaleString('ru-RU') : '';
+  const mKey  = ts => { const d = new Date(ts); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); };
+  const MN = ['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
+  const mLabel = k => { const p = String(k).split('-'); return (MN[Number(p[1]) - 1] || p[1]) + ' ' + p[0]; };
+
+  const orders   = data.orders || [];
+  const allOps   = data.ops || [];
+  const workers  = data.workers || [];
+  const events   = data.events || [];
+  const sections = data.sections || [];
+
+  const byId  = (arr, id) => (arr || []).find(x => x.id === id) || {};
+  const sName = id => byId(sections, id).name || '';
+  const wName = id => byId(workers, id).name || '';
+  const eName = id => byId(data.equipment, id).name || '';
+  const dtName = id => byId(data.downtimeTypes, id).name || '';
+  const drName = id => byId(data.defectReasons, id).name || '';
+  const oById = {}; orders.forEach(o => { oById[o.id] = o; });
+  const productTypes = (data.settings && data.settings.productTypes) || [{ id: 'boiler', label: 'Котлы' }, { id: 'bmk', label: 'БМК' }];
+  const ptLabel = id => (productTypes.find(p => p.id === id) || {}).label || id || '';
+  const OPS = { pending: 'Ожидает', in_progress: 'В работе', done: 'Выполнена', on_check: 'На проверке ОТК',
+    weld_check: 'Приёмка сварщиком', defect: 'Брак', rework: 'Переделка', pending_approval: 'Ждёт подтверждения' };
+
+  const nowTs = Date.now();
+  const curMonth = mKey(nowTs);
+  const prevMonth = (() => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return mKey(d.getTime()); })();
+  const factH = op => (op.startedAt && op.finishedAt > op.startedAt) ? (op.finishedAt - op.startedAt) / HOUR : 0;
+
+  // ── Производные показатели заказа ─────────────────────────────────────────
+  const info = {};
+  orders.forEach(ord => {
+    const list = getOrderOps(ord, data);
+    const done = list.filter(o => o.status === 'done');
+    const starts = list.filter(o => o.startedAt).map(o => o.startedAt);
+    const fins   = done.filter(o => o.finishedAt).map(o => o.finishedAt);
+    const comps = parseComps(ord.components);
+    const confirmed = comps.filter(c => c.status === 'confirmed').length;
+    info[ord.id] = {
+      list,
+      total: list.length,
+      done: done.length,
+      defect: list.filter(o => o.status === 'defect').length,
+      inProgress: list.filter(o => o.status === 'in_progress').length,
+      onCheck: list.filter(o => o.status === 'on_check' || o.status === 'weld_check').length,
+      firstStart: starts.length ? Math.min.apply(null, starts) : 0,
+      lastFinish: fins.length ? Math.max.apply(null, fins) : 0,
+      allDone: list.length > 0 && done.length === list.length,
+      factH: list.reduce((s, o) => s + factH(o), 0),
+      planH: list.reduce((s, o) => s + (Number(o.plannedHours) || 0), 0),
+      sects: [...new Set(list.map(o => sName(o.sectionId)).filter(Boolean))].join(', '),
+      execs: [...new Set(list.flatMap(o => (o.workerIds || []).map(wName)).filter(Boolean))].join(', '),
+      comps: comps.length,
+      compsOk: confirmed,
+      compText: !comps.length ? 'без комплектующих' : (confirmed === comps.length ? 'полная (' + comps.length + ')' : confirmed + '/' + comps.length),
+      kw: orderPowerKw(ord) || 0,
+      qty: Number(ord.qty) || 1,
+    };
+    const i = info[ord.id];
+    i.kwTotal = i.kw * i.qty;
+    i.ready = i.allDone && (!comps.length || confirmed === comps.length);
+  });
+
+  const activeOrders  = orders.filter(o => !o.archived && !o.shipped);
+  const shippedOrders = orders.filter(o => o.shipped);
+
+  // ══════════════ Лист 1. Сводка ══════════════
+  const S = [];
+  const add = (k, v) => S.push({ 'Показатель': k, 'Значение': v });
+  const sep = (t) => S.push({ 'Показатель': t, 'Значение': '' });
+
+  const finTimes = allOps.filter(o => o.finishedAt).map(o => o.finishedAt);
+  add('Отчёт сформирован', fmtDT(nowTs));
+  add('Данные с', finTimes.length ? fmtD(Math.min.apply(null, finTimes)) : '—');
+  add('Данные по', finTimes.length ? fmtD(Math.max.apply(null, finTimes)) : '—');
+
+  sep('ЗАКАЗЫ');
+  add('Всего заказов в системе', orders.length);
+  add('Активных (в производстве)', activeOrders.length);
+  add('Отгружено за всё время', shippedOrders.length);
+  add('В архиве', orders.filter(o => o.archived).length);
+  add('Заведено в этом месяце', orders.filter(o => o.createdAt && mKey(o.createdAt) === curMonth).length);
+  add('Заведено в прошлом месяце', orders.filter(o => o.createdAt && mKey(o.createdAt) === prevMonth).length);
+  add('Отгружено в этом месяце', orders.filter(o => o.shippedAt && mKey(o.shippedAt) === curMonth).length);
+  add('Отгружено в прошлом месяце', orders.filter(o => o.shippedAt && mKey(o.shippedAt) === prevMonth).length);
+  add('Просрочено активных', activeOrders.filter(o => o.deadline && new Date(o.deadline) < nowTs).length);
+  add('Готовы к отгрузке', activeOrders.filter(o => info[o.id].ready).length);
+  add('Штук в активных заказах', activeOrders.reduce((s, o) => s + info[o.id].qty, 0));
+  add('Мощность активных заказов, кВт', Math.round(activeOrders.reduce((s, o) => s + info[o.id].kwTotal, 0)));
+  add('Мощность отгружено за всё время, кВт', Math.round(shippedOrders.reduce((s, o) => s + info[o.id].kwTotal, 0)));
+  add('Мощность отгружено в этом месяце, кВт', Math.round(orders.filter(o => o.shippedAt && mKey(o.shippedAt) === curMonth).reduce((s, o) => s + info[o.id].kwTotal, 0)));
+
+  sep('ПРОИЗВОДСТВО');
+  add('Операций всего', allOps.length);
+  ['done','in_progress','pending','on_check','weld_check','defect','rework'].forEach(st => {
+    const n = allOps.filter(o => o.status === st).length;
+    if (n) add('— ' + (OPS[st] || st), n);
+  });
+  const doneMonth = allOps.filter(o => o.status === 'done' && o.finishedAt && mKey(o.finishedAt) === curMonth);
+  add('Операций выполнено в этом месяце', doneMonth.length);
+  add('Операций выполнено в прошлом месяце', allOps.filter(o => o.status === 'done' && o.finishedAt && mKey(o.finishedAt) === prevMonth).length);
+  add('Фактических часов всего', r1(allOps.reduce((s, o) => s + factH(o), 0)));
+  add('Фактических часов в этом месяце', r1(doneMonth.reduce((s, o) => s + factH(o), 0)));
+  add('Плановых часов проставлено, операций', allOps.filter(o => o.plannedHours).length);
+
+  sep('ЛЮДИ');
+  const liveWorkers = workers.filter(w => !w.archived);
+  add('Сотрудников в системе', workers.length);
+  add('Из них не в архиве', liveWorkers.length);
+  add('На смене сегодня (по табелю)', liveWorkers.filter(w => isWorkerOnShift(w, data.timesheet)).length);
+  // отработанные часы по табелю за месяц
+  const tsMonth = (data.timesheet || {})[curMonth] || {};
+  let tsHours = 0, tsAbsent = 0;
+  Object.keys(tsMonth).forEach(wid => Object.keys(tsMonth[wid] || {}).forEach(d => {
+    const c = tsMonth[wid][d] || {};
+    if (c.code === 'Б' || c.code === 'ОТ' || c.code === 'ОЗ' || c.code === 'НН' || c.code === 'У') tsAbsent++;
+    else tsHours += Number(c.h) || 0;
+  }));
+  add('Отработано часов по табелю в этом месяце', r1(tsHours));
+  add('Дней отсутствия в этом месяце', tsAbsent);
+  const dtMonth = events.filter(e => e.type === 'downtime' && e.ts && mKey(e.ts) === curMonth);
+  add('Простоев в этом месяце, ч', r1(dtMonth.reduce((s, e) => s + (e.duration || 0), 0) / HOUR));
+  add('Случаев простоя в этом месяце', dtMonth.length);
+
+  sep('КАЧЕСТВО');
+  const defectAll = allOps.filter(o => o.status === 'defect').length;
+  const doneAll = allOps.filter(o => o.status === 'done').length;
+  add('Брак, операций всего', defectAll);
+  add('Доля брака, %', doneAll + defectAll ? r1(defectAll / (doneAll + defectAll) * 100) : 0);
+  add('Рекламаций всего', (data.reclamations || []).length);
+  add('Рекламаций открыто', (data.reclamations || []).filter(x => x.status === 'open').length);
+  add('Протоколов ГИ всего', (data.pressureTests || []).length);
+  add('— подписано ОТК', (data.pressureTests || []).filter(t => t.status === 'signed').length);
+  add('— ждёт подписи', (data.pressureTests || []).filter(t => t.status === 'pending_qc').length);
+  add('— отклонено', (data.pressureTests || []).filter(t => t.status === 'rejected').length);
+
+  // ══════════════ Лист 2. Движение по месяцам ══════════════
+  const monthSet = {};
+  orders.forEach(o => { if (o.createdAt) monthSet[mKey(o.createdAt)] = 1; if (o.shippedAt) monthSet[mKey(o.shippedAt)] = 1; });
+  allOps.forEach(o => { if (o.finishedAt) monthSet[mKey(o.finishedAt)] = 1; });
+  Object.keys(data.timesheet || {}).forEach(k => { monthSet[k] = 1; });
+  const months = Object.keys(monthSet).sort();
+
+  const movement = months.map(k => {
+    const created  = orders.filter(o => o.createdAt && mKey(o.createdAt) === k);
+    const started  = orders.filter(o => info[o.id].firstStart && mKey(info[o.id].firstStart) === k);
+    const finished = orders.filter(o => info[o.id].allDone && info[o.id].lastFinish && mKey(info[o.id].lastFinish) === k);
+    const shipped  = orders.filter(o => o.shippedAt && mKey(o.shippedAt) === k);
+    const opsDone  = allOps.filter(o => o.status === 'done' && o.finishedAt && mKey(o.finishedAt) === k);
+    const opsDef   = allOps.filter(o => o.status === 'defect' && o.finishedAt && mKey(o.finishedAt) === k);
+    const ts = (data.timesheet || {})[k] || {};
+    let th = 0, ta = 0;
+    Object.keys(ts).forEach(wid => Object.keys(ts[wid] || {}).forEach(d => {
+      const c = ts[wid][d] || {};
+      if (c.code === 'Б' || c.code === 'ОТ' || c.code === 'ОЗ' || c.code === 'НН' || c.code === 'У') ta++;
+      else th += Number(c.h) || 0;
+    }));
+    const dt = events.filter(e => e.type === 'downtime' && e.ts && mKey(e.ts) === k);
+    const sum = (arr, f) => arr.reduce((s, o) => s + f(info[o.id]), 0);
+    return {
+      'Месяц': mLabel(k),
+      'Заведено заказов': created.length,
+      'Запущено в производство': started.length,
+      'Завершено производством': finished.length,
+      'Отгружено': shipped.length,
+      'Штук отгружено': sum(shipped, i => i.qty),
+      'Мощность отгружена, кВт': Math.round(sum(shipped, i => i.kwTotal)),
+      'Штук заведено': sum(created, i => i.qty),
+      'Мощность заведена, кВт': Math.round(sum(created, i => i.kwTotal)),
+      'Операций выполнено': opsDone.length,
+      'Брак, операций': opsDef.length,
+      'Факт. часов по операциям': r1(opsDone.reduce((s, o) => s + factH(o), 0)),
+      'Отработано по табелю, ч': r1(th),
+      'Дней отсутствия': ta,
+      'Простои, ч': r1(dt.reduce((s, e) => s + (e.duration || 0), 0) / HOUR),
+      'Работало людей': new Set(opsDone.flatMap(o => o.workerIds || [])).size,
+    };
+  });
+
+  // ══════════════ Лист 3. Заказы ══════════════
+  const orderRows = orders.map(ord => {
+    const i = info[ord.id];
+    const dl = ord.deadline ? Math.ceil((new Date(ord.deadline) - nowTs) / DAY) : null;
+    const cur = i.list.find(o => o.status === 'in_progress') || i.list.find(o => o.status === 'on_check') || i.list.find(o => o.status === 'pending');
+    return {
+      'Номер': ord.number || '',
+      'Заказчик': ord.customer || '',
+      'Изделие': ord.product || '',
+      'Тип изделия': ptLabel(ord.productType),
+      'Серийный №': ord.serialNumber || '',
+      'Мощность ед., кВт': i.kw || '',
+      'Кол-во': i.qty,
+      'Мощность всего, кВт': i.kwTotal || '',
+      'Приоритет': (PRIORITY[ord.priority] && PRIORITY[ord.priority].label) || ord.priority || '',
+      'Статус': ord.shipped ? 'Отгружен' : i.allDone ? 'Готов к отгрузке' : i.inProgress ? 'В работе' : i.done ? 'Частично выполнен' : 'Ожидает',
+      'Готовность, %': i.total ? Math.round(i.done / i.total * 100) : 0,
+      'Текущая операция': ord.shipped ? '—' : i.allDone ? 'Все операции завершены' : (cur ? cur.name : '—'),
+      'Операций всего': i.total,
+      'Выполнено': i.done,
+      'Осталось': i.total - i.done,
+      'Брак, операций': i.defect,
+      'Плановый срок': ord.deadline || '',
+      'Осталось дней': dl !== null ? dl : '',
+      'Просрочен': (!ord.shipped && dl !== null && dl < 0) ? 'Да' : '',
+      'Заведён': fmtD(ord.createdAt),
+      'Дата договора': fmtD(ord.contractDate),
+      'Раскрой получен': fmtD(ord.cuttingArrivedAt),
+      'Запущен в производство': fmtD(i.firstStart),
+      'Завершён производством': i.allDone ? fmtD(i.lastFinish) : '',
+      'Отгружен': fmtD(ord.shippedAt),
+      'Дней в производстве': (i.firstStart && i.allDone) ? Math.round((i.lastFinish - i.firstStart) / DAY) : '',
+      'Дней от заведения до отгрузки': (ord.createdAt && ord.shippedAt) ? Math.round((ord.shippedAt - ord.createdAt) / DAY) : '',
+      'Факт. часов': r1(i.factH),
+      'План, ч': r1(i.planH),
+      'Комплектация': i.compText,
+      'Готов к отгрузке': i.ready ? 'Да' : '',
+      'Чертёж': ord.drawingUrl ? 'есть' : '',
+      'Участки': i.sects,
+      'Исполнители': i.execs,
+      'Источник': ord.source === '1c_import' ? 'Импорт 1С' : 'Вручную',
+      'В архиве': ord.archived ? 'Да' : '',
+    };
+  });
+
+  // ══════════════ Лист 4. Операции ══════════════
+  const opRows = allOps.map(op => {
+    const ord = oById[op.orderId] || {};
+    const f = factH(op);
+    return {
+      'Заказ': ord.number || '',
+      'Заказчик': ord.customer || '',
+      'Изделие': ord.product || '',
+      'Мощность, кВт': orderPowerKw(ord) || '',
+      'Тип изделия': ptLabel(ord.productType),
+      'Операция': op.name || '',
+      'Статус': OPS[op.status] || op.status || '',
+      'Участок': sName(op.sectionId),
+      'Оборудование': eName(op.equipmentId),
+      'Исполнители': (op.workerIds || []).map(wName).filter(Boolean).join(', '),
+      'План. старт': fmtD(op.plannedStartDate),
+      'Начата': fmtDT(op.startedAt),
+      'Завершена': fmtDT(op.finishedAt),
+      'Месяц завершения': op.finishedAt ? mKey(op.finishedAt) : '',
+      'Факт, ч': f ? r1(f) : '',
+      'План, ч': op.plannedHours != null ? op.plannedHours : '',
+      'Отклонение, ч': (f && op.plannedHours) ? r1(f - op.plannedHours) : '',
+      'Требует ОТК': op.requiresQC ? 'Да' : '',
+      'Опрессовка': op.requiresPressureTest ? 'Да' : '',
+      'Причина брака': drName(op.defectReasonId),
+      'Комментарий к браку': op.defectNote || '',
+      'В архиве': op.archived ? 'Да' : '',
+    };
+  });
+
+  // ══════════════ Лист 5. Сотрудники ══════════════
+  const wStat = {};
+  const touch = id => wStat[id] || (wStat[id] = { done: 0, defect: 0, factH: 0, orders: {}, sects: {}, last: 0, ops: {} });
+  allOps.forEach(op => (op.workerIds || []).forEach(id => {
+    const s = touch(id);
+    if (op.status === 'done') { s.done++; s.ops[op.name || '—'] = 1; }
+    if (op.status === 'defect') s.defect++;
+    if (op.finishedAt) { s.factH += factH(op); if (op.finishedAt > s.last) s.last = op.finishedAt; s.orders[op.orderId] = 1; }
+    if (op.sectionId) s.sects[sName(op.sectionId)] = 1;
+  }));
+  const dtByWorker = {};
+  events.filter(e => e.type === 'downtime').forEach(e => { dtByWorker[e.workerId] = (dtByWorker[e.workerId] || 0) + (e.duration || 0); });
+
+  const workerRows = workers.map(w => {
+    const s = wStat[w.id] || { done: 0, defect: 0, factH: 0, orders: {}, sects: {}, last: 0, ops: {} };
+    const st = getWorkerStatusToday(w.id, data.timesheet);
+    return {
+      'Сотрудник': w.name || '',
+      'Табельный №': w.tabNumber || '',
+      'Должность': w.position || '',
+      'Разряд': w.grade || '',
+      'Участок (штатный)': sName(w.sectionId),
+      'Участки по факту': Object.keys(s.sects).join(', '),
+      'Статус в карточке': w.status || '',
+      'По табелю сегодня': st === 'working' ? 'на смене' : st === 'sick' ? 'больничный' : st === 'vacation' ? 'отпуск' : st === 'absent' ? 'отсутствует' : 'нет отметки',
+      'Принят': w.hireDate || '',
+      'Тип оплаты': w.payType === 'piece' ? 'сдельная' : w.payType === 'hourly' ? 'повременная' : (w.payType || ''),
+      'Компетенций': (w.competences || []).length,
+      'Операций выполнено': s.done,
+      'Разных операций освоено': Object.keys(s.ops).length,
+      'Брак, операций': s.defect,
+      'Доля брака, %': (s.done + s.defect) ? r1(s.defect / (s.done + s.defect) * 100) : 0,
+      'Факт. часов по операциям': r1(s.factH),
+      'Простои, ч': r1((dtByWorker[w.id] || 0) / HOUR),
+      'Заказов участвовал': Object.keys(s.orders).length,
+      'Последняя операция': fmtD(s.last),
+      'В архиве': w.archived ? 'Да' : '',
+    };
+  }).sort((a, b) => b['Операций выполнено'] - a['Операций выполнено']);
+
+  // ══════════════ Лист 6. Сотрудник × месяц ══════════════
+  const wm = {};
+  const wmTouch = (id, k) => { const key = id + '|' + k; return wm[key] || (wm[key] = { id, k, done: 0, defect: 0, factH: 0, orders: {} }); };
+  allOps.forEach(op => { if (!op.finishedAt) return;
+    const k = mKey(op.finishedAt);
+    (op.workerIds || []).forEach(id => {
+      const c = wmTouch(id, k);
+      if (op.status === 'done') c.done++;
+      if (op.status === 'defect') c.defect++;
+      c.factH += factH(op); c.orders[op.orderId] = 1;
+    });
+  });
+  const wmDown = {};
+  events.filter(e => e.type === 'downtime' && e.ts).forEach(e => {
+    const key = e.workerId + '|' + mKey(e.ts);
+    wmDown[key] = (wmDown[key] || 0) + (e.duration || 0);
+  });
+  const workerMonthRows = Object.keys(wm).map(key => {
+    const c = wm[key];
+    const cell = ((data.timesheet || {})[c.k] || {})[c.id] || {};
+    let th = 0, td = 0, ta = 0;
+    Object.keys(cell).forEach(d => {
+      const v = cell[d] || {};
+      if (v.code === 'Б' || v.code === 'ОТ' || v.code === 'ОЗ' || v.code === 'НН' || v.code === 'У') ta++;
+      else { th += Number(v.h) || 0; td++; }
+    });
+    return {
+      'Сотрудник': wName(c.id) || c.id,
+      'Месяц': mLabel(c.k),
+      'Ключ месяца': c.k,
+      'Операций выполнено': c.done,
+      'Брак, операций': c.defect,
+      'Факт. часов по операциям': r1(c.factH),
+      'Отработано по табелю, ч': r1(th),
+      'Дней в табеле': td,
+      'Дней отсутствия': ta,
+      'Простои, ч': r1((wmDown[key] || 0) / HOUR),
+      'Заказов': Object.keys(c.orders).length,
+    };
+  }).sort((a, b) => a['Ключ месяца'] < b['Ключ месяца'] ? 1 : a['Ключ месяца'] > b['Ключ месяца'] ? -1 : b['Операций выполнено'] - a['Операций выполнено']);
+
+  // ══════════════ Лист 7. Участки ══════════════
+  const secAgg = {};
+  const secTouch = id => secAgg[id] || (secAgg[id] = { name: sName(id) || 'Без участка', total: 0, done: 0, inProgress: 0, pending: 0, defect: 0, factH: 0, planH: 0, orders: {}, workers: {} });
+  allOps.forEach(op => {
+    const s = secTouch(op.sectionId || '-');
+    s.total++;
+    if (op.status === 'done') s.done++;
+    else if (op.status === 'in_progress') s.inProgress++;
+    else if (op.status === 'pending') s.pending++;
+    else if (op.status === 'defect') s.defect++;
+    s.factH += factH(op); s.planH += Number(op.plannedHours) || 0;
+    s.orders[op.orderId] = 1;
+    (op.workerIds || []).forEach(w => { s.workers[w] = 1; });
+  });
+  const sectionRows = Object.keys(secAgg).map(id => {
+    const s = secAgg[id];
+    const list = Object.keys(s.orders).map(oid => oById[oid]).filter(Boolean);
+    return {
+      'Участок': s.name,
+      'Сотрудников закреплено': workers.filter(w => w.sectionId === id && !w.archived).length,
+      'Работало по факту': Object.keys(s.workers).length,
+      'Операций всего': s.total,
+      'Выполнено': s.done,
+      'В работе': s.inProgress,
+      'Ожидает': s.pending,
+      'Брак': s.defect,
+      'Заказов прошло': list.length,
+      'Штук': list.reduce((a, o) => a + info[o.id].qty, 0),
+      'Мощность, кВт': Math.round(list.reduce((a, o) => a + info[o.id].kwTotal, 0)),
+      'Факт. часов': r1(s.factH),
+      'План, ч': r1(s.planH),
+    };
+  }).sort((a, b) => b['Выполнено'] - a['Выполнено']);
+
+  // ══════════════ Лист 8. Табель ══════════════
+  const CODES = ['Б','ОТ','ОЗ','К','НН','У','СД'];
+  const tsRows = [];
+  Object.keys(data.timesheet || {}).sort().reverse().forEach(k => {
+    const m = data.timesheet[k] || {};
+    Object.keys(m).forEach(wid => {
+      const days = m[wid] || {};
+      const row = { 'Сотрудник': wName(wid) || wid, 'Месяц': mLabel(k), 'Ключ месяца': k,
+        'Отработано часов': 0, 'Дней с часами': 0, 'Дней отсутствия': 0 };
+      CODES.forEach(c => { row[c] = 0; });
+      Object.keys(days).forEach(d => {
+        const v = days[d] || {};
+        if (v.code && CODES.indexOf(v.code) >= 0) row[v.code]++;
+        if (v.code === 'Б' || v.code === 'ОТ' || v.code === 'ОЗ' || v.code === 'НН' || v.code === 'У') row['Дней отсутствия']++;
+        else if ((Number(v.h) || 0) > 0 || v.code === 'СД') { row['Отработано часов'] += Number(v.h) || 0; row['Дней с часами']++; }
+      });
+      row['Отработано часов'] = r1(row['Отработано часов']);
+      tsRows.push(row);
+    });
+  });
+
+  // ══════════════ Лист 9. Простои ══════════════
+  const downRows = events.filter(e => e.type === 'downtime').sort((a, b) => (b.ts || 0) - (a.ts || 0)).map(e => {
+    const op = allOps.find(o => o.id === e.opId) || {};
+    const ord = oById[op.orderId] || {};
+    return {
+      'Дата': fmtDT(e.ts),
+      'Месяц': e.ts ? mKey(e.ts) : '',
+      'Сотрудник': wName(e.workerId),
+      'Причина': dtName(e.downtimeTypeId) || e.downtimeTypeId || '',
+      'Часов': r1((e.duration || 0) / HOUR),
+      'Смена': e.shift || '',
+      'Оборудование': eName(e.equipmentId),
+      'Заказ': ord.number || '',
+      'Операция': op.name || '',
+    };
+  });
+
+  // ══════════════ Лист 10. Брак и рекламации ══════════════
+  const reclRows = (data.reclamations || []).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).map(rc => {
+    const op = allOps.find(o => o.id === rc.opId) || {};
+    const ord = oById[rc.orderId] || {};
+    return {
+      'Дата': fmtD(rc.createdAt),
+      'Месяц': rc.createdAt ? mKey(rc.createdAt) : '',
+      'Заказ': ord.number || '',
+      'Изделие': ord.product || '',
+      'Операция': op.name || '',
+      'Участок': sName(op.sectionId),
+      'Исполнители': (rc.workerIds || []).map(wName).filter(Boolean).join(', '),
+      'Причина': drName(rc.defectReasonId) || '',
+      'Описание': rc.defectNote || '',
+      'Источник': rc.defectSource === 'current' ? 'своя операция' : (rc.defectSource || ''),
+      'Статус': rc.status === 'open' ? 'открыта' : rc.status === 'closed' ? 'закрыта' : (rc.status || ''),
+      'Шаг 8D': (rc.d8 && rc.d8.currentStep != null) ? rc.d8.currentStep : '',
+      'Корневая причина': (rc.d8 && rc.d8.rootCause) || '',
+      'Корректирующее действие': (rc.d8 && rc.d8.corrective) || '',
+    };
+  });
+
+  // ══════════════ Лист 11. Протоколы ГИ ══════════════
+  const ptRows = (data.pressureTests || []).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).map(t => {
+    const ord = oById[t.orderId] || {};
+    return {
+      'Дата': fmtD(t.createdAt),
+      'Заказ': ord.number || '',
+      'Изделие': ord.product || '',
+      'Серийный №': t.serialNumber || '',
+      'Рабочее давление, бар': t.workPressure || '',
+      'Давление испытания, бар': t.testPressure || '',
+      'Выдержка, мин': t.duration || '',
+      'Температура, °С': t.tempC || '',
+      'Давление в начале': t.pressureStart || '',
+      'Давление в конце': t.pressureEnd || '',
+      'Потение/течь': t.sweatingFound ? 'да' : 'нет',
+      'Описание дефекта': t.defectDesc || '',
+      'Заключение': t.verdict === 'pass' ? 'выдержал' : t.verdict === 'fail' ? 'не выдержал' : (t.verdict || ''),
+      'Оператор': wName(t.operatorId),
+      'Статус': t.status === 'signed' ? 'подписан ОТК' : t.status === 'pending_qc' ? 'ждёт подписи' : t.status === 'rejected' ? 'отклонён' : (t.status || ''),
+      'Подписал': wName(t.qcSignedBy) || t.qcSignedBy || '',
+      'Дата подписи': fmtD(t.qcSignedAt),
+      'Замечание ОТК': t.qcNote || '',
+    };
+  });
+
+  // ══════════════ Лист 12. Нормы операций ══════════════
+  const normRows = Object.keys(data.opNorms || {}).map(name => {
+    const n = data.opNorms[name] || {};
+    const avg = n.samples ? n.totalMs / n.samples / HOUR : 0;
+    return {
+      'Операция': name,
+      'Замеров': n.samples || 0,
+      'Средняя длительность, ч': r1(avg),
+      'Можно ставить как норму': (n.samples || 0) >= 5 ? 'да' : (n.samples || 0) >= 2 ? 'мало замеров' : 'нет',
+    };
+  }).sort((a, b) => b['Замеров'] - a['Замеров']);
+
+  // ══════════════ Лист 13. Комплектация ══════════════
+  const compRows = [];
+  orders.forEach(ord => parseComps(ord.components).forEach(c => compRows.push({
+    'Заказ': ord.number || '',
+    'Заказчик': ord.customer || '',
+    'Комплектующее': c.name || '',
+    'Код': c.code || '',
+    'Кол-во': c.qty || '',
+    'Ед.': c.unit || '',
+    'Статус': c.status === 'confirmed' ? 'подтверждено' : (c.status || 'ожидает'),
+  })));
+
+  // ══════════════ Лист 14. Поставки материалов ══════════════
+  const delivRows = (data.materialDeliveries || []).map(d => {
+    const ord = oById[d.orderId] || {};
+    return {
+      'Заказ': ord.number || '',
+      'Материал': byId(data.materials, d.materialId).name || d.materialId || '',
+      'Этап': d.stageName || '',
+      'Требуется': d.requiredQty || '',
+      'Поставлено': d.deliveredQty || '',
+      'Ед.': d.unit || '',
+      'Статус': d.status || '',
+      'Подтверждено': fmtD(d.confirmedAt),
+      'Кем': wName(d.confirmedBy) || d.confirmedBy || '',
+    };
+  });
+
+  // ══════════════ Лист 15. Этапы (маршрут) ══════════════
+  const stageRows = (data.productionStages || []).map((st, idx) => ({
+    '№': idx + 1,
+    'Этап': st.name || '',
+    'Тип изделия': ptLabel(st.productType || 'boiler'),
+    'Участок по умолчанию': sName(st.sectionId),
+    'План, ч по умолчанию': st.plannedHours || '',
+    'Оборудование': eName(st.equipmentId),
+    'Требует ОТК': st.requiresQC ? 'Да' : '',
+    'Опрессовка': st.requiresPressureTest ? 'Да' : '',
+  }));
+
+  // ══════════════ Лист 16. Журнал событий (последние 2000) ══════════════
+  const evRows = events.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 2000).map(e => ({
+    'Дата': fmtDT(e.ts),
+    'Тип': e.type || '',
+    'Сотрудник': wName(e.workerId),
+    'Описание': e.message || e.action || e.title || '',
+    'Заказ': (oById[e.orderId] || {}).number || '',
+  }));
+
+  // ══════════════ Лист 17. О данных ══════════════
+  const opsNoSection = allOps.filter(o => !o.sectionId).length;
+  const opsNoPlan = allOps.filter(o => !o.plannedHours).length;
+  const doneNoDate = allOps.filter(o => o.status === 'done' && !o.finishedAt).length;
+  const doneNoStart = allOps.filter(o => o.status === 'done' && !o.startedAt).length;
+  const ordNoPower = orders.filter(o => !orderPowerKw(o)).length;
+  // Мощность в карточке важнее названия, но если они разные — это ошибка ввода,
+  // и цифры отчёта будут расходиться с тем, что цех видит на чертеже.
+  const powerConflict = orders.filter(o => {
+    const explicit = Number(o.powerKw);
+    if (!explicit) return false;
+    const fromName = orderPowerKw({ product: o.product });
+    return fromName && fromName !== explicit;
+  }).map(o => o.number);
+  const about = [
+    { 'Раздел': 'Отчёт', 'Значение': 'Полная выгрузка производства' },
+    { 'Раздел': 'Сформирован', 'Значение': fmtDT(nowTs) },
+    { 'Раздел': 'Охват', 'Значение': 'Все заказы системы, включая архивные и отгруженные. Фильтры экрана «Заказы» на выгрузку не влияют.' },
+    { 'Раздел': '', 'Значение': '' },
+    { 'Раздел': 'КАК СЧИТАЕТСЯ', 'Значение': '' },
+    { 'Раздел': 'Месяц операции', 'Значение': 'По фактической дате завершения операции рабочим.' },
+    { 'Раздел': 'Запущен в производство', 'Значение': 'Дата старта первой операции заказа.' },
+    { 'Раздел': 'Завершён производством', 'Значение': 'Дата последней операции, когда закрыты все операции заказа.' },
+    { 'Раздел': 'Факт. часы', 'Значение': 'Завершение минус старт операции. Считается только там, где рабочий запускал таймер.' },
+    { 'Раздел': 'Отработано по табелю', 'Значение': 'Сумма часов из табеля. Пустая клетка = 0, а не смена: незаполненный табель занижает цифру.' },
+    { 'Раздел': 'Мощность', 'Значение': 'Из карточки заказа, при пустом поле — последнее число в названии модели. Мощность всего = мощность единицы × количество.' },
+    { 'Раздел': 'Простои', 'Значение': 'События простоя, зафиксированные рабочим или мастером.' },
+    { 'Раздел': '', 'Значение': '' },
+    { 'Раздел': 'ПОЛНОТА ДАННЫХ', 'Значение': '' },
+    { 'Раздел': 'Операций без участка', 'Значение': opsNoSection + ' из ' + allOps.length },
+    { 'Раздел': 'Операций без плановых часов', 'Значение': opsNoPlan + ' из ' + allOps.length },
+    { 'Раздел': 'Выполненных операций без даты завершения', 'Значение': doneNoDate },
+    { 'Раздел': 'Выполненных операций без времени старта (факт. часы не посчитаны)', 'Значение': doneNoStart },
+    { 'Раздел': 'Заказов без мощности', 'Значение': ordNoPower + ' из ' + orders.length },
+    { 'Раздел': 'Заказов, где мощность в карточке расходится с названием', 'Значение': powerConflict.length ? powerConflict.join(', ') : 'нет' },
+    { 'Раздел': 'Месяцев с заполненным табелем', 'Значение': Object.keys(data.timesheet || {}).length },
+    { 'Раздел': '', 'Значение': '' },
+    { 'Раздел': 'ЧЕГО ЗДЕСЬ НЕТ', 'Значение': '' },
+    { 'Раздел': 'PIN-коды и ставки оплаты', 'Значение': 'Намеренно не выгружаются: учётные данные и суммы выплат не место в отчёте, который расходится по рукам.' },
+    { 'Раздел': 'Остатки склада, заявки на материалы', 'Значение': 'Лежат в отдельных документах базы. Выгружаются своими кнопками в разделе «Склад».' },
+    { 'Раздел': 'Журнал событий', 'Значение': 'Ограничен последними 2000 записями, чтобы файл оставался читаемым.' },
+  ];
+
+  return [
+    { name: 'Сводка',              rows: S },
+    { name: 'Движение по месяцам', rows: movement },
+    { name: 'Заказы',              rows: orderRows },
+    { name: 'Операции',            rows: opRows },
+    { name: 'Сотрудники',          rows: workerRows },
+    { name: 'Сотрудник × месяц',   rows: workerMonthRows },
+    { name: 'Участки',             rows: sectionRows },
+    { name: 'Табель',              rows: tsRows },
+    { name: 'Простои',             rows: downRows },
+    { name: 'Брак и рекламации',   rows: reclRows },
+    { name: 'Протоколы ГИ',        rows: ptRows },
+    { name: 'Нормы операций',      rows: normRows },
+    { name: 'Комплектация',        rows: compRows },
+    { name: 'Поставки материалов', rows: delivRows },
+    { name: 'Этапы (маршрут)',     rows: stageRows },
+    { name: 'Журнал событий',      rows: evRows },
+    { name: 'О данных',            rows: about },
+  ];
+};
+
 const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   const [form, setForm] = useState({ number: '', product: '',
  qty: '', deadline: '', priority: 'medium', bomId: '', productType: '', drawingUrl: '' });
@@ -1421,121 +2014,28 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
   }, [data.orders, data.ops, showArchived, showShipped, filterType, sortMode]);
   const paginated = useMemo(() => { const start = (page-1)*pageSize; return ordersToShow.slice(start, start+pageSize); }, [ordersToShow, page]);
 
-  // Экспорт заказов в Excel — выгружает текущий отфильтрованный список (ordersToShow)
+  // Полная выгрузка производства. Собирается в buildProductionWorkbook (выше),
+  // здесь только запись файла — так логику можно проверять отдельно от UI.
+  // Выгружается вся база заказов, фильтры экрана намеренно не учитываются:
+  // это отчёт для руководства, а не снимок того, что сейчас на экране.
   const exportOrdersXLSX = useCallback(async () => {
     try {
       await ensureCdn('xlsx');
-      const DAY = 86400000;
-      const fmtTs = ts => ts ? new Date(ts).toLocaleDateString('ru-RU') : '';
-      const secName = id => (data.sections.find(s => s.id === id)?.name) || '';
-      const wName = id => (data.workers.find(w => w.id === id)?.name) || '';
-      const OPS = { pending: 'Ожидает', in_progress: 'В работе', done: 'Выполнена', on_check: 'На проверке ОТК', weld_check: 'Приёмка сварщиком', defect: 'Брак', rework: 'Переделка', pending_approval: 'Ждёт подтверждения' };
-
-      const orderRows = [];
-      const opRows = [];
-
-      ordersToShow.forEach(ord => {
-        const ops = getOrderOps(ord, data);
-        const total = ops.length;
-        const done = ops.filter(o => o.status === 'done').length;
-        const inProgress = ops.filter(o => o.status === 'in_progress').length;
-        const progress = total ? Math.round(done / total * 100) : 0;
-
-        const currentOp = ops.find(o => o.status === 'in_progress')
-          || ops.find(o => o.status === 'on_check')
-          || ops.find(o => o.status === 'pending');
-        const currentOpName = ord.shipped ? '—'
-          : (total > 0 && done === total) ? 'Все операции завершены'
-          : (currentOp ? currentOp.name : '—');
-
-        const statusLabel = ord.shipped ? 'Отгружен'
-          : (total > 0 && done === total) ? 'Готов к отгрузке'
-          : inProgress > 0 ? 'В работе'
-          : done > 0 ? 'Частично выполнен'
-          : 'Ожидает';
-
-        const dl = ord.deadline ? Math.ceil((new Date(ord.deadline) - Date.now()) / DAY) : null;
-        const overdue = !ord.shipped && dl !== null && dl < 0;
-
-        const comps = parseComps(ord.components);
-        let compText, compComplete;
-        if (!comps.length) { compText = 'без комплектующих'; compComplete = true; }
-        else {
-          const conf = comps.filter(c => c.status === 'confirmed').length;
-          compComplete = conf === comps.length;
-          compText = compComplete ? ('полная (' + comps.length + ')') : (conf + '/' + comps.length);
-        }
-        const ready = total > 0 && done === total && compComplete;
-
-        const executors = [...new Set(ops.flatMap(o => (o.workerIds || []).map(wName)).filter(Boolean))].join(', ');
-        const sects = [...new Set(ops.map(o => secName(o.sectionId)).filter(Boolean))].join(', ');
-        const prio = (PRIORITY[ord.priority] && PRIORITY[ord.priority].label) || ord.priority || '';
-        const ptype = (productTypes.find(p => p.id === ord.productType)?.label) || ord.productType || '';
-
-        orderRows.push({
-          'Номер':            ord.number || '',
-          'Заказчик':         ord.customer || '',
-          'Изделие':          ord.product || '',
-          'Тип изделия':      ptype,
-          'Серийный №':       ord.serialNumber || '',
-          'Мощность, кВт':    orderPowerKw(ord) || '',
-          'Мощность всего, кВт': (orderPowerKw(ord) || 0) * (Number(ord.qty) || 1) || '',
-          'Кол-во':           ord.qty || 1,
-          'Приоритет':        prio,
-          'Плановый срок':    ord.deadline || '',
-          'Осталось дней':    dl !== null ? dl : '',
-          'Просрочен':        overdue ? 'Да' : '',
-          'Статус':           statusLabel,
-          'Текущая операция': currentOpName,
-          'Готовность, %':    progress,
-          'Операций всего':   total,
-          'Выполнено':        done,
-          'Осталось':         total - done,
-          'Комплектация':     compText,
-          'Готов к отгрузке': ready ? 'Да' : '',
-          'Участок':          sects,
-          'Исполнители':      executors,
-          'Чертёж':           ord.drawingUrl ? 'есть' : '',
-          'Дата договора':    fmtTs(ord.contractDate),
-          'Раскрой получен':  fmtTs(ord.cuttingArrivedAt),
-          'Факт. старт':      fmtTs(ord.factStartedAt),
-          'Факт. завершение': fmtTs(ord.factFinishedAt),
-          'Отгружен':         fmtTs(ord.shippedAt),
-          'Создан':           fmtTs(ord.createdAt),
-        });
-
-        ops.forEach(op => {
-          const factH = (op.startedAt && op.finishedAt > op.startedAt)
-            ? Math.round((op.finishedAt - op.startedAt) / 360000) / 10 : '';
-          opRows.push({
-            'Заказ':       ord.number || '',
-            'Изделие':     ord.product || '',
-            'Мощность, кВт': orderPowerKw(ord) || '',
-            'Кол-во':      ord.qty || 1,
-            'Операция':    op.name || '',
-            'Статус':      OPS[op.status] || op.status || '',
-            'Участок':     secName(op.sectionId),
-            'Начата':      fmtTs(op.startedAt),
-            'Завершена':   fmtTs(op.finishedAt),
-            'Месяц завершения': op.finishedAt
-              ? new Date(op.finishedAt).getFullYear() + '-' + String(new Date(op.finishedAt).getMonth() + 1).padStart(2, '0')
-              : '',
-            'Факт, ч':     factH,
-            'План, ч':     op.plannedHours != null ? op.plannedHours : '',
-            'Исполнители': (op.workerIds || []).map(wName).filter(Boolean).join(', '),
-          });
-        });
-      });
-
+      const sheets = buildProductionWorkbook(data);
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(orderRows), 'Заказы');
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(opRows), 'Операции');
-      XLSX.writeFile(wb, 'zakazy_' + new Date().toISOString().slice(0, 10) + '.xlsx');
-      addToast('Выгружено заказов: ' + orderRows.length, 'success');
+      sheets.forEach(sh => XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(sh.rows.length ? sh.rows : [{ 'Нет данных': '—' }]),
+        sh.name.slice(0, 31)   // Excel не принимает имя листа длиннее 31 символа
+      ));
+      XLSX.writeFile(wb, 'proizvodstvo_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+      const sh = n => (sheets.find(x => x.name === n) || { rows: [] }).rows.length;
+      addToast('Выгружено: заказов ' + sh('Заказы') + ', операций ' + sh('Операции') +
+        ', сотрудников ' + sh('Сотрудники') + ' · листов ' + sheets.length, 'success');
     } catch (e) {
       addToast('Ошибка экспорта: ' + e.message, 'error');
     }
-  }, [ordersToShow, data, productTypes, addToast]);
+  }, [data, addToast]);
   // Состояние раскрытых родительских заказов
   const [expandedParents, setExpandedParents] = useState({});
   const toggleParent = (orderId) => setExpandedParents(prev => ({ ...prev, [orderId]: !prev[orderId] }));
@@ -1820,7 +2320,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       h('label', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 } },
         h('input', { type: 'checkbox', checked: showShipped, onChange: e => setShowShipped(e.target.checked) }), 'Отгружен'
       ),
-      h('button', { style: gbtn({ fontSize: 11, padding: '4px 10px', marginLeft: 'auto' }), onClick: exportOrdersXLSX, title: 'Выгрузить видимые заказы в Excel (учитывает фильтры)' }, '📥 Экспорт Excel')
+      h('button', { style: gbtn({ fontSize: 11, padding: '4px 10px', marginLeft: 'auto' }), onClick: exportOrdersXLSX, title: 'Полный отчёт по производству: заказы, операции, люди, табель, простои, брак, протоколы ГИ. Выгружается вся база, фильтры экрана не учитываются' }, '📥 Полный отчёт Excel')
     ),
     paginated.length === 0
       ? h('div', { style: S.card }, h(EmptyState, {

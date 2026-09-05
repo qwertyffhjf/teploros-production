@@ -527,7 +527,15 @@ const orderPowerKw = (o) => {
   if (!o) return 0;
   const explicit = Number(o.powerKw || o['Мощность, кВт']);
   if (explicit) return explicit;
-  const m = String(o.product || '').match(/(\d{2,4})(?!.*\d)/);
+  let s = String(o.product || '');
+  // Мощность, названная в тексте явно: «200 кВт», «1800 мВт» (в названиях
+  // встречается такая опечатка вместо кВт) — самый надёжный признак.
+  const kw = s.match(/(\d{2,5})\s*(?:к|м)?вт/i);
+  if (kw) return parseFloat(kw[1]);
+  // Иначе берём число из модели. Сначала убираем числа с посторонними
+  // единицами: в «Lex V2-D 2500, 6 бар» иначе побеждало бы давление.
+  s = s.replace(/\d+(?:[.,]\d+)?\s*(?:бар|мпа|мм|см|м2|м3|кг|т|шт|°с?|%)/gi, ' ');
+  const m = s.match(/(\d{2,4})(?!.*\d)/);
   return m ? parseFloat(m[1]) : 0;
 };
 const fmtPowerKw = (kw) => {
