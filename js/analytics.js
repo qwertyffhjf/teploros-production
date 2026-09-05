@@ -1862,6 +1862,192 @@ const OrderLifecycle = memo(({ data, onUpdate, addToast }) => {
   );
 });
 
+// ==================== Отчёт «Участки за месяц» ====================
+// Что участок сделал за календарный месяц: выполненные операции, прошедшие
+// через участок заказы, количество штук и суммарная мощность этих заказов.
+// Источник даты — op.finishedAt, он проставляется в core.js/buildFinishUpdate
+// при каждом завершении операции с самого начала эксплуатации. Поэтому отчёт
+// считается и за прошлые месяцы — задним числом ничего вводить не нужно.
+const MONTHS_RU = ['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
+const monthKeyOf   = (ts) => { const d = new Date(ts); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); };
+const monthLabelRu = (key) => { const p = String(key).split('-'); return (MONTHS_RU[Number(p[1]) - 1] || p[1]) + ' ' + p[0]; };
+const monthBounds  = (key) => { const p = String(key).split('-'); const y = Number(p[0]), m = Number(p[1]);
+  return [new Date(y, m - 1, 1).getTime(), new Date(y, m, 1).getTime()]; };
+const round1 = (v) => Math.round(v * 10) / 10;
+
+// Статусы, которые означают «рабочий закрыл операцию» (у всех проставлен finishedAt)
+const FINISHED_ST = { done: 1, on_check: 1, weld_check: 1, defect: 1, rework: 1 };
+
+const buildSectionMonthReport = (data, monthKey) => {
+  const [start, end] = monthBounds(monthKey);
+  const orderById = {};
+  (data.orders || []).forEach(o => { orderById[o.id] = o; });
+  const secName = id => (((data.sections || []).find(s => s.id === id) || {}).name) || 'Без участка';
+  const wName   = id => (((data.workers  || []).find(w => w.id === id) || {}).name) || '';
+
+  // 1) Пары «участок × заказ» по всей истории — чтобы понять, закрыл ли участок
+  //    свою часть заказа целиком и именно в этом месяце (такие штуки и мощность
+  //    можно складывать между месяцами без двойного счёта).
+  const pair = {};
+  (data.ops || []).forEach(op => {
+    const key = (op.sectionId || '-') + '|' + op.orderId;
+    const r = pair[key] || (pair[key] = { total: 0, done: 0, lastFinish: 0 });
+    r.total++;
+    if (op.status === 'done') { r.done++; if ((op.finishedAt || 0) > r.lastFinish) r.lastFinish = op.finishedAt; }
+  });
+
+  // 2) Операции, завершённые в выбранном месяце
+  const inMonth = (data.ops || []).filter(op => op.finishedAt >= start && op.finishedAt < end && FINISHED_ST[op.status]);
+
+  const secs = {};
+  inMonth.forEach(op => {
+    const id = op.sectionId || '-';
+    const s = secs[id] || (secs[id] = { id, name: secName(op.sectionId),
+      done: 0, onCheck: 0, defect: 0, rework: 0, factMs: 0, planH: 0, workers: {}, orders: {}, ops: [] });
+    if (op.status === 'done') s.done++;
+    else if (op.status === 'on_check' || op.status === 'weld_check') s.onCheck++;
+    else if (op.status === 'defect') s.defect++;
+    else if (op.status === 'rework') s.rework++;
+    if (op.startedAt && op.finishedAt > op.startedAt) s.factMs += (op.finishedAt - op.startedAt);
+    s.planH += Number(op.plannedHours) || 0;
+    (op.workerIds || []).forEach(w => { s.workers[w] = 1; });
+    s.ops.push(op);
+    const ord = orderById[op.orderId];
+    if (!ord) return;
+    const oa = s.orders[ord.id] || (s.orders[ord.id] = { ord, done: 0, total: 0, names: {}, first: op.finishedAt, last: op.finishedAt });
+    oa.total++;
+    if (op.status === 'done') oa.done++;
+    oa.names[op.name || '—'] = 1;
+    if (op.finishedAt < oa.first) oa.first = op.finishedAt;
+    if (op.finishedAt > oa.last)  oa.last  = op.finishedAt;
+  });
+
+  const fmtD = ts => ts ? new Date(ts).toLocaleDateString('ru-RU') : '';
+  const sections = Object.values(secs).map(s => {
+    const list = Object.values(s.orders);
+    let qty = 0, kw = 0, closedOrders = 0, closedQty = 0, closedKw = 0;
+    list.forEach(({ ord }) => {
+      const q = Number(ord.qty) || 1;
+      const p = orderPowerKw(ord) || 0;
+      qty += q; kw += p * q;
+      const r = pair[s.id + '|' + ord.id];
+      if (r && r.total > 0 && r.done === r.total && r.lastFinish >= start && r.lastFinish < end) {
+        closedOrders++; closedQty += q; closedKw += p * q;
+      }
+    });
+    return { s, list, qty, kw, closedOrders, closedQty, closedKw,
+      factH: round1(s.factMs / 3600000), planH: round1(s.planH), workers: Object.keys(s.workers).length };
+  }).sort((a, b) => b.s.done - a.s.done);
+
+  // Сводные строки для листа Excel и для таблицы на экране
+  const summaryRows = sections.map(x => ({
+    'Участок':                x.s.name,
+    'Операций выполнено':     x.s.done,
+    'На приёмке ОТК/сварщика': x.s.onCheck,
+    'Брак':                   x.s.defect,
+    'Переделка':              x.s.rework,
+    'Заказов в работе':       x.list.length,
+    'Штук':                   x.qty,
+    'Мощность, кВт':          Math.round(x.kw),
+    'Заказов закрыто':        x.closedOrders,
+    'Штук закрыто':           x.closedQty,
+    'Мощность закрыта, кВт':  Math.round(x.closedKw),
+    'Факт. часов':            x.factH,
+    'План, ч':                x.planH,
+    'Исполнителей':           x.workers,
+    'Заказы':                 x.list.map(o => o.ord.number).join(', '),
+  }));
+
+  const totals = summaryRows.reduce((t, r) => {
+    ['Операций выполнено','На приёмке ОТК/сварщика','Брак','Переделка','Штук','Мощность, кВт',
+     'Заказов закрыто','Штук закрыто','Мощность закрыта, кВт','Факт. часов','План, ч']
+      .forEach(k => { t[k] = round1((t[k] || 0) + r[k]); });
+    return t;
+  }, { 'Участок': 'ИТОГО' });
+  const uniqOrders = new Set();
+  sections.forEach(x => x.list.forEach(o => uniqOrders.add(o.ord.id)));
+  totals['Заказов в работе'] = uniqOrders.size;
+  totals['Заказы'] = '';
+  totals['Исполнителей'] = new Set(sections.flatMap(x => Object.keys(x.s.workers))).size;
+
+  // Детализация «участок × заказ»
+  const orderRows = [];
+  sections.forEach(x => x.list.forEach(o => {
+    const q = Number(o.ord.qty) || 1, p = orderPowerKw(o.ord) || 0;
+    const r = pair[x.s.id + '|' + o.ord.id];
+    orderRows.push({
+      'Участок':              x.s.name,
+      'Заказ':                o.ord.number || '',
+      'Заказчик':             o.ord.customer || '',
+      'Изделие':              o.ord.product || '',
+      'Кол-во, шт':           q,
+      'Мощность ед., кВт':    p || '',
+      'Мощность всего, кВт':  p ? p * q : '',
+      'Операций выполнено':   o.done,
+      'Операции':             Object.keys(o.names).join(', '),
+      'Первая операция':      fmtD(o.first),
+      'Последняя операция':   fmtD(o.last),
+      'Участок закрыл заказ': (r && r.total > 0 && r.done === r.total && r.lastFinish >= start && r.lastFinish < end) ? 'Да' : '',
+    });
+  }));
+
+  // Пооперационная детализация
+  const ST_RU = { done: 'Выполнена', on_check: 'На проверке ОТК', weld_check: 'Приёмка сварщиком', defect: 'Брак', rework: 'Переделка' };
+  const opRows = [];
+  sections.forEach(x => x.s.ops.slice().sort((a, b) => a.finishedAt - b.finishedAt).forEach(op => {
+    const ord = orderById[op.orderId] || {};
+    opRows.push({
+      'Дата':        fmtD(op.finishedAt),
+      'Участок':     x.s.name,
+      'Заказ':       ord.number || '',
+      'Изделие':     ord.product || '',
+      'Мощность, кВт': orderPowerKw(ord) || '',
+      'Операция':    op.name || '',
+      'Статус':      ST_RU[op.status] || op.status,
+      'Исполнители': (op.workerIds || []).map(wName).filter(Boolean).join(', '),
+      'Факт, ч':     (op.startedAt && op.finishedAt > op.startedAt) ? round1((op.finishedAt - op.startedAt) / 3600000) : '',
+      'План, ч':     op.plannedHours != null ? op.plannedHours : '',
+    });
+  }));
+
+  // Полнота данных — честно показываем, сколько записей выпало из отчёта
+  const allOrdersInMonth = [...uniqOrders].map(id => orderById[id]).filter(Boolean);
+  const quality = {
+    doneNoDate:  (data.ops || []).filter(o => o.status === 'done' && !o.finishedAt).length,
+    noSection:   inMonth.filter(o => !o.sectionId).length,
+    noWorker:    inMonth.filter(o => !(o.workerIds || []).length).length,
+    noStart:     inMonth.filter(o => !o.startedAt).length,
+    noPlan:      inMonth.filter(o => !o.plannedHours).length,
+    noPower:     allOrdersInMonth.filter(o => !orderPowerKw(o)).length,
+    ordersTotal: allOrdersInMonth.length,
+    opsTotal:    inMonth.length,
+  };
+
+  return { monthKey, start, end, sections, summaryRows, totals, orderRows, opRows, quality };
+};
+
+// Динамика: операций выполнено по участкам за последние N месяцев
+const buildSectionTrend = (data, lastKey, months = 12) => {
+  const [ly, lm] = String(lastKey).split('-').map(Number);
+  const keys = [];
+  for (let i = months - 1; i >= 0; i--) { const d = new Date(ly, lm - 1 - i, 1); keys.push(monthKeyOf(d.getTime())); }
+  const secName = id => (((data.sections || []).find(s => s.id === id) || {}).name) || 'Без участка';
+  const grid = {};
+  (data.ops || []).forEach(op => {
+    if (op.status !== 'done' || !op.finishedAt) return;
+    const k = monthKeyOf(op.finishedAt);
+    if (keys.indexOf(k) < 0) return;
+    const n = secName(op.sectionId);
+    (grid[n] || (grid[n] = {}))[k] = (grid[n][k] || 0) + 1;
+  });
+  return Object.keys(grid).sort().map(n => {
+    const row = { 'Участок': n };
+    keys.forEach(k => { row[monthLabelRu(k)] = grid[n][k] || 0; });
+    row['ИТОГО'] = keys.reduce((s, k) => s + (grid[n][k] || 0), 0);
+    return row;
+  });
+};
+
 // ==================== ProductionReports (Сводки для руководства) ====================
 // Три отчёта из запроса руководства: загрузка цеха, просроченные/горящие, сроки (lead-time).
 const ProductionReports = memo(({ data, onUpdate, addToast }) => {
@@ -1980,6 +2166,62 @@ const ProductionReports = memo(({ data, onUpdate, addToast }) => {
     } catch (e) { addToast('Ошибка экспорта: ' + e.message, 'error'); }
   }, [data, addToast]);
 
+  // — Отчёт «Участки за месяц» —
+  // Месяцы берём из фактических дат завершения операций, поэтому список сам
+  // наполняется историей и не требует ручной настройки периодов.
+  const monthOptions = React.useMemo(() => {
+    const set = {};
+    (data.ops || []).forEach(o => { if (o.finishedAt) set[monthKeyOf(o.finishedAt)] = 1; });
+    set[monthKeyOf(Date.now())] = 1;
+    return Object.keys(set).sort().reverse().slice(0, 24);
+  }, [data.ops]);
+  const [repMonth, setRepMonth] = useState(() => monthKeyOf(Date.now()));
+  const secReport = React.useMemo(() => {
+    try { return buildSectionMonthReport(data, repMonth); } catch (e) { return null; }
+  }, [data, repMonth]);
+
+  const exportSectionMonth = React.useCallback(async () => {
+    try {
+      await ensureCdn('xlsx');
+      const rep = buildSectionMonthReport(data, repMonth);
+      const label = monthLabelRu(repMonth);
+      const q = rep.quality;
+
+      const about = [
+        { 'Раздел': 'Отчёт',        'Значение': 'Работа участков за ' + label },
+        { 'Раздел': 'Сформирован',  'Значение': new Date().toLocaleString('ru-RU') },
+        { 'Раздел': 'Операций закрыто за месяц', 'Значение': q.opsTotal },
+        { 'Раздел': 'Заказов прошло через цех',  'Значение': q.ordersTotal },
+        { 'Раздел': '', 'Значение': '' },
+        { 'Раздел': 'Как считается', 'Значение': 'Операция попадает в месяц по фактической дате её завершения рабочим (finishedAt).' },
+        { 'Раздел': 'Заказов в работе', 'Значение': 'Заказы, по которым участок закрыл хотя бы одну операцию в этом месяце. Один заказ может считаться на нескольких участках и в нескольких месяцах — это загрузка, а не выпуск, складывать между месяцами нельзя.' },
+        { 'Раздел': 'Штук / Мощность', 'Значение': 'Количество изделий по этим заказам и суммарная мощность = мощность изделия × количество.' },
+        { 'Раздел': 'Заказов закрыто', 'Значение': 'Участок выполнил ВСЕ свои операции по заказу, и последняя из них закрыта в этом месяце. Эти штуки и мощность можно складывать между месяцами — двойного счёта нет.' },
+        { 'Раздел': 'Мощность изделия', 'Значение': 'Берётся из карточки заказа, при пустом поле — из последнего числа в названии модели (Lex V2-D 300 → 300 кВт).' },
+        { 'Раздел': 'Факт. часов',  'Значение': 'Сумма (завершение − старт) по операциям месяца. Считается только там, где рабочий запускал таймер.' },
+        { 'Раздел': '', 'Значение': '' },
+        { 'Раздел': 'ПОЛНОТА ДАННЫХ', 'Значение': '' },
+        { 'Раздел': 'Выполненных операций без даты завершения (во всей базе)', 'Значение': q.doneNoDate },
+        { 'Раздел': 'Операций месяца без участка', 'Значение': q.noSection },
+        { 'Раздел': 'Операций месяца без исполнителя', 'Значение': q.noWorker },
+        { 'Раздел': 'Операций месяца без времени старта (факт. часы не посчитаны)', 'Значение': q.noStart },
+        { 'Раздел': 'Операций месяца без плановых часов', 'Значение': q.noPlan },
+        { 'Раздел': 'Заказов месяца без мощности', 'Значение': q.noPower },
+      ];
+
+      const wb = XLSX.utils.book_new();
+      const add = (rows, name) => XLSX.utils.book_append_sheet(wb,
+        XLSX.utils.json_to_sheet(rows.length ? rows : [{ 'Нет данных': 'за ' + label }]), name);
+      add(rep.summaryRows.length ? [...rep.summaryRows, rep.totals] : [], 'Сводка по участкам');
+      add(rep.orderRows, 'Заказы по участкам');
+      add(rep.opRows, 'Операции');
+      add(buildSectionTrend(data, repMonth, 12), 'Динамика 12 мес');
+      add(about, 'О данных');
+      XLSX.writeFile(wb, 'uchastki_' + repMonth + '.xlsx');
+      addToast('Отчёт за ' + label + ': операций ' + q.opsTotal + ', заказов ' + q.ordersTotal, 'success');
+    } catch (e) { addToast('Ошибка экспорта: ' + e.message, 'error'); }
+  }, [data, repMonth, addToast]);
+
   const card = { ...S.card, marginBottom: 12, padding: '14px 16px' };
   const hTitle = { fontSize: 14, fontWeight: 600, marginBottom: 4 };
   const sub = { fontSize: 12, color: 'var(--muted)', lineHeight: 1.5, marginBottom: 10 };
@@ -1987,6 +2229,45 @@ const ProductionReports = memo(({ data, onUpdate, addToast }) => {
   return h('div', null,
     h('div', { style: { fontSize: 12, color: 'var(--muted)', marginBottom: 12 } },
       'Готовые выгрузки для руководства. Каждая кнопка сразу отдаёт файл Excel.'),
+
+    h('div', { style: card },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 } },
+        h('div', { style: hTitle }, '📊 Работа участков за месяц'),
+        h('select', { value: repMonth, onChange: e => setRepMonth(e.target.value),
+          style: { fontSize: 12, padding: '6px 10px', borderRadius: 7, border: '0.5px solid var(--border)', background: 'var(--card)', color: 'var(--text)', cursor: 'pointer' } },
+          monthOptions.map(k => h('option', { key: k, value: k }, monthLabelRu(k))))
+      ),
+      h('div', { style: sub }, secReport
+        ? ('За ' + monthLabelRu(repMonth) + ': закрыто операций ' + secReport.quality.opsTotal +
+           ', через цех прошло заказов ' + secReport.quality.ordersTotal + '.' +
+           (secReport.quality.doneNoDate ? ' Внимание: ' + secReport.quality.doneNoDate + ' выполненных операций без даты завершения — в отчёт не попали.' : '') +
+           ' Выгрузка: сводка по участкам, расшифровка «участок × заказ», все операции месяца, динамика за 12 месяцев.')
+        : 'Сколько операций выполнил каждый участок за месяц, какие заказы через него прошли, сколько штук и какая суммарная мощность.'),
+      secReport && secReport.summaryRows.length > 0 && h('div', { style: { overflowX: 'auto', marginBottom: 10 } },
+        h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 560 } },
+          h('thead', null, h('tr', { style: { color: 'var(--muted)', textAlign: 'left' } },
+            ['Участок', 'Операций', 'Заказов', 'Штук', 'Мощность', 'Закрыто заказов'].map((t, i) =>
+              h('th', { key: i, style: { padding: '6px 8px', borderBottom: '0.5px solid var(--border)', fontWeight: 500, textAlign: i ? 'right' : 'left', whiteSpace: 'nowrap' } }, t)))),
+          h('tbody', null,
+            secReport.summaryRows.map((r, i) => h('tr', { key: i },
+              h('td', { style: { padding: '6px 8px', borderBottom: '0.5px solid var(--border)' } }, r['Участок']),
+              h('td', { style: { padding: '6px 8px', borderBottom: '0.5px solid var(--border)', textAlign: 'right', fontWeight: 600 } }, r['Операций выполнено']),
+              h('td', { style: { padding: '6px 8px', borderBottom: '0.5px solid var(--border)', textAlign: 'right' } }, r['Заказов в работе']),
+              h('td', { style: { padding: '6px 8px', borderBottom: '0.5px solid var(--border)', textAlign: 'right' } }, r['Штук']),
+              h('td', { style: { padding: '6px 8px', borderBottom: '0.5px solid var(--border)', textAlign: 'right', whiteSpace: 'nowrap' } }, fmtPowerKw(r['Мощность, кВт']) || '—'),
+              h('td', { style: { padding: '6px 8px', borderBottom: '0.5px solid var(--border)', textAlign: 'right' } }, r['Заказов закрыто'] || '—')
+            )),
+            h('tr', { style: { fontWeight: 600 } },
+              h('td', { style: { padding: '6px 8px' } }, 'ИТОГО'),
+              h('td', { style: { padding: '6px 8px', textAlign: 'right' } }, secReport.totals['Операций выполнено'] || 0),
+              h('td', { style: { padding: '6px 8px', textAlign: 'right' } }, secReport.totals['Заказов в работе'] || 0),
+              h('td', { style: { padding: '6px 8px', textAlign: 'right' } }, secReport.totals['Штук'] || 0),
+              h('td', { style: { padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' } }, fmtPowerKw(secReport.totals['Мощность, кВт']) || '—'),
+              h('td', { style: { padding: '6px 8px', textAlign: 'right' } }, secReport.totals['Заказов закрыто'] || 0)
+            ))
+        )),
+      h('button', { style: abtn(), onClick: exportSectionMonth }, '📥 Скачать «Участки за месяц»')
+    ),
 
     h('div', { style: card },
       h('div', { style: hTitle }, '🏭 Загрузка цеха'),

@@ -1429,7 +1429,7 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
       const fmtTs = ts => ts ? new Date(ts).toLocaleDateString('ru-RU') : '';
       const secName = id => (data.sections.find(s => s.id === id)?.name) || '';
       const wName = id => (data.workers.find(w => w.id === id)?.name) || '';
-      const OPS = { pending: 'Ожидает', in_progress: 'В работе', done: 'Выполнена', on_check: 'На проверке ОТК', defect: 'Брак', rework: 'Переделка', pending_approval: 'Ждёт подтверждения' };
+      const OPS = { pending: 'Ожидает', in_progress: 'В работе', done: 'Выполнена', on_check: 'На проверке ОТК', weld_check: 'Приёмка сварщиком', defect: 'Брак', rework: 'Переделка', pending_approval: 'Ждёт подтверждения' };
 
       const orderRows = [];
       const opRows = [];
@@ -1478,7 +1478,8 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
           'Изделие':          ord.product || '',
           'Тип изделия':      ptype,
           'Серийный №':       ord.serialNumber || '',
-          'Мощность, кВт':    ord.powerKw || '',
+          'Мощность, кВт':    orderPowerKw(ord) || '',
+          'Мощность всего, кВт': (orderPowerKw(ord) || 0) * (Number(ord.qty) || 1) || '',
           'Кол-во':           ord.qty || 1,
           'Приоритет':        prio,
           'Плановый срок':    ord.deadline || '',
@@ -1504,11 +1505,22 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
         });
 
         ops.forEach(op => {
+          const factH = (op.startedAt && op.finishedAt > op.startedAt)
+            ? Math.round((op.finishedAt - op.startedAt) / 360000) / 10 : '';
           opRows.push({
             'Заказ':       ord.number || '',
+            'Изделие':     ord.product || '',
+            'Мощность, кВт': orderPowerKw(ord) || '',
+            'Кол-во':      ord.qty || 1,
             'Операция':    op.name || '',
             'Статус':      OPS[op.status] || op.status || '',
             'Участок':     secName(op.sectionId),
+            'Начата':      fmtTs(op.startedAt),
+            'Завершена':   fmtTs(op.finishedAt),
+            'Месяц завершения': op.finishedAt
+              ? new Date(op.finishedAt).getFullYear() + '-' + String(new Date(op.finishedAt).getMonth() + 1).padStart(2, '0')
+              : '',
+            'Факт, ч':     factH,
             'План, ч':     op.plannedHours != null ? op.plannedHours : '',
             'Исполнители': (op.workerIds || []).map(wName).filter(Boolean).join(', '),
           });
