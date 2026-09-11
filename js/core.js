@@ -4003,27 +4003,34 @@ const TabBar = memo(({ tabs, tab, setTab }) =>
 // Порядок файлов внутри office сохранён таким же, каким он был в index.html — на
 // случай скрытых зависимостей порядка объявления между файлами.
 const CDN = {
-  xlsx:        { url: 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+  xlsx:        { local: 'js/vendor/xlsx.full.min.js',
+                 url: 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
                  fallback: 'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js',
                  check: () => typeof window.XLSX !== 'undefined' },
-  pdfmake:     { url: 'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js',
+  pdfmake:     { local: 'js/vendor/pdfmake.min.js',
+                 url: 'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js',
                  fallback: 'https://unpkg.com/pdfmake@0.2.7/build/pdfmake.min.js',
                  check: () => typeof window.pdfMake !== 'undefined' },
-  vfsFonts:    { url: 'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.min.js',
+  vfsFonts:    { local: 'js/vendor/vfs_fonts.js',
+                 url: 'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.min.js',
                  fallback: 'https://unpkg.com/pdfmake@0.2.7/build/vfs_fonts.js',
                  check: () => typeof window.pdfMake !== 'undefined' && !!window.pdfMake.vfs },
-  chartjs:     { url: 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js',
+  chartjs:     { local: 'js/vendor/chart.umd.min.js',
+                 url: 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js',
                  fallback: 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
                  check: () => typeof window.Chart !== 'undefined' },
-  html5qrcode: { url: 'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js',
+  html5qrcode: { local: 'js/vendor/html5-qrcode.min.js',
+                 url: 'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js',
                  fallback: 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js',
                  check: () => typeof window.Html5Qrcode !== 'undefined' },
-  pdfjs:       { url: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+  pdfjs:       { local: 'js/vendor/pdf.min.js',
+                 url: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
                  fallback: 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js',
                  check: () => typeof window.pdfjsLib !== 'undefined',
                  after: () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-                   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; } },
-  jszip:       { url: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
+                   'js/vendor/pdf.worker.min.js'; } },
+  jszip:       { local: 'js/vendor/jszip.min.js',
+                 url: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
                  fallback: 'https://unpkg.com/jszip@3.10.1/dist/jszip.min.js',
                  check: () => typeof window.JSZip !== 'undefined' },
 };
@@ -4070,21 +4077,23 @@ const _cdnPromises      = {};
 // почему-то уже есть в window (например уже была загружена другим путём).
 function ensureCdn(key) {
   const spec = CDN[key];
-  if (!spec) return Promise.reject(new Error('Неизвестная CDN-библиотека: ' + key));
+  if (!spec) return Promise.reject(new Error('Неизвестная библиотека: ' + key));
   if (_loadedCdn.has(key) || spec.check()) { _loadedCdn.add(key); return Promise.resolve(); }
   if (_cdnPromises[key]) return _cdnPromises[key];
+  // Порядок источников: свой файл → cdnjs → запасной CDN. Внешние оставлены на
+  // случай, если локальный файл почему-то не доехал при деплое; в нормальной
+  // ситуации до них очередь не доходит и интернет для работы не нужен.
+  const sources = [spec.local, spec.url, spec.fallback].filter(Boolean);
   _cdnPromises[key] = new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = spec.url;
-    s.onload = () => { _loadedCdn.add(key); if (spec.after) spec.after(); resolve(); };
-    s.onerror = () => {
-      const s2 = document.createElement('script');
-      s2.src = spec.fallback;
-      s2.onload = () => { _loadedCdn.add(key); if (spec.after) spec.after(); resolve(); };
-      s2.onerror = () => reject(new Error('Не удалось загрузить ' + key));
-      document.head.appendChild(s2);
+    const tryAt = (i) => {
+      if (i >= sources.length) { reject(new Error('Не удалось загрузить ' + key)); return; }
+      const s = document.createElement('script');
+      s.src = sources[i];
+      s.onload = () => { _loadedCdn.add(key); if (spec.after) spec.after(); resolve(); };
+      s.onerror = () => tryAt(i + 1);
+      document.head.appendChild(s);
     };
-    document.head.appendChild(s);
+    tryAt(0);
   });
   return _cdnPromises[key];
 }
@@ -4493,6 +4502,15 @@ const LAG_CAUSE = {
   NORM:      'Нереальные нормы',     // факт систематически выше plannedHours
   UNKNOWN:   'Причина не определена' // честный пробел в данных, не размазываем
 };
+
+// ==================== Чат: свёрнут ====================
+// Раздел чата убран из интерфейса по решению от 09.2026. Код модуля chat.js и
+// история переписки в Firestore (data.messages) не тронуты — это архив, а не
+// удаление. Чтобы вернуть раздел, достаточно поставить здесь true и залить core.js;
+// правок в других файлах не потребуется.
+// Если переписку нужно вычистить совсем: Администратор → Обслуживание → очистка сообщений.
+const CHAT_ENABLED = false;
+if (typeof window !== 'undefined') window.CHAT_ENABLED = CHAT_ENABLED;
 
 const LAG_DAY = 86400000;
 

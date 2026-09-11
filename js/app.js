@@ -456,7 +456,9 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
     if (!pin.trim()) { setLoginError('Введите PIN-код'); return; }
     const resolved = resolvePin(pin);
     if (!resolved) { setLoginError('Неверный PIN-код'); return; }
-    if (role === 'chat') {
+    // Плитка «Чат» скрыта, но роль могла остаться в сохранённой сессии или ссылке —
+    // тогда просто пускаем человека под его настоящей ролью.
+    if (role === 'chat' && CHAT_ENABLED) {
       if (resolved.role === 'worker') { onLogin('chat', resolved.workerId, resolved.sectionId); return; }
       onLogin('chat_' + resolved.role, null, null);
       return;
@@ -560,7 +562,7 @@ const LoginScreen = ({ data, onLogin, onResetPin }) => {
     ['worker',      '👷', 'Сотрудник'],
     ['shop_master', '🛠️', 'Сменный мастер'],
     ['dashboard',   '📊', 'Дашборд'],
-    ['chat',        '💬', 'Чат'],
+    ...(CHAT_ENABLED ? [['chat', '💬', 'Чат']] : []),
   ];
   const isOtherRole = !primaryRoles.some(([r]) => r === role);
 
@@ -2115,7 +2117,7 @@ function ensureQrLib() {
   return new Promise((resolve) => {
     if (window.QRCode) return resolve(true);
     const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+    s.src = 'js/vendor/qrcode.min.js';
     s.onload = () => resolve(true);
     s.onerror = () => resolve(false);
     document.head.appendChild(s);
@@ -3054,7 +3056,11 @@ function App() {
   }, [data]);
 
   // Определяем «настоящую» роль для рендера — chat_master и chat_controller рендерятся как чат
-  const effectiveRole = role === 'chat_master' || role === 'chat_controller' ? 'chat' : role;
+  // Со свёрнутым чатом старые сессии chat_* разворачиваем обратно в настоящую роль,
+  // иначе человек с сохранённым входом упёрся бы в пустой экран.
+  const effectiveRole = (role === 'chat_master' || role === 'chat_controller')
+    ? (CHAT_ENABLED ? 'chat' : role.slice(5))
+    : (role === 'chat' && !CHAT_ENABLED ? 'worker' : role);
 
   // Ленивая подгрузка office/field бандла (аудит, perf) — см. core.js: BUNDLES/ensureBundleLoaded.
   // 'chat' не нуждается ни в одном из бандлов — ChatScreen живёт в chat.js, грузится статически.
@@ -3168,7 +3174,7 @@ function App() {
           Presence.start(presenceId, userName);
           setGreetingKey(k => k + 1); // показать приветствие
           // chat, chat_master, chat_controller — всё это режим чата
-          if (r === 'chat' || r === 'chat_master' || r === 'chat_controller') setShowChat(true);
+          if (CHAT_ENABLED && (r === 'chat' || r === 'chat_master' || r === 'chat_controller')) setShowChat(true);
         },
         onResetPin: handleResetPin
       })
@@ -3177,7 +3183,7 @@ function App() {
   );
 
   // Режим "только чат"
-  if (effectiveRole === 'chat') return h('div', null,
+  if (CHAT_ENABLED && typeof ChatScreen !== 'undefined' && effectiveRole === 'chat') return h('div', null,
     h('div', { style: { display:'flex', gap:12, padding:'10px 0', borderBottom:'0.5px solid var(--border)', alignItems:'center' } },
       h('button', { style: gbtn({ fontSize:11 }), onClick: goBack }, '← Выход'),
       h('div', { style: { fontSize:12, color:'var(--muted)' } }, `Чат · ${currentUser.name}`)
@@ -3212,7 +3218,7 @@ function App() {
       }, '🔍 ', h('kbd', { className: 'search-kbd', style: { fontSize:10, opacity:0.6, background:'var(--card-2)', border:'0.5px solid var(--border)', borderRadius:4, padding:'1px 4px' } }, '⌘K')),
       h('button', { style: gbtn({ fontSize:11, minHeight:34, padding:'6px 12px' }), onClick: goBack }, '← Выход'),
 
-      effectiveRole !== 'dashboard' && (() => {
+      CHAT_ENABLED && effectiveRole !== 'dashboard' && (() => {
         const chatLastRead = Number(localStorage.getItem(`chat_lastRead_${currentUser.id || 'anon'}`)) || 0;
         const unread = (data.messages || []).filter(m => m.timestamp > chatLastRead && m.senderId !== (currentUser.id || 'system')).length;
         // 🔴 Бейдж для @упоминаний — красный если есть новые упоминания текущего пользователя
@@ -3276,7 +3282,7 @@ function App() {
       }, 'Обновить')
     ),
     h(GreetingBanner, { key: greetingKey, role: effectiveRole, name: currentUser.name, data, workerId }),
-    showChat
+    (CHAT_ENABLED && showChat && typeof ChatScreen !== 'undefined')
       ? h(ChatScreen, { data, onUpdate: save, addToast, currentUser, onBack: () => setShowChat(false) })
       : !bundleReady
         // Модуль для этой роли ещё грузится (первый вход в сессии) — короткая пауза,

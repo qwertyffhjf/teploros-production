@@ -147,7 +147,7 @@ const DeliveryBoard = memo(({ data, onUpdate, addToast, currentUserId, readOnly 
     const unit     = esc(delivery.unit);
     const safeUrl  = esc(url);
     w.document.write(`<!DOCTYPE html><html><head><title>QR поставки</title>
-      <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script></head>
+      <script src="${location.origin + location.pathname.replace(/[^/]*$/, '')}js/vendor/qrcode.min.js"><\/script></head>
       <body style="font-family:sans-serif;padding:20px;text-align:center">
         <div style="border:2px solid #333;padding:16px;display:inline-block;border-radius:8px">
           <div style="font-size:11px;color:#888;margin-bottom:4px">ПОСТАВКА МАТЕРИАЛА</div>

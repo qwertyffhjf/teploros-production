@@ -2426,9 +2426,16 @@ const QRModal = memo(({ ops, order, worker, onClose }) => {
     };
     if (window.QRCode) { render(); return; }
     const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+    // Своя копия, с запасным CDN на случай кривого деплоя
+    s.src = 'js/vendor/qrcode.min.js';
     s.onload = render;
-    s.onerror = () => setQrError(true);
+    s.onerror = () => {
+      const s2 = document.createElement('script');
+      s2.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+      s2.onload = render;
+      s2.onerror = () => setQrError(true);
+      document.head.appendChild(s2);
+    };
     document.head.appendChild(s);
   }, [op, index]);
 

@@ -1,5 +1,5 @@
 // teploros Service Worker v4 — Итерация 4: cache-first для версионированных файлов
-const APP_CACHE = 'teploros-app-v20261047';
+const APP_CACHE = 'teploros-app-v20261048';
 const CDN_CACHE = 'teploros-cdn-v1';
 const CDN_MAX_ENTRIES = 20; // 4.2: лимит записей CDN-кеша
 
@@ -24,6 +24,15 @@ const ASSETS = [
   './js/master.js',
   './js/worker.js',
   './js/app.js',
+  // React и Firebase Auth — критический путь: без них приложение не стартует.
+  // Кладём в предзагрузку, чтобы цех работал даже при проблемах с сетью.
+  // Тяжёлые библиотеки (xlsx, pdfmake, pdf.worker) сюда намеренно не берём —
+  // они нужны не всем и не всегда, подтянутся со своего домена по требованию.
+  './js/vendor/react.production.min.js',
+  './js/vendor/react-dom.production.min.js',
+  './js/vendor/firebase-app-compat.js',
+  './js/vendor/firebase-firestore-compat.js',
+  './js/vendor/firebase-auth-compat.js',
   './78878.webp',
 ];
 
