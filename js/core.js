@@ -1598,6 +1598,10 @@ const DB = {
   _migrationDirty:  null,  // данные, изменённые миграцией и ждущие одноразового закрепления в БД
   _migrationSaving: false, // идёт закрепляющее сохранение миграции
   _lastError:   null,
+  // Отдельный канал для того, что НЕ является ошибкой: слияние правок, аварийная
+  // чистка размера. Раньше всё шло через _lastError, и App показывал это как
+  // «Ошибка сохранения» — с красной плашкой и вибрацией телефона, хотя запись прошла.
+  _lastNotice:  null,
   _sizeWarning: null,
   _online:      true,    // текущий статус сети
   _version:     null,    // версия последних загруженных данных (для optimistic locking)
@@ -1929,7 +1933,8 @@ const DB = {
         toSave.timesheet = pruneTimesheet(toSave.timesheet, 3);
         pruned = true;
         const sizeAfter = Math.round(JSON.stringify(toSave).length / 1024);
-        DB._lastError = `⚠ Данных ${sizeKb}→${sizeAfter} КБ — аварийная очистка. Данные сохранены в архив.`;
+        DB._lastNotice = { key: 'pruned', type: 'warning',
+          text: `База разрослась до ${sizeKb} КБ — старый табель убран в архив, осталось ${sizeAfter} КБ. Данные не потеряны.` };
         console.warn(`Payload: ${sizeKb} KB → ${sizeAfter} KB after emergency pruning`);
       } else if (sizeKb > 700) {
         // Превентивно: оставляем последние 6 месяцев
@@ -2035,7 +2040,10 @@ const DB = {
                   // берём наше. Не менялось локально → берём серверное. Удалено локально или
                   // на сервере → не реанимируем. Без базы → fallback на object-level слияние.
                   _mergeFullState(toSave, remoteData, remoteWh, remoteTs, remoteEv, DB._baseData || {});
-                  DB._lastError = '⚠ Данные объединены с изменениями другого пользователя.';
+                  // Это штатный исход, а не сбой: пока вы работали, кто-то тоже сохранил,
+                  // и обе правки сведены по полям. Сообщаем спокойно и не чаще раза в минуту.
+                  DB._lastNotice = { key: 'merge', type: 'info',
+                    text: 'Изменения синхронизированы с правками коллег' };
                 } catch(mergeErr) {
                   // КРИТИЧНО: раньше здесь был last-write-wins — устаревшие данные
                   // перезаписывали всё. Теперь при сбое слияния НЕ пишем НИЧЕГО:

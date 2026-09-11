@@ -2974,12 +2974,26 @@ function App() {
   }, []);
 
   // Мониторинг ошибок сохранения
+  const noticeSeen = useRef({});
   useEffect(() => {
     const check = setInterval(() => {
       if (DB._lastError) {
         const err = DB._lastError;
         DB._lastError = null;
-        setToasts(prev => [...prev, { id: Date.now(), message: `⚠ Ошибка сохранения: ${err}`, type: 'error' }]);
+        // Текст уже может начинаться с ⚠ — второй значок не добавляем
+        const clean = String(err).replace(/^⚠\s*/, '');
+        setToasts(prev => [...prev, { id: Date.now(), message: `⚠ Ошибка сохранения: ${clean}`, type: 'error' }]);
+      }
+      // Не ошибки: слияние правок, чистка размера. Одно и то же сообщение
+      // повторяем не чаще раза в минуту — иначе при работе вдвоём это сплошной поток.
+      if (DB._lastNotice) {
+        const n = DB._lastNotice;
+        DB._lastNotice = null;
+        const last = noticeSeen.current[n.key] || 0;
+        if (Date.now() - last > 60000) {
+          noticeSeen.current[n.key] = Date.now();
+          setToasts(prev => [...prev, { id: Date.now() + 1, message: n.text, type: n.type || 'info' }]);
+        }
       }
     }, 3000);
     return () => clearInterval(check);
