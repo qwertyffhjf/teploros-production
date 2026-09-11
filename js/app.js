@@ -3300,7 +3300,7 @@ function App() {
           effectiveRole === 'sales'      && h(ErrorBoundary, { name: 'SalesScreen' }, h(SalesScreen,     { data, addToast, onOrderClick: setSelectedOrderId })),
           effectiveRole === 'dashboard' && h(ErrorBoundary, { name: 'Dashboard' }, h(Dashboard, { data, addToast, onOrderClick: setSelectedOrderId, onWorkerClick: setSelectedWorkerId }))
         ),
-    selectedOrderId && h(OrderCardModal, { orderId: selectedOrderId, data, onUpdate: save, onClose: () => setSelectedOrderId(null), canEdit: true, userRole: effectiveRole, onEditMaterials: (id) => { setSelectedOrderId(null); }, onOpenOrder: (id) => setSelectedOrderId(id), onRestoreAsSimple: (id) => {
+    selectedOrderId && h(ErrorBoundary, { name: 'OrderCardModal' }, h(OrderCardModal, { orderId: selectedOrderId, data, onUpdate: save, onClose: () => setSelectedOrderId(null), canEdit: true, userRole: effectiveRole, onEditMaterials: (id) => { setSelectedOrderId(null); }, onOpenOrder: (id) => setSelectedOrderId(id), onRestoreAsSimple: (id) => {
       const order = data.orders.find(o => o.id === id);
       if (!order) return;
       const archivedOwn = data.ops.filter(o => o.orderId === id && o.archived);
@@ -3318,7 +3318,7 @@ function App() {
       save(d);
       setSelectedOrderId(null);
       addToast(`Заказ ${order.number} восстановлен`, 'success');
-    } }),
+    } })),
     // 🌍 Глобальная карточка сотрудника — открывается из любого места системы
     selectedWorkerId && (() => {
       const worker = data.workers.find(w => w.id === selectedWorkerId);

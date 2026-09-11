@@ -1440,10 +1440,325 @@ ${subOrders.length > 0 ? `
   iframe.onload = () => { iframe.contentWindow.print(); setTimeout(() => document.body.removeChild(iframe), 2000); };
 };
 
-const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false, allowRouteSheet = false, onEditMaterials, onEditDeps, userRole, onOpenOrder, onRestoreAsSimple }) => {
+// ==================== Карточка 360°: права и аналитические блоки ====================
+// Раньше набор кнопок собирался из флагов, которые каждый экран передавал по-своему,
+// и один и тот же контролёр по разным ссылкам видел разные права. Теперь решает роль,
+// а экран может права только сузить, но не расширить.
+const ORDER_CARD_ROLE_CAPS = {
+  master:      { edit: true,  money: true,  route: true,  passport: true  },
+  shop_master: { edit: true,  money: true,  route: true,  passport: true  },
+  pdo:         { edit: true,  money: true,  route: true,  passport: true  },
+  director:    { edit: true,  money: true,  route: true,  passport: true  },
+  controller:  { edit: false, money: false, route: true,  passport: true  },
+  sales:       { edit: false, money: false, route: false, passport: true  },
+  dashboard:   { edit: false, money: false, route: false, passport: false },
+  warehouse:   { edit: false, money: false, route: false, passport: false },
+  worker:      { edit: false, money: false, route: false, passport: false },
+};
+const orderCardCaps = (userRole, canEdit, allowRouteSheet) => {
+  const r = ORDER_CARD_ROLE_CAPS[userRole];
+  if (!r) {
+    // Роль не передали — работаем по старым флагам, чтобы ничего не сломать.
+    return { edit: !!canEdit, money: !!canEdit, route: !!(canEdit || allowRouteSheet), passport: !!canEdit };
+  }
+  const narrowed = canEdit === false;
+  return {
+    edit:     narrowed ? false : r.edit,
+    money:    narrowed ? false : r.money,
+    route:    r.route || allowRouteSheet === true,
+    passport: r.passport,
+  };
+};
+
+// Сворачиваемая секция: карточка и так длинная, разворачивают только нужное.
+const Card360Section = memo(({ icon, title, badge, badgeColor, defaultOpen = false, children }) => {
+  const [open, setOpen] = useState(defaultOpen);
+  return h('div', { style: { marginBottom: 8, border: '0.5px solid var(--border-soft)', borderRadius: 8, overflow: 'hidden' } },
+    h('div', {
+      onClick: () => setOpen(o => !o),
+      role: 'button', tabIndex: 0,
+      onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o); } },
+      style: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: 'pointer', background: 'var(--card-2)', userSelect: 'none' }
+    },
+      h('span', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', flex: 1 } }, (icon ? icon + ' ' : '') + title),
+      badge != null && badge !== '' && h('span', {
+        style: { fontSize: 11, fontWeight: 500, padding: '2px 7px', borderRadius: 6, background: (badgeColor || 'var(--muted)') + '18', color: badgeColor || 'var(--muted)', whiteSpace: 'nowrap' }
+      }, badge),
+      h('span', { style: { fontSize: 10, color: 'var(--muted)' } }, open ? '▲' : '▼')
+    ),
+    open && h('div', { style: { padding: '10px 12px' } }, children)
+  );
+});
+
+const OrderCard360 = memo(({ ord, data, caps }) => {
+  const money = !!(caps && caps.money);
+  const HOUR = 3600000;
+  const r1 = v => Math.round((Number(v) || 0) * 10) / 10;
+  const rub = v => Math.round(Number(v) || 0).toLocaleString('ru-RU') + ' ₽';
+  const fmtD = ts => ts ? new Date(ts).toLocaleDateString('ru-RU') : '';
+  const fmtDT = ts => ts ? new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+  const wName = id => ((data.workers || []).find(w => w.id === id) || {}).name || '';
+  const sName = id => ((data.sections || []).find(s => s.id === id) || {}).name || '';
+
+  // Родительский заказ сам операций не имеет — вся фактура лежит на подзаказах,
+  // поэтому везде работаем со списком id: заказ + его подзаказы.
+  const orderIds = useMemo(() => {
+    const ids = [ord.id];
+    (data.orders || []).forEach(o => { if (o.parentOrderId === ord.id && !o.archived) ids.push(o.id); });
+    return ids;
+  }, [ord.id, data.orders]);
+  const inOrder = id => orderIds.indexOf(id) >= 0;
+
+  const ops = useMemo(() => (typeof getOrderOps === 'function'
+    ? getOrderOps(ord, data)
+    : (data.ops || []).filter(o => o.orderId === ord.id && !o.archived)), [ord, data]);
+  const opIds = useMemo(() => { const m = {}; ops.forEach(o => { m[o.id] = 1; }); return m; }, [ops]);
+  const factH = op => (op.startedAt && op.finishedAt > op.startedAt) ? (op.finishedAt - op.startedAt) / HOUR : 0;
+
+  const kv = (label, val, color) => h('div', { key: label, style: { display: 'flex', justifyContent: 'space-between', gap: 12, padding: '4px 0', borderBottom: '0.5px solid var(--border-soft)', fontSize: 12 } },
+    h('span', { style: { color: 'var(--muted)', flexShrink: 0 } }, label),
+    h('span', { style: { textAlign: 'right', fontWeight: 500, color: color || 'inherit' } }, val)
+  );
+  const note = t => h('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 6, lineHeight: 1.45 } }, t);
+
+  // ── Что держит заказ ──────────────────────────────────────────────────────
+  const lag = useMemo(() => {
+    if (typeof buildLagReport !== 'function') return null;
+    try { return (buildLagReport(data, { periodDays: 14 }).lagging || []).find(l => inOrder(l.orderId)) || null; }
+    catch (e) { return null; }
+    // Зависимости перечислены поимённо: объект data меняется при каждой синхронизации
+    // с Firestore, и на [data] расчёт пересчитывался бы от любого сообщения в чате.
+  }, [data.orders, data.ops, data.timesheet, data.materialDeliveries, ord.id]);
+
+  // ── Экономика ─────────────────────────────────────────────────────────────
+  const econ = useMemo(() => {
+    if (!money || typeof calcOrderEconomics !== 'function') return null;
+    try {
+      const parts = orderIds.map(id => calcOrderEconomics(data, id)).filter(Boolean);
+      if (!parts.length) return null;
+      const sum = f => parts.reduce((s, p) => s + (p[f] || 0), 0);
+      return { laborCost: sum('laborCost'), materialCost: sum('materialCost'), totalCost: sum('totalCost'),
+        manHours: r1(sum('manHours')), unratedHours: r1(sum('unratedHours')), materialItems: sum('materialItems') };
+    } catch (e) { return null; }
+  }, [data.orders, data.ops, data.materialConsumptions, data.materials, data.workers, orderIds, money]);
+
+  const planH = ops.reduce((s, o) => s + (Number(o.plannedHours) || 0), 0);
+  const doneFactH = ops.reduce((s, o) => s + factH(o), 0);
+  const qty = Number(ord.qty) || 1;
+  const kw = (typeof orderPowerKw === 'function' ? orderPowerKw(ord) : 0) || 0;
+
+  // ── Качество ──────────────────────────────────────────────────────────────
+  const defects = ops.filter(o => o.status === 'defect');
+  const reworks = ops.filter(o => o.status === 'rework');
+  const recls = (data.reclamations || []).filter(r => inOrder(r.orderId) || opIds[r.opId]);
+  const tests = (data.pressureTests || []).filter(t => inOrder(t.orderId));
+  const qIssues = defects.length + reworks.length + recls.length + tests.filter(t => t.verdict === 'fail' || t.status === 'rejected').length;
+
+  // ── Материалы ─────────────────────────────────────────────────────────────
+  const delivs = (data.materialDeliveries || []).filter(d => inOrder(d.orderId));
+  const delivOpen = delivs.filter(d => d.status !== 'confirmed');
+  const consAgg = useMemo(() => {
+    const m = {};
+    (data.materialConsumptions || []).forEach(c => {
+      if (!opIds[c.opId]) return;
+      const mat = (data.materials || []).find(x => x.id === c.materialId) || {};
+      const k = c.materialId || '—';
+      const a = m[k] || (m[k] = { name: mat.name || c.materialId || '—', unit: mat.unit || '', qty: 0, cost: 0 });
+      a.qty += Number(c.qty) || 0;
+      a.cost += (Number(c.qty) || 0) * (Number(mat.unitCost) || 0);
+    });
+    return Object.values(m).sort((a, b) => b.cost - a.cost);
+  }, [data.materialConsumptions, data.materials, opIds]);
+
+  // ── Люди и время ──────────────────────────────────────────────────────────
+  const crew = useMemo(() => {
+    const m = {};
+    ops.forEach(op => (op.workerIds || []).forEach(id => {
+      const a = m[id] || (m[id] = { id, done: 0, defect: 0, h: 0 });
+      if (op.status === 'done') a.done++;
+      if (op.status === 'defect') a.defect++;
+      a.h += factH(op);
+    }));
+    return Object.values(m).sort((a, b) => b.done - a.done);
+  }, [ops]);
+  const downs = (data.events || []).filter(e => e.type === 'downtime' && opIds[e.opId]);
+  const downH = r1(downs.reduce((s, e) => s + (e.duration || 0), 0) / HOUR);
+  const sects = [...new Set(ops.map(o => sName(o.sectionId)).filter(Boolean))];
+
+  // ── Хронология ────────────────────────────────────────────────────────────
+  // Собираем из фактов, а не только из журнала: журнал пишется не на всё,
+  // а даты стартов и завершений операций есть всегда.
+  const timeline = useMemo(() => {
+    const t = [];
+    const push = (ts, text, color) => { if (ts) t.push({ ts, text, color }); };
+    push(ord.createdAt, 'Заказ заведён', '#378ADD');
+    if (ord.contractDate) push(new Date(ord.contractDate).getTime(), 'Дата договора', 'var(--muted)');
+    push(ord.cuttingArrivedAt, 'Раскрой получен', '#378ADD');
+    push(ord.materialsReadyAt, 'Материалы готовы', '#1D9E75');
+    ops.forEach(op => {
+      push(op.startedAt, 'Начата: ' + (op.name || '') + ((op.workerIds || []).length ? ' — ' + (op.workerIds || []).map(wName).filter(Boolean).join(', ') : ''), '#EF9F27');
+      if (op.status === 'defect') push(op.finishedAt, 'Брак: ' + (op.name || ''), '#E24B4A');
+      else push(op.finishedAt, 'Завершена: ' + (op.name || ''), '#1D9E75');
+    });
+    delivs.filter(d => d.status === 'confirmed').forEach(d => {
+      const mat = (data.materials || []).find(x => x.id === d.materialId) || {};
+      push(d.confirmedAt, 'Поставка подтверждена: ' + (mat.name || d.materialId || ''), '#1D9E75');
+    });
+    recls.forEach(r => push(r.createdAt, 'Рекламация: ' + (r.defectNote || 'без описания'), '#E24B4A'));
+    tests.forEach(t2 => {
+      push(t2.createdAt, 'Протокол ГИ' + (t2.serialNumber ? ' ' + t2.serialNumber : '') + ' — ' + (t2.verdict === 'pass' ? 'выдержал' : 'не выдержал'), t2.verdict === 'pass' ? '#1D9E75' : '#E24B4A');
+      push(t2.qcSignedAt, 'Протокол ГИ подписан ОТК', '#1D9E75');
+    });
+    downs.forEach(e => push(e.ts, 'Простой ' + r1((e.duration || 0) / HOUR) + ' ч' + (wName(e.workerId) ? ' — ' + wName(e.workerId) : ''), '#EF9F27'));
+    const ACT = { order_shipped: 'Заказ отгружен', order_archive: 'Заказ в архив', order_restore: 'Заказ восстановлен',
+      order_restore_simple: 'Подзаказы свёрнуты', earnings_recalc: 'Пересчёт начислений', reclamation_add: 'Заведена рекламация',
+      orders_batch_import: 'Импорт из 1С' };
+    (data.events || []).forEach(e => {
+      if (e.type !== 'action_log' || !e.details || !inOrder(e.details.orderId)) return;
+      push(e.ts, ACT[e.action] || e.action, 'var(--muted)');
+    });
+    push(ord.shippedAt, 'Отгружен заказчику', '#1D9E75');
+    return t.sort((a, b) => b.ts - a.ts);
+  }, [ord, ops, data.events, delivs, recls, tests, downs]);
+
+  // Нули — не информация: у пустого заказа блоки не рисуем, чтобы карточка
+  // не обрастала секциями, в которых нечего смотреть.
+  const hasEcon = !!econ && (econ.totalCost > 0 || econ.manHours > 0 || planH > 0);
+  const hasQuality = ops.length > 0 || qIssues > 0;
+  if (!lag && !hasEcon && !hasQuality && !delivs.length && !consAgg.length && !crew.length && timeline.length < 2) return null;
+
+  return h('div', { style: { marginBottom: 14 } },
+    h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 8 } }, '🔍 Досье заказа'),
+
+    // Что держит заказ — единственный блок, открытый сразу: если он есть, это главное на карточке
+    lag && h(Card360Section, {
+      icon: '🚧', title: 'Что держит заказ', defaultOpen: true,
+      badge: lag.daysLate > 0 ? 'просрочен ' + lag.daysLate + ' дн' : 'отставание',
+      badgeColor: lag.daysLate > 0 ? '#E24B4A' : '#EF9F27'
+    },
+      [
+        lag.blockingOp && kv('Блокирующая операция', lag.blockingOp.name || '—'),
+        lag.blockingOp && lag.blockingOp.sectionId && kv('Участок', sName(lag.blockingOp.sectionId)),
+        lag.blockedOpsCount > 0 && kv('Из-за неё стоит операций', lag.blockedOpsCount),
+        kv('Причина', lag.cause || '—', '#E24B4A'),
+        lag.causeDetail && kv('Пояснение', lag.causeDetail),
+        kv('Готовность', lag.opsDone + ' из ' + lag.opsTotal + ' (' + lag.progress + '%)'),
+      ].filter(Boolean),
+      (lag.evidence || []).length > 0 && note('Основание: ' + lag.evidence.join('; '))
+    ),
+
+    // Экономика
+    hasEcon && h(Card360Section, { icon: '💰', title: 'Экономика', badge: rub(econ.totalCost), badgeColor: '#378ADD' },
+      [
+        kv('Труд', rub(econ.laborCost)),
+        kv('Материалы', rub(econ.materialCost)),
+        kv('Себестоимость', rub(econ.totalCost), '#378ADD'),
+        qty > 1 && kv('На изделие', rub(econ.totalCost / qty)),
+        kw > 0 && kv('На кВт', rub(econ.totalCost / (kw * qty))),
+        kv('Человеко-часов', econ.manHours),
+        planH > 0 && kv('План / факт, ч', r1(planH) + ' / ' + r1(doneFactH),
+          doneFactH > planH * 1.2 ? '#E24B4A' : doneFactH && doneFactH < planH * 0.8 ? '#1D9E75' : undefined),
+      ].filter(Boolean),
+      econ.unratedHours > 0 && note('Из них ' + econ.unratedHours + ' ч посчитано по ставке по умолчанию — у этих сотрудников ставка не заведена.'),
+      planH === 0 && note('Плановые часы по операциям не проставлены, сравнить план с фактом не с чем.')
+    ),
+
+    // Качество
+    hasQuality && h(Card360Section, {
+      icon: '🔬', title: 'Качество',
+      badge: qIssues ? qIssues + ' замечаний' : 'без замечаний',
+      badgeColor: qIssues ? '#E24B4A' : '#1D9E75'
+    },
+      [
+        kv('Брак / переделки, операций', defects.length + ' / ' + reworks.length, defects.length ? '#E24B4A' : undefined),
+        kv('Рекламаций', recls.length, recls.length ? '#E24B4A' : undefined),
+        kv('Протоколов ГИ', tests.length),
+      ],
+      recls.length > 0 && h('div', { style: { marginTop: 8 } },
+        recls.slice(0, 5).map(r => h('div', { key: r.id, style: { fontSize: 11, padding: '5px 0', borderBottom: '0.5px solid var(--border-soft)' } },
+          h('span', { style: { color: 'var(--muted)' } }, fmtD(r.createdAt) + ' · '),
+          (((data.defectReasons || []).find(x => x.id === r.defectReasonId) || {}).name || 'причина не указана'),
+          r.defectNote ? ' — ' + r.defectNote : '',
+          h('span', { style: { color: r.status === 'closed' ? '#1D9E75' : '#EF9F27', marginLeft: 6 } }, r.status === 'closed' ? 'закрыта' : 'открыта')
+        ))
+      ),
+      tests.length > 0 && h('div', { style: { marginTop: 8 } },
+        tests.map(t2 => h('div', { key: t2.id, style: { fontSize: 11, padding: '5px 0', borderBottom: '0.5px solid var(--border-soft)' } },
+          h('span', { style: { color: 'var(--muted)' } }, fmtD(t2.createdAt) + ' · '),
+          'ГИ ' + (t2.serialNumber || '') + ' · ' + (t2.testPressure || '?') + ' бар',
+          h('span', { style: { color: t2.verdict === 'pass' ? '#1D9E75' : '#E24B4A', marginLeft: 6 } }, t2.verdict === 'pass' ? 'выдержал' : 'не выдержал'),
+          h('span', { style: { color: 'var(--muted)', marginLeft: 6 } }, t2.status === 'signed' ? '(подписан ОТК)' : t2.status === 'rejected' ? '(отклонён ОТК)' : '(ждёт подписи)')
+        ))
+      )
+    ),
+
+    // Материалы
+    (delivs.length > 0 || consAgg.length > 0) && h(Card360Section, {
+      icon: '🔩', title: 'Материалы',
+      badge: delivOpen.length ? 'ждёт ' + delivOpen.length : (money && consAgg.length ? rub(consAgg.reduce((s, c) => s + c.cost, 0)) : consAgg.length + ' позиций'),
+      badgeColor: delivOpen.length ? '#EF9F27' : 'var(--muted)'
+    },
+      delivs.length > 0 && h('div', null,
+        h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 4 } }, 'Поставки'),
+        delivs.map(d => {
+          const mat = (data.materials || []).find(x => x.id === d.materialId) || {};
+          const ok = d.status === 'confirmed';
+          return h('div', { key: d.id, style: { display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, padding: '4px 0', borderBottom: '0.5px solid var(--border-soft)' } },
+            h('span', null, (mat.name || d.materialId || '—') + (d.stageName ? ' · ' + d.stageName : '')),
+            h('span', { style: { color: ok ? '#1D9E75' : '#EF9F27', whiteSpace: 'nowrap' } },
+              (d.deliveredQty || 0) + ' / ' + (d.requiredQty || 0) + ' ' + (d.unit || ''))
+          );
+        })
+      ),
+      consAgg.length > 0 && h('div', { style: { marginTop: delivs.length ? 10 : 0 } },
+        h('div', { style: { fontSize: 11, color: 'var(--muted)', marginBottom: 4 } }, 'Списано на заказ'),
+        consAgg.map((c, i) => h('div', { key: i, style: { display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, padding: '4px 0', borderBottom: '0.5px solid var(--border-soft)' } },
+          h('span', null, c.name),
+          h('span', { style: { whiteSpace: 'nowrap' } }, r1(c.qty) + ' ' + c.unit + (money && c.cost ? ' · ' + rub(c.cost) : ''))
+        ))
+      )
+    ),
+
+    // Люди и время
+    crew.length > 0 && h(Card360Section, {
+      icon: '👷', title: 'Люди и время',
+      badge: crew.length + ' чел · ' + r1(doneFactH) + ' ч',
+      badgeColor: 'var(--muted)'
+    },
+      sects.length > 0 && kv('Участки', sects.join(', ')),
+      downH > 0 && kv('Простои по заказу', downH + ' ч', '#EF9F27'),
+      h('div', { style: { marginTop: 8 } },
+        crew.map(c => h('div', { key: c.id, style: { display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, padding: '4px 0', borderBottom: '0.5px solid var(--border-soft)' } },
+          h('span', null, wName(c.id) || '—'),
+          h('span', { style: { whiteSpace: 'nowrap', color: 'var(--muted)' } },
+            c.done + ' оп' + (c.defect ? ' · брак ' + c.defect : '') + (c.h ? ' · ' + r1(c.h) + ' ч' : ''))
+        ))
+      ),
+      downs.length > 0 && note('Простои: ' + [...new Set(downs.map(e => (((data.downtimeTypes || []).find(t => t.id === e.downtimeTypeId) || {}).name) || 'без причины'))].join(', '))
+    ),
+
+    // Хронология
+    timeline.length > 1 && h(Card360Section, { icon: '🕓', title: 'Хронология', badge: timeline.length + ' событий', badgeColor: 'var(--muted)' },
+      h('div', { style: { maxHeight: 260, overflowY: 'auto' } },
+        timeline.slice(0, 60).map((e, i) => h('div', { key: i, style: { display: 'flex', gap: 8, fontSize: 12, padding: '4px 0', borderBottom: '0.5px solid var(--border-soft)' } },
+          h('span', { style: { color: 'var(--muted)', flexShrink: 0, minWidth: 88, fontVariantNumeric: 'tabular-nums' } }, fmtDT(e.ts)),
+          h('span', { style: { color: e.color || 'inherit', overflow: 'hidden', textOverflow: 'ellipsis' } }, e.text)
+        ))
+      ),
+      timeline.length > 60 && note('Показаны последние 60 событий из ' + timeline.length + '.')
+    )
+  );
+});
+
+const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit: canEditProp = false, allowRouteSheet = false, onEditMaterials, onEditDeps, userRole, onOpenOrder, onRestoreAsSimple }) => {
   if (!orderId) return null;
   const ord = data.orders.find(o => o.id === orderId);
   if (!ord) return null;
+
+  // Права решает роль; флаг экрана может их только сузить. Так контролёр видит
+  // одно и то же, из какой бы таблицы он ни открыл карточку.
+  const caps = orderCardCaps(userRole, canEditProp, allowRouteSheet);
+  const canEdit = caps.edit;
 
   // Переход к другому заказу (родитель ↔ подзаказ). Через prop или глобальный хелпер.
   const goToOrder = (id) => {
@@ -1452,7 +1767,11 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
   };
   const parentOrd = ord.parentOrderId ? data.orders.find(o => o.id === ord.parentOrderId) : null;
 
-  const ops        = data.ops.filter(o => o.orderId === ord.id && !o.archived);
+  // Родительский заказ своих операций не имеет — вся работа лежит на подзаказах.
+  // Без этого карточка писала «Нет операций», пока в цехе шло производство.
+  const ops        = (typeof getOrderOps === 'function')
+    ? getOrderOps(ord, data)
+    : data.ops.filter(o => o.orderId === ord.id && !o.archived);
   const done       = ops.filter(o => o.status === 'done').length;
   const inProgress = ops.filter(o => o.status === 'in_progress').length;
   const components = ord.components || [];
@@ -1688,17 +2007,30 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
               ? h('div', { style: { padding: 16, textAlign: 'center', color: 'var(--muted)', fontSize: 13 } }, 'Нет операций')
               : ops.map((op, i) => {
                   const workers = (op.workerIds || []).map(wid => data.workers.find(w => w.id === wid)?.name).filter(Boolean);
+                  // У родителя операции пришли из разных подзаказов — подписываем, из какого
+                  const opOrder = data.orders.find(o => o.id === op.orderId) || ord;
                   return h('div', { key: op.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', borderTop: i > 0 ? '0.5px solid var(--border-soft)' : 'none', fontSize: 12, background: op.status === 'done' ? 'rgba(29,158,117,0.04)' : 'transparent' } },
                     h('span', { style: { fontSize: 10, minWidth: 18, color: 'var(--muted)', flexShrink: 0 } }, i + 1),
+                    ord.isParentOrder && opOrder.id !== ord.id && h('span', {
+                      style: { fontSize: 10, padding: '1px 5px', borderRadius: 4, background: 'var(--card-2)', color: 'var(--muted)', flexShrink: 0, whiteSpace: 'nowrap', cursor: 'pointer' },
+                      title: 'Открыть подзаказ', onClick: e => { e.stopPropagation(); goToOrder(opOrder.id); }
+                    }, opOrder.number || ''),
                     h('span', { style: { flex: 1, textDecoration: op.status === 'done' ? 'line-through' : 'none', color: op.status === 'done' ? 'var(--muted)' : 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, op.name),
                     workers.length > 0 && h('span', { style: { fontSize: 11, color: 'var(--muted)', flexShrink: 0, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, workers.join(', ')),
                     // Приёмка работ БМК мастером (этап 4): факт объёмов + начисление бригаде поровну
-                    canEdit && ord.productType === 'bmk' && op.status === 'done' && h(BmkAcceptButton, { op, order: ord, data, onUpdate }),
+                    canEdit && opOrder.productType === 'bmk' && op.status === 'done' && h(BmkAcceptButton, { op, order: opOrder, data, onUpdate }),
                     h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 6, background: `${ST_COLORS[op.status] || '#888'}18`, color: ST_COLORS[op.status] || '#888', fontWeight: 500, flexShrink: 0, whiteSpace: 'nowrap' } }, ST_LABELS[op.status] || op.status)
                   );
                 })
           )
         ),
+
+        // Досье: деньги, качество, материалы, люди, хронология.
+        // Под ErrorBoundary: карточку открывают все роли, включая рабочих в цехе,
+        // и сбой в аналитическом блоке не должен уносить с собой весь экран.
+        (typeof ErrorBoundary !== 'undefined'
+          ? h(ErrorBoundary, { name: 'OrderCard360' }, h(OrderCard360, { ord, data, caps }))
+          : h(OrderCard360, { ord, data, caps })),
 
         // Подзаказ: показываем шильдик и кнопку редактирования
         ord.parentOrderId && h('div', { style: { background: 'rgba(239,159,39,0.06)', border: `0.5px solid ${AM}`, borderRadius: 8, padding: '10px 14px', marginBottom: 12 } },
@@ -1718,18 +2050,23 @@ const OrderCardModal = memo(({ orderId, data, onUpdate, onClose, canEdit = false
         ),
 
         // Начисления по заказу + кнопка пересчёта (только canEdit)
-        canEdit && h(OrderEarningsRecalc, { ord, data, onUpdate, onClose }),
+        caps.money && h(OrderEarningsRecalc, { ord, data, onUpdate, onClose }),
 
         // Кнопки — только для canEdit
         h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
-          canEdit && !ord.isParentOrder && h('button', { onClick: () => { if (typeof generateFullPassport === 'function') generateFullPassport(ord, data); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '📄 Паспорт PDF'),
-          (canEdit || allowRouteSheet) && !ord.isParentOrder && h('button', { onClick: () => { if (typeof generateRouteSheet === 'function') generateRouteSheet(ord, data); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '📋 Маршрутный лист'),
+          caps.passport && !ord.isParentOrder && h('button', { onClick: () => { if (typeof generateFullPassport === 'function') generateFullPassport(ord, data); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '📄 Паспорт PDF'),
+          caps.route && !ord.isParentOrder && h('button', { onClick: () => { if (typeof generateRouteSheet === 'function') generateRouteSheet(ord, data); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '📋 Маршрутный лист'),
           canEdit && onEditMaterials && h('button', { onClick: () => { onClose(); onEditMaterials(ord.id); }, style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer' } }, '🔩 Заявка на материалы'),
           h('button', {
             onClick: () => printOrderLabel(ord, data),
             style: { fontSize: 12, padding: '7px 14px', border: '0.5px solid var(--border)', borderRadius: 7, background: 'transparent', cursor: 'pointer', fontWeight: 500 }
           }, '🖨 Бирка А4'),
 
+          // У родителя паспорт и маршрутный лист скрыты — печатать надо из подзаказов.
+          // Раньше кнопки просто исчезали, и было непонятно, куда они делись.
+          ord.isParentOrder && (caps.passport || caps.route) && h('div', {
+            style: { fontSize: 11, color: 'var(--muted)', flexBasis: '100%', marginTop: 2 }
+          }, 'Паспорт и маршрутный лист печатаются из подзаказов — откройте нужный в списке выше.')
         )
       )
     )
