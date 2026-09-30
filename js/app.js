@@ -2409,7 +2409,7 @@ const PDOScreen = memo(({ data, onUpdate, addToast, onOrderClick }) => {
     tab === 'ops'           && h(ErrorBoundary, { name: 'MasterOps' }, h(MasterOps,                 { data, onUpdate, addToast, onOrderClick })),
     tab === 'recommend'     && h(ErrorBoundary, { name: 'AssignmentRecommendations' }, h(AssignmentRecommendations, { data, onUpdate, addToast })),
     tab === 'kanban'        && h(ErrorBoundary, { name: 'MasterKanban' }, h(MasterKanban,              { data, onUpdate, addToast })),
-    tab === 'gantt'         && h(ErrorBoundary, { name: 'GanttChart' }, h(GanttChart,                { data })),
+    tab === 'gantt'         && h(ErrorBoundary, { name: 'SmartGantt' }, h(SmartGantt,                { data, onUpdate, addToast })),
     tab === 'calendar'      && h(ErrorBoundary, { name: 'ResourceCalendar' }, h(ResourceCalendar,          { data, onUpdate, addToast })),
     tab === 'plan'          && h(ErrorBoundary, { name: 'MasterTodayPlan' }, h(MasterTodayPlan,           { data })),
     tab === 'reports'       && h(ErrorBoundary, { name: 'ReportsBuilder' }, h(ReportsBuilder,            { data })),

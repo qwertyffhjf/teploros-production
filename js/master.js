@@ -2982,68 +2982,160 @@ const MasterOrders = memo(({ data, onUpdate, addToast, onOrderClick }) => {
 
 // ==================== SmartGantt — планировщик ====================
 
+// ── Вспомогательные функции ────────────────────────────────────────
+
+// Рабочий ли день — по графику из настроек (5/2, 6/1, сменные), как в табеле.
+const ganttIsWorkday = (ts, settings) => {
+  const d = new Date(ts);
+  if (typeof isWorkday === 'function') return isWorkday(d.getFullYear(), d.getMonth(), d.getDate(), settings);
+  const dow = d.getDay();
+  return dow !== 0 && dow !== 6;
+};
+
+// Отсутствие работника в день ts: периоды из «Загрузки» (включая последний день) + коды табеля Б/ОТ/ОЗ/НН.
+const ganttWorkerAbsent = (data, workerId, ts) => {
+  const dayS = new Date(ts).setHours(0, 0, 0, 0);
+  const dayE = new Date(ts).setHours(23, 59, 59, 999);
+  const inPeriod = (data.workerAvailabilities || []).some(a =>
+    a.workerId === workerId &&
+    dayE >= new Date(a.startDate).setHours(0, 0, 0, 0) &&
+    dayS <= new Date(a.endDate).setHours(23, 59, 59, 999));
+  if (inPeriod) return true;
+  const d = new Date(ts);
+  const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const c = ((data.timesheet || {})[key] || {})[workerId]?.[d.getDate()]?.code;
+  return c === 'Б' || c === 'ОТ' || c === 'ОЗ' || c === 'НН';
+};
+
+// dependsOn может прийти строкой JSON — приводим к массиву.
+const ganttDeps = (op) => {
+  let d = op.dependsOn;
+  if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e) { d = []; } }
+  return Array.isArray(d) ? d : [];
+};
+
+// Неподтверждённые поставки, которые ждёт именно эта операция
+// (поставка привязана к этапу через stageName; без stageName — ко всему заказу).
+const ganttOpDeliveries = (data, op) => {
+  const nm = String(op.name || '').trim().toLowerCase();
+  return (data.materialDeliveries || []).filter(d =>
+    d.orderId === op.orderId && d.status !== 'confirmed' &&
+    (!d.stageName || String(d.stageName).trim().toLowerCase() === nm));
+};
+const ganttDeliveryEta = (list) => list.reduce((mx, d) => {
+  const eta = d.expectedDate || d.eta || 0;
+  return Math.max(mx, typeof eta === 'string' ? new Date(eta).getTime() : eta);
+}, 0);
+
+// Раскладка полос по дорожкам, чтобы параллельные операции не перекрывали друг друга.
+const ganttPackLanes = (items) => {
+  const sorted = items.slice().sort((a, b) => a.sch.start - b.sch.start);
+  const laneEnds = [];
+  sorted.forEach(it => {
+    let i = laneEnds.findIndex(e => e <= it.sch.start);
+    if (i < 0) { i = laneEnds.length; laneEnds.push(0); }
+    laneEnds[i] = it.sch.end;
+    it.lane = i;
+  });
+  return { items: sorted, lanes: Math.max(1, laneEnds.length) };
+};
+
+// Загрузка по дням: часы работ из расписания против мощности (люди × смена).
+// byEquipment = false → строки по участкам; true → по станкам (мощность станка = одна смена).
+const ganttComputeLoad = (data, scheduled, cfg, days, byEquipment) => {
+  const { shiftHours, dayStartH, dayEndH } = cfg;
+  const ops = (data.ops || []).filter(o => !o.archived && o.status !== 'done' && o.status !== 'defect' && scheduled[o.id]);
+  const workers = (data.workers || []).filter(w => !w.archived);
+  const defs = byEquipment
+    ? (data.equipment || []).map(e => ({ id: e.id, name: e.name || 'Станок' }))
+    : [...(data.sections || []).map(s => ({ id: s.id, name: s.name })), { id: '__none', name: 'Без участка' }];
+
+  const rows = [];
+  defs.forEach(r => {
+    const rowOps = ops.filter(o => byEquipment ? o.equipmentId === r.id : (r.id === '__none' ? !o.sectionId : o.sectionId === r.id));
+    const rowWorkers = byEquipment ? [] : workers.filter(w => r.id === '__none' ? !w.sectionId : w.sectionId === r.id);
+    if (rowOps.length === 0 && (byEquipment || rowWorkers.length === 0)) return;
+    let peak = 0;
+    const cells = days.map(d => {
+      if (!ganttIsWorkday(d.ts, data.settings)) return { off: true, demand: 0, cap: 0, pct: 0 };
+      const wS = d.ts + dayStartH * 3600000, wE = d.ts + dayEndH * 3600000;
+      let demand = 0;
+      rowOps.forEach(o => {
+        const sch = scheduled[o.id];
+        const ov = Math.min(wE, sch.end) - Math.max(wS, sch.start);
+        if (ov > 0) demand += ov / 3600000 * (byEquipment ? 1 : Math.max(1, (o.workerIds || []).length));
+      });
+      const cap = byEquipment ? shiftHours : rowWorkers.filter(w => !ganttWorkerAbsent(data, w.id, wS)).length * shiftHours;
+      const pct = cap > 0 ? Math.round(demand / cap * 100) : (demand > 0 ? Infinity : 0);
+      if (pct > peak) peak = pct;
+      return { off: false, demand, cap, pct };
+    });
+    rows.push({ id: r.id, name: r.name, workers: rowWorkers.length, ops: rowOps.length, cells, peak });
+  });
+  return rows;
+};
+
 // ── Ядро планировщика ──────────────────────────────────────────────
 const buildSchedule = (data) => {
   const DAY_MS = 86400000;
-  const shifts = data.settings?.shifts || [{ id: 1, start: 8, end: 17 }];
+  const shifts = (data.settings?.shifts && data.settings.shifts.length) ? data.settings.shifts : [{ id: 1, start: 8, end: 17 }];
   const shiftHours = shifts.reduce((s, sh) => s + (sh.end - sh.start), 0) || 8;
-
-  // Начало рабочего дня (первая смена)
   const dayStartH = shifts.reduce((mn, sh) => Math.min(mn, sh.start), 23);
+  const dayEndH = shifts.reduce((mx, sh) => Math.max(mx, sh.end), 0) || 17;
 
-  // Получить timestamp начала рабочего дня для даты
-  const dayStart = (ts) => {
-    const d = new Date(ts); d.setHours(dayStartH, 0, 0, 0); return d.getTime();
-  };
+  const dayStart = (ts) => { const d = new Date(ts); d.setHours(dayStartH, 0, 0, 0); return d.getTime(); };
+  const dayEnd = (ts) => { const d = new Date(ts); d.setHours(dayEndH, 0, 0, 0); return d.getTime(); };
+  const isWorkdayAt = (ts) => ganttIsWorkday(ts, data.settings);
+  const hourOf = (ts) => { const d = new Date(ts); return d.getHours() + d.getMinutes() / 60; };
 
-  // Является ли день рабочим (не выходной)
-  const isWorkday = (ts) => {
-    const dow = new Date(ts).getDay();
-    return dow !== 0 && dow !== 6;
-  };
-
-  // Следующий рабочий момент после ts
+  // Ближайший рабочий момент не раньше ts
   const nextWorkMoment = (ts) => {
     let t = ts;
-    const d = new Date(t);
-    const h = d.getHours() + d.getMinutes() / 60;
-    const lastShift = shifts[shifts.length - 1];
-    // Если после конца смен — переходим на следующий рабочий день
-    if (h >= lastShift.end) {
-      t = dayStart(t + DAY_MS);
-      while (!isWorkday(t)) t += DAY_MS;
-    }
-    if (!isWorkday(t)) {
-      t = dayStart(t);
-      while (!isWorkday(t)) t += DAY_MS;
+    for (let g = 0; g < 400; g++) {
+      if (!isWorkdayAt(t)) { t = dayStart(t + DAY_MS); continue; }
+      const hh = hourOf(t);
+      if (hh < dayStartH) return dayStart(t);
+      if (hh >= dayEndH) { t = dayStart(t + DAY_MS); continue; }
+      return t;
     }
     return t;
   };
 
-  // Добавить рабочие миллисекунды к ts
+  // Ближайший рабочий момент не позже ts (для обратного расчёта)
+  const prevWorkMoment = (ts) => {
+    let t = ts;
+    for (let g = 0; g < 400; g++) {
+      if (!isWorkdayAt(t)) { t = dayEnd(t - DAY_MS); continue; }
+      const hh = hourOf(t);
+      if (hh <= dayStartH) { t = dayEnd(t - DAY_MS); continue; }
+      if (hh > dayEndH) return dayEnd(t);
+      return t;
+    }
+    return t;
+  };
+
+  // ts + ms рабочего времени
   const addWorkMs = (ts, ms) => {
     let t = nextWorkMoment(ts);
     let remaining = ms;
-    let guard = 0;
-    while (remaining > 0 && guard++ < 500) {
-      const d = new Date(t);
-      const h = d.getHours() + d.getMinutes() / 60;
-      const lastShift = shifts[shifts.length - 1];
-      const tillEnd = (lastShift.end - Math.max(h, dayStartH)) * 3600000;
-      if (tillEnd <= 0) {
-        // Уже за концом смены — переходим на следующий рабочий день
-        t = dayStart(t + DAY_MS);
-        while (!isWorkday(t)) t += DAY_MS;
-        continue;
-      }
-      if (remaining <= tillEnd) {
-        t += remaining;
-        remaining = 0;
-      } else {
-        remaining -= tillEnd;
-        t = dayStart(t + DAY_MS);
-        while (!isWorkday(t)) t += DAY_MS;
-      }
+    for (let g = 0; g < 800; g++) {
+      const tillEnd = (dayEndH - hourOf(t)) * 3600000;
+      if (remaining <= tillEnd) return t + remaining;
+      remaining -= tillEnd;
+      t = nextWorkMoment(dayStart(t + DAY_MS));
+    }
+    return t;
+  };
+
+  // ts − ms рабочего времени
+  const subWorkMs = (ts, ms) => {
+    let t = prevWorkMoment(ts);
+    let remaining = ms;
+    for (let g = 0; g < 800; g++) {
+      const avail = (hourOf(t) - dayStartH) * 3600000;
+      if (remaining <= avail) return t - remaining;
+      remaining -= avail;
+      t = prevWorkMoment(dayStart(t) - 1);
     }
     return t;
   };
@@ -3056,57 +3148,55 @@ const buildSchedule = (data) => {
     return 8 * 3600000; // дефолт — 8 часов
   };
 
-  // Доступность рабочего: недоступен в периоде (отпуск/больничный)
-  const isWorkerUnavailable = (workerId, ts) => {
-    return (data.workerAvailabilities || []).some(a =>
-      a.workerId === workerId && ts >= a.startDate && ts <= a.endDate
-    );
-  };
+  // Занятость ресурсов: рабочие (id) и станки ('eq:' + id) → массив [{start, end}]
+  const resBusy = {};
+  const addBusy = (rid, start, end) => { (resBusy[rid] = resBusy[rid] || []).push({ start, end }); };
 
-  // Занятость рабочих: карта workerId → массив [{start, end}]
-  const workerBusy = {};
-  const addBusy = (workerId, start, end) => {
-    if (!workerBusy[workerId]) workerBusy[workerId] = [];
-    workerBusy[workerId].push({ start, end });
-  };
-
-  // Найти ближайший свободный слот у рабочего после notBefore
-  const findFreeSlot = (workerId, notBefore, durationMs) => {
+  const findFreeSlot = (rid, notBefore, durMs) => {
+    const isEq = String(rid).startsWith('eq:');
+    const list = (resBusy[rid] || []).sort((a, b) => a.start - b.start);
     let t = nextWorkMoment(notBefore);
-    const busy = (workerBusy[workerId] || []).sort((a, b) => a.start - b.start);
-    let attempts = 0;
-    while (attempts++ < 200) {
-      if (isWorkerUnavailable(workerId, t)) {
-        t = dayStart(t + DAY_MS);
-        while (!isWorkday(t) || isWorkerUnavailable(workerId, t)) t += DAY_MS;
-        continue;
-      }
-      const end = addWorkMs(t, durationMs);
-      const conflict = busy.find(b => b.start < end && b.end > t);
+    for (let a = 0; a < 300; a++) {
+      if (!isEq && ganttWorkerAbsent(data, rid, t)) { t = nextWorkMoment(dayStart(t + DAY_MS)); continue; }
+      const end = addWorkMs(t, durMs);
+      const conflict = list.find(b => b.start < end && b.end > t);
       if (!conflict) return t;
       t = nextWorkMoment(conflict.end);
     }
     return t;
   };
 
-  // Дата готовности поставки для заказа
-  const getDeliveryReady = (orderId) => {
-    const deliveries = (data.materialDeliveries || []).filter(d =>
-      d.orderId === orderId && d.status !== 'confirmed'
-    );
-    if (deliveries.length === 0) return 0;
-    // Берём максимальную ожидаемую дату поставки
-    const maxEta = deliveries.reduce((mx, d) => {
-      const eta = d.expectedDate || d.eta || 0;
-      return Math.max(mx, typeof eta === 'string' ? new Date(eta).getTime() : eta);
-    }, 0);
-    return maxEta;
+  // Общий слот для нескольких ресурсов сразу (все рабочие + станок)
+  const findCommonSlot = (rids, notBefore, durMs) => {
+    let t = notBefore;
+    for (let i = 0; i < 30; i++) {
+      let next = t;
+      rids.forEach(r => { next = Math.max(next, findFreeSlot(r, t, durMs)); });
+      if (next === t) return t;
+      t = next;
+    }
+    return t;
+  };
+
+  // Операции без исполнителя: очередь на участок по числу его работников (оценка)
+  const secWorkers = {};
+  (data.workers || []).forEach(w => { if (!w.archived && w.sectionId) secWorkers[w.sectionId] = (secWorkers[w.sectionId] || 0) + 1; });
+  const poolFree = {};
+  const poolTake = (secId, notBefore, durMs) => {
+    const n = secWorkers[secId];
+    if (!secId || !n) return null;
+    const arr = poolFree[secId] || (poolFree[secId] = new Array(n).fill(0));
+    let bi = 0;
+    for (let i = 1; i < arr.length; i++) if (arr[i] < arr[bi]) bi = i;
+    const start = nextWorkMoment(Math.max(notBefore, arr[bi]));
+    arr[bi] = addWorkMs(start, durMs);
+    return start;
   };
 
   // Топологическая сортировка операций с учётом зависимостей
   const topoSort = (ops) => {
     const map = {};
-    ops.forEach(op => { map[op.id] = { op, deps: op.dependsOn || [], done: false }; });
+    ops.forEach(op => { map[op.id] = { op, deps: ganttDeps(op), done: false }; });
     const result = [];
     const visit = (id, stack = new Set()) => {
       if (stack.has(id)) return; // цикл — пропускаем
@@ -3120,16 +3210,28 @@ const buildSchedule = (data) => {
   };
 
   // ── Основной алгоритм ──────────────────────────────────────────
-
   const now_ = Date.now();
   const activeOrders = data.orders.filter(o => !o.archived && !o.shipped);
   const allOps = data.ops.filter(o => !o.archived && o.status !== 'done' && o.status !== 'defect');
 
   // Режим B: прямой расчёт (реальный старт с учётом загрузки)
-  const scheduledB = {}; // opId → {start, end}
-  const opFinish = {}; // opId → timestamp завершения
+  const scheduledB = {};
+  const opFinish = {};
 
-  // Сортируем заказы по приоритету
+  // 1) Операции «в работе» фиксируем первыми — они уже заняли людей и станки,
+  //    и заказы с высоким приоритетом должны их обходить.
+  allOps.forEach(op => {
+    if (op.status !== 'in_progress' || !op.startedAt) return;
+    const plannedEnd = addWorkMs(op.startedAt, opDurationMs(op));
+    const overrun = plannedEnd < now_; // плановое время вышло, а операция не закрыта
+    const end = Math.max(plannedEnd, now_);
+    scheduledB[op.id] = { start: op.startedAt, end, fixed: true, overrun };
+    opFinish[op.id] = end;
+    const rids = [...(op.workerIds || []), ...(op.equipmentId ? ['eq:' + op.equipmentId] : [])];
+    rids.forEach(r => addBusy(r, op.startedAt, end));
+  });
+
+  // 2) Остальные — по приоритету заказа
   const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
   const sortedOrders = [...activeOrders].sort((a, b) =>
     (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2)
@@ -3137,83 +3239,42 @@ const buildSchedule = (data) => {
 
   sortedOrders.forEach(order => {
     const orderOps = allOps.filter(o => o.orderId === order.id);
-    const sorted = topoSort(orderOps);
-    const deliveryReady = getDeliveryReady(order.id);
-
-    sorted.forEach(op => {
+    topoSort(orderOps).forEach(op => {
+      if (scheduledB[op.id]) return; // уже зафиксирована
       const durMs = opDurationMs(op);
+      const wids = op.workerIds || [];
+      const rids = [...wids, ...(op.equipmentId ? ['eq:' + op.equipmentId] : [])];
 
-      // Операция не может начаться раньше:
-      // 1. Сейчас (или факт. начало если in_progress)
-      // 2. Готовности всех зависимостей
-      // 3. Готовности поставок
-      let notBefore = op.status === 'in_progress' && op.startedAt ? op.startedAt : now_;
-      (op.dependsOn || []).forEach(depId => {
-        if (opFinish[depId]) notBefore = Math.max(notBefore, opFinish[depId]);
-      });
-      if (deliveryReady > 0) notBefore = Math.max(notBefore, deliveryReady);
+      // Не раньше: сейчас, готовности зависимостей, поставки материалов для ЭТОЙ операции
+      let notBefore = now_;
+      ganttDeps(op).forEach(depId => { if (opFinish[depId]) notBefore = Math.max(notBefore, opFinish[depId]); });
+      const dl = ganttOpDeliveries(data, op);
+      const eta = dl.length ? ganttDeliveryEta(dl) : 0;
+      if (eta > 0) notBefore = Math.max(notBefore, eta);
 
-      // Если уже in_progress — фиксируем текущий старт
-      if (op.status === 'in_progress' && op.startedAt) {
-        const end = addWorkMs(op.startedAt, durMs);
-        scheduledB[op.id] = { start: op.startedAt, end, fixed: true };
-        opFinish[op.id] = end;
-        (op.workerIds || []).forEach(wid => addBusy(wid, op.startedAt, end));
-        return;
-      }
-
-      // Для каждого назначенного рабочего найти свободный слот
-      if (!op.workerIds?.length) {
-        // Нет назначенных — ставим от notBefore без учёта занятости
-        const start = nextWorkMoment(notBefore);
-        const end = addWorkMs(start, durMs);
-        scheduledB[op.id] = { start, end };
-        opFinish[op.id] = end;
-        return;
-      }
-
-      // С назначенными — берём наиболее ранний общий слот
-      let bestStart = null;
-      op.workerIds.forEach(wid => {
-        const slot = findFreeSlot(wid, notBefore, durMs);
-        bestStart = bestStart === null ? slot : Math.max(bestStart, slot);
-      });
-      const start = bestStart || nextWorkMoment(notBefore);
+      let start;
+      if (rids.length > 0) start = findCommonSlot(rids, notBefore, durMs);
+      else start = poolTake(op.sectionId, notBefore, durMs) ?? nextWorkMoment(notBefore);
       const end = addWorkMs(start, durMs);
-      scheduledB[op.id] = { start, end };
+      scheduledB[op.id] = { start, end, virtual: wids.length === 0 };
       opFinish[op.id] = end;
-      op.workerIds.forEach(wid => addBusy(wid, start, end));
+      rids.forEach(r => addBusy(r, start, end));
     });
   });
 
-  // Режим A: обратный расчёт от дедлайна
+  // Режим A: обратный расчёт от дедлайна — каждая операция должна закончиться
+  // к старту самой ранней из зависящих от неё, а если таких нет — к дедлайну.
   const scheduledA = {};
   activeOrders.forEach(order => {
     if (!order.deadline) return;
     const deadlineTs = new Date(order.deadline).getTime() + 86399000; // конец дня
     const orderOps = allOps.filter(o => o.orderId === order.id);
-    const sorted = topoSort(orderOps).reverse(); // от конца к началу
-
-    let cursor = deadlineTs;
-    sorted.forEach(op => {
-      const durMs = opDurationMs(op);
-      const end = cursor;
-      // Вычитаем рабочее время назад с учётом выходных
-      let start = end;
-      let remaining = durMs;
-      let guard = 0;
-      while (remaining > 0 && guard++ < 500) {
-        const d = new Date(start);
-        if (!isWorkday(start)) { start -= DAY_MS; continue; }
-        const h = d.getHours() + d.getMinutes() / 60;
-        const dayEnd = shifts[shifts.length - 1].end;
-        const availBack = (Math.min(h, dayEnd) - dayStartH) * 3600000;
-        if (availBack <= 0) { start = dayStart(start) - DAY_MS; continue; }
-        if (remaining <= availBack) { start -= remaining; remaining = 0; }
-        else { remaining -= availBack; start = dayStart(start) - DAY_MS; }
-      }
-      scheduledA[op.id] = { start, end };
-      cursor = start;
+    const dependents = {};
+    orderOps.forEach(op => ganttDeps(op).forEach(d => { (dependents[d] = dependents[d] || []).push(op.id); }));
+    topoSort(orderOps).reverse().forEach(op => {
+      let end = prevWorkMoment(deadlineTs); // конец рабочего дня дедлайна, не 23:59
+      (dependents[op.id] || []).forEach(id => { if (scheduledA[id]) end = Math.min(end, scheduledA[id].start); });
+      scheduledA[op.id] = { start: subWorkMs(end, opDurationMs(op)), end };
     });
   });
 
@@ -3224,8 +3285,7 @@ const buildSchedule = (data) => {
   activeOrders.forEach(order => {
     if (!order.deadline) return;
     const deadlineTs = new Date(order.deadline).getTime() + 86399000;
-    const orderOps = allOps.filter(o => o.orderId === order.id);
-    const finishTimes = orderOps.map(o => scheduledB[o.id]?.end || 0).filter(t => t > 0);
+    const finishTimes = allOps.filter(o => o.orderId === order.id).map(o => scheduledB[o.id]?.end || 0).filter(t => t > 0);
     if (finishTimes.length === 0) return;
     const lastFinish = Math.max(...finishTimes);
     if (lastFinish > deadlineTs) {
@@ -3234,40 +3294,39 @@ const buildSchedule = (data) => {
     }
   });
 
-  // Конфликт 2: два заказа претендуют на рабочего в одно время
+  // Конфликт 2: два заказа претендуют на рабочего в одно время (только уже запущенные операции)
   const workerConflicts = {};
   allOps.forEach(op => {
     const sch = scheduledB[op.id];
     if (!sch) return;
     (op.workerIds || []).forEach(wid => {
       if (!workerConflicts[wid]) workerConflicts[wid] = [];
-      workerConflicts[wid].push({ opId: op.id, orderId: op.orderId, start: sch.start, end: sch.end, name: op.name });
+      workerConflicts[wid].push({ opId: op.id, orderId: op.orderId, start: sch.start, end: sch.end, name: op.name, fixed: !!sch.fixed });
     });
   });
-  // Конфликты рабочих: показываем только если обе операции 'in_progress' одновременно
-  // (планировщик уже избегает будущих конфликтов через findFreeSlot)
   Object.entries(workerConflicts).forEach(([wid, ops]) => {
     const sorted_ = ops.sort((a, b) => a.start - b.start);
     for (let i = 0; i < sorted_.length - 1; i++) {
-      const a = sorted_[i], b_ = sorted_[i+1];
-      // Реальный конфликт: перекрытие у уже запущенных операций
-      const bothFixed = a.fixed && b_.fixed;
-      if (bothFixed && a.end > b_.start) {
+      const a = sorted_[i], b_ = sorted_[i + 1];
+      if (a.fixed && b_.fixed && a.end > b_.start) {
         const worker = data.workers.find(w => w.id === wid);
         conflicts.push({ type: 'worker', workerId: wid, workerName: worker?.name || '?', op1: a, op2: b_ });
       }
     }
   });
 
-  return { scheduledA, scheduledB, conflicts };
+  return { scheduledA, scheduledB, conflicts, cfg: { shiftHours, dayStartH, dayEndH } };
 };
 
 // ── SmartGantt компонент ──────────────────────────────────────────
+// Предупреждение о просрочке показываем один раз за сессию на заказ; дальше — по кнопке «⚠ конфл.».
+const _ganttSeenConflicts = new Set();
+
 const SmartGantt = memo(({ data, onUpdate, addToast }) => {
   const [mode, setMode] = useState('B'); // 'A' | 'B'
+  const [group, setGroup] = useState('order'); // 'order' | 'section' | 'equipment'
   const [schedule, setSchedule] = useState(null);
   const [swapDialog, setSwapDialog] = useState(null); // конфликт для диалога перестановки
-  const [seenConflicts, setSeenConflicts] = useState(new Set());
   const [viewStart, setViewStart] = useState(() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); });
   const [viewDays, setViewDays] = useState(21);
 
@@ -3277,44 +3336,40 @@ const SmartGantt = memo(({ data, onUpdate, addToast }) => {
   useEffect(() => {
     const s = buildSchedule(data);
     setSchedule(s);
-
-    // Показываем диалог для новых конфликтов дедлайна
-    const newDeadlineConflicts = s.conflicts.filter(c =>
-      c.type === 'deadline' && !seenConflicts.has(c.orderId)
-    );
-    if (newDeadlineConflicts.length > 0) {
-      setSwapDialog(newDeadlineConflicts[0]);
+    const fresh = s.conflicts.filter(c => c.type === 'deadline' && !_ganttSeenConflicts.has(c.orderId));
+    if (fresh.length > 0) {
+      _ganttSeenConflicts.add(fresh[0].orderId);
+      setSwapDialog(fresh[0]);
     }
-  }, [data.ops, data.orders, data.materialDeliveries, data.workerAvailabilities]);
+  }, [data.ops, data.orders, data.materialDeliveries, data.workerAvailabilities, data.timesheet, data.workers, data.settings, data.equipment]);
 
   if (!schedule) return h('div', { style: S.card }, 'Строю расписание...');
 
-  const { scheduledA, scheduledB, conflicts } = schedule;
+  const { scheduledA, scheduledB, conflicts, cfg } = schedule;
   const scheduled = mode === 'A' ? scheduledA : scheduledB;
   const viewEnd = viewStart + viewDays * 86400000;
+  const LANE_H = 24;
 
-  // Строим временную шкалу
   const days = [];
   for (let i = 0; i < viewDays; i++) {
     const ts = viewStart + i * 86400000;
     const d = new Date(ts);
-    days.push({ ts, day: d.getDate(), month: d.getMonth(), dow: d.getDay() });
+    days.push({ ts, day: d.getDate(), month: d.getMonth(), dow: d.getDay(), off: !ganttIsWorkday(ts, data.settings) });
   }
 
-  // Группируем операции по заказам
   const activeOrders = data.orders.filter(o => !o.archived && !o.shipped)
     .sort((a, b) => (({ critical:0,high:1,medium:2,low:3 })[a.priority]??2) - (({ critical:0,high:1,medium:2,low:3 })[b.priority]??2));
+  const orderById = {}; data.orders.forEach(o => { orderById[o.id] = o; });
+  const secById = {}; (data.sections || []).forEach(s => { secById[s.id] = s; });
+  const eqById = {}; (data.equipment || []).forEach(e => { eqById[e.id] = e; });
 
   const pctOf = (ts) => Math.max(0, Math.min(100, (ts - viewStart) / (viewEnd - viewStart) * 100));
   const todayTs = (() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
-
   const fmtDate = (ts) => { const d = new Date(ts); return `${d.getDate()} ${MONTHS_RU[d.getMonth()]}`; };
+  const PRIORITY_COLORS = { critical: RD, high: AM, medium: '#378ADD', low: '#888' };
 
   // Перестановка заказов
   const handleSwap = (conflictOrderId, otherOrderId) => {
-    // Помечаем что видели этот конфликт
-    setSeenConflicts(prev => new Set([...prev, conflictOrderId]));
-    // Меняем приоритет: поднимаем conflictOrder выше otherOrder
     const conflictOrder = data.orders.find(o => o.id === conflictOrderId);
     const otherOrder = data.orders.find(o => o.id === otherOrderId);
     if (!conflictOrder || !otherOrder) { setSwapDialog(null); return; }
@@ -3329,6 +3384,74 @@ const SmartGantt = memo(({ data, onUpdate, addToast }) => {
     setSwapDialog(null);
   };
 
+  // ── Строки: по заказам / участкам / станкам ──
+  const openOps = data.ops.filter(o => !o.archived && o.status !== 'done' && o.status !== 'defect' && scheduled[o.id]);
+  const inView = (sch) => sch.end >= viewStart && sch.start <= viewEnd;
+  let rows = [];
+  if (group === 'order') {
+    activeOrders.forEach(order => {
+      const ops = openOps.filter(o => o.orderId === order.id);
+      if (!ops.length) return;
+      const orderEnd = Math.max(...ops.map(o => scheduled[o.id].end));
+      const deadlineTs = order.deadline ? new Date(order.deadline).getTime() + 86399000 : null;
+      rows.push({ key: order.id, kind: 'order', order, ops, deadlineTs, isLate: !!(deadlineTs && orderEnd > deadlineTs) });
+    });
+  } else if (group === 'section') {
+    [...(data.sections || []), { id: '__none', name: 'Без участка' }].forEach(sec => {
+      const ops = openOps.filter(o => sec.id === '__none' ? !o.sectionId : o.sectionId === sec.id);
+      if (ops.length) rows.push({ key: sec.id, kind: 'sec', name: sec.name, ops });
+    });
+  } else {
+    (data.equipment || []).forEach(eq => {
+      const ops = openOps.filter(o => o.equipmentId === eq.id);
+      if (ops.length) rows.push({ key: eq.id, kind: 'eq', name: eq.name || 'Станок', ops });
+    });
+  }
+  rows = rows.map(r => {
+    const vis = r.ops.filter(o => inView(scheduled[o.id])).map(op => ({ op, sch: scheduled[op.id] }));
+    return { ...r, packed: ganttPackLanes(vis), visible: vis.length };
+  }).filter(r => r.visible > 0);
+  const opsWithoutEq = group === 'equipment' ? openOps.filter(o => !o.equipmentId && inView(scheduled[o.id])).length : 0;
+
+  const loadRows = ganttComputeLoad(data, scheduled, cfg, days, group === 'equipment');
+  const loadBg = (c) => c.off ? 'rgba(0,0,0,0.03)'
+    : c.pct === Infinity || c.pct > 100 ? 'rgba(226,75,74,0.55)'
+    : c.pct > 80 ? 'rgba(239,159,39,0.45)'
+    : c.pct > 0 ? 'rgba(46,160,67,0.25)' : 'transparent';
+
+  const renderBar = (op, sch, lane, showOrderNo) => {
+    const order = orderById[op.orderId];
+    const left = pctOf(sch.start);
+    const width = Math.max(0.5, pctOf(sch.end) - left);
+    const waitsDelivery = ganttOpDeliveries(data, op).length > 0 && sch.start <= Date.now();
+    const workerNames = (op.workerIds || []).map(wid => {
+      const w = data.workers.find(x => x.id === wid);
+      return w ? w.name.split(' ')[0] : '?';
+    }).join(', ');
+    const tip = [
+      `${order ? order.number + ' · ' : ''}${op.name}`,
+      `${fmtDate(sch.start)} → ${fmtDate(sch.end)}${op.plannedHours ? ' · план ' + op.plannedHours + ' ч' : ''}`,
+      `Исполнители: ${workerNames || 'не назначены'}`,
+      op.sectionId && secById[op.sectionId] ? `Участок: ${secById[op.sectionId].name}` : null,
+      op.equipmentId && eqById[op.equipmentId] ? `Станок: ${eqById[op.equipmentId].name}` : null,
+      sch.overrun ? '⚠ плановое время вышло, операция не закрыта' : null,
+      sch.virtual ? 'Нет исполнителя — старт оценён по мощности участка' : null,
+      waitsDelivery ? 'Ждёт поставку материалов' : null
+    ].filter(Boolean).join('\n');
+    const label = showOrderNo && order ? `${order.number} · ${op.name}` : op.name;
+    return h('div', { key: op.id, title: tip,
+      style: {
+        position:'absolute', left:`${left}%`, width:`${width}%`,
+        top: 4 + lane * LANE_H, height: LANE_H - 4,
+        background: op.status === 'in_progress' ? AM : waitsDelivery ? '#aaa' : (PRIORITY_COLORS[order?.priority] || '#378ADD'),
+        borderRadius:4, opacity: sch.virtual ? 0.5 : 1, overflow:'hidden',
+        display:'flex', alignItems:'center', padding:'0 4px',
+        fontSize:9, color:'#fff', fontWeight:500, boxSizing:'border-box', cursor:'default',
+        border: sch.overrun ? `1.5px solid ${RD}` : op.status === 'in_progress' ? `1.5px solid ${AM2}` : 'none',
+      }
+    }, width > 3 && h('span', { style: { overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, label));
+  };
+
   return h('div', { style: S.card },
 
     // ── Диалог перестановки ──
@@ -3336,7 +3459,6 @@ const SmartGantt = memo(({ data, onUpdate, addToast }) => {
       const conflict = swapDialog;
       const order = data.orders.find(o => o.id === conflict.orderId);
       if (!order) return null;
-      // Ищем заказ с которым конфликтует (занимает рабочих в то же время)
       const workerConflict = conflicts.find(c =>
         c.type === 'worker' && (c.op1.orderId === conflict.orderId || c.op2.orderId === conflict.orderId)
       );
@@ -3355,18 +3477,9 @@ const SmartGantt = memo(({ data, onUpdate, addToast }) => {
             otherOrder && h('span', null, ` из-за конкурирующего заказа `, h('b', null, otherOrder.number), `.`)
           ),
           h('div', { style: { display:'flex', gap:8, flexWrap:'wrap' } },
-            otherOrder && h('button', {
-              style: abtn(),
-              onClick: () => handleSwap(conflict.orderId, otherOrderId)
-            }, `Поднять приоритет ${order.number}`),
-            h('button', {
-              style: gbtn(),
-              onClick: () => { setSeenConflicts(prev => new Set([...prev, conflict.orderId])); setSwapDialog(null); }
-            }, 'Оставить как есть'),
-            h('button', {
-              style: rbtn(),
-              onClick: () => setSwapDialog(null)
-            }, 'Закрыть')
+            otherOrder && h('button', { style: abtn(), onClick: () => handleSwap(conflict.orderId, otherOrderId) }, `Поднять приоритет ${order.number}`),
+            h('button', { style: gbtn(), onClick: () => setSwapDialog(null) }, 'Оставить как есть'),
+            h('button', { style: rbtn(), onClick: () => setSwapDialog(null) }, 'Закрыть')
           )
         )
       );
@@ -3375,6 +3488,13 @@ const SmartGantt = memo(({ data, onUpdate, addToast }) => {
     // ── Заголовок ──
     h('div', { style: { display:'flex', alignItems:'center', gap:8, marginBottom:12, flexWrap:'wrap' } },
       h('div', { style: { ...S.sec, marginBottom:0, flex:1 } }, 'Гант — умное расписание'),
+
+      // Группировка строк
+      h('select', { style: { ...gbtn({ fontSize:11, padding:'4px 8px' }), cursor:'pointer' }, value: group, onChange: e => setGroup(e.target.value), title: 'Как группировать строки' },
+        h('option', { value:'order' }, 'По заказам'),
+        h('option', { value:'section' }, 'По участкам'),
+        h('option', { value:'equipment' }, 'По станкам')
+      ),
 
       // Переключатель режимов
       h('div', { style: { display:'flex', borderRadius:8, overflow:'hidden', border:`0.5px solid var(--border)` } },
@@ -3391,7 +3511,7 @@ const SmartGantt = memo(({ data, onUpdate, addToast }) => {
       ),
 
       // Конфликты
-      conflicts.length > 0 && h('button', {
+      conflicts.filter(c => c.type === 'deadline').length > 0 && h('button', {
         style: { ...rbtn({ fontSize:11, padding:'4px 10px' }) },
         onClick: () => { const c = conflicts.find(c => c.type === 'deadline'); if (c) setSwapDialog(c); }
       }, `⚠ ${conflicts.filter(c=>c.type==='deadline').length} конфл.`),
@@ -3413,8 +3533,8 @@ const SmartGantt = memo(({ data, onUpdate, addToast }) => {
     // ── Легенда режима ──
     h('div', { style: { fontSize:11, color:'var(--muted)', marginBottom:8, padding:'6px 10px', background:'var(--bg)', borderRadius:6 } },
       mode === 'A'
-        ? '📅 Обратный расчёт от дедлайна — когда нужно было запустить операции чтобы успеть. Красная полоса = уже опоздали.'
-        : '⚙ Прямой расчёт — реальный старт с учётом загрузки рабочих и поставок. Серая = ожидает поставку.'
+        ? '📅 Обратный расчёт от дедлайна — когда нужно было запустить операции, чтобы успеть. Зависимые операции идут цепочкой, независимые — параллельно.'
+        : '⚙ Прямой расчёт — реальный старт с учётом занятости рабочих и станков, готовности зависимостей и поставок. Серая — ждёт поставку. Красная рамка — плановое время вышло. Бледная — исполнитель не назначен, старт оценён по мощности участка.'
     ),
 
     // ── Временная шкала ──
@@ -3423,95 +3543,74 @@ const SmartGantt = memo(({ data, onUpdate, addToast }) => {
 
         // Заголовок дней
         h('div', { style: { display:'flex', marginLeft:160 } },
-          days.map(({ ts, day, month, dow }) =>
+          days.map(({ ts, day, month, off }) =>
             h('div', { key:ts, style: {
               flex:1, textAlign:'center', fontSize:10, padding:'3px 0',
-              background: dow === 0 || dow === 6 ? 'rgba(255,0,0,0.05)' : 'transparent',
+              background: off ? 'rgba(255,0,0,0.05)' : 'transparent',
               borderLeft:'0.5px solid var(--border-soft)',
               fontWeight: ts === todayTs ? 700 : 400,
-              color: ts === todayTs ? AM : dow===0||dow===6 ? '#aaa' : 'var(--muted)'
+              color: ts === todayTs ? AM : off ? '#aaa' : 'var(--muted)'
             } }, `${day}.${month+1}`)
           )
         ),
 
-        // Строки заказов
-        activeOrders.map(order => {
-          const orderOps = data.ops.filter(o => o.orderId === order.id && !o.archived && o.status !== 'done' && o.status !== 'defect');
-          if (orderOps.length === 0) return null;
+        rows.length === 0 && h('div', { style: { padding:16, fontSize:12, color:'var(--muted)' } }, 'В выбранном периоде нет запланированных операций.'),
 
-          const schOps = orderOps.map(op => ({ op, sch: scheduled[op.id] })).filter(x => x.sch);
-          if (schOps.length === 0) return null;
+        // Строки
+        rows.map(row => {
+          const { items, lanes } = row.packed;
+          const label = row.kind === 'order'
+            ? [
+                h('span', { key:'n', style: { fontWeight:500, color: AM } }, row.order.number),
+                row.isLate && h('span', { key:'l', style: { color: RD, fontSize:10 } }, '⚠'),
+                h('span', { key:'p', style: { fontSize:10, color:'var(--muted)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, row.order.product?.slice(0,20))
+              ]
+            : [
+                h('span', { key:'n', style: { fontWeight:500, color: AM, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, row.name),
+                h('span', { key:'c', style: { fontSize:10, color:'var(--muted)' } }, `${row.ops.length} оп.`)
+              ];
 
-          const orderStart = Math.min(...schOps.map(x => x.sch.start));
-          const orderEnd   = Math.max(...schOps.map(x => x.sch.end));
-          const deadlineTs = order.deadline ? new Date(order.deadline).getTime() + 86399000 : null;
-          const isLate = deadlineTs && orderEnd > deadlineTs;
-          const isOutOfView = orderEnd < viewStart || orderStart > viewEnd;
-          if (isOutOfView) return null;
-
-          const PRIORITY_COLORS = { critical: RD, high: AM, medium: '#378ADD', low: '#888' };
-          const barColor = PRIORITY_COLORS[order.priority] || '#378ADD';
-
-          return h('div', { key: order.id, style: { display:'flex', alignItems:'stretch', borderBottom:`0.5px solid var(--border-soft)`, minHeight:36 } },
-
-            // Метка заказа
-            h('div', { style: { width:160, flexShrink:0, padding:'4px 8px', fontSize:11, display:'flex', alignItems:'center', gap:4, borderRight:`0.5px solid var(--border-soft)` } },
-              h('span', { style: { fontWeight:500, color: AM } }, order.number),
-              isLate && h('span', { style: { color: RD, fontSize:10 } }, '⚠'),
-              h('span', { style: { fontSize:10, color:'var(--muted)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, order.product?.slice(0,20))
-            ),
-
-            // Полосы операций
-            h('div', { style: { flex:1, position:'relative', minHeight:36 } },
-              // Линия дедлайна
-              deadlineTs && deadlineTs >= viewStart && deadlineTs <= viewEnd && h('div', { style: {
-                position:'absolute', top:0, bottom:0, width:2,
-                left: `${pctOf(deadlineTs)}%`,
-                background: isLate ? RD : GN,
-                zIndex:2, opacity:0.6
+          return h('div', { key: row.key, style: { display:'flex', alignItems:'stretch', borderBottom:`0.5px solid var(--border-soft)`, minHeight: lanes * LANE_H + 8 } },
+            h('div', { style: { width:160, flexShrink:0, padding:'4px 8px', fontSize:11, display:'flex', alignItems:'center', gap:4, borderRight:`0.5px solid var(--border-soft)` } }, label),
+            h('div', { style: { flex:1, position:'relative', minHeight: lanes * LANE_H + 8 } },
+              // Линия дедлайна (только в режиме «по заказам»)
+              row.kind === 'order' && row.deadlineTs && row.deadlineTs >= viewStart && row.deadlineTs <= viewEnd && h('div', { style: {
+                position:'absolute', top:0, bottom:0, width:2, left: `${pctOf(row.deadlineTs)}%`,
+                background: row.isLate ? RD : GN, zIndex:2, opacity:0.6
               } }),
               // Выходные
-              days.filter(d => d.dow === 0 || d.dow === 6).map(d =>
+              days.filter(d => d.off).map(d =>
                 h('div', { key:d.ts, style: { position:'absolute', top:0, bottom:0, left:`${pctOf(d.ts)}%`, width:`${100/viewDays}%`, background:'rgba(0,0,0,0.03)' } })
               ),
-              // Полосы операций
-              schOps.map(({ op, sch }) => {
-                if (sch.end < viewStart || sch.start > viewEnd) return null;
-                const left = pctOf(sch.start);
-                const width = Math.max(0.5, pctOf(sch.end) - left);
-                const hasDeliveryBlock = (() => {
-                  const deliveries = (data.materialDeliveries || []).filter(d => d.orderId === op.orderId && d.status !== 'confirmed');
-                  return deliveries.length > 0 && sch.start <= Date.now();
-                })();
-                const workerNames = (op.workerIds || []).map(wid => {
-                  const w = data.workers.find(x => x.id === wid);
-                  return w ? w.name.split(' ')[0] : '?';
-                }).join(', ');
-
-                return h('div', { key: op.id,
-                  title: `${op.name}\n${workerNames || 'нет исполнителя'}\n${fmtDate(sch.start)} → ${fmtDate(sch.end)}`,
-                  style: {
-                    position:'absolute',
-                    left:`${left}%`, width:`${width}%`,
-                    top:4, height:28,
-                    background: op.status === 'in_progress' ? AM
-                      : hasDeliveryBlock ? '#aaa'
-                      : barColor,
-                    borderRadius:4,
-                    opacity: op.workerIds?.length ? 1 : 0.5,
-                    overflow:'hidden',
-                    display:'flex', alignItems:'center',
-                    padding:'0 4px',
-                    fontSize:9, color:'#fff', fontWeight:500,
-                    boxSizing:'border-box',
-                    cursor:'default',
-                    border: op.status === 'in_progress' ? `1.5px solid ${AM2}` : 'none',
-                  }
-                }, width > 5 ? (op.name.slice(0,12) + (op.name.length>12?'…':'')) : '')
-              })
+              items.map(it => renderBar(it.op, it.sch, it.lane, row.kind !== 'order'))
             )
           );
-        }).filter(Boolean)
+        }),
+
+        opsWithoutEq > 0 && h('div', { style: { padding:'6px 8px', fontSize:10, color:'var(--muted)' } }, `Операций без станка в периоде: ${opsWithoutEq} (в этом разрезе не показаны)`)
+      )
+    ),
+
+    // ── Загрузка по дням ──
+    loadRows.length > 0 && h('div', { style: { marginTop:14, borderTop:`0.5px solid var(--border-soft)`, paddingTop:10 } },
+      h('div', { style: { fontSize:12, fontWeight:600, marginBottom:2 } }, group === 'equipment' ? 'Загрузка станков по дням' : 'Загрузка участков по дням'),
+      h('div', { style: { fontSize:10, color:'var(--muted)', marginBottom:6 } },
+        `Часы работ по расписанию к мощности (${group === 'equipment' ? 'смена станка' : 'люди × смена, минус отпуска и больничные'}). Зелёный — до 80%, жёлтый — до 100%, красный — перегруз.`),
+      h('div', { style: { overflowX:'auto' } },
+        h('div', { style: { minWidth: 600 } },
+          loadRows.map(r => h('div', { key: r.id, style: { display:'flex', alignItems:'stretch', borderBottom:`0.5px solid var(--border-soft)` } },
+            h('div', { style: { width:160, flexShrink:0, padding:'3px 8px', fontSize:11, borderRight:`0.5px solid var(--border-soft)`, overflow:'hidden' } },
+              h('div', { style: { fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, r.name),
+              h('div', { style: { fontSize:9, color: r.peak > 100 ? RD2 : 'var(--muted)' } },
+                (group === 'equipment' ? '' : `${r.workers} чел. · `) + (r.peak === Infinity ? 'пик: нет людей' : `пик ${r.peak}%`))
+            ),
+            r.cells.map((c, i) => h('div', {
+              key: days[i].ts,
+              title: c.off ? 'Выходной' : `${fmtDate(days[i].ts)}: ${Math.round(c.demand * 10) / 10} ч работ при мощности ${Math.round(c.cap)} ч`,
+              style: { flex:1, minHeight:24, background: loadBg(c), borderLeft:'0.5px solid var(--border-soft)', fontSize:9, textAlign:'center', lineHeight:'24px', color:'var(--text)' }
+            }, !c.off && viewDays <= 21 && (c.pct === Infinity ? '!' : c.pct > 0 ? c.pct : '')))
+          ))
+        )
       )
     ),
 
@@ -3539,7 +3638,7 @@ const SmartGantt = memo(({ data, onUpdate, addToast }) => {
         { color: RD,    label: 'Критический' },
         { color: AM,    label: 'Высокий' },
         { color: '#378ADD', label: 'Средний' },
-        { color: 'var(--muted)', label: 'Ждёт поставку' },
+        { color: '#aaa', label: 'Ждёт поставку' },
         { color: 'var(--muted)', label: 'Нет исполнителя', opacity: 0.5 },
       ].map(({ color, label, opacity }) =>
         h('span', { key:label, style:{ display:'flex', alignItems:'center', gap:4 } },
